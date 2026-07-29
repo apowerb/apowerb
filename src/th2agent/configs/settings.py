@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     test_token: str = ""  # For authentication
     encrypt_key: str = ""
     algorithm: str = "HS256"
+    # Mode TLS de la connexion Postgres. `require` par defaut : c'est ce que
+    # le code imposait en dur, et tous les deploiements existants tournent
+    # contre un Postgres gere qui l'exige. Un auto-hebergeur avec une base
+    # locale sans TLS pose `DB_SSLMODE=disable` — sans ce reglage, il ne
+    # pouvait tout simplement pas demarrer.
+    db_sslmode: str = "require"
     access_token_expire_minutes: int = 120
     # ADK configuration
     root_path: str = "http://localhost:8000"

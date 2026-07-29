@@ -43,7 +43,7 @@ class ToolConfigStore(BaseModel):
     db_type: str = tool_config.db_type
     db_schema: str = tool_config.db_schema
     engine: Any = create_engine(
-        f"{db_type}://{db_user}:{db_password}@{db_url}?sslmode=require"
+        f"{db_type}://{db_user}:{db_password}@{db_url}?sslmode={settings.db_sslmode}"
     )
     metadata: Any = MetaData()
     tool_config_table: Any = Table(
