@@ -1,0 +1,82 @@
+# Grille tarifaire des modèles LLM — source de vérité du coût estimé affiché
+# dans la page « Consommation ».
+#
+# ⚠️ C'est une ESTIMATION, pas une facture. Les tarifs des fournisseurs
+# changent sans préavis : un modèle absent de cette grille est rendu par
+# l'API avec `cost_eur: null` et affiché « — » côté front, JAMAIS 0 €.
+# Préférer un trou visible à un chiffre faux.
+#
+# Unité : prix pour 1 000 000 de tokens, en EUR.
+# - input          : tokens du prompt facturés plein tarif
+# - cached_input   : tokens du prompt servis depuis le cache de contexte
+#                    (~10 % du tarif input chez Google). Le calcul déduit
+#                    les tokens cachés de l'input plein tarif.
+# - output         : tokens générés. Google facture explicitement les
+#                    tokens de raisonnement ("thinking") DANS l'output —
+#                    le calcul ajoute donc thoughts_tokens à output.
+#
+# La clé est la valeur exacte de `llm_usage.model` telle qu'écrite par le
+# usage_recorder (préfixe litellm compris, ex. `gemini/gemini-2.5-flash`).
+#
+# ⚠️ Ce fichier est lu UNE FOIS par process (lru_cache sur load_pricing).
+# Modifier un tarif n'a aucun effet sur l'app en cours : il faut
+# REDÉMARRER le service (`sudo systemctl restart th2agent.service`).
+#
+# Ne sont tarifés ici que les tarifs TEXTE/IMAGE/VIDÉO. L'audio est plus
+# cher chez Google (input ~2-4x) : si un agent passe à l'audio, ces
+# montants sous-estimeront.
+#
+# Modèles à fenêtre variable (2.5 Pro, 3.1 Pro : tarif majoré au-delà de
+# 200k tokens de prompt) : le tarif RETENU est celui du palier bas. Les
+# gros prompts sont donc sous-estimés — ne pas les ajouter sans traiter
+# ce palier.
+
+currency: EUR
+
+# Tarifs sources en USD, convertis avec ce taux.
+usd_to_eur: 0.8742
+
+sources:
+  pricing: "https://ai.google.dev/gemini-api/docs/pricing (relevé le 2026-07-20)"
+  fx: "taux USD->EUR du 2026-07-20"
+
+updated_at: "2026-07-20"
+
+models:
+  # --- Google Gemini -------------------------------------------------
+  gemini/gemini-3.1-flash-lite:      # 0.25 / 1.50 / 0.025 USD
+    input: 0.2186
+    cached_input: 0.0219
+    output: 1.3113
+
+  gemini/gemini-3-flash-preview:     # 0.50 / 3.00 / 0.05 USD
+    input: 0.4371
+    cached_input: 0.0437
+    output: 2.6226
+
+  gemini/gemini-3.5-flash:           # 1.50 / 9.00 / 0.15 USD
+    input: 1.3113
+    cached_input: 0.1311
+    output: 7.8678
+
+  gemini/gemini-2.5-flash:           # 0.30 / 2.50 / 0.03 USD
+    input: 0.2623
+    cached_input: 0.0262
+    output: 2.1855
+
+  gemini/gemini-2.5-flash-lite:      # 0.10 / 0.40 / 0.01 USD
+    input: 0.0874
+    cached_input: 0.0087
+    output: 0.3497
+
+  # --- OVHcloud AI Endpoints -----------------------------------------
+  # Offre sans coût à l'usage côté projet. Tarifé à 0 EXPLICITEMENT —
+  # ce qui n'est pas la même chose qu'absent de la grille (= inconnu).
+  mistral/Mistral-Small-3.2-24B-Instruct-2506:
+    input: 0.0
+    cached_input: 0.0
+    output: 0.0
+
+# Volontairement NON tarifés (fenêtre variable au-delà de 200k tokens,
+# cf. avertissement plus haut) : gemini-2.5-pro, gemini-3.1-pro-preview.
+# Ils remontent `cost_eur: null` tant que le palier n'est pas géré.

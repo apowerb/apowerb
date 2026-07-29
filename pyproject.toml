@@ -1,0 +1,110 @@
+[project]
+name = "th2agent"
+version = "0.1.1"
+description = "Agentic framework for building and deploying AI agents with flexible orchestration, custom tool integration, RAG, Text-to-SQL, webhooks, and billing."
+readme = "README.md"
+authors = [
+    { name = "Farid  Azouaou", email = "farid.azouaou@thaink2.com" }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+# 3.12 est le vrai plancher : le code imbrique des guillemets identiques
+# dans une f-string (PEP 701), rejete par 3.11. Verifie en compilant tout
+# src/ sur 3.11 (echec) puis 3.12 et 3.13 (OK).
+requires-python = ">=3.12"
+keywords = ["agents", "adk", "llm", "rag", "text-to-sql", "fastapi", "postgresql", "orchestration"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Framework :: FastAPI",
+]
+dependencies = [
+    "anthropic>=0.43.0",
+    "asyncpg>=0.31.0",
+    "fastapi>=0.123.10",
+    "google-adk[toolbox]>=1.36.2,<2.0.0",
+    "litellm>=1.81.0",
+    "psycopg2-binary>=2.9.11",
+    "pydantic[email]>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "requests>=2.31.0",
+    "sqlalchemy>=2.0.45",
+    "typer>=0.12.0",
+    "uvicorn>=0.30.0",
+    "cryptography==46.0.3",
+    "bcrypt==4.0.1",
+    "passlib>=1.7.4",
+    "python-jose>=3.5.0",
+    "PyPDF2>=3.0.0",
+    "pymupdf>=1.24",
+    "fpdf2>=2.8.0",
+    "pins>=0.9.1",
+    "s3fs>=2023.12.0",
+    "fsspec>=2023.12.0",
+    "aiobotocore>=2.9.0",
+    "stripe>=14.3.0",
+    "Pillow>=10.0.0",
+    "pyotp>=2.9.0",
+    "qrcode>=8.0",
+    "plotly>=5.18.0",
+    "pandas>=2.1.0",
+    "matplotlib>=3.7.0",
+    "duckdb>=1.0.0",
+    "pymysql==1.1.2",
+    "pydantic-core==2.41.5",
+    "tavily-python>=0.7.22",
+    "openpyxl>=3.1.5",
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
+    "xlrd>=2.0.2",
+    "boto3>=1.33.13",
+    "botocore>=1.33.13",
+    "s3transfer>=0.8.2",
+    "nanoid>=2.0.0",
+    "websockets>=13.0",
+    "prometheus-client>=0.20.0",
+    "pyodbc>=5.1.0",
+    "aioodbc>=0.5.0",
+]
+
+[project.optional-dependencies]
+s3 = [
+    "s3fs==2023.12.0",
+    "fsspec==2023.12.0",
+    "aiobotocore==2.9.0",
+]
+
+[project.scripts]
+# Pointe la CLI Typer, pas ``th2agent:main`` : cette cible était morte
+# (``main()`` vit dans th2agent.main, jamais réexporté dans le __init__),
+# et elle aurait chargé tout le serveur pour lancer une commande.
+th2agent = "th2agent.cli.main:app"
+
+[build-system]
+requires = ["uv_build>=0.8.14,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "anyio>=4.12.1",
+    "httpx>=0.28.1",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.14.10",
+    "sphinx>=7.0.0",
+    "types-requests>=2.31.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: integration tests (require running server)",
+    "unit: unit tests",
+]

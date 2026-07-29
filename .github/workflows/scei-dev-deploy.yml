@@ -1,0 +1,111 @@
+name: Deploy SCEI dev branch directly to SCEI_PROD_VM
+
+on:
+  # Phase D: push trigger DISABLED. A push to scei-dev-branch would scp the
+  # monolith over the LIVE overlay (v0.11.1) = silent prod regression.
+  # Rollback stays available via manual workflow_dispatch.
+  workflow_dispatch:
+
+jobs:
+  deploy-scei:
+    runs-on: ubuntu-latest
+    environment:
+      name: scei-production
+      url: https://api-scei.thaink2.fr
+
+    # Serialise les deploys SCEI : deux runs qui scp/chmod le meme repertoire
+    # sur SCEI_PROD_VM se detruisent mutuellement. Le trigger push est
+    # desactive (seul workflow_dispatch reste), donc le risque est faible ;
+    # le verrou couvre le cas de deux dispatch manuels rapproches.
+    # Jamais cancel-in-progress : interrompre un scp en cours laisserait la VM
+    # de PROD incoherente.
+    concurrency:
+      group: deploy-scei-th2agent
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create deployment directory on SCEI_PROD_VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SCEI_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SCEI_SSH_KEY }}
+          script: |
+            sudo mkdir -p /home/ubuntu/thaink2/th2agent
+            # Le parent /home/ubuntu/thaink2 est partage avec th2agent-app.
+            # Un -R ici traverse .../th2agent-app/** pendant que l'autre repo y
+            # deploie => "chmod: cannot access ...: No such file or directory".
+            sudo chown $USER:$USER /home/ubuntu/thaink2
+            sudo chmod 755 /home/ubuntu/thaink2
+            sudo chown -R $USER:$USER /home/ubuntu/thaink2/th2agent
+            sudo chmod -R 755 /home/ubuntu/thaink2/th2agent
+
+      - name: Copy files to SCEI_PROD_VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SCEI_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SCEI_SSH_KEY }}
+          source: ".,!.git"
+          target: "/home/ubuntu/thaink2/th2agent"
+          rm: false
+
+      - name: Tag deployed version
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SCEI_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SCEI_SSH_KEY }}
+          script: |
+            echo "${{ github.ref_name }}@${{ github.sha }} ($(date -u +%Y-%m-%dT%H:%M:%SZ))" > /home/ubuntu/thaink2/th2agent/.release-version
+            cat /home/ubuntu/thaink2/th2agent/.release-version
+
+      - name: Deploy SCEI API
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SCEI_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SCEI_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            cd /home/ubuntu/thaink2/th2agent/
+            chmod +x iac/deploy.sh
+            ./iac/deploy.sh
+
+      - name: Configure Nginx
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SCEI_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SCEI_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/thaink2/th2agent/
+            chmod +x iac/setup-nginx.sh
+            sudo ./iac/setup-nginx.sh
+
+      - name: Setup SSL Certificate
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SCEI_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SCEI_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/thaink2/th2agent/
+            chmod +x iac/setup-ssl.sh
+            sudo ./iac/setup-ssl.sh
+
+      - name: Deployment Status
+        if: success()
+        run: |
+          echo "SCEI dev branch ${{ github.ref_name }} deployed to SCEI_PROD_VM"
+          echo "Public URL: https://api-scei.thaink2.fr"
+          echo "Health: curl -fsS https://api-scei.thaink2.fr/health"
+
+      - name: Deployment Failed
+        if: failure()
+        run: |
+          echo "SCEI dev deploy failed. Check the logs above."
+          exit 1

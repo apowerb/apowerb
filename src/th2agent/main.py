@@ -1,0 +1,646 @@
+import sys
+# Force UTF-8 stdout/stderr on Windows to avoid UnicodeEncodeError with emojis
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+from fastapi import APIRouter
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+import typer
+import uvicorn
+import os
+from jose import JWTError, jwt
+
+from th2agent.core.invocation_context import set_current_invoker
+
+# load th2agent routers
+from th2agent.routers.tools import router as tools_router
+from th2agent.routers.agents import router as agents_router
+from th2agent.routers.agent_reload import router as agent_reload_router
+from th2agent.routers.runs import router as runs_router
+from th2agent.routers.adk_runner import router as adk_runner_router
+from th2agent.routers.artifacts import router as artifacts_router
+from th2agent.auth.router import router as auth_router
+# Scheduler integration is optional — controlled by settings.scheduler_enabled
+# (env: SCHEDULER_ENABLED). Disabled deployments (e.g. SCEI) skip Mage entirely.
+from th2agent.configs.settings import get_settings as _settings_for_sched
+if _settings_for_sched().scheduler_enabled:
+    from th2agent.routers.scheduler import router as scheduler_router
+else:
+    scheduler_router = None
+
+from th2agent.routers.files import router as files_router
+from th2agent.users.router import router as user_router
+from th2agent.routers.superagents import router as superagents_router
+from th2agent.routers.hub import router as hub_router
+from th2agent.routers.rag import router as rag_router
+from th2agent.routers.data_lake import router as data_lake_router
+from th2agent.routers.config import router as config_router
+from th2agent.routers.api_keys import router as api_keys_router
+from th2agent.routers.emailing import router as emailing_router
+from th2agent.routers.integrations import router as integrations_router
+from th2agent.routers.webhooks import router as webhooks_router
+from th2agent.routers.notifications import router as notifications_router
+from th2agent.routers.onedrive_browser import router as onedrive_browser_router
+from th2agent.routers.google_drive_browser import router as google_drive_browser_router
+from th2agent.routers.share import router as share_router
+from th2agent.routers.skills import router as skills_router
+from th2agent.routers.audio_stream import router as audio_stream_router
+from th2agent.routers.workflows import router as workflows_router
+from th2agent.routers.health import router as health_router
+from th2agent.helpers.integrations_migration import ensure_integrations_table
+from th2agent.helpers.webhook_migration import ensure_webhook_subscriptions_table, ensure_webhook_subscriptions_columns
+from th2agent.helpers.webhook_log_migration import ensure_webhook_logs_table
+from th2agent.helpers.notification_migration import ensure_notifications_table
+from th2agent.helpers.business_intelligence_migration import ensure_business_intelligence_table
+from th2agent.helpers.share_migration import ensure_shared_conversations_columns
+from th2agent.helpers.oauth_states_migration import ensure_oauth_states_table
+from th2agent.helpers.security import get_algorithm, get_secret_key
+from th2agent.bi.charts.router import (
+    _load_charts_on_startup,
+    register_exception_handlers ,
+    router as charts_router
+)
+from th2agent.bi.dashboards.router import router as dashboards_router
+from th2agent.bi.data.router import router as data_router
+from th2agent.bi.stats_router import router as bi_stats_router
+from th2agent.bi.data.upload_router import router as bi_upload_router
+from th2agent.bi.data.dataset_router import router as bi_dataset_router
+from th2agent.routers.models import router as models_router
+from th2agent.bi.refresh_router import router as bi_refresh_router
+from th2agent.bi.chart_refresh_router import router as bi_chart_refresh_router
+
+from th2agent.configs.settings import get_settings
+from th2agent.configs.paths import (
+    agents_pool_dir,
+    artifacts_store_dir,
+    ensure_runtime_dirs,
+)
+from th2agent.helpers import encryptor as _encryptor
+from th2agent.helpers.user_migration import ensure_user_columns
+from th2agent.helpers.store_migrations import ensure_store_tables
+from th2agent.core.adk_agent_builder import ensure_agent_modules
+
+
+_BOOTSTRAPPED = False
+
+
+def bootstrap(force: bool = False) -> None:
+    """Effets de bord du démarrage : validation, migrations, auto-réparation.
+
+    Tout ceci s'exécutait auparavant au *niveau module* : importer
+    ``th2agent.main`` déclenchait 10 migrations sur une vraie base et écrivait
+    dans ``agents_pool/``. Un simple ``import`` valait donc un boot — et rendait
+    le paquet inutilisable comme dépendance. C'est désormais branché sur le
+    lifespan ASGI : l'objet ``app`` reste importable, les effets de bord ne se
+    produisent qu'au démarrage réel du serveur.
+
+    Idempotent : une seule exécution par processus, comme l'ancien code au
+    niveau module (un import ne s'exécute qu'une fois).
+    """
+    global _BOOTSTRAPPED
+    if _BOOTSTRAPPED and not force:
+        return
+
+    # La configuration doit être complète pour servir (elle ne l'est plus
+    # à l'import : cf Settings.assert_runtime_ready).
+    get_settings().assert_runtime_ready()
+
+    # Dossiers de travail (agents_pool, artifacts_store, uploads).
+    ensure_runtime_dirs()
+
+    # B7 — Fail fast if no Fernet encryption key is configured. OAuth tokens
+    # persisted in the `integrations` table MUST be encrypted at rest; we refuse
+    # to boot rather than silently fall back to plaintext. The only escape hatch
+    # is ENV=test for unit tests that stub `encryptor.fernet` themselves.
+    if _encryptor.fernet is None and os.getenv("ENV", "").lower() != "test":
+        print(
+            "[FATAL] ENCRYPT_KEY is not configured — refusing to start. "
+            "OAuth integration tokens must be Fernet-encrypted at rest.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Tables des stores (agents, tool configs, skills, hub, api keys) — leur
+    # DDL tournait à l'import des modules concernés.
+    ensure_store_tables()
+
+    # Auto-migrate user table columns (OAuth + Billing)
+    ensure_user_columns()
+    ensure_integrations_table()
+    ensure_webhook_subscriptions_table()
+    ensure_webhook_subscriptions_columns()
+    ensure_webhook_logs_table()
+    ensure_notifications_table()
+    ensure_business_intelligence_table()
+    ensure_shared_conversations_columns()
+    ensure_oauth_states_table()
+
+    # Migrations apportees par les briques branchees. Ici et pas a l'import :
+    # importer th2agent ne doit jamais toucher la base.
+    from th2agent.core.extensions.registry import registry as _reg
+    for _crochet in _reg.bootstrap_hooks():
+        _crochet()
+
+    # B7 — Optional dev/staging hook: re-encrypt plaintext integration tokens at
+    # boot when ENCRYPT_LEGACY_ON_BOOT=true. No-op by default; MUST remain false
+    # in production (the migration is driven explicitly via the CLI there).
+    if get_settings().encrypt_legacy_on_boot:
+        try:
+            from th2agent.integrations.helpers import encrypt_legacy_integration_tokens
+            _migrated = encrypt_legacy_integration_tokens()
+            print(
+                f"[WARNING] ENCRYPT_LEGACY_ON_BOOT=true — migrated {_migrated} "
+                "integration row(s) to encrypted tokens."
+            )
+        except Exception as _exc:
+            print(f"[WARNING] Legacy integration token migration failed: {_exc}")
+
+    # Auto-repair missing agent.py files in the agents pool
+    ensure_agent_modules()
+
+    # Charts BI : lecture en base, donc au boot et pas à l'import.
+    _load_charts_on_startup()
+
+    _BOOTSTRAPPED = True
+
+# load Google ADK FastAPI app
+from google.adk.cli.fast_api import get_fast_api_app
+from google.adk.cli.adk_web_server import AdkWebServer as _AdkWebServer
+
+# Capture the AdkWebServer instance created inside get_fast_api_app() so the
+# hot-reload endpoint can reach its agent_loader + runners_to_clean set.
+_ADK_HANDLES: dict = {}
+_orig_adk_init = _AdkWebServer.__init__
+
+
+def _capture_adk_init(self, *args, **kwargs):
+    _orig_adk_init(self, *args, **kwargs)
+    _ADK_HANDLES["web_server"] = self
+    _ADK_HANDLES["agent_loader"] = self.agent_loader
+
+
+_AdkWebServer.__init__ = _capture_adk_init
+
+# Configure LiteLLM for OVHCloud compatibility
+from th2agent.helpers.litellm_config import configure_litellm_for_ovhcloud
+
+# Apply LiteLLM configuration for OVHCloud and providers without system message support
+configure_litellm_for_ovhcloud()
+
+settings = get_settings()
+
+# ── ADK Auth Middleware ────────────────────────────────────────────────────────
+# Google ADK's get_fast_api_app() injects /run and /run_sse directly into the
+# app before our routers are added, so Depends(get_current_user) never runs on
+# those paths.  This middleware closes that gap by validating the JWT for every
+# request that hits those two ADK-native endpoints.
+'''
+ADK_PROTECTED_PATHS = {
+    "/run", "/run_sse", "/run_live", "/list-apps", "/version",
+    "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json",
+}
+'''
+ADK_PROTECTED_PATHS = {
+    "/run", "/run_sse", "/run_live", "/list-apps", "/version",
+}
+ADK_PROTECTED_PREFIXES = ("/apps/", "/builder/", "/debug/")
+
+
+class ADKAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path in ADK_PROTECTED_PATHS or any(path.startswith(p) for p in ADK_PROTECTED_PREFIXES):
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Not authenticated"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            token = auth_header.split(" ", 1)[1].strip()
+            # Résolue hors du try : sans ENCRYPT_KEY, on ne répond pas 401
+            # (« ton jeton est mauvais »), on échoue — le serveur est cassé,
+            # pas l'appelant.
+            secret = get_secret_key()
+            try:
+                payload = jwt.decode(
+                    token,
+                    secret,
+                    algorithms=[get_algorithm()],
+                )
+                # H1 — ADK-native endpoints only accept real user access
+                # tokens. Long-lived agent_refresh tokens (90-day) and normal
+                # refresh tokens MUST NOT be usable here; they have a
+                # dedicated /run_from_refresh_token endpoint.
+                if payload.get("type") != "access":
+                    raise JWTError("Invalid token type")
+                if payload.get("sub") is None:
+                    raise JWTError("Missing identity claim")
+            except JWTError:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Could not validate credentials"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            # Bind the run's identity (the token ``sub`` is always the user
+            # email) for THIS request so user-personal integrations (Outlook,
+            # Gmail, ...) resolve the actual invoker. This is the ONLY hook that
+            # covers the ADK-native /run path used by scheduled and webhook runs
+            # — they POST straight to google-adk's endpoint, bypassing the
+            # /api/adk wrapper where the interactive binding lives, so without
+            # this the send falls back to the racy global AGENT_OWNER and mails
+            # go out from the wrong mailbox (incident 2026-07-03).
+            set_current_invoker(payload["sub"])
+        return await call_next(request)
+
+api_host = "127.0.0.1"
+api_port = 8000
+
+
+# Emplacements des dossiers runtime, issus de la configuration (défaut :
+# CWD, comportement historique). Leur *création* est faite par
+# ``bootstrap()`` au démarrage : la calculer ici ne coûte rien, mais
+# l'exécuter ferait de l'import de ce module une écriture disque.
+agents_dir = str(agents_pool_dir())
+artifacts_dir = str(artifacts_store_dir())
+
+# Persistance des sessions : sans ``session_service_uri``, ADK retombe sur
+# InMemorySessionService -> conversations perdues a CHAQUE restart (cf audit
+# 2026-06-08 : ~8 restarts/j, aucun historique). On branche DatabaseSessionService
+# sur la base (URL construite depuis l'env, jamais de secret hardcode) ->
+# conversations persistees + auditables (indispensable pour le produit revendable).
+from th2agent.helpers.database_connection import DBConfig as _DBConfig
+
+_dbc = _DBConfig()
+_SESSION_DB_URI = (
+    f"postgresql+asyncpg://{_dbc.db_user}:{_dbc.db_password}"
+    f"@{_dbc.db_host}:{_dbc.db_port}/{_dbc.db_name}"
+)
+
+app = get_fast_api_app(
+    host=api_host,
+    port=api_port,
+    agents_dir=agents_dir,
+    web=False,  # True
+    logo_text="welcome to thaink2 agentic platform",
+    logo_image_url="https://raw.githubusercontent.com/thaink2/thaink2publicimages/main/thaink2_logo_circle.png",
+    # memory_service_uri="rag://",  # Disabled: RAG corpus was empty
+    session_service_uri=_SESSION_DB_URI,
+    # Borne le pool ADK (sinon 15 conns/worker via create_async_engine) : la
+    # base defaultdb est PARTAGEE (th2scei prod incluse, max 100 conns). 5/worker.
+    session_db_kwargs={
+        "pool_size": 3, "max_overflow": 2, "pool_timeout": 10,
+        "pool_recycle": 300, "pool_pre_ping": True,
+        # ADK cree ses tables NON qualifiees par un schema -> elles tombent
+        # sur "public", ou le user DB n'a pas le droit CREATE (durcissement
+        # PG15) => InsufficientPrivilegeError / HTTP 500 sur create_session.
+        # On pose le search_path sur le schema applicatif (th2agent_dev en
+        # dev, DB_SCHEMA en prod) pour qu'ADK y cree/lise ses tables.
+        "connect_args": {"server_settings": {"search_path": _dbc.db_schema}},
+    },
+    artifact_service_uri="file:///" + os.path.abspath(artifacts_dir).replace("\\", "/"),
+)
+# Levier 3 : cap d'appels LLM (adapte au contexte 32k OVHcloud)
+# Patche AdkWebServer.RunConfig pour injecter max_llm_calls=LLM_MAX_CALLS (defaut 25)
+from th2agent.core.agent_helpers.run_config_patch import apply_adk_run_config_patch
+apply_adk_run_config_patch()
+
+# Expose the captured ADK handles on app.state so routers can reach them.
+app.state.adk_web_server = _ADK_HANDLES.get("web_server")
+app.state.adk_agent_loader = _ADK_HANDLES.get("agent_loader")
+# Câblage pur (routes + tools de l'overlay client) : doit rester à la
+# construction de l'app, avant l'inclusion des routers. Aucun accès base.
+from th2agent.core.extensions.loader import load_overlay  # noqa: E402
+load_overlay()
+register_exception_handlers(app)
+# ``bootstrap()`` (validation, migrations, auto-réparation, charts) est appelé
+# depuis ``_wrapped_lifespan`` plus bas — le wrapper de lifespan que ce module
+# installe déjà pour contourner celui d'ADK. Surtout pas à l'import.
+
+# B19 — Structured logging (JSON in prod/staging, text in dev). Configured
+# once at boot; all subsequent ``setup_logging(__name__)`` calls simply
+# return a logger bound to this root configuration.
+from th2agent.configs.th2logger import configure_structured_logging
+configure_structured_logging()
+
+# B19 — Metrics middleware (Prometheus). Added BEFORE SecurityHeaders so
+# the latency histogram captures the full middleware stack cost.
+from th2agent.helpers.metrics_middleware import MetricsMiddleware
+from th2agent.helpers.metrics import make_metrics_asgi_app
+app.add_middleware(MetricsMiddleware)
+
+# B8 — Security headers on every response (CSP, HSTS, XFO, CT, Referrer-Policy).
+# Added BEFORE CORS so its headers survive OPTIONS pre-flight responses.
+from th2agent.helpers.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+# B8 — Strict CORS whitelist. Origins/methods/headers explicitly enumerated
+# (no wildcards) so misconfigured frontends can't bypass CSRF assumptions.
+def _split_csv(value: str) -> list[str]:
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_split_csv(settings.cors_allowed_origins),
+    allow_credentials=True,
+    allow_methods=_split_csv(settings.cors_allowed_methods),
+    allow_headers=_split_csv(settings.cors_allowed_headers),
+)
+
+# B19 — Request-ID middleware is the outermost wrapper: it must see every
+# request before any other middleware logs or branches, and its header must
+# end up on every response. Starlette executes middlewares in reverse
+# registration order, so the LAST ``add_middleware`` call wins as outermost.
+from th2agent.helpers.request_id_middleware import RequestIdMiddleware
+
+# Protect Google ADK's native /run and /run_sse endpoints
+app.add_middleware(ADKAuthMiddleware)
+app.add_middleware(RequestIdMiddleware)
+
+# B19 — Prometheus scrape endpoint (ASGI sub-app, outside /api on purpose).
+app.mount("/metrics", make_metrics_asgi_app())
+
+# Create API router
+api_router = APIRouter()
+api_router.include_router(auth_router, prefix="/api")
+api_router.include_router(user_router, prefix="/api")
+api_router.include_router(agents_router, prefix="/api")
+api_router.include_router(agent_reload_router, prefix="/api")
+api_router.include_router(tools_router, prefix="/api")
+api_router.include_router(runs_router, prefix="/api")
+api_router.include_router(adk_runner_router, prefix="/api/adk")
+api_router.include_router(artifacts_router, prefix="/api")
+if scheduler_router is not None:
+    api_router.include_router(scheduler_router, prefix="/api")
+api_router.include_router(files_router, prefix="/api")
+api_router.include_router(superagents_router, prefix="/api")
+api_router.include_router(hub_router, prefix="/api")
+api_router.include_router(rag_router, prefix="/api")
+api_router.include_router(data_lake_router, prefix="/api")
+api_router.include_router(config_router, prefix="/api")
+api_router.include_router(api_keys_router, prefix="/api")
+api_router.include_router(integrations_router, prefix="/api")
+api_router.include_router(webhooks_router, prefix="/api")
+api_router.include_router(notifications_router, prefix="/api")
+api_router.include_router(emailing_router, prefix="/api")
+api_router.include_router(onedrive_browser_router)
+api_router.include_router(google_drive_browser_router)
+api_router.include_router(charts_router, prefix="/api/v1")
+api_router.include_router(dashboards_router, prefix="/api/v1")
+api_router.include_router(data_router, prefix="/api/v1")
+api_router.include_router(bi_stats_router, prefix="/api/v1")
+api_router.include_router(bi_upload_router, prefix="/api/v1")
+api_router.include_router(bi_dataset_router, prefix="/api/v1")
+api_router.include_router(bi_refresh_router, prefix="/api/v1")
+api_router.include_router(bi_chart_refresh_router, prefix="/api/v1")
+api_router.include_router(share_router, prefix="/api")
+api_router.include_router(skills_router, prefix="/api")
+api_router.include_router(models_router, prefix="/api")
+api_router.include_router(audio_stream_router, prefix="/api")
+api_router.include_router(workflows_router, prefix="/api")
+
+# Routeurs apportes par les briques branchees (TH2_EXTENSIONS). Montes apres
+# ceux du noyau, donc une brique ajoute des routes sans pouvoir masquer les
+# siennes. Aucun nom de module tiers n'apparait ici : c'est ce qui permet de
+# publier ce fichier tel quel dans le noyau open source.
+from th2agent.core.extensions.registry import registry as _ext_registry  # noqa: E402
+from th2agent.configs.th2logger import setup_logging as _setup_logging  # noqa: E402
+
+_ext_logger = _setup_logging(__name__)
+for _spec in _ext_registry.routers():
+    api_router.include_router(_spec.router, prefix=_spec.prefix)
+    _ext_logger.info("[EXT] routeur monte: %s (%s)", _spec.name or "anonyme", _spec.prefix)
+
+# Include API router in main app
+app.include_router(api_router)
+# Start background webhook subscription renewal loop + backlog drain
+from th2agent.scheduler.webhook_renewal import webhook_renewal_loop
+from th2agent.scheduler.events_retention import events_retention_loop
+from th2agent.scheduler import backlog_worker
+from th2agent.scheduler.notifier_watch import notifier_watch_loop
+from th2agent.routers.webhook_handlers.outlook import process_webhook_log_row
+
+
+@app.on_event("startup")
+async def _start_webhook_renewal():
+    import asyncio
+    # Debug breadcrumbs (cf. SCEI prod 2026-05-07 where this hook was
+    # apparently never reaching backlog_worker.start_in_background and
+    # there were no logs to triage). prints survive any logger config
+    # so we can confirm in journalctl which step the hook actually
+    # reached.
+    print("[STARTUP HOOK] _start_webhook_renewal entered", flush=True)
+    try:
+        _load_charts_on_startup()
+        print("[STARTUP HOOK] _load_charts_on_startup ok", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] _load_charts_on_startup raised: {e!r}", flush=True)
+
+    try:
+        renewal_task = asyncio.create_task(webhook_renewal_loop())
+
+        def _on_renewal_done(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                print(
+                    f"[STARTUP HOOK] webhook_renewal_loop crashed: {exc!r}",
+                    flush=True,
+                )
+
+        renewal_task.add_done_callback(_on_renewal_done)
+        print("[STARTUP HOOK] webhook_renewal_loop scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] webhook_renewal_loop schedule raised: {e!r}", flush=True)
+
+    try:
+        asyncio.create_task(notifier_watch_loop())
+        print("[STARTUP HOOK] notifier_watch_loop scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] notifier_watch_loop schedule raised: {e!r}", flush=True)
+
+    try:
+        retention_task = asyncio.create_task(events_retention_loop())
+
+        def _on_retention_done(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                print(
+                    f"[STARTUP HOOK] events_retention_loop crashed: {exc!r}",
+                    flush=True,
+                )
+
+        retention_task.add_done_callback(_on_retention_done)
+        print("[STARTUP HOOK] events_retention_loop scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] events_retention_loop schedule raised: {e!r}", flush=True)
+
+    try:
+        # Drain webhook_logs queue one row at a time. Serialising agent
+        # runs here is what keeps the Gemini per-minute input-token
+        # quota from saturating when several Graph notifications land
+        # in the same window.
+        backlog_worker.start_in_background(process_webhook_log_row)
+        print("[STARTUP HOOK] backlog_worker.start_in_background returned", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] backlog_worker.start_in_background raised: {e!r}", flush=True)
+
+    try:
+        from th2agent.core.agent_seeds import ensure_seed_agents
+        ensure_seed_agents()
+        print("[STARTUP HOOK] ensure_seed_agents ok", flush=True)
+    except Exception as e:
+        print(f"[WARNING] Seed agent import failed (non-fatal): {e}", flush=True)
+
+    print("[STARTUP HOOK] _start_webhook_renewal done", flush=True)
+
+
+# Belt and suspenders: explicitly register the same callback via the
+# add_event_handler API. ADK's get_fast_api_app(...) wraps the app in
+# its own lifespan; depending on FastAPI version, the @app.on_event
+# decorator above is sometimes silently shadowed by that lifespan.
+# add_event_handler is the long-standing API the lifespan-shadowing
+# defaults respect.
+app.add_event_handler("startup", _start_webhook_renewal)
+
+
+# Final fallback: ADK builds the FastAPI app with its own lifespan
+# context manager (``get_fast_api_app(...)`` wraps the app's startup
+# in an ``@asynccontextmanager``). When that pattern is in use, both
+# ``@app.on_event("startup")`` and ``app.add_event_handler("startup",
+# ...)`` are silently *ignored* — Starlette only honours the lifespan
+# context. Verified on SCEI prod 2026-05-07: with both hooks above
+# defined, journalctl never showed the ``[STARTUP HOOK] entered``
+# print, so the worker never started and the webhook backlog stalled.
+#
+# Patch the lifespan in place: keep ADK's original wrapped, then run
+# our startup callback after the inner lifespan has yielded — that
+# matches Starlette semantics where the context body equals the
+# "running" phase of the application.
+import contextlib as _stdlib_contextlib
+
+_inner_lifespan = getattr(app.router, "lifespan_context", None)
+
+
+def _preflight_validate_templates() -> None:
+    """Boot-time guard: reject any shipped template whose agent_instruction
+    contains an unescaped ``{xxx}`` ADK placeholder that cannot be a real
+    session.state variable.
+
+    Background: SCEI prod 2026-05-13 → 2026-05-18, 53 ARs dropped to
+    ``error`` because ``scei_ar_assistant`` shipped with 5 illustrative
+    ``{xxx}`` examples that ADK tried to resolve at runtime. PR #172
+    escaped the SCEI placeholders; this check stops the next regression
+    from booting at all.
+    """
+    from th2agent.core.superagents.templates import SUPERAGENT_TEMPLATES
+    from th2agent.core.validation.prompt_safety import assert_templates_safe
+
+    print("[STARTUP HOOK] _preflight_validate_templates entered", flush=True)
+    assert_templates_safe(SUPERAGENT_TEMPLATES)
+    print("[STARTUP HOOK] _preflight_validate_templates passed", flush=True)
+
+
+@_stdlib_contextlib.asynccontextmanager
+async def _wrapped_lifespan(scope_app):
+    print("[STARTUP HOOK via lifespan wrapper] entering", flush=True)
+    # Effets de bord du boot (migrations, agents_pool, charts) : ils
+    # tournaient au niveau module, ce qui faisait d'un simple import un
+    # démarrage complet. Ici, ils ne partent qu'au vrai lancement.
+    bootstrap()
+    print("✅ Manual startup complete!", flush=True)
+    _preflight_validate_templates()
+    if _inner_lifespan is not None:
+        try:
+            async with _inner_lifespan(scope_app):
+                await _start_webhook_renewal()
+                yield
+        except TypeError:
+            # ADK's lifespan signature can be either ``(app)`` or
+            # ``()`` depending on its version — try the no-arg form
+            # before giving up.
+            async with _inner_lifespan():
+                await _start_webhook_renewal()
+                yield
+    else:
+        await _start_webhook_renewal()
+        yield
+    print("[STARTUP HOOK via lifespan wrapper] exited", flush=True)
+
+
+# ``app.router.lifespan_context`` is the canonical attribute Starlette
+# reads on every request cycle, so swapping it is the only way to make
+# our startup callback actually fire when ADK installs its own.
+app.router.lifespan_context = _wrapped_lifespan
+print(
+    "[STARTUP MODULE] lifespan_context wrapped (had_inner="
+    f"{_inner_lifespan is not None})",
+    flush=True,
+)
+
+
+# B19 — Real health checks (live + ready). The router provides
+# ``/health/live`` and ``/health/ready``; a legacy ``/health`` alias is
+# preserved for external probes that were scraping the old endpoint.
+app.include_router(health_router)
+
+
+@app.get("/health")
+async def health_legacy_alias():
+    """Backward-compatible alias for the old ``/health`` endpoint.
+
+    Prefer ``/health/live`` (fast) or ``/health/ready`` (dependency
+    aware) for new probes.
+    """
+    return {"status": "healthy", "service": "th2agent"}
+
+# Google domain verification (unprotected)
+@app.get("/google3c3f80c61f9d38d4.html")
+async def google_verification():
+    return FileResponse(
+        os.path.join(os.path.dirname(__file__), "static", "google3c3f80c61f9d38d4.html"),
+        media_type="text/html",
+    )
+
+
+# CLI Application
+cli_app = typer.Typer()
+
+
+@cli_app.command()
+def serve(
+    host: str = typer.Option(
+        api_host, "--host", "-h", help="Host to bind the server to"
+    ),
+    port: int = typer.Option(
+        api_port, "--port", "-p", help="Port to bind the server to"
+    ),
+    reload: bool = typer.Option(
+        True, "--reload/--no-reload", help="Enable auto-reload"
+    ),
+):
+    """Start the th2agent FastAPI server."""
+    typer.echo(f"Starting th2agent server on {host}:{port}")
+    uvicorn.run("th2agent.main:app", host=host, port=port, reload=reload)
+
+
+def main():
+    """Main CLI entry point."""
+    from th2agent.cli.main import app as cli_main_app
+
+    cli_main_app()
+
+
+__main__ = "th2agent.main"
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("th2agent.main:app", host=api_host, port=api_port, reload=True)

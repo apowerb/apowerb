@@ -1,0 +1,55 @@
+repos:
+  # -------------------------
+  # Basic hygiene
+  # -------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+
+  # -------------------------
+  # uv – dependency sync
+  # -------------------------
+  - repo: local
+    hooks:
+      - id: uv-sync
+        name: uv sync
+        entry: uv sync
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+  # -------------------------
+  # Ruff – lint + format
+  # -------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # -------------------------
+  # Mypy – static typing
+  # -------------------------
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        additional_dependencies: []
+
+  # -------------------------
+  # Tests (optional but recommended)
+  # -------------------------
+  # - repo: local
+  #   hooks:
+  #     - id: pytest
+  #       name: pytest
+  #       entry: uv run pytest
+  #       language: system
+  #       pass_filenames: false
+  #       stages: [commit]
