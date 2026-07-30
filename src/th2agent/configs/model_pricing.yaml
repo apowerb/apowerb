@@ -28,7 +28,7 @@
 #
 # Modèles à fenêtre variable (2.5 Pro, 3.1 Pro : tarif majoré au-delà de
 # 200k tokens de prompt) : le tarif RETENU est celui du palier bas. Les
-# gros prompts sont donc sous-estimés — ne pas les aFjouter sans traiter
+# gros prompts sont donc sous-estimés — ne pas les ajouter sans traiter
 # ce palier.
 
 currency: EUR
