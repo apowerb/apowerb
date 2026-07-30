@@ -1,0 +1,48 @@
+name: Upload Python Package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  pypi-publish:
+    name: Upload release to PyPI
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          # Strip "v" prefix if present
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Update pyproject.toml version
+        run: |
+          # Use a different delimiter for sed to avoid issues with slashes in the version
+          sed -i "s|^version = .*|version = \"${{ steps.get_version.outputs.VERSION }}\"|" pyproject.toml
+
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Tell pypi this is a trusted publisher
+          attestations: true
