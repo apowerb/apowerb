@@ -149,6 +149,17 @@ async def run_agent_from_jwt(jwt_token: str) -> Dict[str, Any]:
         logger.info(f"[JWT RUN] Using ADK run_mode: {adk_run_mode}")
 
         # Execute the agent with folder_name instead of agent_name
+        # Ce chemin planifie atteint le serveur ADK directement, sans
+        # passer par le routeur /api/adk/run : sans cet appel, un run
+        # programme ignorerait le plafond que le chat respecte.
+        from th2agent.core.run_gate import apply_run_guards, resolve_owner_plan
+
+        await apply_run_guards(
+            agent_name=folder_name,
+            owner_id=user_id,
+            plan=await resolve_owner_plan(user_id),
+        )
+
         result = await _pkg.run_adk_agent(
             agent_name=folder_name,
             user_id=user_id,
@@ -301,6 +312,17 @@ async def run_agent_from_refresh_token(
         logger.info(f"[REFRESH] Using ADK run_mode: {adk_run_mode}")
 
         # Execute the agent
+        # Ce chemin planifie atteint le serveur ADK directement, sans
+        # passer par le routeur /api/adk/run : sans cet appel, un run
+        # programme ignorerait le plafond que le chat respecte.
+        from th2agent.core.run_gate import apply_run_guards, resolve_owner_plan
+
+        await apply_run_guards(
+            agent_name=folder_name,
+            owner_id=user_id,
+            plan=await resolve_owner_plan(user_id),
+        )
+
         result = await _pkg.run_adk_agent(
             agent_name=folder_name,
             user_id=user_id,

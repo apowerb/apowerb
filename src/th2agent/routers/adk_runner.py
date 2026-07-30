@@ -145,12 +145,13 @@ async def run_agent(
 
     # Quota du modele mutualise -- avant toute execution, et avant meme de
     # creer la session : un run refuse ne doit rien laisser derriere lui.
-    from th2agent.core.extensions.registry import registry as _registry
+    from th2agent.core.run_gate import apply_run_guards
 
-    for _garde in _registry.run_guards():
-        await _garde(
-            folder_name, owner_id=current_user.email, plan=current_user.plan
-        )
+    await apply_run_guards(
+        agent_name=folder_name,
+        owner_id=current_user.email,
+        plan=current_user.plan,
+    )
 
     # Check if session exists, create if not
     session_was_created = False
@@ -273,12 +274,13 @@ async def run_agent_sse(
     # facture ; ici l'utilisateur recoit un 402 propre, exploitable.
     # Import local : les imports de ce module sont deja tous post-`_security`
     # (E402), inutile d'en ajouter un de plus.
-    from th2agent.core.extensions.registry import registry as _registry
+    from th2agent.core.run_gate import apply_run_guards
 
-    for _garde in _registry.run_guards():
-        await _garde(
-            folder_name, owner_id=current_user.email, plan=current_user.plan
-        )
+    await apply_run_guards(
+        agent_name=folder_name,
+        owner_id=current_user.email,
+        plan=current_user.plan,
+    )
 
     try:
         NewMessage(**request.new_message)

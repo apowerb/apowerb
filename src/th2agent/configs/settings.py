@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     # n'est jamais plafonnée. 0 (ou négatif) = illimité, ce qui sert de
     # kill-switch sans redéploiement si le garde-fou bloque à tort.
     default_llm_monthly_token_quota: int = 1_000_000
+    # Ce qu'un credit achete vaut en tokens du modele mutualise. 100 000
+    # tokens par credit place le paquet Starter (10 credits, 10 $) a
+    # l'equivalent d'un mois de quota par defaut. Valeur commerciale :
+    # a confirmer, d'ou le reglage plutot qu'une constante.
+    credit_token_value: int = 100_000
     # Override par plan, en JSON — ex.
     # DEFAULT_LLM_PLAN_QUOTAS={"free": 1000000, "pro": 50000000}
     default_llm_plan_quotas: dict[str, int] = {}

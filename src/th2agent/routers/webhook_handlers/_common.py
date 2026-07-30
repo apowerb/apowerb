@@ -131,6 +131,10 @@ async def run_agent_for_webhook(
                 "session would be unreachable from the UI"
             )
         user_id_str = user_row.email
+        # getattr et non un acces direct : le plafond est best-effort et
+        # ne doit jamais casser un webhook par sa propre panne. 'None'
+        # resserre sur le quota par defaut, il n ouvre rien.
+        owner_plan = getattr(user_row, "plan", None)
 
     # Bind the webhook agent's owner as the invoker for THIS task so
     # user-personal integrations (Outlook, Gmail, ...) resolve against the
@@ -212,6 +216,16 @@ async def run_agent_for_webhook(
                 )
 
         # Trigger the agent
+        # Meme raison que le chemin planifie : ce handler atteint le
+        # /run natif d'ADK, les gardes ne sont appliquees nulle part ailleurs.
+        from th2agent.core.run_gate import apply_run_guards
+
+        await apply_run_guards(
+            agent_name=agent_folder,
+            owner_id=user_id_str,
+            plan=owner_plan,
+        )
+
         result = await run_adk_agent(
             agent_name=agent_folder,
             user_id=user_id_str,
