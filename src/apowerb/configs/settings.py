@@ -10,6 +10,11 @@ _logger = setup_logging(__name__)
 
 _ENV_FILE = ".env"
 
+# Shipped placeholder for RAG_WEBHOOK_SECRET. It is a literal in a public
+# repository, so it is a known credential rather than a secret: production
+# refuses to boot on it (see _refuse_default_webhook_secret).
+_DEFAULT_RAG_WEBHOOK_SECRET = "th2-webhook-default-secret"
+
 
 def _warn_duplicate_env_keys(env_path: str = _ENV_FILE) -> None:
     """Log a warning for any variable declared more than once in *env_path*.
@@ -272,7 +277,7 @@ class Settings(BaseSettings):
 
     # RAG webhook / SSE streaming
     public_base_url: str = "http://localhost:8000"
-    rag_webhook_secret: str = "th2-webhook-default-secret"
+    rag_webhook_secret: str = _DEFAULT_RAG_WEBHOOK_SECRET
 
     # Integration token encryption migration (B7)
     # Dev/staging flag: when true, the backend runs
@@ -316,12 +321,37 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _warn_default_webhook_secret(self) -> "Settings":
-        if self.rag_webhook_secret == "th2-webhook-default-secret":
-            _logger.warning(
-                "SECURITY: rag_webhook_secret is using the default value. "
-                "Set a strong, unique RAG_WEBHOOK_SECRET environment variable in production."
+    def _refuse_default_webhook_secret(self) -> "Settings":
+        """Refuse to boot in production on an unset RAG webhook secret.
+
+        ``POST /rag/webhook`` sits outside the auth middleware and trusts an
+        HMAC-SHA256 signature instead, so this value is the only credential
+        guarding it. The shipped placeholder is a literal in a public
+        repository, and a blank value makes the HMAC computable by anyone --
+        either one lets a forged call rewrite indexing status and push events
+        onto a subscriber stream.
+
+        Warning and continuing was not enough. Both machines carried
+        ``RAG_WEBHOOK_SECRET="th2-webhook-default-secret"`` -- the placeholder,
+        quoted -- so the key read as configured while the public default was
+        live, and the warning had become part of the startup noise. A setting
+        that guards an unauthenticated endpoint has to fail closed, like the
+        other production refusals above.
+        """
+        if self.rag_webhook_secret.strip() not in {"", _DEFAULT_RAG_WEBHOOK_SECRET}:
+            return self
+
+        if self.working_mode.lower() in {"prod", "production"}:
+            raise ValueError(
+                "RAG_WEBHOOK_SECRET is empty or still the shipped placeholder "
+                "when WORKING_MODE=production. Refusing to start -- it is the "
+                "only credential checked by /rag/webhook. Generate one with: "
+                "openssl rand -hex 32"
             )
+        _logger.warning(
+            "SECURITY: rag_webhook_secret is empty or using the default value. "
+            "Set a strong, unique RAG_WEBHOOK_SECRET environment variable in production."
+        )
         return self
 
     @model_validator(mode="after")
