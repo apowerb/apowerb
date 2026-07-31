@@ -37,6 +37,9 @@ def _prod_env(**overrides) -> dict:
         "ENCRYPT_KEY": ENCRYPT_KEY,
         "WORKING_MODE": "production",
         "GOOGLE_WEBHOOK_AUDIENCE": "https://example.com/webhooks/gmail",
+        # Production now refuses the shipped placeholder, so every prod
+        # environment has to carry a real one.
+        "RAG_WEBHOOK_SECRET": "0" * 64,
     }
     base.update(overrides)
     return base
@@ -81,6 +84,44 @@ class TestProductionBootRefusals:
         with pytest.raises(ValueError) as exc:
             Settings(_env_file=None)
         assert "encrypt_legacy_on_boot" in str(exc.value).lower()
+
+    def test_default_rag_webhook_secret_in_production_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """The shipped placeholder is a public literal: refuse it in prod."""
+        env = _prod_env(RAG_WEBHOOK_SECRET="th2-webhook-default-secret")
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ValueError) as exc:
+            Settings(_env_file=None)
+        assert "rag_webhook_secret" in str(exc.value).lower()
+
+    def test_blank_rag_webhook_secret_in_production_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """A blank value makes the HMAC computable by anyone: refuse it too."""
+        env = _prod_env(RAG_WEBHOOK_SECRET="   ")
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ValueError) as exc:
+            Settings(_env_file=None)
+        assert "rag_webhook_secret" in str(exc.value).lower()
+
+    def test_real_rag_webhook_secret_in_production_accepted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """Non-regression: a real secret must still boot in production."""
+        env = _prod_env(RAG_WEBHOOK_SECRET="a" * 64)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        monkeypatch.chdir(tmp_path)
+
+        settings = Settings(_env_file=None)
+        assert settings.rag_webhook_secret == "a" * 64
 
     def test_dev_mode_allows_all_flags(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
