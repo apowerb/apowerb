@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from th2agent.tools_store.portfolio.database import (
+from apowerb.tools_store.portfolio.database import (
     _slugify_db_name,
     make_database_tools,
 )
@@ -104,8 +104,8 @@ _placeholder_tool_db.__name__ = "tool_db"
 
 
 def test_rebind_with_two_dbs_emits_suffixed_tools(monkeypatch):
-    from th2agent.core.agent_helpers import tools_binder
-    from th2agent.tools_store import tools_helpers
+    from apowerb.core.agent_helpers import tools_binder
+    from apowerb.tools_store import tools_helpers
 
     def fake_load(tid, owner_id):
         if tid == "tool_config_pmi":
@@ -135,8 +135,8 @@ def test_rebind_with_two_dbs_emits_suffixed_tools(monkeypatch):
 
 
 def test_rebind_with_single_db_keeps_canonical_names(monkeypatch):
-    from th2agent.core.agent_helpers import tools_binder
-    from th2agent.tools_store import tools_helpers
+    from apowerb.core.agent_helpers import tools_binder
+    from apowerb.tools_store import tools_helpers
 
     def fake_load(tid, owner_id):
         return ("database.tool_run_sql", _DB_PMI)
@@ -155,8 +155,8 @@ def test_rebind_with_single_db_keeps_canonical_names(monkeypatch):
 
 def test_rebind_with_no_db_falls_back_to_env(monkeypatch):
     """No DB config attached → tools still bound, fall back to env vars."""
-    from th2agent.core.agent_helpers import tools_binder
-    from th2agent.tools_store import tools_helpers
+    from apowerb.core.agent_helpers import tools_binder
+    from apowerb.tools_store import tools_helpers
 
     monkeypatch.setattr(
         tools_helpers,
@@ -176,8 +176,8 @@ def test_rebind_with_no_db_falls_back_to_env(monkeypatch):
 
 def test_rebind_collision_resolution(monkeypatch):
     """Two DBs with the same DB_NAME (rare but possible) — slugs must stay unique."""
-    from th2agent.core.agent_helpers import tools_binder
-    from th2agent.tools_store import tools_helpers
+    from apowerb.core.agent_helpers import tools_binder
+    from apowerb.tools_store import tools_helpers
 
     db_a = dict(_DB_PMI)
     db_b = dict(_DB_PMI)  # same DB_NAME='PMI'
@@ -202,7 +202,7 @@ def test_rebind_collision_resolution(monkeypatch):
 
 def test_rebind_no_op_when_no_db_placeholder():
     """If the tool list has no tool_run_sql/tool_db, rebind_database is a no-op."""
-    from th2agent.core.agent_helpers import tools_binder
+    from apowerb.core.agent_helpers import tools_binder
 
     def other():
         pass

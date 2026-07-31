@@ -67,8 +67,8 @@ def _fake_user():
 
 @pytest.fixture()
 def active_fernet():
-    """Install a known-good Fernet instance on th2agent.helpers.encryptor."""
-    from th2agent.helpers import encryptor as enc_mod
+    """Install a known-good Fernet instance on apowerb.helpers.encryptor."""
+    from apowerb.helpers import encryptor as enc_mod
 
     key = Fernet.generate_key()
     original = enc_mod.fernet
@@ -111,7 +111,7 @@ def sqlite_engine() -> Engine:
 @pytest.fixture()
 def integration_helpers(active_fernet, sqlite_engine, monkeypatch):
     """Return the helpers module with its engine builder redirected to SQLite."""
-    from th2agent.integrations import helpers as mod
+    from apowerb.integrations import helpers as mod
 
     monkeypatch.setattr(mod, "_build_engine", lambda *a, **k: sqlite_engine)
     return mod
@@ -119,8 +119,8 @@ def integration_helpers(active_fernet, sqlite_engine, monkeypatch):
 
 def _build_scheduler_app(mage_client):
     """Mount the scheduler router with `get_current_user` and the Mage client overridden."""
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.routers import scheduler as scheduler_router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.routers import scheduler as scheduler_router
 
     # Patch the singleton client used by the router
     scheduler_router.scheduler_client = mage_client
@@ -156,7 +156,7 @@ class TestSchedulerCreatesTask:
         }
 
         with patch(
-            "th2agent.routers.scheduler.process_agent_registration",
+            "apowerb.routers.scheduler.process_agent_registration",
             return_value=fake_trigger_info,
         ) as mocked:
             resp = client.post(
@@ -183,8 +183,8 @@ class TestSchedulerCreatesTask:
 
     def test_create_trigger_requires_authentication(self):
         """Without a valid user override, the dependency must enforce 401."""
-        from th2agent.auth.dependencies import get_current_user
-        from th2agent.routers import scheduler as scheduler_router
+        from apowerb.auth.dependencies import get_current_user
+        from apowerb.routers import scheduler as scheduler_router
 
         app = FastAPI()
         app.include_router(scheduler_router.router, prefix="/api/scheduler")
@@ -215,7 +215,7 @@ class TestSchedulerRunsAgentWithContext:
 
     @pytest.mark.asyncio
     async def test_refresh_token_flow_forwards_context_to_adk_runner(self):
-        from th2agent.scheduler import run_agent_background as rab
+        from apowerb.scheduler import run_agent_background as rab
 
         fake_token_data = {
             "agent_name": "emailing-agent",
@@ -229,8 +229,8 @@ class TestSchedulerRunsAgentWithContext:
 
         with patch.object(rab, "decode_agent_refresh_token", return_value=fake_token_data), \
              patch.object(rab, "get_agent_folder_name", return_value="emailing_agent_folder"), \
-             patch("th2agent.core.adk_runner.get_adk_session", new=AsyncMock(return_value={})), \
-             patch("th2agent.core.adk_runner.create_adk_agent_session", new=AsyncMock(return_value={})), \
+             patch("apowerb.core.adk_runner.get_adk_session", new=AsyncMock(return_value={})), \
+             patch("apowerb.core.adk_runner.create_adk_agent_session", new=AsyncMock(return_value={})), \
              patch.object(rab, "run_adk_agent", new=AsyncMock(return_value={"ok": True})) as adk_mock:
 
             result = await rab.run_agent_from_refresh_token("fake-refresh-token")
@@ -251,7 +251,7 @@ class TestSchedulerRunsAgentWithContext:
 
     @pytest.mark.asyncio
     async def test_refresh_token_flow_rejects_invalid_token(self):
-        from th2agent.scheduler import run_agent_background as rab
+        from apowerb.scheduler import run_agent_background as rab
 
         with patch.object(rab, "decode_agent_refresh_token", return_value=None):
             with pytest.raises(ValueError, match="Invalid or expired"):
@@ -271,7 +271,7 @@ class TestSendEmailToolPayload:
     """
 
     def test_gmail_send_email_builds_correct_payload(self):
-        from th2agent.tools_store.portfolio import google_gmail
+        from apowerb.tools_store.portfolio import google_gmail
 
         captured: dict[str, Any] = {}
 
@@ -291,7 +291,7 @@ class TestSendEmailToolPayload:
 
         with patch.object(
             google_gmail, "google_auth_headers", return_value={"Authorization": "Bearer fake"}
-        ), patch("th2agent.tools_store.portfolio.google_gmail.httpx.post", side_effect=_fake_post):
+        ), patch("apowerb.tools_store.portfolio.google_gmail.httpx.post", side_effect=_fake_post):
             result = google_gmail.tool_send_email(
                 to="alice@example.com",
                 subject="Weekly report",
@@ -320,14 +320,14 @@ class TestSendEmailToolPayload:
         assert "Here is your digest." in body_bytes.decode("utf-8")
 
     def test_gmail_send_email_rejects_empty_recipient(self):
-        from th2agent.tools_store.portfolio import google_gmail
+        from apowerb.tools_store.portfolio import google_gmail
 
         result = google_gmail.tool_send_email(to="", subject="x", body="y")
         assert result["status"] == "error"
         assert result["retry"] is False
 
     def test_outlook_send_email_builds_graph_sendmail_payload(self):
-        from th2agent.tools_store.portfolio import outlook_mail
+        from apowerb.tools_store.portfolio import outlook_mail
 
         captured: dict[str, Any] = {}
 
@@ -343,7 +343,7 @@ class TestSendEmailToolPayload:
 
         with patch.object(
             outlook_mail, "_graph_headers", return_value={"Authorization": "Bearer fake"}
-        ), patch("th2agent.tools_store.portfolio.outlook_mail.httpx.post", side_effect=_fake_post):
+        ), patch("apowerb.tools_store.portfolio.outlook_mail.httpx.post", side_effect=_fake_post):
             result = outlook_mail.tool_send_outlook_email(
                 to="bob@example.com",
                 subject="Graph send test",
@@ -405,7 +405,7 @@ class TestRefreshTokenDecryptedAtRuntime:
     ):
         """The Google tool lazily pulls its refresh_token through
         ``fetch_integration_configs``, which ultimately decrypts via B7."""
-        from th2agent.tools_store.portfolio import google_auth
+        from apowerb.tools_store.portfolio import google_auth
 
         # Force the tool to re-run the integration loader
         monkeypatch.setattr(google_auth, "_integration_loaded_for", {})
@@ -433,9 +433,9 @@ class TestRefreshTokenDecryptedAtRuntime:
             }
 
         # The lazy loader imports it dynamically; patch the symbol in the
-        # module that does ``from th2agent.integrations.helpers import ...``.
+        # module that does ``from apowerb.integrations.helpers import ...``.
         monkeypatch.setattr(
-            "th2agent.integrations.helpers.fetch_integration_configs", _fake_fetch
+            "apowerb.integrations.helpers.fetch_integration_configs", _fake_fetch
         )
 
         google_auth._ensure_integration_tokens("GOOGLE_GMAIL")
@@ -456,7 +456,7 @@ class TestProviderErrorsAreSurfaced:
     rather than raising inside the agent and killing the scheduled run."""
 
     def test_gmail_send_email_401_returns_auth_expired_error(self, caplog):
-        from th2agent.tools_store.portfolio import google_gmail
+        from apowerb.tools_store.portfolio import google_gmail
 
         class _Resp:
             status_code = 401
@@ -468,7 +468,7 @@ class TestProviderErrorsAreSurfaced:
         with patch.object(
             google_gmail, "google_auth_headers", return_value={"Authorization": "Bearer fake"}
         ), patch(
-            "th2agent.tools_store.portfolio.google_gmail.httpx.post", return_value=_Resp()
+            "apowerb.tools_store.portfolio.google_gmail.httpx.post", return_value=_Resp()
         ):
             result = google_gmail.tool_send_email(
                 to="alice@example.com", subject="x", body="y"
@@ -479,7 +479,7 @@ class TestProviderErrorsAreSurfaced:
         assert "reconnect" in result["message"].lower() or "auth" in result["message"].lower()
 
     def test_gmail_send_email_429_returns_retryable_error_dict(self):
-        from th2agent.tools_store.portfolio import google_gmail
+        from apowerb.tools_store.portfolio import google_gmail
 
         class _Resp:
             status_code = 429
@@ -491,7 +491,7 @@ class TestProviderErrorsAreSurfaced:
         with patch.object(
             google_gmail, "google_auth_headers", return_value={"Authorization": "Bearer fake"}
         ), patch(
-            "th2agent.tools_store.portfolio.google_gmail.httpx.post", return_value=_Resp()
+            "apowerb.tools_store.portfolio.google_gmail.httpx.post", return_value=_Resp()
         ):
             result = google_gmail.tool_send_email(
                 to="alice@example.com", subject="x", body="y"
@@ -506,7 +506,7 @@ class TestProviderErrorsAreSurfaced:
     async def test_scheduler_runtime_logs_adk_failure(self, caplog):
         """If the downstream ADK call blows up, the scheduler runtime must
         log it (no silent swallow) and re-raise for the caller."""
-        from th2agent.scheduler import run_agent_background as rab
+        from apowerb.scheduler import run_agent_background as rab
 
         fake_token_data = {
             "agent_name": "emailing-agent",
@@ -519,11 +519,11 @@ class TestProviderErrorsAreSurfaced:
 
         with patch.object(rab, "decode_agent_refresh_token", return_value=fake_token_data), \
              patch.object(rab, "get_agent_folder_name", return_value="folder"), \
-             patch("th2agent.core.adk_runner.get_adk_session", new=AsyncMock(return_value={})), \
-             patch("th2agent.core.adk_runner.create_adk_agent_session", new=AsyncMock(return_value={})), \
+             patch("apowerb.core.adk_runner.get_adk_session", new=AsyncMock(return_value={})), \
+             patch("apowerb.core.adk_runner.create_adk_agent_session", new=AsyncMock(return_value={})), \
              patch.object(rab, "run_adk_agent", new=AsyncMock(side_effect=RuntimeError("boom"))):
 
-            caplog.set_level(logging.ERROR, logger="th2agent.scheduler.run_agent_background")
+            caplog.set_level(logging.ERROR, logger="apowerb.scheduler.run_agent_background")
             with pytest.raises(RuntimeError, match="boom"):
                 await rab.run_agent_from_refresh_token("fake-token")
 
@@ -577,7 +577,7 @@ class TestCancelledSchedule:
         app = _build_scheduler_app(mage_client)
         client = TestClient(app, raise_server_exceptions=False)
 
-        with patch("th2agent.tools_store.portfolio.google_gmail.httpx.post") as post_mock:
+        with patch("apowerb.tools_store.portfolio.google_gmail.httpx.post") as post_mock:
             resp = client.put("/api/scheduler/pipelines/runs/77/cancel")
             assert resp.status_code == 200
 

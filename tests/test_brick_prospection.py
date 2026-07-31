@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[1]
-NOYAU = RACINE / "src" / "th2agent"
+NOYAU = RACINE / "src" / "apowerb"
 
 
 class TestLeNoyauNeConnaitPlusLaBrique:
@@ -81,7 +81,7 @@ class TestCeQuiRestVolontairementAuNoyau:
         assert "tool_hubspot_get_sales_leads" in module.read_text(encoding="utf-8")
 
     def test_le_catalogue_du_noyau_ne_nomme_aucun_template_commercial(self):
-        from th2agent.core.superagents.templates import SUPERAGENT_TEMPLATES
+        from apowerb.core.superagents.templates import SUPERAGENT_TEMPLATES
 
         ids = {t["template_id"] for t in SUPERAGENT_TEMPLATES}
         assert "prospecting_loop_agent" not in ids

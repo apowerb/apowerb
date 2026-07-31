@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 
 
-SKILL_DIR = Path(__file__).resolve().parent.parent / "src" / "th2agent" / "skills_store" / "portfolio" / "dashboard-builder"
+SKILL_DIR = Path(__file__).resolve().parent.parent / "src" / "apowerb" / "skills_store" / "portfolio" / "dashboard-builder"
 SKILL_FILE = SKILL_DIR / "SKILL.md"
 
 

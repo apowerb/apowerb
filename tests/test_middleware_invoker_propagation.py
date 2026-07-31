@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.testclient import TestClient
 
-from th2agent.core.invocation_context import (
+from apowerb.core.invocation_context import (
     set_current_invoker,
     resolve_integration_user,
 )

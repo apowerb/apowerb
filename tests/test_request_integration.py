@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from th2agent.core.agent_helpers.agent_utils import (
+from apowerb.core.agent_helpers.agent_utils import (
     VALID_INTEGRATION_PROVIDERS,
     request_integration,
 )

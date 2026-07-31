@@ -27,8 +27,8 @@ def _fake_user(email: str):
 @pytest.fixture()
 def client():
     """Build a TestClient where get_current_user returns USER_A."""
-    from th2agent.routers.adk_runner import router
-    from th2agent.auth.dependencies import get_current_user
+    from apowerb.routers.adk_runner import router
+    from apowerb.auth.dependencies import get_current_user
 
     app = FastAPI()
     app.include_router(router, prefix="/api/adk")
@@ -37,13 +37,13 @@ def client():
         return _fake_user(USER_A)
 
     app.dependency_overrides[get_current_user] = override_user_a
-    with patch("th2agent.routers.adk_runner.get_agent_folder_name", return_value="agent1"), \
-         patch("th2agent.routers.adk_runner.run_adk_agent", new_callable=AsyncMock) as mock_run, \
-         patch("th2agent.routers.adk_runner.get_adk_session", new_callable=AsyncMock) as mock_get, \
-         patch("th2agent.routers.adk_runner.create_adk_agent_session", new_callable=AsyncMock) as mock_create, \
-         patch("th2agent.routers.adk_runner.update_adk_agent_session", new_callable=AsyncMock) as mock_update, \
-         patch("th2agent.routers.adk_runner.delete_adk_agent_session", new_callable=AsyncMock) as mock_delete, \
-         patch("th2agent.routers.adk_runner.stream_adk_agent") as mock_stream:
+    with patch("apowerb.routers.adk_runner.get_agent_folder_name", return_value="agent1"), \
+         patch("apowerb.routers.adk_runner.run_adk_agent", new_callable=AsyncMock) as mock_run, \
+         patch("apowerb.routers.adk_runner.get_adk_session", new_callable=AsyncMock) as mock_get, \
+         patch("apowerb.routers.adk_runner.create_adk_agent_session", new_callable=AsyncMock) as mock_create, \
+         patch("apowerb.routers.adk_runner.update_adk_agent_session", new_callable=AsyncMock) as mock_update, \
+         patch("apowerb.routers.adk_runner.delete_adk_agent_session", new_callable=AsyncMock) as mock_delete, \
+         patch("apowerb.routers.adk_runner.stream_adk_agent") as mock_stream:
         mock_run.return_value = {"status": "ok"}
         mock_get.return_value = {"events": []}
         mock_create.return_value = {"session_id": "s1"}
@@ -145,7 +145,7 @@ class TestIdorSessionsEndpoints:
 
 class TestIdorRunNowEndpoint:
     def test_run_now_rejects_explicit_mismatched_user_id(self, client):
-        with patch("th2agent.scheduler.run_agent_background.get_agent_by_id") as mock_agent:
+        with patch("apowerb.scheduler.run_agent_background.get_agent_by_id") as mock_agent:
             mock_agent.return_value = {"agent_name": "agent1", "owner_id": USER_B}
             resp = client.post(
                 "/api/adk/run_now",

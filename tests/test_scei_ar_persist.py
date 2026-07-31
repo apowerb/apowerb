@@ -1321,7 +1321,7 @@ from th2customers.scei.tools.scei_ar_persist import (  # noqa: E402
     _lines_are_doubtful,
     _load_full_pdf_text,
 )
-from th2agent.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
+from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
 
 import pathlib
 
@@ -1553,7 +1553,7 @@ class TestExtractAllPagesText:
 
     def test_first_page_alone_missing_refs(self):
         """Prouve le bug original : extract_first_page_text ne contient PAS les refs."""
-        from th2agent.core.agent_helpers.pdf_to_images_tool import extract_first_page_text
+        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_first_page_text
         r1 = extract_first_page_text(str(_FIXTURE_DIR / "CF101197.PDF"))
         assert "NSYCAG291LPF" not in r1["text"], (
             "Page 1 must NOT contain AR lines — if this fails, the PDF layout changed"
@@ -1631,7 +1631,7 @@ class TestReextractRealPdfText:
     def test_intake_pdf_text_first_page_only_yields_none(self):
         """Régression : avec l'ancienne logique (page 1 seulement),
         la re-extraction retournait None. Ce test documente l'état pré-fix."""
-        from th2agent.core.agent_helpers.pdf_to_images_tool import extract_first_page_text
+        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_first_page_text
         r1 = extract_first_page_text(str(_FIXTURE_DIR / "CF101197.PDF"))
         page1_text = r1["text"]
         result = _reextract_lines_from_pmi_and_text(_PMI_CF101197, page1_text)
@@ -1672,7 +1672,7 @@ class TestLoadFullPdfText:
         """Intégration : avec un log_id pointant sur un vrai PDF fixture,
         le texte de toutes les pages est retourné."""
         import shutil
-        from th2agent.storage import webhook_attachments
+        from apowerb.storage import webhook_attachments
 
         # Construire un dossier temporaire simulant le layout d'attachments
         log_id = 12345

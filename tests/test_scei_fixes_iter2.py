@@ -17,7 +17,7 @@ from th2customers.scei.tools.scei_ar_persist import (
     _load_full_pdf_text,
     _norm_ref,
 )
-from th2agent.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
+from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
 
 _FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "scei"
 
@@ -324,7 +324,7 @@ class TestDefaut4SortedPdfFiles:
     def test_pdf_files_sorted_deterministic(self, tmp_path, monkeypatch):
         """Deux PDFs → la concaténation est toujours dans le même ordre (sorted)."""
         import shutil
-        from th2agent.storage import webhook_attachments
+        from apowerb.storage import webhook_attachments
 
         log_id = 54321
         att_dir = tmp_path / "2026" / "05" / str(log_id)
@@ -353,7 +353,7 @@ class TestDefaut4SortedPdfFiles:
     def test_pdf_separator_present(self, tmp_path, monkeypatch):
         """Les PDFs doivent être séparés par un délimiteur de page."""
         import shutil
-        from th2agent.storage import webhook_attachments
+        from apowerb.storage import webhook_attachments
 
         log_id = 54322
         att_dir = tmp_path / "2026" / "05" / str(log_id)

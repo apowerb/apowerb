@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from th2agent.tools_store.portfolio.database import (
+from apowerb.tools_store.portfolio.database import (
     _NEVER_ALLOWED_OPS,
     _OPT_IN_OPS,
     _parse_allowed_ops,

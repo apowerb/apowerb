@@ -23,8 +23,8 @@ import types
 import pytest
 from fastapi import APIRouter
 
-from th2agent.core.extensions import loader
-from th2agent.core.extensions.registry import CORE_TOOL_PACK, ExtensionRegistry
+from apowerb.core.extensions import loader
+from apowerb.core.extensions.registry import CORE_TOOL_PACK, ExtensionRegistry
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ class TestPacksDOutils:
         """Le nom d'outil vient de la base. Retirer une brique laisse derrière
         des lignes qui la référencent encore — elles doivent être ignorées, pas
         faire échouer tous les agents du serveur."""
-        from th2agent.tools_store import tools_helpers
+        from apowerb.tools_store import tools_helpers
 
         assert tools_helpers._import_from_packs(
             "module_qui_n_existe_nulle_part", attr="portfolio_package"
@@ -125,7 +125,7 @@ class TestPacksDOutils:
     def test_un_outil_du_noyau_se_resout_toujours(self):
         """Contre-épreuve : le test précédent ne doit pas passer parce que la
         résolution est cassée pour tout le monde."""
-        from th2agent.tools_store import tools_helpers
+        from apowerb.tools_store import tools_helpers
 
         module = tools_helpers._import_from_packs("basic", attr="portfolio_package")
         assert module is not None
@@ -151,12 +151,12 @@ class TestRouteurs:
         """Le verrou qui protège la publication.
 
         ``main.py`` monte les routeurs de briques en itérant le registre. Si
-        quelqu'un rajoute un import nommé vers un paquet hors ``th2agent``, le
+        quelqu'un rajoute un import nommé vers un paquet hors ``apowerb``, le
         fichier ne peut plus partir en open source tel quel.
         """
         from pathlib import Path
 
-        source = Path(loader.__file__).resolve().parents[3] / "th2agent" / "main.py"
+        source = Path(loader.__file__).resolve().parents[3] / "apowerb" / "main.py"
         lignes = [
             ligne.strip()
             for ligne in source.read_text(encoding="utf-8").splitlines()

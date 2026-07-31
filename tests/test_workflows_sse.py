@@ -51,8 +51,8 @@ async def _blocking_runner(wid, cancel_event, canvas_agent_ids, file_bytes):
 @pytest.fixture()
 def workflows_app():
     """Mount the workflows router with an authenticated user override."""
-    from th2agent.routers import workflows as workflows_module
-    from th2agent.auth.dependencies import get_current_user
+    from apowerb.routers import workflows as workflows_module
+    from apowerb.auth.dependencies import get_current_user
 
     workflows_module._runs.clear()
     workflows_module._workflow_runner = _blocking_runner
@@ -74,8 +74,8 @@ def workflows_app():
 
 
 def test_run_sse_without_auth_returns_401():
-    from th2agent.routers import workflows as workflows_module
-    from th2agent.auth.dependencies import get_current_user
+    from apowerb.routers import workflows as workflows_module
+    from apowerb.auth.dependencies import get_current_user
 
     workflows_module._runs.clear()
 
@@ -102,8 +102,8 @@ def test_run_sse_without_auth_returns_401():
 
 
 def test_cancel_without_auth_returns_401():
-    from th2agent.routers import workflows as workflows_module
-    from th2agent.auth.dependencies import get_current_user
+    from apowerb.routers import workflows as workflows_module
+    from apowerb.auth.dependencies import get_current_user
 
     workflows_module._runs.clear()
 

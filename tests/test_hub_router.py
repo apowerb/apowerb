@@ -29,8 +29,8 @@ def _fake_user(email: str = USER_A_EMAIL, user_id: int = 1):
 
 
 def _build_app(*, user_email: str | None = USER_A_EMAIL):
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.routers.hub import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.routers.hub import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -61,7 +61,7 @@ class TestListHub:
         client = TestClient(app)
 
         with patch(
-            "th2agent.routers.hub.list_hub_agents",
+            "apowerb.routers.hub.list_hub_agents",
             return_value=published,
         ) as mock_list:
             resp = client.get("/api/hub")
@@ -104,7 +104,7 @@ class TestPublishScopesToCurrentUser:
         client = TestClient(app)
 
         with patch(
-            "th2agent.routers.hub.publish_agent",
+            "apowerb.routers.hub.publish_agent",
             return_value={"hub_id": "hub42", "hub_name": "Alice agent"},
         ) as mock_publish:
             resp = client.post(
@@ -137,7 +137,7 @@ class TestCloneScopesToCurrentUser:
         client = TestClient(app)
 
         with patch(
-            "th2agent.routers.hub.clone_hub_agent",
+            "apowerb.routers.hub.clone_hub_agent",
             return_value={
                 "agent_id": "agent99",
                 "cloned_from": "hub1",
@@ -176,7 +176,7 @@ class TestCloneNonExistentHub:
         # Simulate: the hub row does not exist -> get_hub_agent returns None
         # -> core must raise HTTPException(404).  No mock on clone_hub_agent.
         with patch(
-            "th2agent.core.hub_main.get_hub_agent",
+            "apowerb.core.hub_main.get_hub_agent",
             return_value=None,
         ):
             resp = client.post(
@@ -199,7 +199,7 @@ class TestDeleteAuthorization:
         client = TestClient(app, raise_server_exceptions=False)
 
         with patch(
-            "th2agent.core.hub_main.get_hub_agent",
+            "apowerb.core.hub_main.get_hub_agent",
             return_value=None,
         ):
             resp = client.delete("/api/hub/hub9999")
@@ -217,7 +217,7 @@ class TestDeleteAuthorization:
             "hub_name": "Bob's agent",
         }
         with patch(
-            "th2agent.core.hub_main.get_hub_agent",
+            "apowerb.core.hub_main.get_hub_agent",
             return_value=bob_hub,
         ):
             resp = client.delete("/api/hub/hub1")
@@ -236,7 +236,7 @@ class TestGetHubNonExistent:
         client = TestClient(app, raise_server_exceptions=False)
 
         with patch(
-            "th2agent.routers.hub.get_hub_agent",
+            "apowerb.routers.hub.get_hub_agent",
             return_value=None,
         ):
             resp = client.get("/api/hub/hub9999")

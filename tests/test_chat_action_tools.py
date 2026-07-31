@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from th2agent.core.agent_helpers.chat_action_tools import (
+from apowerb.core.agent_helpers.chat_action_tools import (
     confirm_destructive,
     embed_chart,
     propose_agent_upgrade,
@@ -261,7 +261,7 @@ class TestEmbedChart:
     def test_carries_dashboard_id_from_helper(self) -> None:
         from unittest.mock import patch
         with patch(
-            "th2agent.tools_store.portfolio.business_intelligence.ensure_chart_in_chat_dashboard",
+            "apowerb.tools_store.portfolio.business_intelligence.ensure_chart_in_chat_dashboard",
             return_value="dash_99",
         ):
             result = embed_chart(chart_id="chart_42")
@@ -270,7 +270,7 @@ class TestEmbedChart:
     def test_resilient_when_helper_raises(self) -> None:
         from unittest.mock import patch
         with patch(
-            "th2agent.tools_store.portfolio.business_intelligence.ensure_chart_in_chat_dashboard",
+            "apowerb.tools_store.portfolio.business_intelligence.ensure_chart_in_chat_dashboard",
             side_effect=RuntimeError("boom"),
         ):
             result = embed_chart(chart_id="chart_42")

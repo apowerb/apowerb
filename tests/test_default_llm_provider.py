@@ -9,7 +9,7 @@ Deux garanties testees ici :
 """
 import pytest
 
-from th2agent.core.agent_helpers import default_llm as dl
+from apowerb.core.agent_helpers import default_llm as dl
 
 
 class _FakeSettings:

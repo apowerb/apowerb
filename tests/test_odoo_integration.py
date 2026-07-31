@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from th2agent.integrations import odoo as odoo_svc
-from th2agent.tools_store.portfolio import odoo as odoo_tools
+from apowerb.integrations import odoo as odoo_svc
+from apowerb.tools_store.portfolio import odoo as odoo_tools
 
 
 # ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@ from th2agent.tools_store.portfolio import odoo as odoo_tools
 def _mock_httpx_post(resp_status=200, resp_json=None, raise_exc=None):
     """Patch httpx.AsyncClient used inside odoo_svc._jsonrpc."""
     def _factory():
-        cls_patch = patch("th2agent.integrations.odoo.httpx.AsyncClient")
+        cls_patch = patch("apowerb.integrations.odoo.httpx.AsyncClient")
         mock_cls = cls_patch.start()
         client = AsyncMock()
         if raise_exc is not None:
@@ -179,7 +179,7 @@ class TestTools:
         odoo_tools.reset_odoo_creds_cache()
 
     def _patch_post(self, resp_json=None, status_code=200, raise_exc=None):
-        p = patch("th2agent.tools_store.portfolio.odoo.httpx.post")
+        p = patch("apowerb.tools_store.portfolio.odoo.httpx.post")
         mock_post = p.start()
         if raise_exc is not None:
             mock_post.side_effect = raise_exc

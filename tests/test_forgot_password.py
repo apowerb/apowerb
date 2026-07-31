@@ -70,9 +70,9 @@ def sent_emails():
 @pytest.fixture()
 def app_with_auth(monkeypatch, sent_emails):
     """Mount the auth router with a fake DB and a fake email sender."""
-    from th2agent.auth import router as auth_router_module
-    from th2agent.auth.dependencies import get_db
-    from th2agent.helpers.security import get_password_hash
+    from apowerb.auth import router as auth_router_module
+    from apowerb.auth.dependencies import get_db
+    from apowerb.helpers.security import get_password_hash
 
     hashed = get_password_hash(USER_OLD_PASSWORD)
     fake_user = _FakeUser(USER_EMAIL, hashed)
@@ -88,7 +88,7 @@ def app_with_auth(monkeypatch, sent_emails):
     # Patch the email sender to capture outbound messages. The production
     # helper lives in ``helpers.email_sender`` and the auth service imports
     # it lazily — so we patch at the source module.
-    from th2agent.helpers import system_mailer
+    from apowerb.helpers import system_mailer
 
     async def _fake_send(*, to, subject, html, text=None):
         sent_emails.append({"to": to, "subject": subject, "body": html})
@@ -104,9 +104,9 @@ class TestForgotPassword:
         self, monkeypatch, sent_emails
     ):
         """Unknown emails must NOT leak their existence."""
-        from th2agent.auth import router as auth_router_module
-        from th2agent.auth.dependencies import get_db
-        from th2agent.helpers import system_mailer
+        from apowerb.auth import router as auth_router_module
+        from apowerb.auth.dependencies import get_db
+        from apowerb.helpers import system_mailer
 
         async def _db_override():
             yield _FakeSession(None)  # no user
@@ -148,7 +148,7 @@ class TestForgotPassword:
 class TestResetPassword:
     def _mint(self, *, email: str, token_type: str = "password_reset",
               expires_delta: timedelta = timedelta(minutes=30)):
-        from th2agent.helpers.security import get_secret_key, get_algorithm
+        from apowerb.helpers.security import get_secret_key, get_algorithm
 
         payload = {
             "sub": email,
@@ -171,7 +171,7 @@ class TestResetPassword:
         assert resp.status_code == 200, resp.text
 
         # Password hash must have been rotated AND persisted
-        from th2agent.helpers.security import verify_password
+        from apowerb.helpers.security import verify_password
         assert verify_password(USER_NEW_PASSWORD, user.password)
         assert session.committed
 
@@ -218,8 +218,8 @@ class TestResetTokenIssuance:
     30-minute TTL by default."""
 
     def test_generate_reset_token_encodes_type_and_sub(self):
-        from th2agent.auth.service import generate_reset_token
-        from th2agent.helpers.security import get_secret_key, get_algorithm
+        from apowerb.auth.service import generate_reset_token
+        from apowerb.helpers.security import get_secret_key, get_algorithm
 
         token = generate_reset_token(USER_EMAIL)
         payload = jwt.decode(token, get_secret_key(), algorithms=[get_algorithm()])

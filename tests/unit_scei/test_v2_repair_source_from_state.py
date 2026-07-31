@@ -21,7 +21,7 @@ def _event(function_responses):
 
 
 def test_state_intake_pdf_text_takes_priority():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     ctx = MagicMock()
     ctx.state = {"intake_pdf_text": "TEXTE GATE CF100688"}
     # meme si des events existent, le state prime
@@ -32,7 +32,7 @@ def test_state_intake_pdf_text_takes_priority():
 
 
 def test_falls_back_to_events_when_state_absent():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     ctx = MagicMock()
     ctx.state = {}
     ctx._invocation_context.session.events = [
@@ -42,7 +42,7 @@ def test_falls_back_to_events_when_state_absent():
 
 
 def test_empty_state_value_falls_back_to_events():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     ctx = MagicMock()
     ctx.state = {"intake_pdf_text": "   "}
     ctx._invocation_context.session.events = [
@@ -52,7 +52,7 @@ def test_empty_state_value_falls_back_to_events():
 
 
 def test_state_access_error_does_not_break_fallback():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     ctx = MagicMock()
     # .state leve -> on degrade vers events sans exception
     type(ctx).state = property(lambda self: (_ for _ in ()).throw(RuntimeError("no state")))

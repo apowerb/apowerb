@@ -10,12 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[1]
-NOYAU = RACINE / "src" / "th2agent"
+NOYAU = RACINE / "src" / "apowerb"
 
 
 class TestLeNoyauNeConnaitPlusLaBrique:
     def test_aucun_module_du_noyau_ne_nomme_la_facturation(self):
-        interdits = ("th2agent.billing", "th2agent_billing", "stripe_service")
+        interdits = ("apowerb.billing", "th2agent_billing", "stripe_service")
         fautifs = []
         for fichier in NOYAU.rglob("*.py"):
             for ligne_no, ligne in enumerate(
@@ -34,7 +34,7 @@ class TestLeNoyauNeConnaitPlusLaBrique:
 
     def test_le_noyau_garde_les_tables_de_facturation(self):
         """Même arbitrage que les colonnes ``mfa_*`` et la table ``llm_usage``."""
-        from th2agent.models import User
+        from apowerb.models import User
 
         for colonne in ("credits", "stripe_customer_id"):
             assert hasattr(User, colonne), colonne
@@ -50,11 +50,11 @@ class TestSansBriqueLaCleDisparait:
         édition, une clé fausse dit qu'elle existe et qu'elle est éteinte. Le
         front n'en fait pas la même chose.
         """
-        from th2agent.core.extensions.registry import ExtensionRegistry
+        from apowerb.core.extensions.registry import ExtensionRegistry
 
         assert "billing_enabled" not in ExtensionRegistry().feature_flags()
 
     def test_le_registre_neuf_n_a_aucun_drapeau(self):
-        from th2agent.core.extensions.registry import ExtensionRegistry
+        from apowerb.core.extensions.registry import ExtensionRegistry
 
         assert ExtensionRegistry().feature_flags() == {}

@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from th2agent.tools_store.portfolio.integration_status import (
+from apowerb.tools_store.portfolio.integration_status import (
     INTEGRATION_ERROR,
     INTEGRATION_EXPIRED,
     INTEGRATION_MISSING,
@@ -33,7 +33,7 @@ PROVIDER = "microsoft_onedrive"
 def _isolate_token_state(monkeypatch):
     """Each test starts with a clean cache and no token in env, so behaviour
     is deterministic (the helper has module-level state)."""
-    from th2agent.tools_store.portfolio import onedrive_core
+    from apowerb.tools_store.portfolio import onedrive_core
 
     onedrive_core._token_cache.clear()
     onedrive_core._integration_loaded_for = None
@@ -61,7 +61,7 @@ def _fake_post(status_code: int, text: str = "", json_body: dict | None = None) 
 
 class TestMissingCredentials:
     def test_no_refresh_token_raises_missing(self, monkeypatch):
-        from th2agent.tools_store.portfolio import onedrive_core
+        from apowerb.tools_store.portfolio import onedrive_core
 
         # Force the auto-heal retry to also produce no refresh_token.
         monkeypatch.setattr(onedrive_core, "_ensure_integration_tokens", lambda: None)
@@ -85,7 +85,7 @@ class TestExpiredRefreshToken:
         Auto-heal helper restores the token, second call → invalid_grant
         again (token is still revoked) → raise EXPIRED."""
         import os
-        from th2agent.tools_store.portfolio import onedrive_core
+        from apowerb.tools_store.portfolio import onedrive_core
 
         monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "stale-token")
         monkeypatch.setenv("ONEDRIVE_CLIENT_ID", "cid")
@@ -122,7 +122,7 @@ class TestExpiredRefreshToken:
 
 class TestGenericTokenEndpointError:
     def test_503_raises_error(self, monkeypatch):
-        from th2agent.tools_store.portfolio import onedrive_core
+        from apowerb.tools_store.portfolio import onedrive_core
 
         monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "rt")
         monkeypatch.setenv("ONEDRIVE_CLIENT_ID", "cid")
@@ -149,7 +149,7 @@ class TestGenericTokenEndpointError:
 
 class TestMalformedTokenResponse:
     def test_200_without_access_token_raises_error(self, monkeypatch):
-        from th2agent.tools_store.portfolio import onedrive_core
+        from apowerb.tools_store.portfolio import onedrive_core
 
         monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "rt")
         monkeypatch.setenv("ONEDRIVE_CLIENT_ID", "cid")
@@ -176,7 +176,7 @@ class TestToolPropagatesStructuredPayload:
         """``onedrive_read.tool_list_files`` must propagate the structured
         payload — not the legacy ``status: error`` dict — when the token
         helper raises ``IntegrationStatusError``."""
-        from th2agent.tools_store.portfolio import onedrive_read
+        from apowerb.tools_store.portfolio import onedrive_read
 
         def _missing_helper():
             raise IntegrationStatusError(
@@ -194,7 +194,7 @@ class TestToolPropagatesStructuredPayload:
         assert out["_integration_status"] is True
 
     def test_upload_returns_integration_status_when_auth_fails(self, monkeypatch):
-        from th2agent.tools_store.portfolio import onedrive_write
+        from apowerb.tools_store.portfolio import onedrive_write
 
         def _expired():
             raise IntegrationStatusError(

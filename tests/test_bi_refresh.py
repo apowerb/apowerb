@@ -7,8 +7,8 @@ from datetime import datetime
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.bi.dashboards.core import Dashboard, DashboardStatus, DashboardVisibility
-from th2agent.bi.dashboards.service import DashboardNotFoundError
+from apowerb.bi.dashboards.core import Dashboard, DashboardStatus, DashboardVisibility
+from apowerb.bi.dashboards.service import DashboardNotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -49,15 +49,15 @@ def mock_dashboard_service():
 @pytest.fixture
 def client(mock_dashboard_service):
     """Build a TestClient with mocked dependencies."""
-    with patch("th2agent.bi.refresh_router.get_agent_by_id") as mock_get_agent, \
-         patch("th2agent.bi.refresh_router.schedule_agent_run", new_callable=AsyncMock) as mock_schedule, \
-         patch("th2agent.bi.refresh_router.get_orchestrator") as mock_orch, \
-         patch("th2agent.bi.refresh_router.fetch_agents", return_value=[]) as mock_fetch, \
-         patch("th2agent.bi.refresh_router.MageAPIClient") as mock_mage_client:
+    with patch("apowerb.bi.refresh_router.get_agent_by_id") as mock_get_agent, \
+         patch("apowerb.bi.refresh_router.schedule_agent_run", new_callable=AsyncMock) as mock_schedule, \
+         patch("apowerb.bi.refresh_router.get_orchestrator") as mock_orch, \
+         patch("apowerb.bi.refresh_router.fetch_agents", return_value=[]) as mock_fetch, \
+         patch("apowerb.bi.refresh_router.MageAPIClient") as mock_mage_client:
 
-        from th2agent.bi.refresh_router import router
-        from th2agent.auth.dependencies import get_current_user
-        from th2agent.bi.dependencies import get_dashboard_service
+        from apowerb.bi.refresh_router import router
+        from apowerb.auth.dependencies import get_current_user
+        from apowerb.bi.dependencies import get_dashboard_service
 
         app = FastAPI()
         app.include_router(router, prefix="/api/v1")
@@ -210,7 +210,7 @@ class TestDeleteSchedule:
         # fetch_agents must return an agent whose agent_id matches the schedule name
         client._mock_fetch.return_value = [{"agent_id": 1}]
 
-        with patch("th2agent.bi.refresh_router.requests.delete") as mock_req_delete:
+        with patch("apowerb.bi.refresh_router.requests.delete") as mock_req_delete:
             mock_req_delete.return_value = mock_response
 
             resp = client.delete(

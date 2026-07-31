@@ -9,25 +9,25 @@ import contextlib
 
 import pytest
 
-import th2agent.bi.db_stores as db_stores
-import th2agent.tools_store.portfolio.business_intelligence as bi
-from th2agent.bi.charts.core import ChartType
-from th2agent.bi.data.service import ChartDataService
-from th2agent.bi.charts.schemas import (
+import apowerb.bi.db_stores as db_stores
+import apowerb.tools_store.portfolio.business_intelligence as bi
+from apowerb.bi.charts.core import ChartType
+from apowerb.bi.data.service import ChartDataService
+from apowerb.bi.charts.schemas import (
     ChartCreateRequest,
     ChartUpdateRequest,
     DataSourceSchema,
 )
-from th2agent.bi.charts.service import ChartService, InMemoryChartStore
-from th2agent.bi.dashboards.core import ComponentType
-from th2agent.bi.dashboards.schema import (
+from apowerb.bi.charts.service import ChartService, InMemoryChartStore
+from apowerb.bi.dashboards.core import ComponentType
+from apowerb.bi.dashboards.schema import (
     AddComponentRequest,
     ChartWidgetSchema,
     ComponentCreateSchema,
     DashboardCreateRequest,
     GridPositionSchema,
 )
-from th2agent.bi.dashboards.service import DashboardService, InMemoryDashboardStore
+from apowerb.bi.dashboards.service import DashboardService, InMemoryDashboardStore
 
 OWNER = "test@example.com"
 
@@ -263,7 +263,7 @@ class TestUpdateKeyValueComponent:
 
     @pytest.mark.asyncio
     async def test_update_key_value_content(self, dashboard_service):
-        from th2agent.bi.dashboards.schema import (
+        from apowerb.bi.dashboards.schema import (
             KeyValueCreateSchema,
             UpdateComponentRequest,
         )
@@ -304,7 +304,7 @@ class TestUpdateKeyValueComponent:
     async def test_update_rejects_chart_component(
         self, dashboard_service, chart_service
     ):
-        from th2agent.bi.dashboards.schema import (
+        from apowerb.bi.dashboards.schema import (
             KeyValueCreateSchema,
             UpdateComponentRequest,
         )
@@ -335,8 +335,8 @@ class TestUpdateKeyValueComponent:
 
     @pytest.mark.asyncio
     async def test_update_missing_component_raises(self, dashboard_service):
-        from th2agent.bi.dashboards.service import ComponentNotFoundError
-        from th2agent.bi.dashboards.schema import (
+        from apowerb.bi.dashboards.service import ComponentNotFoundError
+        from apowerb.bi.dashboards.schema import (
             KeyValueCreateSchema,
             UpdateComponentRequest,
         )

@@ -12,8 +12,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from th2agent.schema.skill_schema import SkillCreateSchema, SkillUpdateSchema
-from th2agent.users import schemas as user_schemas
+from apowerb.schema.skill_schema import SkillCreateSchema, SkillUpdateSchema
+from apowerb.users import schemas as user_schemas
 
 
 # ---------------------------------------------------------------------------
@@ -267,14 +267,14 @@ def client(mock_skill_store):
     with auth and skill_store mocked out.
     """
     # Patch skill_store before importing the router module
-    with patch("th2agent.skills_store.skill_manager.skill_store", mock_skill_store), \
-         patch("th2agent.skills_store.skill_manager.SkillStore", return_value=mock_skill_store):
+    with patch("apowerb.skills_store.skill_manager.skill_store", mock_skill_store), \
+         patch("apowerb.skills_store.skill_manager.SkillStore", return_value=mock_skill_store):
         # Re-patch at the router module level as well, since it imports at top level
-        with patch("th2agent.routers.skills.skill_store", mock_skill_store), \
-             patch("th2agent.routers.skills.list_all_skills") as mock_list_all, \
-             patch("th2agent.routers.skills.list_portfolio_skills") as mock_list_portfolio:
+        with patch("apowerb.routers.skills.skill_store", mock_skill_store), \
+             patch("apowerb.routers.skills.list_all_skills") as mock_list_all, \
+             patch("apowerb.routers.skills.list_portfolio_skills") as mock_list_portfolio:
 
-            from th2agent.routers.skills import router
+            from apowerb.routers.skills import router
 
             app = FastAPI()
             app.include_router(router, prefix="/api")
@@ -284,7 +284,7 @@ def client(mock_skill_store):
             async def override_get_current_user():
                 return fake_user
 
-            from th2agent.auth.dependencies import get_current_user
+            from apowerb.auth.dependencies import get_current_user
             app.dependency_overrides[get_current_user] = override_get_current_user
 
             test_client = TestClient(app)
@@ -569,10 +569,10 @@ class TestAuthRequired:
 
     def test_no_auth_returns_401_or_403(self):
         """Without the dependency override, requests should fail authentication."""
-        with patch("th2agent.routers.skills.skill_store", MagicMock()), \
-             patch("th2agent.routers.skills.list_all_skills"), \
-             patch("th2agent.routers.skills.list_portfolio_skills"):
-            from th2agent.routers.skills import router
+        with patch("apowerb.routers.skills.skill_store", MagicMock()), \
+             patch("apowerb.routers.skills.list_all_skills"), \
+             patch("apowerb.routers.skills.list_portfolio_skills"):
+            from apowerb.routers.skills import router
 
             app = FastAPI()
             app.include_router(router, prefix="/api")
@@ -610,8 +610,8 @@ class TestListPortfolioSkillsLoader:
         no_skill_dir = tmp_path / "no-skill-here"
         no_skill_dir.mkdir()
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path):
-            from th2agent.skills_store.skills_loader import list_portfolio_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path):
+            from apowerb.skills_store.skills_loader import list_portfolio_skills
             result = list_portfolio_skills()
 
         assert len(result) == 1
@@ -622,8 +622,8 @@ class TestListPortfolioSkillsLoader:
 
     def test_no_portfolio_dir_returns_empty(self, tmp_path):
         nonexistent = tmp_path / "does-not-exist"
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", nonexistent):
-            from th2agent.skills_store.skills_loader import list_portfolio_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", nonexistent):
+            from apowerb.skills_store.skills_loader import list_portfolio_skills
             result = list_portfolio_skills()
         assert result == []
 
@@ -632,8 +632,8 @@ class TestListPortfolioSkillsLoader:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("Just plain instructions here.\n")
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path):
-            from th2agent.skills_store.skills_loader import list_portfolio_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path):
+            from apowerb.skills_store.skills_loader import list_portfolio_skills
             result = list_portfolio_skills()
 
         assert len(result) == 1
@@ -648,8 +648,8 @@ class TestListPortfolioSkillsLoader:
             d.mkdir()
             (d / "SKILL.md").write_text(f"---\nname: {name}\ndescription: desc\n---\nInstructions")
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path):
-            from th2agent.skills_store.skills_loader import list_portfolio_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path):
+            from apowerb.skills_store.skills_loader import list_portfolio_skills
             result = list_portfolio_skills()
 
         assert len(result) == 3
@@ -671,8 +671,8 @@ class TestLoadDbSkill:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = [row]
 
-        with patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import _load_db_skill
+        with patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import _load_db_skill
             result = _load_db_skill("db-skill")
 
         assert result is not None
@@ -686,8 +686,8 @@ class TestLoadDbSkill:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = []
 
-        with patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import _load_db_skill
+        with patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import _load_db_skill
             result = _load_db_skill("nonexistent")
 
         assert result is None
@@ -700,8 +700,8 @@ class TestLoadDbSkill:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = [row]
 
-        with patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import _load_db_skill
+        with patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import _load_db_skill
             result = _load_db_skill("my-skill")
 
         assert result is not None
@@ -714,8 +714,8 @@ class TestLoadDbSkill:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = [row]
 
-        with patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import _load_db_skill
+        with patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import _load_db_skill
             result = _load_db_skill("my-skill")
 
         assert result is not None
@@ -727,8 +727,8 @@ class TestLoadDbSkill:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = [row]
 
-        with patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import _load_db_skill
+        with patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import _load_db_skill
             result = _load_db_skill("my-skill")
 
         assert result is not None
@@ -745,12 +745,12 @@ class TestLoadAgentSkills:
             "---\nname: my-portfolio-skill\ndescription: desc\n---\nInstructions"
         )
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
-             patch("th2agent.skills_store.skills_loader.load_skill_from_dir") as mock_load:
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
+             patch("apowerb.skills_store.skills_loader.load_skill_from_dir") as mock_load:
             mock_skill = MagicMock()
             mock_load.return_value = mock_skill
 
-            from th2agent.skills_store.skills_loader import load_agent_skills
+            from apowerb.skills_store.skills_loader import load_agent_skills
             result = load_agent_skills(["my-portfolio-skill"])
 
         assert result is not None
@@ -760,15 +760,15 @@ class TestLoadAgentSkills:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = []
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
-             patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import load_agent_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
+             patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import load_agent_skills
             result = load_agent_skills(["nonexistent-skill"])
 
         assert result is None
 
     def test_load_empty_list_returns_none(self):
-        from th2agent.skills_store.skills_loader import load_agent_skills
+        from apowerb.skills_store.skills_loader import load_agent_skills
         result = load_agent_skills([])
         assert result is None
 
@@ -794,9 +794,9 @@ class TestListAllSkills:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = [db_row]
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
-             patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import list_all_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
+             patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import list_all_skills
             result = list_all_skills(organization_id="org.com")
 
         # Should have 1 portfolio + 1 db skill
@@ -808,9 +808,9 @@ class TestListAllSkills:
         mock_store = MagicMock()
         mock_store.get_list_skills.return_value = []
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
-             patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import list_all_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
+             patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import list_all_skills
             list_all_skills(organization_id="specific-org.com")
 
         # Verify that the query was constructed (the mock was called)
@@ -820,9 +820,9 @@ class TestListAllSkills:
         mock_store = MagicMock()
         mock_store.get_list_skills.side_effect = Exception("DB connection failed")
 
-        with patch("th2agent.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
-             patch("th2agent.skills_store.skill_manager.skill_store", mock_store):
-            from th2agent.skills_store.skills_loader import list_all_skills
+        with patch("apowerb.skills_store.skills_loader._PORTFOLIO_DIR", tmp_path), \
+             patch("apowerb.skills_store.skill_manager.skill_store", mock_store):
+            from apowerb.skills_store.skills_loader import list_all_skills
             result = list_all_skills(organization_id="org.com")
 
         # Should still return portfolio skills (empty in this case) without crashing

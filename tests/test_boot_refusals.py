@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from cryptography.fernet import Fernet
 
-from th2agent.configs.settings import Settings
+from apowerb.configs.settings import Settings
 
 
 ENCRYPT_KEY = Fernet.generate_key().decode()

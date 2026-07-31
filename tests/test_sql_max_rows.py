@@ -36,7 +36,7 @@ class TestSqlMaxRows:
         with patch.dict(os.environ, env_patch, clear=False):
             # On a besoin de reimporter pour que os.getenv soit relu
             import importlib
-            import th2agent.tools_store.portfolio.database as db_mod
+            import apowerb.tools_store.portfolio.database as db_mod
             importlib.reload(db_mod)
 
             # Patcher le curseur pour que fetchall retourne nos fausses lignes
@@ -52,7 +52,7 @@ class TestSqlMaxRows:
     def test_200_rows_truncated_to_150(self, caplog):
         """200 lignes -> tronque a 150 + warning loggue."""
         import logging
-        with caplog.at_level(logging.WARNING, logger="th2agent.tools_store.portfolio.database"):
+        with caplog.at_level(logging.WARNING, logger="apowerb.tools_store.portfolio.database"):
             with patch.dict(os.environ, {"SQL_MAX_ROWS": "150"}, clear=False):
                 result = self._run_execute_and_format(200, max_rows_env="150")
 
@@ -93,7 +93,7 @@ class TestSqlMaxRows:
         mock_conn = MagicMock()
 
         import importlib
-        import th2agent.tools_store.portfolio.database as db_mod
+        import apowerb.tools_store.portfolio.database as db_mod
         importlib.reload(db_mod)
 
         with patch.dict(os.environ, {"SQL_MAX_ROWS": "3"}, clear=False):

@@ -112,7 +112,7 @@ class TestSupplierMismatchGateOnNotifier:
         })
         ctx = _make_callback_context(state)
 
-        with caplog.at_level(logging.CRITICAL, logger="th2agent.core.agent_helpers.callbacks"):
+        with caplog.at_level(logging.CRITICAL, logger="apowerb.core.agent_helpers.callbacks"):
             with patch("google.genai.types.Content") as MockContent, \
                  patch("google.genai.types.Part") as MockPart:
                 MockContent.return_value = MagicMock()

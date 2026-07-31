@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from google.genai import types
 
-from th2agent.core.guardrails import (
+from apowerb.core.guardrails import (
     create_before_model_callback,
     create_after_model_callback,
     create_before_tool_callback,

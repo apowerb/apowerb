@@ -18,7 +18,7 @@ import logging
 
 import pytest
 
-from th2agent.configs import th2logger
+from apowerb.configs import th2logger
 
 
 @pytest.fixture(autouse=True)

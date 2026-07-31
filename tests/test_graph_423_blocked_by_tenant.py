@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from th2agent.tools_store.portfolio.integration_status import (
+from apowerb.tools_store.portfolio.integration_status import (
     INTEGRATION_BLOCKED_BY_TENANT,
 )
 
@@ -38,7 +38,7 @@ def _fake_resp(status_code: int, text: str = "") -> MagicMock:
 
 class TestOneDriveHandleGraphError:
     def test_423_maps_to_blocked_by_tenant(self):
-        from th2agent.tools_store.portfolio.onedrive_core import _handle_graph_error
+        from apowerb.tools_store.portfolio.onedrive_core import _handle_graph_error
 
         resp = _fake_resp(
             423,
@@ -59,7 +59,7 @@ class TestOneDriveHandleGraphError:
         assert "423" in out["message"]
 
     def test_2xx_returns_none(self):
-        from th2agent.tools_store.portfolio.onedrive_core import _handle_graph_error
+        from apowerb.tools_store.portfolio.onedrive_core import _handle_graph_error
 
         assert _handle_graph_error(_fake_resp(200), "x") is None
 
@@ -67,7 +67,7 @@ class TestOneDriveHandleGraphError:
         """We do NOT touch existing 401/403/404/4xx mappings. A 401 still
         returns the legacy ``status=error`` dict so callers built around it
         keep working."""
-        from th2agent.tools_store.portfolio.onedrive_core import _handle_graph_error
+        from apowerb.tools_store.portfolio.onedrive_core import _handle_graph_error
 
         out = _handle_graph_error(_fake_resp(401, text="unauth"), "x")
 
@@ -76,7 +76,7 @@ class TestOneDriveHandleGraphError:
 
     def test_500_does_not_map_to_blocked_by_tenant(self):
         """A non-423 5xx is a generic Graph error, not a tenant block."""
-        from th2agent.tools_store.portfolio.onedrive_core import _handle_graph_error
+        from apowerb.tools_store.portfolio.onedrive_core import _handle_graph_error
 
         out = _handle_graph_error(_fake_resp(500, text="boom"), "x")
 
@@ -91,7 +91,7 @@ class TestOneDriveHandleGraphError:
 
 class TestTeamsHandleGraphError:
     def test_423_maps_to_blocked_by_tenant(self):
-        from th2agent.tools_store.portfolio.teams import _handle_graph_error
+        from apowerb.tools_store.portfolio.teams import _handle_graph_error
 
         resp = _fake_resp(
             423,
@@ -106,7 +106,7 @@ class TestTeamsHandleGraphError:
         assert out["remediable_by_reconnect"] is False
 
     def test_403_keeps_legacy_format(self):
-        from th2agent.tools_store.portfolio.teams import _handle_graph_error
+        from apowerb.tools_store.portfolio.teams import _handle_graph_error
 
         out = _handle_graph_error(_fake_resp(403, text="forbidden"), "x")
 
@@ -121,7 +121,7 @@ class TestTeamsHandleGraphError:
 
 class TestRemediabilityFlag:
     def test_blocked_by_tenant_is_not_remediable(self):
-        from th2agent.tools_store.portfolio.integration_status import (
+        from apowerb.tools_store.portfolio.integration_status import (
             INTEGRATION_BLOCKED_BY_TENANT as code,
             IntegrationStatusError,
         )
@@ -144,7 +144,7 @@ class TestSharedUploadDf423:
         """If retries are exhausted on a tenant-level 423, callers must
         receive a dict carrying ``code=INTEGRATION_BLOCKED_BY_TENANT``,
         not a free-form string."""
-        from th2agent.tools_store.portfolio import onedrive_core
+        from apowerb.tools_store.portfolio import onedrive_core
 
         # The retry loop imports ``time as _time`` inside the function and
         # calls ``_time.sleep(...)``; patching the module-level
@@ -180,7 +180,7 @@ class TestSharedUploadDf423:
         """A non-423 4xx still returns the plain-string payload so the
         existing ``isinstance(upload_err, dict)`` branch on callers is
         not pointlessly entered."""
-        from th2agent.tools_store.portfolio import onedrive_core
+        from apowerb.tools_store.portfolio import onedrive_core
 
         # No retries triggered (only 423 retries), so a 500 returns immediately.
         monkeypatch.setattr(

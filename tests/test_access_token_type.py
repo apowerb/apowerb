@@ -19,8 +19,8 @@ from datetime import timedelta
 
 from jose import jwt
 
-from th2agent.configs.settings import get_settings
-from th2agent.helpers.security import create_access_token
+from apowerb.configs.settings import get_settings
+from apowerb.helpers.security import create_access_token
 
 
 settings = get_settings()

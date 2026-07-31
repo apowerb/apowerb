@@ -28,8 +28,8 @@ def _fake_user(email: str, user_id: int = 1):
 
 
 def _build_app(*, user_email: str | None = USER_A_EMAIL):
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.routers.data_lake import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.routers.data_lake import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -115,7 +115,7 @@ class TestPinListScopedByBoardConfig:
         client = TestClient(app)
 
         with patch(
-            "th2agent.routers.data_lake.StorageBoardFactory"
+            "apowerb.routers.data_lake.StorageBoardFactory"
         ) as mock_factory_cls:
             mock_factory = MagicMock()
             mock_factory.get_board = MagicMock(return_value=fake_board)
@@ -156,7 +156,7 @@ class TestWriteCrossTenantRejected:
         client = TestClient(app)
 
         with patch(
-            "th2agent.routers.data_lake.StorageBoardFactory"
+            "apowerb.routers.data_lake.StorageBoardFactory"
         ) as mock_factory_cls:
             mock_factory = MagicMock()
             mock_board = MagicMock()

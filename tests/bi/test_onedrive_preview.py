@@ -60,9 +60,9 @@ def _build_client(
     refresh_token: str | None = REFRESH_TOKEN,
     user_email: str = USER_EMAIL,
 ) -> TestClient:
-    from th2agent.bi.data.dataset_router import router
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
+    from apowerb.bi.data.dataset_router import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
 
     app = FastAPI()
     # Mount without prefix here — the tests call /bi/onedrive/preview directly.
@@ -83,8 +83,8 @@ def _build_client(
 
 def _patch_onedrive_layer(monkeypatch: pytest.MonkeyPatch, df, err=None) -> None:
     """Stub Graph auth + spreadsheet parser so the route never hits the network."""
-    from th2agent.bi.data import dataset_router as dr
-    from th2agent.helpers import encryptor as enc_mod
+    from apowerb.bi.data import dataset_router as dr
+    from apowerb.helpers import encryptor as enc_mod
 
     monkeypatch.setattr(enc_mod, "decrypt_value", lambda v: v, raising=True)
     monkeypatch.setattr(
@@ -170,8 +170,8 @@ class TestOnedrivePreviewHappyPath:
         assert len(body["sample_rows"]) == 10
 
     def test_preview_forwards_sheet_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from th2agent.bi.data import dataset_router as dr
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.bi.data import dataset_router as dr
+        from apowerb.helpers import encryptor as enc_mod
 
         captured: dict = {}
 
@@ -208,7 +208,7 @@ class TestOnedrivePreviewHappyPath:
 
 class TestOnedrivePreviewErrors:
     def test_missing_integration_returns_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.helpers import encryptor as enc_mod
 
         monkeypatch.setattr(enc_mod, "decrypt_value", lambda v: v, raising=True)
 
@@ -353,8 +353,8 @@ class TestOnedrivePreviewResponseShape:
     def test_sheet_name_accepts_integer_index(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from th2agent.bi.data import dataset_router as dr
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.bi.data import dataset_router as dr
+        from apowerb.helpers import encryptor as enc_mod
 
         captured: dict = {}
 
@@ -383,8 +383,8 @@ class TestOnedrivePreviewItemIdFallback:
     def test_item_id_resolves_to_path_when_item_path_absent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from th2agent.bi.data import dataset_router as dr
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.bi.data import dataset_router as dr
+        from apowerb.helpers import encryptor as enc_mod
 
         captured: dict = {}
 
@@ -419,8 +419,8 @@ class TestOnedrivePreviewItemIdFallback:
     def test_item_path_takes_precedence_over_item_id(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from th2agent.bi.data import dataset_router as dr
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.bi.data import dataset_router as dr
+        from apowerb.helpers import encryptor as enc_mod
 
         captured: dict = {}
 

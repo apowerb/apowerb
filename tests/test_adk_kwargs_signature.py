@@ -42,15 +42,15 @@ def _load_module(rel_path: str, name: str):
 
 def _get_callbacks():
     return _load_module(
-        "th2agent/core/agent_helpers/callbacks.py",
-        "_th2agent_callbacks_direct",
+        "apowerb/core/agent_helpers/callbacks.py",
+        "_apowerb_callbacks_direct",
     )
 
 
 def _get_history_compaction():
     return _load_module(
-        "th2agent/core/history_compaction.py",
-        "_th2agent_history_compaction_direct",
+        "apowerb/core/history_compaction.py",
+        "_apowerb_history_compaction_direct",
     )
 
 

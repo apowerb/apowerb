@@ -10,7 +10,7 @@ réponses HTTP :
 - ``Referrer-Policy: no-referrer-when-downgrade``
 
 Ces tests montent une app FastAPI minimale avec uniquement le middleware
-(isolation). La présence des headers sur la vraie ``th2agent.main.app``
+(isolation). La présence des headers sur la vraie ``apowerb.main.app``
 n'est pas vérifiée ici (coûteux au boot) — le test d'intégration en amont
 s'en charge via les tests E2E.
 """
@@ -18,7 +18,7 @@ s'en charge via les tests E2E.
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.helpers.security_headers import SecurityHeadersMiddleware
+from apowerb.helpers.security_headers import SecurityHeadersMiddleware
 
 
 def _build_app() -> FastAPI:

@@ -137,9 +137,9 @@ def _build_app(
     user_id: int | None = USER_A_ID,
     email: str | None = USER_A_EMAIL,
 ):
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
-    from th2agent.routers.webhooks import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
+    from apowerb.routers.webhooks import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -335,7 +335,7 @@ class TestRetriggerUpdateClauseNotIn:
         """Compile le statement update de l'endpoint et assert la sous-chaine NOT IN."""
         from sqlalchemy import update
         from sqlalchemy.dialects import sqlite
-        from th2agent.models import WebhookLog
+        from apowerb.models import WebhookLog
 
         stmt = (
             update(WebhookLog)

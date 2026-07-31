@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from th2agent.tools_store.portfolio.image_generation import (
+from apowerb.tools_store.portfolio.image_generation import (
     _sanitize_filename,
     _DALLE_SIZE_MAP,
     _STABILITY_AR_MAP,
@@ -141,7 +141,7 @@ def _fake_image_bytes():
 
 def _patch_provider(name, mock_fn):
     """Patch a provider's gen_fn inside _PROVIDERS (dict holds original refs)."""
-    import th2agent.tools_store.portfolio.image_generation as mod
+    import apowerb.tools_store.portfolio.image_generation as mod
 
     original = mod._PROVIDERS[name]
     mod._PROVIDERS[name] = (original[0], mock_fn, original[2])

@@ -389,7 +389,7 @@ class TestRealPdfNonRegression:
         if not pdf_path.exists():
             pytest.skip(f"Fixture {cf_name} absente")
         try:
-            from th2agent.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
+            from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
             result_pdf = extract_all_pages_text(str(pdf_path))
             pdf_text = result_pdf.get("text", "")
         except Exception as e:
@@ -431,7 +431,7 @@ class TestRealPdfNonRegression:
         if not pdf_path.exists():
             pytest.skip(f"Fixture {cf_name} absente")
         try:
-            from th2agent.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
+            from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
             result_pdf = extract_all_pages_text(str(pdf_path))
             pdf_text = result_pdf.get("text", "")
         except Exception as e:

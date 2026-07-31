@@ -9,7 +9,7 @@ PR adds more test code than it protects.
 """
 from __future__ import annotations
 
-from th2agent.routers.webhook_handlers import outlook as h
+from apowerb.routers.webhook_handlers import outlook as h
 
 
 class TestStripHtml:

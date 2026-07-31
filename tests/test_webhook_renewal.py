@@ -1,4 +1,4 @@
-"""Tests for ``th2agent.scheduler.webhook_renewal``.
+"""Tests for ``apowerb.scheduler.webhook_renewal``.
 
 Live regression 2026-05-10 04:33 UTC on SCEI_PROD: the renewal pass
 crashed with ``greenlet_spawn has not been called; can't call
@@ -37,9 +37,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from th2agent.helpers.database import Base
-from th2agent.models import User, WebhookSubscription
-from th2agent.scheduler import webhook_renewal
+from apowerb.helpers.database import Base
+from apowerb.models import User, WebhookSubscription
+from apowerb.scheduler import webhook_renewal
 
 
 @pytest.fixture

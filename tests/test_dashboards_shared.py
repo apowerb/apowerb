@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
-from th2agent.bi.dashboards.core import DashboardStatus, DashboardVisibility
+from apowerb.bi.dashboards.core import DashboardStatus, DashboardVisibility
 
 VIEWER_EMAIL = "alice@example.com"
 
@@ -39,9 +39,9 @@ def _dash(*, id_, created_by, visibility, status_=DashboardStatus.PUBLISHED):
 
 
 def _build_app(dashboards, *, email=VIEWER_EMAIL):
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
-    from th2agent.bi.dashboards.router import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
+    from apowerb.bi.dashboards.router import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
@@ -71,7 +71,7 @@ def _build_app(dashboards, *, email=VIEWER_EMAIL):
 
 def _patched_client(dashboards, *, email=VIEWER_EMAIL):
     app, store_cls = _build_app(dashboards, email=email)
-    p = patch("th2agent.bi.db_stores.DatabaseDashboardStore", store_cls)
+    p = patch("apowerb.bi.db_stores.DatabaseDashboardStore", store_cls)
     p.start()
     client = TestClient(app, raise_server_exceptions=False)
     return client, p

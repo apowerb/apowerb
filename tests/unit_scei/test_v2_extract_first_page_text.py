@@ -21,7 +21,7 @@ def _make_pdf(path: str, text: str = "HELLO CF101082") -> None:
 
 
 def test_extract_text_pdf_with_text_layer(tmp_path):
-    from th2agent.core.agent_helpers.pdf_to_images_tool import (
+    from apowerb.core.agent_helpers.pdf_to_images_tool import (
         extract_first_page_text,
     )
     p = str(tmp_path / "ar.pdf")
@@ -35,7 +35,7 @@ def test_extract_text_pdf_with_text_layer(tmp_path):
 
 
 def test_extract_too_large(tmp_path, monkeypatch):
-    from th2agent.core.agent_helpers import pdf_to_images_tool as mod
+    from apowerb.core.agent_helpers import pdf_to_images_tool as mod
     p = str(tmp_path / "big.pdf")
     _make_pdf(p)
     monkeypatch.setattr(mod.os.path, "getsize", lambda _p: 25_000_001)
@@ -48,7 +48,7 @@ def test_extract_too_large(tmp_path, monkeypatch):
 
 
 def test_extract_missing_file_returns_error_no_exception():
-    from th2agent.core.agent_helpers.pdf_to_images_tool import (
+    from apowerb.core.agent_helpers.pdf_to_images_tool import (
         extract_first_page_text,
     )
     out = extract_first_page_text("/nonexistent/path/nope.pdf")
@@ -58,7 +58,7 @@ def test_extract_missing_file_returns_error_no_exception():
 
 
 def test_extract_corrupt_file_returns_error_no_exception(tmp_path):
-    from th2agent.core.agent_helpers.pdf_to_images_tool import (
+    from apowerb.core.agent_helpers.pdf_to_images_tool import (
         extract_first_page_text,
     )
     p = tmp_path / "corrupt.pdf"
@@ -72,7 +72,7 @@ def test_extract_corrupt_file_returns_error_no_exception(tmp_path):
 def test_pdf_first_page_tool_still_works(tmp_path, monkeypatch):
     """Non-regression: la closure tool_pdf_first_page reste fonctionnelle
     et renvoie le contrat existant (status, text, has_text_layer, ...)."""
-    from th2agent.core.agent_helpers.pdf_to_images_tool import (
+    from apowerb.core.agent_helpers.pdf_to_images_tool import (
         _make_pdf_first_page,
     )
     folder = "agentX"

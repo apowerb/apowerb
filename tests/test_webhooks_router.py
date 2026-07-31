@@ -75,9 +75,9 @@ class _FakeSession:
 
 
 def _build_app(session: _FakeSession, *, user_id: int | None = USER_A_ID, email: str | None = USER_A_EMAIL):
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
-    from th2agent.routers.webhooks import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
+    from apowerb.routers.webhooks import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -162,14 +162,14 @@ class TestCreateSubscriptionHappyPath:
         client = TestClient(app)
 
         with patch(
-            "th2agent.routers.webhooks.OutlookWebhookService.get_access_token_for_user",
+            "apowerb.routers.webhooks.OutlookWebhookService.get_access_token_for_user",
             new_callable=AsyncMock,
             return_value="fake-token",
         ), patch(
-            "th2agent.routers.webhooks.OutlookWebhookService.generate_client_state",
+            "apowerb.routers.webhooks.OutlookWebhookService.generate_client_state",
             return_value="cs",
         ), patch(
-            "th2agent.routers.webhooks.OutlookWebhookService.create_subscription",
+            "apowerb.routers.webhooks.OutlookWebhookService.create_subscription",
             new_callable=AsyncMock,
             return_value={
                 "id": "graph-sub-xyz",
@@ -376,11 +376,11 @@ class TestDeleteSubscriptionPostCommitAccess:
         client = TestClient(app, raise_server_exceptions=False)
 
         with patch(
-            "th2agent.routers.webhooks.OutlookWebhookService.get_access_token_for_user",
+            "apowerb.routers.webhooks.OutlookWebhookService.get_access_token_for_user",
             new_callable=AsyncMock,
             return_value="fake-token",
         ), patch(
-            "th2agent.routers.webhooks.OutlookWebhookService.delete_subscription",
+            "apowerb.routers.webhooks.OutlookWebhookService.delete_subscription",
             new_callable=AsyncMock,
             return_value=None,
         ):
@@ -395,8 +395,8 @@ class TestGmailIncomingSignatureInvalid:
     def test_gmail_notification_missing_auth_returns_401(self):
         """The public /webhooks/gmail/notifications endpoint requires an OIDC
         Bearer token (Google Pub/Sub).  Missing Authorization header → 401."""
-        from th2agent.configs.settings import Settings, get_settings
-        from th2agent.routers.webhooks import router
+        from apowerb.configs.settings import Settings, get_settings
+        from apowerb.routers.webhooks import router
 
         def _override_settings() -> Settings:
             return Settings(
@@ -415,7 +415,7 @@ class TestGmailIncomingSignatureInvalid:
         app.dependency_overrides[get_settings] = _override_settings
 
         with patch(
-            "th2agent.routers.webhook_handlers.gmail.get_settings",
+            "apowerb.routers.webhook_handlers.gmail.get_settings",
             side_effect=_override_settings,
         ):
             client = TestClient(app, raise_server_exceptions=False)

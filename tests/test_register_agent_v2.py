@@ -24,7 +24,7 @@ import inspect
 
 class TestRegisterAgentPersistsV2Fields:
     def test_register_agent_writes_output_key(self):
-        from th2agent.core import agent_main
+        from apowerb.core import agent_main
 
         src = inspect.getsource(agent_main.register_agent)
         assert "output_key=" in src, (
@@ -34,7 +34,7 @@ class TestRegisterAgentPersistsV2Fields:
         )
 
     def test_register_agent_writes_output_schema_name(self):
-        from th2agent.core import agent_main
+        from apowerb.core import agent_main
 
         src = inspect.getsource(agent_main.register_agent)
         assert "output_schema_name=" in src, (
@@ -44,7 +44,7 @@ class TestRegisterAgentPersistsV2Fields:
         )
 
     def test_register_agent_writes_skip_when_upstream(self):
-        from th2agent.core import agent_main
+        from apowerb.core import agent_main
 
         src = inspect.getsource(agent_main.register_agent)
         assert "skip_when_upstream=" in src, (
@@ -55,7 +55,7 @@ class TestRegisterAgentPersistsV2Fields:
 
 class TestUpdateAgentPersistsV2Fields:
     def test_update_agent_writes_output_key(self):
-        from th2agent.core import agent_main
+        from apowerb.core import agent_main
 
         src = inspect.getsource(agent_main.update_agent)
         assert "output_key=" in src, (
@@ -65,13 +65,13 @@ class TestUpdateAgentPersistsV2Fields:
         )
 
     def test_update_agent_writes_output_schema_name(self):
-        from th2agent.core import agent_main
+        from apowerb.core import agent_main
 
         src = inspect.getsource(agent_main.update_agent)
         assert "output_schema_name=" in src
 
     def test_update_agent_writes_skip_when_upstream(self):
-        from th2agent.core import agent_main
+        from apowerb.core import agent_main
 
         src = inspect.getsource(agent_main.update_agent)
         assert "skip_when_upstream=" in src
@@ -79,7 +79,7 @@ class TestUpdateAgentPersistsV2Fields:
 
 class TestTemplateResyncFieldsCoverV2Fields:
     def test_resync_includes_output_key(self):
-        from th2agent.core.superagents import _TEMPLATE_RESYNC_FIELDS
+        from apowerb.core.superagents import _TEMPLATE_RESYNC_FIELDS
 
         assert "output_key" in _TEMPLATE_RESYNC_FIELDS, (
             "When a template changes its output_key (e.g. typo fix), "
@@ -89,11 +89,11 @@ class TestTemplateResyncFieldsCoverV2Fields:
         )
 
     def test_resync_includes_output_schema_name(self):
-        from th2agent.core.superagents import _TEMPLATE_RESYNC_FIELDS
+        from apowerb.core.superagents import _TEMPLATE_RESYNC_FIELDS
 
         assert "output_schema_name" in _TEMPLATE_RESYNC_FIELDS
 
     def test_resync_includes_skip_when_upstream(self):
-        from th2agent.core.superagents import _TEMPLATE_RESYNC_FIELDS
+        from apowerb.core.superagents import _TEMPLATE_RESYNC_FIELDS
 
         assert "skip_when_upstream" in _TEMPLATE_RESYNC_FIELDS

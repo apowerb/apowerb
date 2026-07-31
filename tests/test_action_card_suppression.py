@@ -27,21 +27,21 @@ class TestChatActionCardToolNames:
     suppressed for structured-output agents."""
 
     def test_constant_exists_and_is_frozenset(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _CHAT_ACTION_CARD_TOOL_NAMES,
         )
 
         assert isinstance(_CHAT_ACTION_CARD_TOOL_NAMES, frozenset)
 
     def test_constant_contains_exactly_5_tools(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _CHAT_ACTION_CARD_TOOL_NAMES,
         )
 
         assert len(_CHAT_ACTION_CARD_TOOL_NAMES) == 5
 
     def test_constant_contains_all_expected_names(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _CHAT_ACTION_CARD_TOOL_NAMES,
         )
 
@@ -61,7 +61,7 @@ class TestChatActionCardToolNames:
 
 class TestShouldInjectChatActionTools:
     def test_returns_false_when_output_schema_name_set(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _should_inject_chat_action_tools,
         )
 
@@ -70,7 +70,7 @@ class TestShouldInjectChatActionTools:
         ) is False
 
     def test_returns_false_for_any_non_empty_schema_name(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _should_inject_chat_action_tools,
         )
 
@@ -81,21 +81,21 @@ class TestShouldInjectChatActionTools:
             ) is False, schema
 
     def test_returns_true_when_output_schema_name_is_none(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _should_inject_chat_action_tools,
         )
 
         assert _should_inject_chat_action_tools({"output_schema_name": None}) is True
 
     def test_returns_true_when_output_schema_name_is_empty_string(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _should_inject_chat_action_tools,
         )
 
         assert _should_inject_chat_action_tools({"output_schema_name": ""}) is True
 
     def test_returns_true_when_output_schema_name_key_absent(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _should_inject_chat_action_tools,
         )
 
@@ -104,7 +104,7 @@ class TestShouldInjectChatActionTools:
     def test_returns_true_for_chat_agent_with_no_schema(self):
         """Regression guard: chat agents without output_schema_name keep all
         tools. Breaking this would suppress chips in the emailing pipeline."""
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _should_inject_chat_action_tools,
         )
 

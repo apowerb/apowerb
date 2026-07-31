@@ -44,9 +44,9 @@ def store():
 
 def _build_app(store: _FakeStore, current_user_email: str | None):
     """Build a FastAPI app with share router and mocked DB/auth."""
-    from th2agent.routers import share as share_module
-    from th2agent.auth.dependencies import get_current_user, get_optional_user
-    from th2agent.helpers.database import get_db
+    from apowerb.routers import share as share_module
+    from apowerb.auth.dependencies import get_current_user, get_optional_user
+    from apowerb.helpers.database import get_db
 
     app = FastAPI()
     app.include_router(share_module.router, prefix="/api")
@@ -137,7 +137,7 @@ def _payload():
 
 def _insert_share(store, share_id, owner_id, is_public, expires_delta_days=1):
     """Helper: insert a SharedConversation-like record directly in the store."""
-    from th2agent.models import SharedConversation
+    from apowerb.models import SharedConversation
 
     record = SharedConversation(
         id=share_id,
@@ -192,7 +192,7 @@ class TestReadShareOwnership:
         ).json()["shareId"]
 
         # Switch context: a different user tries to read it
-        from th2agent.auth.dependencies import (
+        from apowerb.auth.dependencies import (
             get_current_user,
             get_optional_user,
         )
@@ -253,7 +253,7 @@ class TestDeleteShareOwnership:
             "/api/conversations/share", json=_payload()
         ).json()["shareId"]
 
-        from th2agent.auth.dependencies import get_current_user
+        from apowerb.auth.dependencies import get_current_user
 
         async def _current_b():
             return _fake_user(USER_B)

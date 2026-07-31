@@ -52,8 +52,8 @@ class TestTruncateBeforeStrip:
     def test_truncate_applied_even_when_image_present(self):
         """40 messages dont 1 avec image -> truncate reduit (< 40) ET strip
         nettoie le base64. La chaine truncate-puis-strip doit etre appliquee."""
-        from th2agent.core.agent_helpers.callbacks import create_truncate_history_callback
-        from th2agent.core.history_compaction import create_strip_large_payloads_callback
+        from apowerb.core.agent_helpers.callbacks import create_truncate_history_callback
+        from apowerb.core.history_compaction import create_strip_large_payloads_callback
 
         # Simuler la chaine telle que CORRIGEE dans agent_utils
         # truncate d'abord, strip ensuite (les deux retournent toujours None)
@@ -87,7 +87,7 @@ class TestTruncateBeforeStrip:
         On simule un strip qui retourne non-None pour montrer le bug.
         Ce test PASSE si la chaine correcte est en place (truncate en premier).
         """
-        from th2agent.core.agent_helpers.callbacks import create_truncate_history_callback
+        from apowerb.core.agent_helpers.callbacks import create_truncate_history_callback
 
         truncate_cb = create_truncate_history_callback(keep_recent=14)
 

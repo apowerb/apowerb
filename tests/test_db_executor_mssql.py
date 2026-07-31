@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pyodbc
 import pytest
 
-from th2agent.bi.data.db_executor import DatabaseQueryExecutor
+from apowerb.bi.data.db_executor import DatabaseQueryExecutor
 
 
 @pytest.fixture
@@ -171,7 +171,7 @@ async def test_run_mssql_pyodbc_error_reraised_as_runtime(exec_inst, suiviar_con
 
 
 async def test_run_dispatch_routes_mssql(exec_inst, suiviar_config, mock_pyodbc_connect):
-    from th2agent.bi.charts.core import DataSource, SourceType
+    from apowerb.bi.charts.core import DataSource, SourceType
     source = DataSource(kind=SourceType.DATABASE, query="SELECT 1 AS x", limit=5)
     with patch.object(exec_inst, "_get_config", return_value={
         **suiviar_config,

@@ -56,9 +56,9 @@ def _build_client(
     refresh_token: str | None = REFRESH_TOKEN,
     user_email: str = USER_EMAIL,
 ) -> TestClient:
-    from th2agent.routers.onedrive_browser import router
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
+    from apowerb.routers.onedrive_browser import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
 
     app = FastAPI()
     app.include_router(router)
@@ -116,8 +116,8 @@ class TestExcelPreviewGuards:
 class TestExcelPreviewHappyPath:
     def _patch_graph(self, monkeypatch, df, err=None):
         """Patch the Graph layer so the route never hits the network."""
-        from th2agent.routers import onedrive_browser as odb
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.routers import onedrive_browser as odb
+        from apowerb.helpers import encryptor as enc_mod
 
         # Avoid encryptor noise — treat refresh_token as plaintext.
         monkeypatch.setattr(
@@ -232,8 +232,8 @@ class TestExcelPreviewHappyPath:
 
     def test_preview_forwards_sheet_name(self, monkeypatch):
         """sheet_name query param must reach the parser verbatim."""
-        from th2agent.routers import onedrive_browser as odb
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.routers import onedrive_browser as odb
+        from apowerb.helpers import encryptor as enc_mod
 
         captured: dict = {}
 
@@ -262,8 +262,8 @@ class TestExcelPreviewHappyPath:
 
     def test_preview_forwards_sheet_name_as_int_when_digit(self, monkeypatch):
         """A numeric sheet_name like '1' must be forwarded as int."""
-        from th2agent.routers import onedrive_browser as odb
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.routers import onedrive_browser as odb
+        from apowerb.helpers import encryptor as enc_mod
 
         captured: dict = {}
 
@@ -294,8 +294,8 @@ class TestExcelPreviewHappyPath:
 
 class TestExcelPreviewErrors:
     def test_preview_handles_parse_error(self, monkeypatch):
-        from th2agent.routers import onedrive_browser as odb
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.routers import onedrive_browser as odb
+        from apowerb.helpers import encryptor as enc_mod
 
         monkeypatch.setattr(enc_mod, "decrypt_value", lambda v: v, raising=True)
         monkeypatch.setattr(
@@ -319,8 +319,8 @@ class TestExcelPreviewErrors:
         assert "bad file" in body.get("message", "")
 
     def test_preview_handles_graph_error(self, monkeypatch):
-        from th2agent.routers import onedrive_browser as odb
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.routers import onedrive_browser as odb
+        from apowerb.helpers import encryptor as enc_mod
 
         monkeypatch.setattr(enc_mod, "decrypt_value", lambda v: v, raising=True)
         monkeypatch.setattr(

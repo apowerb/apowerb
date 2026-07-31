@@ -9,7 +9,7 @@ GEMINI_REASONING_EFFORT) — et thinking={"type":"disabled"} ne doit PLUS
 apparaitre (il etait de toute facon partiellement placebo : thinkingConfig
 vide sur gemini-2.5.x, thinkingLevel non nul force sur gemini-3.x).
 """
-from th2agent.core.agent_helpers.llm_model_builder import build_litellm_model
+from apowerb.core.agent_helpers.llm_model_builder import build_litellm_model
 
 
 def _details(model: str) -> dict:

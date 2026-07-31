@@ -1,6 +1,6 @@
 """Unit tests for the extension registry (pure, no DB/network)."""
 
-from th2agent.core.extensions.registry import CallbackSpec, ExtensionRegistry, registry
+from apowerb.core.extensions.registry import CallbackSpec, ExtensionRegistry, registry
 
 
 def test_callbacks_preserve_registration_order():

@@ -47,8 +47,8 @@ def _pubsub_body(email: str = "alice@example.com", history_id: str = "42") -> di
 @pytest.fixture()
 def app_client():
     """Build a minimal FastAPI app wiring the webhooks router with mocked settings."""
-    from th2agent.configs.settings import Settings, get_settings
-    from th2agent.routers.webhooks import router as webhooks_router
+    from apowerb.configs.settings import Settings, get_settings
+    from apowerb.routers.webhooks import router as webhooks_router
 
     def _override_settings() -> Settings:
         return Settings(
@@ -67,7 +67,7 @@ def app_client():
     app.dependency_overrides[get_settings] = _override_settings
 
     with patch(
-        "th2agent.routers.webhook_handlers.gmail.get_settings",
+        "apowerb.routers.webhook_handlers.gmail.get_settings",
         side_effect=_override_settings,
     ):
         yield TestClient(app)
@@ -93,7 +93,7 @@ class TestGmailWebhookRejectsMissingAuth:
 class TestGmailWebhookRejectsInvalidJwt:
     def test_invalid_signature_returns_403(self, app_client):
         with patch(
-            "th2agent.helpers.google_oidc.id_token.verify_oauth2_token",
+            "apowerb.helpers.google_oidc.id_token.verify_oauth2_token",
             side_effect=ValueError("Invalid token signature"),
         ):
             resp = app_client.post(
@@ -105,7 +105,7 @@ class TestGmailWebhookRejectsInvalidJwt:
 
     def test_expired_token_returns_403(self, app_client):
         with patch(
-            "th2agent.helpers.google_oidc.id_token.verify_oauth2_token",
+            "apowerb.helpers.google_oidc.id_token.verify_oauth2_token",
             side_effect=ValueError("Token expired, 1700000000 < 1799999999"),
         ):
             resp = app_client.post(
@@ -117,7 +117,7 @@ class TestGmailWebhookRejectsInvalidJwt:
 
     def test_wrong_audience_returns_403(self, app_client):
         with patch(
-            "th2agent.helpers.google_oidc.id_token.verify_oauth2_token",
+            "apowerb.helpers.google_oidc.id_token.verify_oauth2_token",
             side_effect=ValueError("Token has wrong audience"),
         ):
             resp = app_client.post(
@@ -130,7 +130,7 @@ class TestGmailWebhookRejectsInvalidJwt:
     def test_wrong_issuer_returns_403(self, app_client):
         """An otherwise well-formed token with non-Google issuer must be rejected."""
         with patch(
-            "th2agent.helpers.google_oidc.id_token.verify_oauth2_token",
+            "apowerb.helpers.google_oidc.id_token.verify_oauth2_token",
             return_value={
                 "iss": "https://evil.example.com",
                 "aud": AUDIENCE,
@@ -165,10 +165,10 @@ class TestGmailWebhookAcceptsValidJwt:
         fake_session.execute = AsyncMock(return_value=exec_result)
 
         with patch(
-            "th2agent.helpers.google_oidc.id_token.verify_oauth2_token",
+            "apowerb.helpers.google_oidc.id_token.verify_oauth2_token",
             return_value=valid_claims,
         ), patch(
-            "th2agent.routers.webhook_handlers.gmail.sessionmanager"
+            "apowerb.routers.webhook_handlers.gmail.sessionmanager"
         ) as mock_mgr:
             mock_mgr.session.return_value = fake_session
 
@@ -185,7 +185,7 @@ class TestSettingsGmailWebhookBoot:
     """Boot-time validation of Gmail webhook security settings."""
 
     def _make(self, **overrides):
-        from th2agent.configs.settings import Settings
+        from apowerb.configs.settings import Settings
 
         base = dict(
             db_host="x",
@@ -228,8 +228,8 @@ class TestGmailWebhookDevSkipFlag:
     """When WEBHOOK_DEV_SKIP_SIG=true, signature is skipped (dev only)."""
 
     def test_dev_skip_allows_missing_auth(self):
-        from th2agent.configs.settings import Settings, get_settings
-        from th2agent.routers.webhooks import router as webhooks_router
+        from apowerb.configs.settings import Settings, get_settings
+        from apowerb.routers.webhooks import router as webhooks_router
 
         def _override_settings() -> Settings:
             return Settings(
@@ -256,10 +256,10 @@ class TestGmailWebhookDevSkipFlag:
         fake_session.execute = AsyncMock(return_value=exec_result)
 
         with patch(
-            "th2agent.routers.webhook_handlers.gmail.get_settings",
+            "apowerb.routers.webhook_handlers.gmail.get_settings",
             side_effect=_override_settings,
         ), patch(
-            "th2agent.routers.webhook_handlers.gmail.sessionmanager"
+            "apowerb.routers.webhook_handlers.gmail.sessionmanager"
         ) as mock_mgr:
             mock_mgr.session.return_value = fake_session
             client = TestClient(app)

@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from th2agent.core.agent_helpers.callbacks import (
+from apowerb.core.agent_helpers.callbacks import (
     build_validating_state_writer,
 )
 from th2customers.scei.schemas import ARIntakePayload
@@ -53,7 +53,7 @@ async def test_repair_recovers_from_prose():
     )
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps(_valid_intake_dict())))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -73,7 +73,7 @@ async def test_repair_recovers_from_narrated_tool_call():
     )
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps(_valid_intake_dict())))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -92,7 +92,7 @@ async def test_repair_fails_still_prose_writes_sentinel():
     )
     mock_ac = AsyncMock(return_value=_llm_response("sorry, here is more prose"))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -108,7 +108,7 @@ async def test_no_repair_model_writes_sentinel_without_calling_litellm():
     cb = build_validating_state_writer(ARIntakePayload, STATE_KEY)
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps(_valid_intake_dict())))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -126,7 +126,7 @@ async def test_happy_path_no_repair_invoked():
     )
     mock_ac = AsyncMock(return_value=_llm_response("should never be used"))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -145,7 +145,7 @@ async def test_repair_exception_falls_back_to_sentinel():
     )
     mock_ac = AsyncMock(side_effect=TimeoutError("boom"))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -171,7 +171,7 @@ async def test_repair_passes_api_key_explicitly_without_api_base():
     )
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps(_valid_intake_dict())))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -197,7 +197,7 @@ async def test_repair_uses_openai_prefix_and_api_base_when_base_set():
     )
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps(_valid_intake_dict())))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -224,7 +224,7 @@ async def test_dict_shaped_tool_call_triggers_repair():
     )
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps(_valid_intake_dict())))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -245,7 +245,7 @@ async def test_repair_returns_tool_call_again_writes_sentinel():
     again = {"tool_name": "tool_run_sql", "tool_args": {"q": "x"}}
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps(again)))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 
@@ -264,7 +264,7 @@ async def test_repair_returns_off_schema_json_writes_sentinel():
     )
     mock_ac = AsyncMock(return_value=_llm_response(json.dumps({"foo": "bar"})))
     with patch(
-        "th2agent.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
+        "apowerb.core.agent_helpers.callbacks.litellm.acompletion", mock_ac
     ):
         await cb(_ctx(state))
 

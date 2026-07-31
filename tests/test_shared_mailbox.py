@@ -9,7 +9,7 @@ Tests:
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from th2agent.tools_store.portfolio.outlook_mail import _mailbox_base, _GRAPH_BASE
+from apowerb.tools_store.portfolio.outlook_mail import _mailbox_base, _GRAPH_BASE
 
 
 class TestMailboxBase:
@@ -26,10 +26,10 @@ class TestMailboxBase:
 class TestToolsUseMailboxParam:
     """Verify that each tool builds URLs with the mailbox parameter."""
 
-    @patch("th2agent.tools_store.portfolio.outlook_mail._graph_headers")
-    @patch("th2agent.tools_store.portfolio.outlook_mail.httpx")
+    @patch("apowerb.tools_store.portfolio.outlook_mail._graph_headers")
+    @patch("apowerb.tools_store.portfolio.outlook_mail.httpx")
     def test_list_emails_default_uses_me(self, mock_httpx, mock_headers):
-        from th2agent.tools_store.portfolio.outlook_mail import tool_list_emails
+        from apowerb.tools_store.portfolio.outlook_mail import tool_list_emails
 
         mock_headers.return_value = {"Authorization": "Bearer fake"}
         mock_resp = MagicMock()
@@ -43,10 +43,10 @@ class TestToolsUseMailboxParam:
         url = call_args[0][0]
         assert "/me/mailFolders/" in url
 
-    @patch("th2agent.tools_store.portfolio.outlook_mail._graph_headers")
-    @patch("th2agent.tools_store.portfolio.outlook_mail.httpx")
+    @patch("apowerb.tools_store.portfolio.outlook_mail._graph_headers")
+    @patch("apowerb.tools_store.portfolio.outlook_mail.httpx")
     def test_list_emails_shared_uses_users_path(self, mock_httpx, mock_headers):
-        from th2agent.tools_store.portfolio.outlook_mail import tool_list_emails
+        from apowerb.tools_store.portfolio.outlook_mail import tool_list_emails
 
         mock_headers.return_value = {"Authorization": "Bearer fake"}
         mock_resp = MagicMock()
@@ -60,10 +60,10 @@ class TestToolsUseMailboxParam:
         url = call_args[0][0]
         assert "/users/shared@domain.com/mailFolders/" in url
 
-    @patch("th2agent.tools_store.portfolio.outlook_mail._graph_headers")
-    @patch("th2agent.tools_store.portfolio.outlook_mail.httpx")
+    @patch("apowerb.tools_store.portfolio.outlook_mail._graph_headers")
+    @patch("apowerb.tools_store.portfolio.outlook_mail.httpx")
     def test_read_email_shared_uses_users_path(self, mock_httpx, mock_headers):
-        from th2agent.tools_store.portfolio.outlook_mail import tool_read_email
+        from apowerb.tools_store.portfolio.outlook_mail import tool_read_email
 
         mock_headers.return_value = {"Authorization": "Bearer fake"}
         mock_resp = MagicMock()
@@ -87,10 +87,10 @@ class TestToolsUseMailboxParam:
         url = call_args[0][0]
         assert "/users/shared@domain.com/messages/" in url
 
-    @patch("th2agent.tools_store.portfolio.outlook_mail._graph_headers")
-    @patch("th2agent.tools_store.portfolio.outlook_mail.httpx")
+    @patch("apowerb.tools_store.portfolio.outlook_mail._graph_headers")
+    @patch("apowerb.tools_store.portfolio.outlook_mail.httpx")
     def test_search_emails_shared_uses_users_path(self, mock_httpx, mock_headers):
-        from th2agent.tools_store.portfolio.outlook_mail import tool_search_emails
+        from apowerb.tools_store.portfolio.outlook_mail import tool_search_emails
 
         mock_headers.return_value = {"Authorization": "Bearer fake"}
         mock_resp = MagicMock()
@@ -104,10 +104,10 @@ class TestToolsUseMailboxParam:
         url = call_args[0][0]
         assert "/users/shared@domain.com/messages" in url
 
-    @patch("th2agent.tools_store.portfolio.outlook_mail._graph_headers")
-    @patch("th2agent.tools_store.portfolio.outlook_mail.httpx")
+    @patch("apowerb.tools_store.portfolio.outlook_mail._graph_headers")
+    @patch("apowerb.tools_store.portfolio.outlook_mail.httpx")
     def test_list_mail_folders_shared_uses_users_path(self, mock_httpx, mock_headers):
-        from th2agent.tools_store.portfolio.outlook_mail import tool_list_mail_folders
+        from apowerb.tools_store.portfolio.outlook_mail import tool_list_mail_folders
 
         mock_headers.return_value = {"Authorization": "Bearer fake"}
         mock_resp = MagicMock()
@@ -121,10 +121,10 @@ class TestToolsUseMailboxParam:
         url = call_args[0][0]
         assert "/users/shared@domain.com/mailFolders" in url
 
-    @patch("th2agent.tools_store.portfolio.outlook_mail._graph_headers")
-    @patch("th2agent.tools_store.portfolio.outlook_mail.httpx")
+    @patch("apowerb.tools_store.portfolio.outlook_mail._graph_headers")
+    @patch("apowerb.tools_store.portfolio.outlook_mail.httpx")
     def test_send_email_shared_uses_users_path(self, mock_httpx, mock_headers):
-        from th2agent.tools_store.portfolio.outlook_mail import tool_send_outlook_email
+        from apowerb.tools_store.portfolio.outlook_mail import tool_send_outlook_email
 
         mock_headers.return_value = {"Authorization": "Bearer fake"}
         mock_resp = MagicMock()
@@ -142,10 +142,10 @@ class TestToolsUseMailboxParam:
         url = call_args[0][0]
         assert "/users/shared@domain.com/sendMail" in url
 
-    @patch("th2agent.tools_store.portfolio.outlook_mail._graph_headers")
-    @patch("th2agent.tools_store.portfolio.outlook_mail.httpx")
+    @patch("apowerb.tools_store.portfolio.outlook_mail._graph_headers")
+    @patch("apowerb.tools_store.portfolio.outlook_mail.httpx")
     def test_download_attachment_shared_uses_users_path(self, mock_httpx, mock_headers):
-        from th2agent.tools_store.portfolio.outlook_mail import tool_download_attachment
+        from apowerb.tools_store.portfolio.outlook_mail import tool_download_attachment
 
         mock_headers.return_value = {"Authorization": "Bearer fake"}
         mock_resp = MagicMock()
@@ -172,7 +172,7 @@ class TestToolsUseMailboxParam:
 
 class TestSharedMailboxScopes:
     def test_outlook_scopes_include_shared(self):
-        from th2agent.integrations.microsoft import MICROSOFT_SERVICE_SCOPES
+        from apowerb.integrations.microsoft import MICROSOFT_SERVICE_SCOPES
         outlook_scopes = MICROSOFT_SERVICE_SCOPES["outlook"]
         assert "Mail.Read.Shared" in outlook_scopes
         assert "Mail.Send.Shared" in outlook_scopes

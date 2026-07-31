@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from th2agent.tools_store.portfolio.integration_status import (
+from apowerb.tools_store.portfolio.integration_status import (
     INTEGRATION_MISSING,
     IntegrationStatusError,
 )
@@ -47,7 +47,7 @@ def _assert_structured(result: dict, expected_provider: str) -> None:
 
 class TestGoogleDriveStructuredAuthError:
     def test_get_account_info(self):
-        from th2agent.tools_store.portfolio import google_drive
+        from apowerb.tools_store.portfolio import google_drive
 
         with patch.object(
             google_drive, "google_auth_headers", side_effect=_missing("google")
@@ -64,7 +64,7 @@ class TestGoogleDriveStructuredAuthError:
 
 class TestGoogleCalendarStructuredAuthError:
     def test_list_events(self):
-        from th2agent.tools_store.portfolio import google_calendar
+        from apowerb.tools_store.portfolio import google_calendar
 
         with patch.object(
             google_calendar, "google_auth_headers", side_effect=_missing("google")
@@ -81,7 +81,7 @@ class TestGoogleCalendarStructuredAuthError:
 
 class TestGoogleDocsStructuredAuthError:
     def test_read_document(self):
-        from th2agent.tools_store.portfolio import google_docs
+        from apowerb.tools_store.portfolio import google_docs
 
         # Pick whichever public tool exists; tool_read_document is the most
         # universal naming. Fall back on inspection if absent.
@@ -117,7 +117,7 @@ class TestGoogleDocsStructuredAuthError:
 
 class TestGoogleSheetsStructuredAuthError:
     def test_first_tool(self):
-        from th2agent.tools_store.portfolio import google_sheets
+        from apowerb.tools_store.portfolio import google_sheets
 
         tools = [
             getattr(google_sheets, name)
@@ -147,7 +147,7 @@ class TestGoogleSheetsStructuredAuthError:
         them. Make sure the structured payload still wins on auth failure
         (the JSON in ``values`` parses fine, so we reach the auth call
         and the IntegrationStatusError is raised as expected)."""
-        from th2agent.tools_store.portfolio import google_sheets
+        from apowerb.tools_store.portfolio import google_sheets
 
         with patch.object(
             google_sheets, "google_auth_headers", side_effect=_missing("google")
@@ -163,7 +163,7 @@ class TestGoogleSheetsStructuredAuthError:
     def test_write_cells_invalid_json_takes_precedence(self):
         """If the JSON cannot be parsed, the JSONDecodeError branch must
         still win — no auth call attempted, no structured payload."""
-        from th2agent.tools_store.portfolio import google_sheets
+        from apowerb.tools_store.portfolio import google_sheets
 
         # Even with a stub that would raise IntegrationStatusError, the
         # JSON parsing fails first so the helper is never called.
@@ -189,7 +189,7 @@ class TestGoogleSheetsStructuredAuthError:
 
 class TestTeamsStructuredAuthError:
     def test_list_chats(self):
-        from th2agent.tools_store.portfolio import teams
+        from apowerb.tools_store.portfolio import teams
 
         # _graph_headers calls microsoft_auth_headers — patch the upstream.
         with patch.object(

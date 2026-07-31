@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from th2agent.helpers import notifier_health
-from th2agent.scheduler import notifier_watch
+from apowerb.helpers import notifier_health
+from apowerb.scheduler import notifier_watch
 
 
 class _Result:

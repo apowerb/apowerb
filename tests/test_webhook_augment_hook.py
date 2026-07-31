@@ -8,7 +8,7 @@ Contract: hook returns the augmented string (used as-is) or None/empty
 """
 import asyncio
 
-import th2agent.routers.webhook_handlers.outlook as outlook_mod
+import apowerb.routers.webhook_handlers.outlook as outlook_mod
 
 
 def _run(coro):

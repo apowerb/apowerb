@@ -1,6 +1,6 @@
-"""th2agent doit être importable comme une library, sans environnement.
+"""apowerb doit être importable comme une library, sans environnement.
 
-Historiquement, ``import th2agent.<n_importe_quoi>`` exigeait un ``.env``
+Historiquement, ``import apowerb.<n_importe_quoi>`` exigeait un ``.env``
 complet : ~30 modules faisaient ``settings = get_settings()`` en colonne 1 et
 ``Settings`` déclarait 6 champs sans valeur par défaut. Importer le paquet
 depuis un autre projet était donc impossible — c'était une application
@@ -29,28 +29,28 @@ from pathlib import Path
 
 import pytest
 
-from th2agent.configs.settings import RUNTIME_REQUIRED_FIELDS, Settings
+from apowerb.configs.settings import RUNTIME_REQUIRED_FIELDS, Settings
 
 
 # Modules représentatifs de chaque sous-système : si ceux-là s'importent à
 # vide, le paquet est consommable comme library.
 LIBRARY_MODULES = [
-    "th2agent",
-    "th2agent.configs.settings",
-    "th2agent.configs.paths",
-    "th2agent.helpers.security",
-    "th2agent.helpers.encryptor",
-    "th2agent.helpers.database",
-    "th2agent.helpers.database_connection",
-    "th2agent.models",
-    "th2agent.agent_store.agent_manager",
-    "th2agent.tools_store.tool_config",
-    "th2agent.skills_store.skill_manager",
-    "th2agent.storage.storage_service",
-    "th2agent.integrations.helpers",
-    "th2agent.users.router",
-    "th2agent.core.adk_agent_builder",
-    "th2agent.routers.scheduler",
+    "apowerb",
+    "apowerb.configs.settings",
+    "apowerb.configs.paths",
+    "apowerb.helpers.security",
+    "apowerb.helpers.encryptor",
+    "apowerb.helpers.database",
+    "apowerb.helpers.database_connection",
+    "apowerb.models",
+    "apowerb.agent_store.agent_manager",
+    "apowerb.tools_store.tool_config",
+    "apowerb.skills_store.skill_manager",
+    "apowerb.storage.storage_service",
+    "apowerb.integrations.helpers",
+    "apowerb.users.router",
+    "apowerb.core.adk_agent_builder",
+    "apowerb.routers.scheduler",
 ]
 
 
@@ -147,10 +147,10 @@ class TestImportIsSideEffectFree:
     def test_importing_the_server_module_only_costs_the_adk_artifact_dir(
         self, tmp_path: Path
     ):
-        """``th2agent.main`` s'importe sans configuration et sans migration.
+        """``apowerb.main`` s'importe sans configuration et sans migration.
 
         C'est le module le plus dur : il construit l'app ASGI à l'import,
-        parce que le déploiement référence ``th2agent.main:app``. Il ne joue
+        parce que le déploiement référence ``apowerb.main:app``. Il ne joue
         plus aucune migration et ne crée plus ``agents_pool/`` ni
         ``uploads/`` — cela appartient à ``bootstrap()``, au démarrage réel.
 
@@ -161,7 +161,7 @@ class TestImportIsSideEffectFree:
         mais nommément : toute *autre* écriture fait échouer ce test.
         """
         code = """
-            import th2agent.main as m
+            import apowerb.main as m
             assert callable(m.bootstrap)
             assert m.app is not None
         """
@@ -175,19 +175,19 @@ class TestImportIsSideEffectFree:
     def test_importing_the_scheduler_router_builds_no_orchestrator(self, tmp_path: Path):
         """``scheduler_client = get_orchestrator().client`` tournait à l'import.
 
-        Monter ``th2agent.routers.scheduler`` sur sa propre app construisait
+        Monter ``apowerb.routers.scheduler`` sur sa propre app construisait
         donc un client HTTP d'orchestration avant la première requête, et
         figeait le choix ``mage``/``th2etl`` au moment de l'import plutôt qu'à
         celui de l'appel. Le proxy résout à l'accès d'attribut ; on vérifie ici
         qu'aucun client n'existe tant que personne ne s'en sert.
         """
         code = """
-            import th2agent.scheduler.mage as mage
+            import apowerb.scheduler.mage as mage
 
             appels = []
             mage.get_orchestrator = lambda *a, **k: appels.append(1)
 
-            import th2agent.routers.scheduler as sched
+            import apowerb.routers.scheduler as sched
             assert appels == [], "l'import a construit un orchestrateur"
             assert sched.scheduler_client is not None
         """
@@ -197,7 +197,7 @@ class TestImportIsSideEffectFree:
     def test_encryptor_exposes_none_when_key_is_missing(self, tmp_path: Path):
         """``encryptor.fernet`` vaut None (pas une exception) sans ENCRYPT_KEY."""
         code = """
-            from th2agent.helpers import encryptor
+            from apowerb.helpers import encryptor
             assert encryptor.fernet is None, encryptor.fernet
             try:
                 encryptor.encrypt_value("x")

@@ -27,8 +27,8 @@ import textwrap
 
 import pytest
 
-from th2agent.configs.settings import get_settings
-from th2agent.helpers import security
+from apowerb.configs.settings import get_settings
+from apowerb.helpers import security
 
 
 def _run_without_encrypt_key(code: str, tmp_path) -> subprocess.CompletedProcess:
@@ -64,13 +64,13 @@ class TestCléAbsente:
     def test_import_toujours_possible(self, tmp_path):
         """Le contrat library survit : importer ne configure rien."""
         result = _run_without_encrypt_key(
-            "import th2agent.helpers.security  # ne doit pas lever", tmp_path
+            "import apowerb.helpers.security  # ne doit pas lever", tmp_path
         )
         assert result.returncode == 0, result.stderr[-2000:]
 
     def test_utiliser_la_clé_est_refusé(self, tmp_path):
         code = """
-            from th2agent.helpers import security
+            from apowerb.helpers import security
 
             try:
                 security.get_secret_key()
@@ -85,7 +85,7 @@ class TestCléAbsente:
     def test_signer_un_jeton_est_refusé(self, tmp_path):
         """Le point qui compte : aucun JWT ne peut être émis sans clé."""
         code = """
-            from th2agent.helpers import security
+            from apowerb.helpers import security
 
             try:
                 security.create_access_token({"sub": "x"})

@@ -4,7 +4,7 @@ import json
 import asyncio
 from unittest.mock import patch
 
-from th2agent.core import adk_runner as AR
+from apowerb.core import adk_runner as AR
 
 
 def _ev(text=None, fc=False, err=None):

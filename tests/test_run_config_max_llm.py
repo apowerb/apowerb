@@ -20,26 +20,26 @@ class TestRunConfigMaxLlmCalls:
 
     def test_get_llm_max_calls_default(self):
         """Sans LLM_MAX_CALLS, la valeur par defaut est 25."""
-        from th2agent.core.agent_helpers.run_config_patch import get_llm_max_calls
+        from apowerb.core.agent_helpers.run_config_patch import get_llm_max_calls
         env_without = {k: v for k, v in os.environ.items() if k != "LLM_MAX_CALLS"}
         with patch.dict(os.environ, env_without, clear=True):
             assert get_llm_max_calls() == 25
 
     def test_get_llm_max_calls_from_env(self):
         """LLM_MAX_CALLS=40 -> retourne 40."""
-        from th2agent.core.agent_helpers.run_config_patch import get_llm_max_calls
+        from apowerb.core.agent_helpers.run_config_patch import get_llm_max_calls
         with patch.dict(os.environ, {"LLM_MAX_CALLS": "40"}, clear=False):
             assert get_llm_max_calls() == 40
 
     def test_get_llm_max_calls_invalid_env_uses_default(self):
         """LLM_MAX_CALLS=invalid -> fallback sur 25."""
-        from th2agent.core.agent_helpers.run_config_patch import get_llm_max_calls
+        from apowerb.core.agent_helpers.run_config_patch import get_llm_max_calls
         with patch.dict(os.environ, {"LLM_MAX_CALLS": "not_a_number"}, clear=False):
             assert get_llm_max_calls() == 25
 
     def test_patch_run_config_injects_max_llm_calls(self):
         """patch_adk_run_config() patche l'objet RunConfig passe en argument."""
-        from th2agent.core.agent_helpers.run_config_patch import patch_run_config
+        from apowerb.core.agent_helpers.run_config_patch import patch_run_config
 
         # Simule un RunConfig avec max_llm_calls=500 (defaut ADK)
         fake_run_config = MagicMock()
@@ -52,7 +52,7 @@ class TestRunConfigMaxLlmCalls:
 
     def test_patch_run_config_respects_env(self):
         """patch_run_config utilise LLM_MAX_CALLS de l'environnement."""
-        from th2agent.core.agent_helpers.run_config_patch import patch_run_config
+        from apowerb.core.agent_helpers.run_config_patch import patch_run_config
 
         fake_run_config = MagicMock()
         fake_run_config.max_llm_calls = 500
@@ -64,7 +64,7 @@ class TestRunConfigMaxLlmCalls:
 
     def test_run_config_patch_module_importable(self):
         """Le module run_config_patch est importable."""
-        import th2agent.core.agent_helpers.run_config_patch as m
+        import apowerb.core.agent_helpers.run_config_patch as m
         assert hasattr(m, "get_llm_max_calls")
         assert hasattr(m, "patch_run_config")
         assert hasattr(m, "apply_adk_run_config_patch")

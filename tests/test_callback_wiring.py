@@ -11,7 +11,7 @@ import pytest
 
 class TestSchemaLookupChain:
     def test_lookup_resolves_scei_schemas(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _lookup_output_schema,
         )
         from th2customers.scei.schemas import (
@@ -29,7 +29,7 @@ class TestSchemaLookupChain:
         assert _lookup_output_schema("ARNotifyPayload") is ARNotifyPayload
 
     def test_lookup_returns_none_for_unknown(self):
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _lookup_output_schema,
         )
 
@@ -40,7 +40,7 @@ class TestSchemaLookupChain:
         each must resolve to a real Pydantic class via the lookup chain.
         If this test fails, the after_agent_callback won't get wired and
         downstream sub-agents will read raw LLM prose, not validated JSON."""
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _lookup_output_schema,
         )
         from th2customers.scei.templates.scei_v2 import (
@@ -66,10 +66,10 @@ class TestSchemaLookupChain:
 
     def test_callback_factory_accepts_resolved_class(self):
         """End-to-end: name → class → callback built without error."""
-        from th2agent.core.agent_helpers.agent_utils import (
+        from apowerb.core.agent_helpers.agent_utils import (
             _lookup_output_schema,
         )
-        from th2agent.core.agent_helpers.callbacks import (
+        from apowerb.core.agent_helpers.callbacks import (
             build_validating_state_writer,
         )
 

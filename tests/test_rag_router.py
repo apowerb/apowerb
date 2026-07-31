@@ -34,8 +34,8 @@ def _fake_user(email: str, user_id: int = 1):
 
 def _build_app(current_user_email: str | None):
     """Build a FastAPI app mounting the RAG router with auth override."""
-    from th2agent.routers.rag import router
-    from th2agent.auth.dependencies import get_current_user
+    from apowerb.routers.rag import router
+    from apowerb.auth.dependencies import get_current_user
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -97,7 +97,7 @@ def patched_agent_store():
     }
     fake = _FakeAgentStore(agents)
 
-    with patch("th2agent.core.agent_main.agent_store", fake):
+    with patch("apowerb.core.agent_main.agent_store", fake):
         yield fake
 
 
@@ -195,17 +195,17 @@ class TestIndexDbHappyPath:
 
         fake_register = AsyncMock()
         with patch(
-            "th2agent.routers.rag._sync_index_db",
+            "apowerb.routers.rag._sync_index_db",
             return_value={"status": "ok", "knowledge_id": "kid-42"},
         ) as mock_sync, patch(
-            "th2agent.routers.rag.append_source",
+            "apowerb.routers.rag.append_source",
             return_value={
                 "knowledge_id": "kid-42",
                 "name": "kb",
                 "status": "processing",
             },
         ), patch(
-            "th2agent.routers.rag.rag_manager.register_knowledge",
+            "apowerb.routers.rag.rag_manager.register_knowledge",
             fake_register,
         ):
             resp = client.post(
@@ -262,7 +262,7 @@ class TestRagWebhookSignature:
         assert resp.status_code == 401, resp.text
 
     def test_webhook_valid_signature_returns_200(self):
-        from th2agent.configs.settings import get_settings
+        from apowerb.configs.settings import get_settings
 
         secret = get_settings().rag_webhook_secret
         app = _build_app(current_user_email=None)
@@ -278,7 +278,7 @@ class TestRagWebhookSignature:
         sig = self._signed(body, secret)
 
         with patch(
-            "th2agent.routers.rag.rag_manager.get_scope",
+            "apowerb.routers.rag.rag_manager.get_scope",
             new_callable=AsyncMock,
             return_value=None,
         ):

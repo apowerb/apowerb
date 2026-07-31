@@ -21,7 +21,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.routers import health as health_module
+from apowerb.routers import health as health_module
 
 
 def _build_app() -> FastAPI:

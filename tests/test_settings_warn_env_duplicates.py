@@ -35,14 +35,14 @@ def _write_env(tmp_path: Path, content: str) -> Path:
 
 class TestDuplicateDetection:
     def test_single_duplicate_emits_one_warning(self, tmp_path):
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
             "FOO=bar\nBAZ=qux\nFOO=other\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         assert logger.warning.call_count == 1
@@ -54,14 +54,14 @@ class TestDuplicateDetection:
         assert "1, 3" in args  # the line list
 
     def test_multiple_distinct_duplicates_each_warn(self, tmp_path):
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
             "FOO=1\nBAR=1\nFOO=2\nBAR=2\nQUX=1\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         assert logger.warning.call_count == 2
@@ -69,14 +69,14 @@ class TestDuplicateDetection:
         assert warned_keys == {"FOO", "BAR"}
 
     def test_no_duplicate_no_warning(self, tmp_path):
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
             "FOO=1\nBAR=2\nQUX=3\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         logger.warning.assert_not_called()
@@ -84,9 +84,9 @@ class TestDuplicateDetection:
     def test_missing_file_is_silent(self, tmp_path):
         """Production deployments often set every variable via the process
         env (no .env on disk). The helper must be a no-op then."""
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(tmp_path / "does-not-exist"))
 
         logger.warning.assert_not_called()
@@ -99,7 +99,7 @@ class TestDuplicateDetection:
 
 class TestEnvParsingTolerance:
     def test_comments_and_blanks_are_ignored(self, tmp_path):
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
@@ -110,7 +110,7 @@ class TestEnvParsingTolerance:
             "FOO=baz\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         # FOO is on lines 3 and 5 — comments / blanks must NOT shift the count
@@ -119,14 +119,14 @@ class TestEnvParsingTolerance:
         assert "3, 5" in args
 
     def test_export_prefix_is_stripped(self, tmp_path):
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
             "export FOO=1\nFOO=2\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         assert logger.warning.call_count == 1
@@ -136,14 +136,14 @@ class TestEnvParsingTolerance:
         """A mix of ``"FOO"=bar`` and ``FOO=baz`` must still trigger the
         duplicate warning — review feedback after the original PR
         otherwise let this through silently."""
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
             '"FOO"=1\nFOO=2\n',
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         assert logger.warning.call_count == 1
@@ -151,14 +151,14 @@ class TestEnvParsingTolerance:
         assert "FOO" in logger.warning.call_args[0][1:]
 
     def test_single_quoted_keys_normalise_to_unquoted(self, tmp_path):
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
             "'FOO'=1\nFOO=2\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         assert logger.warning.call_count == 1
@@ -167,20 +167,20 @@ class TestEnvParsingTolerance:
     def test_quoted_value_with_equals_does_not_split_key(self, tmp_path):
         """``FOO="a=b"`` must NOT be parsed as key ``"a`` — the value side
         keeps everything past the first ``=``."""
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
             'FOO="a=b"\nBAR=1\n',
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         logger.warning.assert_not_called()
 
     def test_lines_without_equals_are_ignored(self, tmp_path):
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
@@ -189,14 +189,14 @@ class TestEnvParsingTolerance:
             "FOO=2\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         assert logger.warning.call_count == 1
 
     def test_value_with_equals_is_handled(self, tmp_path):
         """A value containing ``=`` must not look like a duplicate of the key."""
-        from th2agent.configs.settings import _warn_duplicate_env_keys
+        from apowerb.configs.settings import _warn_duplicate_env_keys
 
         env = _write_env(
             tmp_path,
@@ -204,7 +204,7 @@ class TestEnvParsingTolerance:
             "OTHER=plain\n",
         )
 
-        with patch("th2agent.configs.settings._logger") as logger:
+        with patch("apowerb.configs.settings._logger") as logger:
             _warn_duplicate_env_keys(str(env))
 
         logger.warning.assert_not_called()
@@ -218,7 +218,7 @@ class TestEnvParsingTolerance:
 class TestGetSettingsWiring:
     def test_get_settings_invokes_warn_helper(self, tmp_path, monkeypatch):
         """Boot path must run the duplicate scan."""
-        from th2agent.configs import settings as settings_mod
+        from apowerb.configs import settings as settings_mod
 
         # Make sure get_settings actually re-runs (it's lru_cached).
         settings_mod.get_settings.cache_clear()

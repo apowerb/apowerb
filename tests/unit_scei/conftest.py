@@ -17,7 +17,7 @@ def pytest_configure(config):
     mock_store.tool_config_table = MagicMock()
     mock_store.engine = MagicMock()
 
-    # Pre-populate sys.modules so th2agent.tools_store.tools_helpers doesn't connect
+    # Pre-populate sys.modules so apowerb.tools_store.tools_helpers doesn't connect
     import sys
 
     mock_tool_config_mod = MagicMock()
@@ -30,8 +30,8 @@ def pytest_configure(config):
     mock_database = MagicMock()
     mock_database.make_database_tools = MagicMock(return_value=[])
 
-    sys.modules.setdefault("th2agent.tools_store.tool_config", mock_tool_config_mod)
-    sys.modules.setdefault("th2agent.tools_store.tools_helpers", mock_tools_helpers)
+    sys.modules.setdefault("apowerb.tools_store.tool_config", mock_tool_config_mod)
+    sys.modules.setdefault("apowerb.tools_store.tools_helpers", mock_tools_helpers)
     sys.modules.setdefault(
-        "th2agent.tools_store.portfolio.database", mock_database
+        "apowerb.tools_store.portfolio.database", mock_database
     )

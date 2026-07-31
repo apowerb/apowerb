@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from th2agent.sqlgen.generator import extract_sql
-from th2agent.sqlgen.safety import validate_sql_safety
-from th2agent.sqlgen.schema_format import build_schema_prompt, compact_table_line
-from th2agent.sqlgen.table_selection import score_and_order_tables
+from apowerb.sqlgen.generator import extract_sql
+from apowerb.sqlgen.safety import validate_sql_safety
+from apowerb.sqlgen.schema_format import build_schema_prompt, compact_table_line
+from apowerb.sqlgen.table_selection import score_and_order_tables
 
 
 def _schema():

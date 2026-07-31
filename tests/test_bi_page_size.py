@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from th2agent.bi.data.schema import DataRequest
+from apowerb.bi.data.schema import DataRequest
 
 
 class TestDataRequestPageSize:

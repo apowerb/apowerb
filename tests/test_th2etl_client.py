@@ -1,5 +1,5 @@
 """Unit tests for the th2etl orchestrator client. Loaded by file path so the
-heavy th2agent package is not imported; only `requests` is needed (mocked)."""
+heavy apowerb package is not imported; only `requests` is needed (mocked)."""
 from __future__ import annotations
 
 import importlib.util
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-_MOD_PATH = Path(__file__).resolve().parents[1] / "src" / "th2agent" / "scheduler" / "th2etl_client.py"
+_MOD_PATH = Path(__file__).resolve().parents[1] / "src" / "apowerb" / "scheduler" / "th2etl_client.py"
 _spec = importlib.util.spec_from_file_location("th2etl_client", _MOD_PATH)
 th2etl_client = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(th2etl_client)

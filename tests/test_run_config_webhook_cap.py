@@ -31,7 +31,7 @@ class TestWebhookPathCapped:
         Le wrapper est SYNC (comme Runner.run_async) et injecte run_config
         dans les kwargs avant de deleguer au mock original.
         """
-        from th2agent.core.agent_helpers.run_config_patch import patch_runner_run_async
+        from apowerb.core.agent_helpers.run_config_patch import patch_runner_run_async
 
         fake_runner = MagicMock()
         captured_kwargs = {}
@@ -77,7 +77,7 @@ class TestWebhookPathCapped:
 
     def test_existing_run_config_not_overwritten(self):
         """Si run_async est appele avec un run_config explicite, il n'est pas ecrase."""
-        from th2agent.core.agent_helpers.run_config_patch import patch_runner_run_async
+        from apowerb.core.agent_helpers.run_config_patch import patch_runner_run_async
         from google.adk.agents.run_config import RunConfig
 
         fake_runner = MagicMock()
@@ -120,7 +120,7 @@ class TestWebhookPathCapped:
 
     def test_patch_runner_run_async_importable(self):
         """patch_runner_run_async est exportee depuis run_config_patch."""
-        import th2agent.core.agent_helpers.run_config_patch as m
+        import apowerb.core.agent_helpers.run_config_patch as m
         assert hasattr(m, "patch_runner_run_async"), (
             "patch_runner_run_async manquante dans run_config_patch"
         )

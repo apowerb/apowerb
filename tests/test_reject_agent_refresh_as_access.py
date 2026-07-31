@@ -17,10 +17,10 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from jose import jwt
 
-from th2agent.auth.dependencies import get_current_user
-from th2agent.configs.settings import get_settings
-from th2agent.helpers.database import get_db
-from th2agent.main import ADKAuthMiddleware
+from apowerb.auth.dependencies import get_current_user
+from apowerb.configs.settings import get_settings
+from apowerb.helpers.database import get_db
+from apowerb.main import ADKAuthMiddleware
 
 
 USER_EMAIL = "alice@example.com"

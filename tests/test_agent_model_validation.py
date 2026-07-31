@@ -5,7 +5,7 @@ inexistant) etait accepte en base puis levait litellm.BadRequestError "LLM
 Provider NOT provided" a CHAQUE tour -> agent muet. On valide a l'ecriture.
 """
 import pytest
-from th2agent.core.agent_helpers.llm_model_builder import validate_agent_model
+from apowerb.core.agent_helpers.llm_model_builder import validate_agent_model
 
 
 def test_known_providers_pass():

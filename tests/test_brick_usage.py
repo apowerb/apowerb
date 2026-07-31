@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[1]
-NOYAU = RACINE / "src" / "th2agent"
+NOYAU = RACINE / "src" / "apowerb"
 
 
 class TestLeNoyauNeConnaitPlusLaBrique:
@@ -55,7 +55,7 @@ class TestLeNoyauNeConnaitPlusLaBrique:
 
     def test_le_chainage_de_callbacks_reste_au_noyau(self):
         """Plomberie ADK générique — pas une fonctionnalité vendue."""
-        from th2agent.core.agent_helpers.callback_chain import (
+        from apowerb.core.agent_helpers.callback_chain import (
             chain_after_model_callbacks,
         )
 
@@ -64,7 +64,7 @@ class TestLeNoyauNeConnaitPlusLaBrique:
     def test_le_noyau_garde_la_table_llm_usage(self):
         """Même arbitrage que les colonnes ``mfa_*`` : inerte sans la brique,
         et la sortir imposerait de découper les migrations pour rien."""
-        from th2agent.models import LlmUsage
+        from apowerb.models import LlmUsage
 
         assert LlmUsage.__tablename__ == "llm_usage"
 
@@ -72,16 +72,16 @@ class TestLeNoyauNeConnaitPlusLaBrique:
 class TestSansBriqueToutPasse:
     def test_aucune_garde_donc_aucun_plafond(self):
         """L'offre open source annonce des quotas illimités."""
-        from th2agent.core.extensions.registry import ExtensionRegistry
+        from apowerb.core.extensions.registry import ExtensionRegistry
 
         assert ExtensionRegistry().run_guards() == []
 
     def test_aucun_observateur_donc_aucune_comptabilisation(self):
-        from th2agent.core.extensions.registry import ExtensionRegistry
+        from apowerb.core.extensions.registry import ExtensionRegistry
 
         assert ExtensionRegistry().model_observers() == []
 
     def test_aucun_crochet_de_demarrage(self):
-        from th2agent.core.extensions.registry import ExtensionRegistry
+        from apowerb.core.extensions.registry import ExtensionRegistry
 
         assert ExtensionRegistry().bootstrap_hooks() == []

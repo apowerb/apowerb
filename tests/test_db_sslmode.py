@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-NOYAU = Path(__file__).resolve().parents[1] / "src" / "th2agent"
+NOYAU = Path(__file__).resolve().parents[1] / "src" / "apowerb"
 
 
 def test_aucun_sslmode_en_dur_dans_le_noyau():
@@ -32,13 +32,13 @@ def test_aucun_sslmode_en_dur_dans_le_noyau():
 
 def test_le_defaut_reste_require():
     """Aucun deploiement existant ne change de comportement."""
-    from th2agent.configs.settings import Settings
+    from apowerb.configs.settings import Settings
 
     assert Settings.model_fields["db_sslmode"].default == "require"
 
 
 def test_le_reglage_est_honore(monkeypatch):
-    from th2agent.configs.settings import get_settings
+    from apowerb.configs.settings import get_settings
 
     monkeypatch.setattr(get_settings(), "db_sslmode", "disable", raising=False)
     assert get_settings().db_sslmode == "disable"

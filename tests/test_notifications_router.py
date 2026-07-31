@@ -86,9 +86,9 @@ def _build_app(
     user_id: int | None = USER_A_ID,
     email: str | None = USER_A_EMAIL,
 ):
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
-    from th2agent.routers.notifications import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
+    from apowerb.routers.notifications import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api")

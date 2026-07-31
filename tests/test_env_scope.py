@@ -57,13 +57,13 @@ def _cleanup_env():
 
 class TestEnvScopeBasic:
     async def test_sets_vars_inside_scope(self):
-        from th2agent.helpers.env_scope import env_scope
+        from apowerb.helpers.env_scope import env_scope
 
         async with env_scope({"B6_TEST_KEY": "secret-value"}):
             assert os.environ.get("B6_TEST_KEY") == "secret-value"
 
     async def test_removes_vars_after_scope(self):
-        from th2agent.helpers.env_scope import env_scope
+        from apowerb.helpers.env_scope import env_scope
 
         async with env_scope({"B6_TEST_KEY": "secret-value"}):
             pass
@@ -71,7 +71,7 @@ class TestEnvScopeBasic:
         assert "B6_TEST_KEY" not in os.environ
 
     async def test_restores_preexisting_value(self):
-        from th2agent.helpers.env_scope import env_scope
+        from apowerb.helpers.env_scope import env_scope
 
         os.environ["B6_PREEXISTING"] = "original"
         async with env_scope({"B6_PREEXISTING": "overridden"}):
@@ -82,7 +82,7 @@ class TestEnvScopeBasic:
 
 class TestEnvScopeExceptionSafety:
     async def test_cleans_up_on_exception(self):
-        from th2agent.helpers.env_scope import env_scope
+        from apowerb.helpers.env_scope import env_scope
 
         with pytest.raises(RuntimeError, match="boom"):
             async with env_scope({"B6_TEST_KEY": "secret"}):
@@ -99,7 +99,7 @@ class TestEnvScopeConcurrency:
         protected section. We sleep inside the scope to encourage the
         scheduler to interleave.
         """
-        from th2agent.helpers.env_scope import env_scope
+        from apowerb.helpers.env_scope import env_scope
 
         lock = asyncio.Lock()
         observations: dict[str, list[str]] = {"A": [], "B": []}
@@ -126,7 +126,7 @@ class TestEnvScopeConcurrency:
 class TestEnvScopeSkipsEmptyValues:
     async def test_none_value_does_not_set_env_var(self):
         """Passing {"KEY": None} should NOT create an env var set to "None"."""
-        from th2agent.helpers.env_scope import env_scope
+        from apowerb.helpers.env_scope import env_scope
 
         async with env_scope({"B6_TEST_KEY": None}):
             assert "B6_TEST_KEY" not in os.environ

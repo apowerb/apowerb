@@ -2,7 +2,7 @@
 
 import pytest
 
-from th2agent.core.superagents import SUPERAGENT_TEMPLATES
+from apowerb.core.superagents import SUPERAGENT_TEMPLATES
 
 
 def _get_dashboard_template():

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from th2agent.routers.audio_stream import router
+from apowerb.routers.audio_stream import router
 
 
 def _create_app() -> FastAPI:
@@ -29,7 +29,7 @@ class TestDictationMode:
     def test_dictation_mode_rejects_with_error_and_closes(self) -> None:
         app = _create_app()
         client = TestClient(app)
-        with patch("th2agent.routers.audio_stream.jwt") as mock_jwt:
+        with patch("apowerb.routers.audio_stream.jwt") as mock_jwt:
             mock_jwt.decode.return_value = _payload()
             with client.websocket_connect(
                 "/api/audio/ws/s-1?token=valid&mode=dictation"
@@ -43,7 +43,7 @@ class TestDictationMode:
     def test_conversation_mode_is_default(self) -> None:
         app = _create_app()
         client = TestClient(app)
-        with patch("th2agent.routers.audio_stream.jwt") as mock_jwt:
+        with patch("apowerb.routers.audio_stream.jwt") as mock_jwt:
             mock_jwt.decode.return_value = _payload()
             with client.websocket_connect("/api/audio/ws/s-1?token=valid") as ws:
                 ws.send_json({"type": "ping"})
@@ -53,7 +53,7 @@ class TestDictationMode:
     def test_explicit_conversation_mode_behaves_normally(self) -> None:
         app = _create_app()
         client = TestClient(app)
-        with patch("th2agent.routers.audio_stream.jwt") as mock_jwt:
+        with patch("apowerb.routers.audio_stream.jwt") as mock_jwt:
             mock_jwt.decode.return_value = _payload()
             with client.websocket_connect(
                 "/api/audio/ws/s-1?token=valid&mode=conversation"
@@ -75,10 +75,10 @@ class TestLanguagePropagation:
         fake_session.start = AsyncMock()
         fake_session.stop = AsyncMock()
 
-        with patch("th2agent.routers.audio_stream.jwt") as mock_jwt, \
-             patch("th2agent.routers.audio_stream._use_gemini", return_value=True), \
+        with patch("apowerb.routers.audio_stream.jwt") as mock_jwt, \
+             patch("apowerb.routers.audio_stream._use_gemini", return_value=True), \
              patch(
-                 "th2agent.routers.audio_stream.GeminiLiveSession",
+                 "apowerb.routers.audio_stream.GeminiLiveSession",
                  return_value=fake_session,
              ):
             mock_jwt.decode.return_value = _payload()

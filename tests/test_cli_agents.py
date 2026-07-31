@@ -1,4 +1,4 @@
-"""Tests for the ``th2agent agents`` CLI.
+"""Tests for the ``apowerb agents`` CLI.
 
 Live regression 2026-05-12 on SCEI_PROD: ``agents list`` crashed with
 ``psycopg2.ProgrammingError: can't adapt type 'AgentStore'`` because
@@ -15,8 +15,8 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from th2agent.cli.agents import app
-from th2agent.core.agent_main import fetch_agents
+from apowerb.cli.agents import app
+from apowerb.core.agent_main import fetch_agents
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +83,8 @@ def fake_agents():
 class TestCliAgentsList:
     def test_list_without_owner_calls_fetch_with_none(self, fake_agents):
         runner = CliRunner()
-        with patch("th2agent.cli.agents.fetch_agents", return_value=fake_agents) as mock_fetch, \
-             patch("th2agent.cli.agents.get_agent_store"):
+        with patch("apowerb.cli.agents.fetch_agents", return_value=fake_agents) as mock_fetch, \
+             patch("apowerb.cli.agents.get_agent_store"):
             result = runner.invoke(app, ["list"])
         assert result.exit_code == 0, result.output
         # Critical: must call with user_id=None (admin mode), NOT with a
@@ -97,8 +97,8 @@ class TestCliAgentsList:
 
     def test_list_with_owner_filters_to_that_owner(self, fake_agents):
         runner = CliRunner()
-        with patch("th2agent.cli.agents.fetch_agents", return_value=fake_agents[:1]) as mock_fetch, \
-             patch("th2agent.cli.agents.get_agent_store"):
+        with patch("apowerb.cli.agents.fetch_agents", return_value=fake_agents[:1]) as mock_fetch, \
+             patch("apowerb.cli.agents.get_agent_store"):
             result = runner.invoke(app, ["list", "--owner", "com@scei88.fr"])
         assert result.exit_code == 0, result.output
         mock_fetch.assert_called_once_with(user_id="com@scei88.fr")
@@ -110,8 +110,8 @@ class TestCliAgentsList:
         ``agent_id`` / ``agent_name`` — every line read ``ID: N/A``.
         Make sure the printed output now shows the real values."""
         runner = CliRunner()
-        with patch("th2agent.cli.agents.fetch_agents", return_value=fake_agents), \
-             patch("th2agent.cli.agents.get_agent_store"):
+        with patch("apowerb.cli.agents.fetch_agents", return_value=fake_agents), \
+             patch("apowerb.cli.agents.get_agent_store"):
             result = runner.invoke(app, ["list"])
         assert result.exit_code == 0
         out = result.output
@@ -125,8 +125,8 @@ class TestCliAgentsList:
 
     def test_list_empty_db_does_not_crash(self):
         runner = CliRunner()
-        with patch("th2agent.cli.agents.fetch_agents", return_value=[]), \
-             patch("th2agent.cli.agents.get_agent_store"):
+        with patch("apowerb.cli.agents.fetch_agents", return_value=[]), \
+             patch("apowerb.cli.agents.get_agent_store"):
             result = runner.invoke(app, ["list"])
         assert result.exit_code == 0
         assert "No agents found" in result.output
@@ -143,8 +143,8 @@ class TestCliAgentsList:
             captured.update(kwargs)
             return fake_agents
 
-        with patch("th2agent.cli.agents.fetch_agents", side_effect=_capture), \
-             patch("th2agent.cli.agents.get_agent_store"):
+        with patch("apowerb.cli.agents.fetch_agents", side_effect=_capture), \
+             patch("apowerb.cli.agents.get_agent_store"):
             result = runner.invoke(app, ["list"])
         assert result.exit_code == 0
         val = captured.get("user_id", "SENTINEL")

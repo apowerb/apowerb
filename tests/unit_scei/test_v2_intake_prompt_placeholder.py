@@ -36,7 +36,7 @@ def test_intake_placeholder_is_optional_not_a_boot_error():
     """find_unsafe_braces doit classer {intake_pdf_text?} en warning (optionnel),
     PAS en error (qui crasherait le boot quand la cle est absente)."""
     from th2customers.scei.templates.scei_v2 import _INTAKE_PROMPT
-    from th2agent.core.validation.prompt_safety import find_unsafe_braces
+    from apowerb.core.validation.prompt_safety import find_unsafe_braces
     issues = find_unsafe_braces(_INTAKE_PROMPT)
     errors = [i for i in issues if i.level == "error" and "intake_pdf_text" in i.placeholder]
     assert errors == []
