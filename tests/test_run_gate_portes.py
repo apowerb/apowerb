@@ -91,7 +91,7 @@ class TestPortier:
             )
 
         assert not appelee
-        assert any("sans proprietaire" in m for m in caplog.messages), (
+        assert any("no owner" in m for m in caplog.messages), (
             "un run non plafonne faute d'identite doit laisser une trace"
         )
 

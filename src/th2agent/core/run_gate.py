@@ -1,17 +1,17 @@
-"""Passage oblige de tout run d'agent devant les gardes enregistrees.
+"""Mandatory checkpoint for every agent run, in front of the registered guards.
 
-Il existe plusieurs portes d'entree vers un run : le chat (`/api/adk/run`,
-`/api/adk/run_sse`), les runs planifies (Mage/th2etl via `/run_from_jwt` et
-`/run_from_refresh_token`) et les webhooks. Chacune resolvait -- ou oubliait
-de resoudre -- les gardes pour son compte : seules les deux premieres le
-faisaient, les autres passaient au travers.
+There are several entry doors into a run: chat (`/api/adk/run`,
+`/api/adk/run_sse`), scheduled runs (Mage/th2etl via `/run_from_jwt` and
+`/run_from_refresh_token`), and webhooks. Each one used to resolve -- or
+forget to resolve -- the guards on its own: only the first two did, the
+others slipped through.
 
-Ce module est le point unique. Une nouvelle porte doit l'appeler ; un test
-de couverture (`tests/test_run_gate_couverture.py`) relit les sources et
-echoue si un module appelle le runner ADK sans passer par ici.
+This module is the single choke point. Any new door must call it; a
+coverage test (`tests/test_run_gate_couverture.py`) re-reads the sources and
+fails if a module calls the ADK runner without going through here.
 
-Le noyau ne nomme aucune garde : il les demande au registre d'extensions.
-Sans brique installee, la liste est vide et tout passe.
+The core names no guard itself: it asks the extension registry for them.
+With no add-on installed, the list is empty and everything passes through.
 """
 from __future__ import annotations
 
@@ -22,12 +22,11 @@ logger = getLogger(__name__)
 
 
 async def resolve_owner_plan(owner_id: str) -> Optional[str]:
-    """Plan commercial de *owner_id* (son email), ou ``None``.
+    """Commercial plan for *owner_id* (their email), or ``None``.
 
-    Best-effort : les chemins non interactifs (planifie, webhook) n'ont pas
-    d'objet utilisateur sous la main, seulement un identifiant. Une panne de
-    lecture rend ``None``, ce qui fait retomber la garde sur le plafond par
-    defaut -- jamais sur « pas de plafond ».
+    Best-effort: non-interactive paths (scheduled, webhook) don't have a
+    user object at hand, only an identifier. A read failure yields ``None``,
+    which falls back the guard to the default cap -- never to "no cap".
     """
     if not owner_id:
         return None
@@ -38,13 +37,13 @@ async def resolve_owner_plan(owner_id: str) -> Optional[str]:
         from th2agent.models import User
 
         async with sessionmanager.session() as db:
-            resultat = await db.execute(
+            result = await db.execute(
                 select(User.plan).where(User.email == owner_id)
             )
-            return resultat.scalar_one_or_none()
+            return result.scalar_one_or_none()
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "[RUN GATE] plan illisible pour %s: %s", owner_id, exc
+            "[RUN GATE] plan unreadable for %s: %s", owner_id, exc
         )
         return None
 
@@ -52,30 +51,30 @@ async def resolve_owner_plan(owner_id: str) -> Optional[str]:
 async def apply_run_guards(
     *, agent_name: str, owner_id: str, plan: Optional[str]
 ) -> None:
-    """Fait passer un run devant toutes les gardes enregistrees.
+    """Put an agent run through every registered guard.
 
-    Leve ce que leve une garde (typiquement un 402 de quota depasse) : c'est
-    le refus net, avant que quoi que ce soit ne commence.
+    Raises whatever a guard raises (typically a 402 for quota exceeded):
+    that's the hard refusal, before anything even starts.
 
-    ``owner_id`` vide ne fait PAS sauter le controle en silence : il est
-    trace en WARNING. Un plafond commercial doit tomber en marche ouverte
-    plutot que rendre le produit muet, mais l'ouverture doit s'entendre --
-    sinon elle devient le trou suivant.
+    An empty ``owner_id`` does NOT silently skip the check: it is logged
+    as a WARNING. A commercial cap should fail open rather than make the
+    product mute, but the opening must be audible -- otherwise it becomes
+    the next hole.
     """
     from th2agent.core.extensions.registry import registry
 
-    gardes = registry.run_guards()
-    if not gardes:
+    guards = registry.run_guards()
+    if not guards:
         return
 
     if not owner_id:
         logger.warning(
-            "[RUN GATE] run de %s sans proprietaire resolu : %d garde(s) "
-            "non appliquee(s)",
+            "[RUN GATE] run for %s with no owner resolved: %d guard(s) "
+            "not applied",
             agent_name,
-            len(gardes),
+            len(guards),
         )
         return
 
-    for garde in gardes:
-        await garde(agent_name, owner_id=owner_id, plan=plan)
+    for guard in guards:
+        await guard(agent_name, owner_id=owner_id, plan=plan)
