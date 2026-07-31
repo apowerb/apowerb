@@ -8,9 +8,9 @@ authors = [
 ]
 license = "MIT"
 license-files = ["LICENSE"]
-# 3.12 est le vrai plancher : le code imbrique des guillemets identiques
-# dans une f-string (PEP 701), rejete par 3.11. Verifie en compilant tout
-# src/ sur 3.11 (echec) puis 3.12 et 3.13 (OK).
+# 3.12 is the real floor: the code nests identical quotes inside an f-string
+# (PEP 701), which 3.11 rejects. Checked by compiling all of src/ on 3.11
+# (fails) then on 3.12 and 3.13 (both fine).
 requires-python = ">=3.12"
 keywords = ["agents", "adk", "llm", "rag", "text-to-sql", "fastapi", "postgresql", "orchestration"]
 classifiers = [
@@ -71,6 +71,12 @@ dependencies = [
     "pyodbc>=5.1.0",
     "aioodbc>=0.5.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/apowerb/apowerb"
+Repository = "https://github.com/apowerb/apowerb"
+Issues = "https://github.com/apowerb/apowerb/issues"
+Changelog = "https://github.com/apowerb/apowerb/releases"
 
 [project.optional-dependencies]
 s3 = [
