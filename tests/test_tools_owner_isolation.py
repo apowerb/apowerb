@@ -45,7 +45,7 @@ def _test_encrypt_key(monkeypatch):
     Restores the original Fernet instance on teardown so later tests that
     rely on the real encrypt_key keep working.
     """
-    from th2agent.helpers import encryptor as enc_mod
+    from apowerb.helpers import encryptor as enc_mod
 
     original_fernet = enc_mod.fernet
     key = Fernet.generate_key().decode()
@@ -93,7 +93,7 @@ def fake_store():
 
     # Prevent the real ToolConfigStore from connecting to Postgres at import
     # time: stub `create_table` before the helpers module is loaded/reloaded.
-    from th2agent.tools_store import tool_config as tc_mod
+    from apowerb.tools_store import tool_config as tc_mod
 
     engine, table = _build_sqlite_store()
 
@@ -123,7 +123,7 @@ def fake_store():
 
     with patch.object(tc_mod.ToolConfigStore, "create_table", lambda self: None):
         # Import helpers once (module is cached after first test)
-        from th2agent.tools_store import tools_helpers as th  # noqa: WPS433
+        from apowerb.tools_store import tools_helpers as th  # noqa: WPS433
 
         fake = _FakeStore()
         with patch.object(th, "tool_config_store", fake):
@@ -132,7 +132,7 @@ def fake_store():
 
 def _insert(engine, table, owner_id: str, name: str, params: dict | None = None) -> int:
     """Insert a row and return its ID. Params are stored already-encrypted."""
-    from th2agent.helpers.encryptor import encrypt_value_in_dict
+    from apowerb.helpers.encryptor import encrypt_value_in_dict
 
     if params is None:
         params = {}

@@ -1,6 +1,6 @@
 """Unit tests for select_write_config — deps injected, no DB, no real imports."""
 
-from th2agent.core.db.write_config import select_write_config
+from apowerb.core.db.write_config import select_write_config
 
 _PARSE = lambda v: set((v or "").split(","))
 

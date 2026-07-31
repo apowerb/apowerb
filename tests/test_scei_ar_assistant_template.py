@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from th2agent.core.superagents import SUPERAGENT_TEMPLATES
+from apowerb.core.superagents import SUPERAGENT_TEMPLATES
 
 
 REQUIRED_FIELDS = [

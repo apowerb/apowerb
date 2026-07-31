@@ -23,10 +23,10 @@ from pathlib import Path
 
 import pytest
 
-from th2agent.configs import paths
-from th2agent.configs.settings import get_settings
+from apowerb.configs import paths
+from apowerb.configs.settings import get_settings
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "th2agent"
+SRC = Path(__file__).resolve().parents[1] / "src" / "apowerb"
 
 # Le module qui définit les chemins a évidemment le droit de nommer le dossier.
 FICHIERS_AUTORISÉS = {"configs/paths.py", "configs/settings.py"}
@@ -58,7 +58,7 @@ class TestAucunCheminEnDur:
         sites = _sites_en_dur()
         assert not sites, (
             "Ces lignes construisent un chemin d'upload sans passer par "
-            "th2agent.configs.paths — utiliser uploads_dir(), agent_upload_dir() "
+            "apowerb.configs.paths — utiliser uploads_dir(), agent_upload_dir() "
             "ou scope_upload_dir() :\n  " + "\n  ".join(sites)
         )
 
@@ -108,7 +108,7 @@ class TestLeLevierEstHonoré:
         moment de l'import — donc jamais en CI, jamais en déploiement, et
         systématiquement chez lui.
         """
-        from th2agent.core import knowledge_map
+        from apowerb.core import knowledge_map
 
         monkeypatch.setattr(get_settings(), "runtime_root", str(tmp_path / "a"), raising=False)
         premier = knowledge_map._map_path("agent1")
@@ -129,14 +129,14 @@ class TestLesLecteursEtLesÉcrivainsSAccordent:
 
     def test_le_webhook_dépose_là_où_l_outil_de_lecture_cherche(self):
         """Symétrie exacte : ces deux-là se sont déjà désalignés en prod."""
-        from th2agent.core import knowledge_map
+        from apowerb.core import knowledge_map
 
         attendu = self.racine / "uploads" / "agent7"
         assert paths.agent_upload_dir(7) == attendu
         assert Path(knowledge_map._map_path("agent7")).parent == attendu
 
     def test_le_stockage_local_écrit_sous_la_racine_configurée(self, monkeypatch):
-        from th2agent.storage.storage_service import StorageService
+        from apowerb.storage.storage_service import StorageService
 
         monkeypatch.setattr(get_settings(), "storage_mode", "local", raising=False)
 
@@ -153,8 +153,8 @@ class TestLesLecteursEtLesÉcrivainsSAccordent:
         et l'autre par ``./uploads``, l'agent recevait « File not found » sur un
         fichier qu'il venait lui-même de produire, avec une racine configurée.
         """
-        from th2agent.core.agent_helpers.read_file_tool import _make_read_uploaded_file
-        from th2agent.core.agent_helpers.tool_factories import _make_create_downloadable_file
+        from apowerb.core.agent_helpers.read_file_tool import _make_read_uploaded_file
+        from apowerb.core.agent_helpers.tool_factories import _make_create_downloadable_file
 
         monkeypatch.setattr(get_settings(), "storage_mode", "local", raising=False)
 

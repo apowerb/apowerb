@@ -1,5 +1,5 @@
 [project]
-name = "th2agent"
+name = "apowerb"
 version = "0.1.1"
 description = "Agentic framework for building and deploying AI agents with flexible orchestration, custom tool integration, RAG, Text-to-SQL, webhooks, and billing."
 readme = "README.md"
@@ -80,10 +80,10 @@ s3 = [
 ]
 
 [project.scripts]
-# Pointe la CLI Typer, pas ``th2agent:main`` : cette cible était morte
-# (``main()`` vit dans th2agent.main, jamais réexporté dans le __init__),
+# Pointe la CLI Typer, pas ``apowerb:main`` : cette cible était morte
+# (``main()`` vit dans apowerb.main, jamais réexporté dans le __init__),
 # et elle aurait chargé tout le serveur pour lancer une commande.
-th2agent = "th2agent.cli.main:app"
+apowerb = "apowerb.cli.main:app"
 
 [build-system]
 requires = ["uv_build>=0.8.14,<0.9.0"]

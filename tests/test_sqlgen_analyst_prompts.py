@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from th2agent.sqlgen.analyst import InvestigationStep
-from th2agent.sqlgen.analyst_prompts import (
+from apowerb.sqlgen.analyst import InvestigationStep
+from apowerb.sqlgen.analyst_prompts import (
     build_interpreter_messages,
     build_planner_messages,
     parse_interpreter_response,

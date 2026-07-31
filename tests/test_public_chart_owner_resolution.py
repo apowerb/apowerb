@@ -17,8 +17,8 @@ OWNER = "creator@example.com"
 
 def _build_app():
     """Include only the data router with get_db overridden to a dummy session."""
-    from th2agent.bi.data.router import router as data_router
-    from th2agent.helpers.database import get_db
+    from apowerb.bi.data.router import router as data_router
+    from apowerb.helpers.database import get_db
 
     app = FastAPI()
     app.include_router(data_router, prefix="/api/v1")
@@ -38,8 +38,8 @@ def _fake_chart(chart_id: str = "chart1", created_by: str | None = OWNER):
 
 
 def _fake_data_response():
-    from th2agent.bi.data.schema import ChartDataResponse, PageMeta
-    from th2agent.bi.charts.core import ChartType
+    from apowerb.bi.data.schema import ChartDataResponse, PageMeta
+    from apowerb.bi.charts.core import ChartType
 
     return ChartDataResponse(
         chart_id="chart1",
@@ -61,9 +61,9 @@ class TestPublicChartOwnerResolution:
         mock_get = AsyncMock(return_value=fake_chart)
 
         with patch(
-            "th2agent.bi.charts.service.ChartService"
+            "apowerb.bi.charts.service.ChartService"
         ) as MockChartSvc, patch(
-            "th2agent.bi.data.service.ChartDataService"
+            "apowerb.bi.data.service.ChartDataService"
         ) as MockDataSvc:
             MockChartSvc.return_value.get = mock_get
             MockDataSvc.return_value.fetch = mock_fetch
@@ -85,9 +85,9 @@ class TestPublicChartOwnerResolution:
         mock_get = AsyncMock(return_value=fake_chart)
 
         with patch(
-            "th2agent.bi.charts.service.ChartService"
+            "apowerb.bi.charts.service.ChartService"
         ) as MockChartSvc, patch(
-            "th2agent.bi.data.service.ChartDataService"
+            "apowerb.bi.data.service.ChartDataService"
         ) as MockDataSvc:
             MockChartSvc.return_value.get = mock_get
             MockDataSvc.return_value.fetch = mock_fetch
@@ -100,13 +100,13 @@ class TestPublicChartOwnerResolution:
         assert kwargs.get("user_id") is None
 
     def test_public_endpoint_returns_404_when_chart_missing(self):
-        from th2agent.bi.charts.service import ChartNotFoundError
+        from apowerb.bi.charts.service import ChartNotFoundError
 
         app = _build_app()
 
         mock_get = AsyncMock(side_effect=ChartNotFoundError("nope"))
 
-        with patch("th2agent.bi.charts.service.ChartService") as MockChartSvc:
+        with patch("apowerb.bi.charts.service.ChartService") as MockChartSvc:
             MockChartSvc.return_value.get = mock_get
 
             client = TestClient(app)

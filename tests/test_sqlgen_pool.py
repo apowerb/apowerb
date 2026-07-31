@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import types
 
-from th2agent.tools_store.portfolio import text_to_sql as tts
+from apowerb.tools_store.portfolio import text_to_sql as tts
 
 
 def _state(**kw):

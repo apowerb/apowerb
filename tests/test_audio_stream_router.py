@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.routers.audio_stream import router
+from apowerb.routers.audio_stream import router
 
 
 def _create_app() -> FastAPI:
@@ -38,7 +38,7 @@ class TestWebSocketAuth:
         app = _create_app()
         client = TestClient(app)
 
-        with patch("th2agent.routers.audio_stream.jwt") as mock_jwt:
+        with patch("apowerb.routers.audio_stream.jwt") as mock_jwt:
             mock_jwt.decode.return_value = _make_token_payload()
             with client.websocket_connect("/api/audio/ws/session-1?token=valid-jwt") as ws:
                 ws.send_json({"type": "ping"})
@@ -54,7 +54,7 @@ class TestWebSocketProtocol:
     def patched_app(self):
         app = _create_app()
         client = TestClient(app)
-        with patch("th2agent.routers.audio_stream.jwt") as mock_jwt:
+        with patch("apowerb.routers.audio_stream.jwt") as mock_jwt:
             mock_jwt.decode.return_value = _make_token_payload()
             yield client
 
@@ -72,7 +72,7 @@ class TestWebSocketProtocol:
             assert "Unknown" in resp["message"] or "unknown" in resp["message"]
 
     def test_start_listening_returns_confirmation(self, patched_app: TestClient) -> None:
-        with patch("th2agent.routers.audio_stream.FallbackSTT") as mock_stt_cls:
+        with patch("apowerb.routers.audio_stream.FallbackSTT") as mock_stt_cls:
             mock_stt = AsyncMock()
             mock_stt_cls.return_value = mock_stt
             with self._connect(patched_app) as ws:
@@ -85,7 +85,7 @@ class TestWebSocketProtocol:
                 assert resp["type"] == "listening_started"
 
     def test_stop_listening_returns_confirmation(self, patched_app: TestClient) -> None:
-        with patch("th2agent.routers.audio_stream.FallbackSTT") as mock_stt_cls:
+        with patch("apowerb.routers.audio_stream.FallbackSTT") as mock_stt_cls:
             mock_stt = AsyncMock()
             mock_stt_cls.return_value = mock_stt
             with self._connect(patched_app) as ws:
@@ -101,7 +101,7 @@ class TestWebSocketProtocol:
                 assert resp["type"] == "listening_stopped"
 
     def test_start_speaking_triggers_tts(self, patched_app: TestClient) -> None:
-        with patch("th2agent.routers.audio_stream.FallbackTTS") as mock_tts_cls:
+        with patch("apowerb.routers.audio_stream.FallbackTTS") as mock_tts_cls:
             mock_tts = AsyncMock()
             mock_tts.stream_tts = AsyncMock()
             mock_tts_cls.return_value = mock_tts

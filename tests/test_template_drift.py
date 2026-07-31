@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from th2agent.core.superagents import (
+from apowerb.core.superagents import (
     _TEMPLATE_HASH_FIELDS,
     _TEMPLATE_RESYNC_FIELDS,
     compute_template_hash,
@@ -54,7 +54,7 @@ def test_hash_changes_when_instruction_changes():
     original = compute_template_hash("scei_ar_assistant")
 
     # Patch the in-memory list ; module under test re-reads it on each call.
-    from th2agent.core.superagents import templates as tpl_mod
+    from apowerb.core.superagents import templates as tpl_mod
 
     edited = []
     for t in tpl_mod.SUPERAGENT_TEMPLATES:
@@ -64,7 +64,7 @@ def test_hash_changes_when_instruction_changes():
 
     with patch.object(tpl_mod, "SUPERAGENT_TEMPLATES", edited):
         # The package re-exports the list via __init__; patch that too.
-        from th2agent.core import superagents as pkg
+        from apowerb.core import superagents as pkg
 
         with patch.object(pkg, "SUPERAGENT_TEMPLATES", edited):
             new_hash = compute_template_hash("scei_ar_assistant")
@@ -75,8 +75,8 @@ def test_hash_changes_when_instruction_changes():
 def test_hash_changes_when_tools_reordered():
     """Order of ``agent_tools`` matters (drives priority in
     load_agent_tools_functions). Reordering must surface as drift."""
-    from th2agent.core import superagents as pkg
-    from th2agent.core.superagents import templates as tpl_mod
+    from apowerb.core import superagents as pkg
+    from apowerb.core.superagents import templates as tpl_mod
 
     original = compute_template_hash("scei_ar_assistant")
 
@@ -96,8 +96,8 @@ def test_hash_changes_when_tools_reordered():
 def test_hash_does_not_depend_on_excluded_fields():
     """Mutating a non-hash field (description, agent_name) must NOT change
     the hash — otherwise every cosmetic edit would force users to re-sync."""
-    from th2agent.core import superagents as pkg
-    from th2agent.core.superagents import templates as tpl_mod
+    from apowerb.core import superagents as pkg
+    from apowerb.core.superagents import templates as tpl_mod
 
     original = compute_template_hash("scei_ar_assistant")
 
@@ -209,8 +209,8 @@ def test_resync_preserves_user_tool_configs(monkeypatch, tmp_path):
     tool_config14 (PMI) + tool_config15 (SuiviAR), leaving the SCEI agent
     without any DB tool. These configs are user-owned credentials — they
     must survive a template resync."""
-    from th2agent.core import agent_main
-    from th2agent.core.agent_helpers import (  # noqa: F401  (imported for side effects)
+    from apowerb.core import agent_main
+    from apowerb.core.agent_helpers import (  # noqa: F401  (imported for side effects)
         agent_utils,
     )
 

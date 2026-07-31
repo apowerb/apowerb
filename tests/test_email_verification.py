@@ -7,8 +7,8 @@ import pytest
 from fastapi import Response
 from jose import jwt
 
-from th2agent.auth import exceptions, service
-from th2agent.helpers.security import get_algorithm, get_secret_key, get_password_hash
+from apowerb.auth import exceptions, service
+from apowerb.helpers.security import get_algorithm, get_secret_key, get_password_hash
 
 
 class _FakeUser:
@@ -98,7 +98,7 @@ async def test_verify_email_token_unknown_user():
 @pytest.mark.asyncio
 async def test_send_verification_unknown_email_is_silent(monkeypatch):
     sent = AsyncMock()
-    monkeypatch.setattr("th2agent.helpers.system_mailer.send_system_email", sent)
+    monkeypatch.setattr("apowerb.helpers.system_mailer.send_system_email", sent)
     await service.send_verification_email("ghost@example.com", _FakeSession(None))
     sent.assert_not_awaited()
 
@@ -106,7 +106,7 @@ async def test_send_verification_unknown_email_is_silent(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_verification_already_verified_is_silent(monkeypatch):
     sent = AsyncMock()
-    monkeypatch.setattr("th2agent.helpers.system_mailer.send_system_email", sent)
+    monkeypatch.setattr("apowerb.helpers.system_mailer.send_system_email", sent)
     await service.send_verification_email("alice@example.com", _FakeSession(_FakeUser(email_verified=True)))
     sent.assert_not_awaited()
 
@@ -114,7 +114,7 @@ async def test_send_verification_already_verified_is_silent(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_verification_unverified_sends(monkeypatch):
     sent = AsyncMock()
-    monkeypatch.setattr("th2agent.helpers.system_mailer.send_system_email", sent)
+    monkeypatch.setattr("apowerb.helpers.system_mailer.send_system_email", sent)
     await service.send_verification_email("alice@example.com", _FakeSession(_FakeUser(email_verified=False)))
     sent.assert_awaited_once()
     assert sent.call_args.kwargs["to"] == "alice@example.com"

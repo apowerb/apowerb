@@ -15,7 +15,7 @@ import logging
 
 import pytest
 
-from th2agent.tools_store.tools_helpers import (
+from apowerb.tools_store.tools_helpers import (
     _LEGACY_TOOL_RENAMES,
     load_agent_tools_functions,
 )
@@ -34,14 +34,14 @@ def test_legacy_map_contains_renamed_tools():
 
 def test_onedrive_read_tool_resolves_under_new_name():
     """The renamed function must be discoverable in the portfolio module."""
-    from th2agent.tools_store.portfolio import onedrive_read
+    from apowerb.tools_store.portfolio import onedrive_read
 
     assert hasattr(onedrive_read, "tool_read_onedrive_file")
     assert not hasattr(onedrive_read, "tool_read_file")
 
 
 def test_google_drive_tool_resolves_under_new_name():
-    from th2agent.tools_store.portfolio import google_drive
+    from apowerb.tools_store.portfolio import google_drive
 
     assert hasattr(google_drive, "tool_read_drive_file")
     assert not hasattr(google_drive, "tool_read_file")
@@ -49,7 +49,7 @@ def test_google_drive_tool_resolves_under_new_name():
 
 def test_legacy_name_is_resolved_with_warning(caplog):
     """An agent referencing the old name still loads the tool, with a WARNING."""
-    caplog.set_level(logging.WARNING, logger="th2agent.tools_store.tools_helpers")
+    caplog.set_level(logging.WARNING, logger="apowerb.tools_store.tools_helpers")
 
     names, funcs = load_agent_tools_functions(
         ["onedrive_read.tool_read_file"],
@@ -70,7 +70,7 @@ def test_legacy_name_is_resolved_with_warning(caplog):
 
 
 def test_legacy_google_drive_resolves(caplog):
-    caplog.set_level(logging.WARNING, logger="th2agent.tools_store.tools_helpers")
+    caplog.set_level(logging.WARNING, logger="apowerb.tools_store.tools_helpers")
 
     names, funcs = load_agent_tools_functions(
         ["google_drive.tool_read_file"],
@@ -85,7 +85,7 @@ def test_legacy_google_drive_resolves(caplog):
 def test_basic_tool_read_file_unchanged():
     """``basic.tool_read_file`` keeps its name — only the OneDrive/Drive
     versions were renamed (path-based local read stays canonical)."""
-    from th2agent.tools_store.portfolio import basic
+    from apowerb.tools_store.portfolio import basic
 
     assert hasattr(basic, "tool_read_file")
     names, funcs = load_agent_tools_functions(

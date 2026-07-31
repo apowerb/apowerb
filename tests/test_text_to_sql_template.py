@@ -10,7 +10,7 @@ from __future__ import annotations
 
 
 def _template():
-    from th2agent.core.superagents.templates.data import DATA_TEMPLATES
+    from apowerb.core.superagents.templates.data import DATA_TEMPLATES
 
     for t in DATA_TEMPLATES:
         if t["template_id"] == "text_to_sql_agent":

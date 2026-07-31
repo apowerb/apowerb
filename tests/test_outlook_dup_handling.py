@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import inspect
 
-from th2agent.routers.webhook_handlers import outlook as handler
+from apowerb.routers.webhook_handlers import outlook as handler
 
 
 def test_handler_captures_subscription_id_locally_before_insert():

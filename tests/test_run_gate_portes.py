@@ -18,11 +18,11 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from th2agent.core import run_gate
-from th2agent.core.extensions.registry import registry
-from th2agent.helpers.database import Base
-from th2agent.models import User
-from th2agent.routers.webhook_handlers import _common
+from apowerb.core import run_gate
+from apowerb.core.extensions.registry import registry
+from apowerb.helpers.database import Base
+from apowerb.models import User
+from apowerb.routers.webhook_handlers import _common
 
 
 @pytest.fixture

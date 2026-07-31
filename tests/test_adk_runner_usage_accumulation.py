@@ -2,12 +2,12 @@
 
 The 'usage_metadata' dict on events uses snake_case keys (confirmed by
 reading the existing prompt_token_count / candidates_token_count
-accumulation in th2agent.core.adk_runner) — unlike part-level keys such
+accumulation in apowerb.core.adk_runner) — unlike part-level keys such
 as 'functionCall' / 'functionResponse', which are camelCase.
 """
 from __future__ import annotations
 
-from th2agent.core.adk_runner import parse_session_to_trace
+from apowerb.core.adk_runner import parse_session_to_trace
 
 
 def _event(usage_metadata=None, author="agent1", timestamp=1.0):

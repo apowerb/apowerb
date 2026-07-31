@@ -20,9 +20,9 @@ from __future__ import annotations
 import pytest
 from jose import jwt
 
-from th2agent.configs.settings import get_settings
-from th2agent.helpers import security
-from th2agent.helpers.security import create_access_token, get_algorithm, get_secret_key
+from apowerb.configs.settings import get_settings
+from apowerb.helpers import security
+from apowerb.helpers.security import create_access_token, get_algorithm, get_secret_key
 
 
 class TestSourceUnique:

@@ -1,4 +1,4 @@
-"""Tests for ``th2agent.routers.webhook_handlers._common.run_agent_for_webhook``.
+"""Tests for ``apowerb.routers.webhook_handlers._common.run_agent_for_webhook``.
 
 Live regression 2026-05-11: webhook ADK sessions were stored under
 ``users/3/sessions/webhook_1`` (stringified user_id int) while the
@@ -26,9 +26,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from th2agent.helpers.database import Base
-from th2agent.models import User
-from th2agent.routers.webhook_handlers import _common
+from apowerb.helpers.database import Base
+from apowerb.models import User
+from apowerb.routers.webhook_handlers import _common
 
 
 @pytest.fixture

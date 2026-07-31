@@ -48,7 +48,7 @@ def _build_ctx() -> Any:
 # ---------------------------------------------------------------------------
 
 def _import_cb():
-    from th2agent.core.agent_helpers.callbacks import create_truncate_history_callback
+    from apowerb.core.agent_helpers.callbacks import create_truncate_history_callback
     return create_truncate_history_callback
 
 
@@ -142,7 +142,7 @@ class TestTruncateHistoryCallback:
         req = _build_llm_request(list(contents))
         original_contents = list(req.contents)
 
-        with caplog.at_level(logging.WARNING, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.WARNING, logger="apowerb.truncate_history"):
             result = cb(callback_context=_build_ctx(), llm_request=req)
 
         assert result is None

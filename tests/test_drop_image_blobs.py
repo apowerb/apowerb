@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from th2agent.helpers.litellm_config import (
+from apowerb.helpers.litellm_config import (
     IMAGE_KEEP_TAIL,
     drop_old_image_blobs_from_messages,
 )

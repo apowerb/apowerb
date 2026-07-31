@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from th2agent.core import adk_runner
+from apowerb.core import adk_runner
 
 
 # --------------------------------------------------------------------------- #

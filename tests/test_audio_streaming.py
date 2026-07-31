@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from th2agent.core.audio_streaming import FallbackSTT, FallbackTTS
+from apowerb.core.audio_streaming import FallbackSTT, FallbackTTS
 
 
 class _FakeStreamResponse:

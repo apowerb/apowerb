@@ -301,7 +301,7 @@ class TestD2RefDansDescription:
         from th2customers.scei.tools.scei_ar_persist import (
             _reextract_lines_from_pmi_and_text,
         )
-        from th2agent.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
+        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
 
         pdf_path = _FIXTURE_DIR / "CF101197.PDF"
         if not pdf_path.exists():
@@ -390,7 +390,7 @@ class TestD3FiltreNonDoubtfulSansSituation:
         """
         from unittest.mock import MagicMock
         import th2customers.scei.tools.scei_ar_persist as m
-        from th2agent.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
+        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
 
         pdf_path = _FIXTURE_DIR / "CF101197.PDF"
         if not pdf_path.exists():

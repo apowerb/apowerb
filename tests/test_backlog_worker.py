@@ -1,4 +1,4 @@
-"""Tests for ``th2agent.scheduler.backlog_worker``.
+"""Tests for ``apowerb.scheduler.backlog_worker``.
 
 The worker drains the ``webhook_logs`` queue: it picks the oldest
 ``pending``/``retrying`` row whose ``next_attempt_at`` has elapsed,
@@ -39,9 +39,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from th2agent.helpers.database import Base
-from th2agent.models import User, WebhookLog, WebhookSubscription
-from th2agent.scheduler import backlog_worker
+from apowerb.helpers.database import Base
+from apowerb.models import User, WebhookLog, WebhookSubscription
+from apowerb.scheduler import backlog_worker
 
 
 @pytest.fixture
@@ -599,7 +599,7 @@ async def test_start_in_background_logs_spawn(caplog):
     async def my_processor(log_id_arg):  # noqa: ARG001 — signature must match
         return None
 
-    caplog.set_level("INFO", logger="th2agent.scheduler.backlog_worker")
+    caplog.set_level("INFO", logger="apowerb.scheduler.backlog_worker")
     task = backlog_worker.start_in_background(my_processor)
     try:
         assert task is not None
@@ -637,12 +637,12 @@ async def test_start_in_background_logs_silent_crash(caplog, monkeypatch):
         return True
 
     monkeypatch.setattr(backlog_worker, "run_worker", crashing_run_worker)
-    from th2agent.scheduler import backlog_migrations
+    from apowerb.scheduler import backlog_migrations
     monkeypatch.setattr(
         backlog_migrations, "ensure_webhook_logs_schema", _noop_schema
     )
 
-    caplog.set_level("ERROR", logger="th2agent.scheduler.backlog_worker")
+    caplog.set_level("ERROR", logger="apowerb.scheduler.backlog_worker")
 
     async def my_processor(log_id_arg):  # noqa: ARG001
         return None
@@ -684,9 +684,9 @@ async def test_ensure_schema_skips_on_sqlite(sqlite_session_factory, caplog):
     cleanly — the alternative is a hard failure on every test run
     because sqlite does not support ``ADD COLUMN IF NOT EXISTS``.
     """
-    from th2agent.scheduler import backlog_migrations
+    from apowerb.scheduler import backlog_migrations
 
-    caplog.set_level("INFO", logger="th2agent.scheduler.backlog_migrations")
+    caplog.set_level("INFO", logger="apowerb.scheduler.backlog_migrations")
     result = await backlog_migrations.ensure_webhook_logs_schema()
 
     assert result is True
@@ -703,7 +703,7 @@ async def test_ensure_schema_returns_false_on_failure(monkeypatch, caplog):
     surface as a soft failure — the worker keeps draining whatever
     schema is in place and the operator falls back to the standalone
     script."""
-    from th2agent.scheduler import backlog_migrations
+    from apowerb.scheduler import backlog_migrations
 
     class _ExplodingSession:
         async def __aenter__(self):
@@ -718,7 +718,7 @@ async def test_ensure_schema_returns_false_on_failure(monkeypatch, caplog):
     monkeypatch.setattr(
         backlog_migrations.sessionmanager, "session", _broken_session
     )
-    caplog.set_level("ERROR", logger="th2agent.scheduler.backlog_migrations")
+    caplog.set_level("ERROR", logger="apowerb.scheduler.backlog_migrations")
 
     result = await backlog_migrations.ensure_webhook_logs_schema()
 
@@ -739,7 +739,7 @@ async def test_start_in_background_is_idempotent(caplog):
     async def my_processor(log_id_arg):  # noqa: ARG001
         return None
 
-    caplog.set_level("INFO", logger="th2agent.scheduler.backlog_worker")
+    caplog.set_level("INFO", logger="apowerb.scheduler.backlog_worker")
     first = backlog_worker.start_in_background(my_processor)
     second = backlog_worker.start_in_background(my_processor)
     try:

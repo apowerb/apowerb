@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from th2agent.helpers import notify_etl
+from apowerb.helpers import notify_etl
 
 
 @pytest.fixture(autouse=True)

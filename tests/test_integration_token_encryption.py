@@ -4,7 +4,7 @@ Phase RED of TDD for batch B7:
 - These tests describe the BEHAVIOUR we want from the unified integration
   token helpers (save / get / migrate).  The corresponding production code
   does NOT exist yet — importing the symbols below MUST fail today.
-- When the green phase lands, ``th2agent.integrations.helpers`` must expose
+- When the green phase lands, ``apowerb.integrations.helpers`` must expose
   ``save_integration_tokens``, ``get_integration_tokens`` and
   ``encrypt_legacy_integration_tokens`` and every test below must pass.
 
@@ -69,11 +69,11 @@ def fernet_key() -> str:
 
 @pytest.fixture()
 def active_fernet(fernet_key):
-    """Force th2agent.helpers.encryptor to use a known-good Fernet instance.
+    """Force apowerb.helpers.encryptor to use a known-good Fernet instance.
 
     Restores the original one on teardown so later tests are not impacted.
     """
-    from th2agent.helpers import encryptor as enc_mod
+    from apowerb.helpers import encryptor as enc_mod
 
     original = enc_mod.fernet
     enc_mod.fernet = Fernet(fernet_key.encode())
@@ -117,7 +117,7 @@ def helpers_module(active_fernet, sqlite_engine, monkeypatch):
     yet.  We still return the module so individual tests can surface a
     precise AttributeError on the missing symbol.
     """
-    mod = importlib.import_module("th2agent.integrations.helpers")
+    mod = importlib.import_module("apowerb.integrations.helpers")
 
     # The production helpers rely on ``DBConfig().get_db_url()`` to build
     # their own engine.  For the unit tests we monkeypatch the engine
@@ -299,7 +299,7 @@ class TestMissingEncryptKey:
     def test_save_raises_without_encrypt_key(self, helpers_module):
         """With no Fernet instance configured, save must FAIL LOUDLY —
         never silently fall back to plaintext persistence."""
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.helpers import encryptor as enc_mod
 
         with patch.object(enc_mod, "fernet", None):
             with pytest.raises(Exception) as excinfo:
@@ -333,7 +333,7 @@ class TestInvalidEncryptKey:
         )
 
         # …then swap the Fernet to a fresh (incompatible) key and try to read.
-        from th2agent.helpers import encryptor as enc_mod
+        from apowerb.helpers import encryptor as enc_mod
 
         wrong_key = Fernet.generate_key()
         with patch.object(enc_mod, "fernet", Fernet(wrong_key)):
@@ -413,8 +413,8 @@ def orm_engine(active_fernet) -> Engine:
     <schema>.integrations`` work out of the box.
     """
     from sqlalchemy import text
-    from th2agent.configs.settings import get_settings
-    from th2agent.models import Integration
+    from apowerb.configs.settings import get_settings
+    from apowerb.models import Integration
 
     schema = get_settings().db_schema
     engine = create_engine("sqlite:///:memory:")
@@ -435,7 +435,7 @@ def orm_session(orm_engine):
 
 def _fernet_ciphertext(plaintext: str) -> str:
     """Produce a real Fernet ciphertext using the active fixture key."""
-    from th2agent.helpers import encryptor as enc_mod
+    from apowerb.helpers import encryptor as enc_mod
 
     return enc_mod.encrypt_value(plaintext)
 
@@ -445,9 +445,9 @@ class TestORMListenerBlocksPlaintext:
         """Adding an Integration with a plaintext access_token through the
         ORM Session must trigger the before_insert listener and raise."""
         from sqlalchemy.exc import StatementError
-        from th2agent.models import Integration
+        from apowerb.models import Integration
         # Importing helpers registers the event listener as a side effect.
-        import th2agent.integrations.helpers  # noqa: F401
+        import apowerb.integrations.helpers  # noqa: F401
 
         orm_session.add(
             Integration(
@@ -463,8 +463,8 @@ class TestORMListenerBlocksPlaintext:
 
     def test_insert_valid_ciphertext_via_orm_passes(self, orm_session):
         """A real Fernet ciphertext must go through the listener untouched."""
-        from th2agent.models import Integration
-        import th2agent.integrations.helpers  # noqa: F401
+        from apowerb.models import Integration
+        import apowerb.integrations.helpers  # noqa: F401
 
         ciphertext = _fernet_ciphertext("plain-access")
 
@@ -482,8 +482,8 @@ class TestORMListenerBlocksPlaintext:
     def test_null_tokens_pass_listener(self, orm_session):
         """``Integration(access_token=None, refresh_token=None)`` is a
         legitimate state (e.g. Odoo) — listener must let it through."""
-        from th2agent.models import Integration
-        import th2agent.integrations.helpers  # noqa: F401
+        from apowerb.models import Integration
+        import apowerb.integrations.helpers  # noqa: F401
 
         orm_session.add(
             Integration(
@@ -500,8 +500,8 @@ class TestORMListenerBlocksPlaintext:
         """Mutating an Integration's access_token to plaintext via ORM must
         also fire the before_update listener."""
         from sqlalchemy.exc import StatementError
-        from th2agent.models import Integration
-        import th2agent.integrations.helpers  # noqa: F401
+        from apowerb.models import Integration
+        import apowerb.integrations.helpers  # noqa: F401
 
         ciphertext = _fernet_ciphertext("plain-access")
         row = Integration(
@@ -527,7 +527,7 @@ class TestCheckConstraintBlocksRawInsert:
         """An INSERT through SQLAlchemy Core (or psql) bypassing the ORM
         must still be rejected by the table's CheckConstraint."""
         from sqlalchemy.exc import IntegrityError
-        from th2agent.models import Integration
+        from apowerb.models import Integration
 
         with orm_engine.begin() as conn:
             with pytest.raises(IntegrityError):
@@ -543,7 +543,7 @@ class TestCheckConstraintBlocksRawInsert:
     def test_raw_core_insert_valid_ciphertext_passes(self, orm_engine):
         """A row with a Fernet-prefixed access_token must satisfy the
         constraint even when inserted via raw Core."""
-        from th2agent.models import Integration
+        from apowerb.models import Integration
 
         ciphertext = _fernet_ciphertext("plain-access")
         with orm_engine.begin() as conn:
@@ -557,7 +557,7 @@ class TestCheckConstraintBlocksRawInsert:
             )
 
     def test_raw_core_insert_null_tokens_passes(self, orm_engine):
-        from th2agent.models import Integration
+        from apowerb.models import Integration
 
         with orm_engine.begin() as conn:
             conn.execute(
@@ -573,7 +573,7 @@ class TestCheckConstraintBlocksRawInsert:
         """UPDATE setting access_token back to plaintext must also be
         rejected by the CheckConstraint."""
         from sqlalchemy.exc import IntegrityError
-        from th2agent.models import Integration
+        from apowerb.models import Integration
 
         ciphertext = _fernet_ciphertext("plain-access")
         with orm_engine.begin() as conn:

@@ -2,7 +2,7 @@
 
 Tout appel à ``audit(event, user_id=..., **details)`` doit :
 
-- Émettre un log INFO sur le logger dédié ``th2agent.audit``.
+- Émettre un log INFO sur le logger dédié ``apowerb.audit``.
 - Contenir ``audit=True``, le nom de l'événement, l'``user_id``, et les
   détails supplémentaires via ``extra=``.
 """
@@ -15,8 +15,8 @@ import logging
 
 import pytest
 
-from th2agent.configs import th2logger
-from th2agent.helpers.audit_log import audit, AUDIT_LOGGER_NAME
+from apowerb.configs import th2logger
+from apowerb.helpers.audit_log import audit, AUDIT_LOGGER_NAME
 
 
 @pytest.fixture(autouse=True)

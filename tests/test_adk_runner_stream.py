@@ -52,7 +52,7 @@ class _FakeSession:
 @pytest.mark.asyncio
 async def test_stream_forwards_chunk_larger_than_aiohttp_line_cap():
     """A single SSE event > 64 KB must pass through without crashing."""
-    from th2agent.core import adk_runner
+    from apowerb.core import adk_runner
 
     big_payload = "x" * 200_000  # 200 KB — well above aiohttp's 64 KB readline cap
     sse = f"data: {{\"big\": \"{big_payload}\"}}\n\n".encode("utf-8")
@@ -77,7 +77,7 @@ async def test_stream_forwards_chunk_larger_than_aiohttp_line_cap():
 @pytest.mark.asyncio
 async def test_stream_handles_utf8_split_across_chunks():
     """Multi-byte UTF-8 chars cut between chunks must not produce mojibake."""
-    from th2agent.core import adk_runner
+    from apowerb.core import adk_runner
 
     full = "data: éàü\n\n".encode("utf-8")
     chunks = [full[:7], full[7:]]  # split in the middle of a multi-byte char

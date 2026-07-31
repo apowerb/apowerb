@@ -240,7 +240,7 @@ class TestGateLogContainsRealNames:
         }
         ctx = _make_gate_callback_context(ar_match_dict)
 
-        with caplog.at_level(logging.CRITICAL, logger="th2agent.core.agent_helpers.callbacks"):
+        with caplog.at_level(logging.CRITICAL, logger="apowerb.core.agent_helpers.callbacks"):
             with patch("google.genai.types.Content") as MockContent, \
                  patch("google.genai.types.Part") as MockPart:
                 MockContent.return_value = MagicMock()

@@ -8,7 +8,7 @@ that returned 422 on /data. Proven live with Mistral on th2demo.
 
 from __future__ import annotations
 
-from th2agent.tools_store.portfolio.business_intelligence import _looks_like_sql
+from apowerb.tools_store.portfolio.business_intelligence import _looks_like_sql
 
 
 class TestLooksLikeSql:

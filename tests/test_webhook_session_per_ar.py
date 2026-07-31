@@ -26,7 +26,7 @@ def test_outlook_session_id_uses_log_id_not_sub_db_id() -> None:
     src_path = (
         pathlib.Path(__file__).resolve().parents[1]
         / "src"
-        / "th2agent"
+        / "apowerb"
         / "routers"
         / "webhook_handlers"
         / "outlook.py"
@@ -55,7 +55,7 @@ def test_outlook_push_notification_links_to_webhooks_tab() -> None:
     src_path = (
         pathlib.Path(__file__).resolve().parents[1]
         / 'src'
-        / 'th2agent'
+        / 'apowerb'
         / 'routers'
         / 'webhook_handlers'
         / 'outlook.py'

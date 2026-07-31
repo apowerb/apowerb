@@ -13,8 +13,8 @@ import os
 
 import pytest
 
-from th2agent.core.invocation_context import set_current_invoker
-from th2agent.tools_store.portfolio import google_auth
+from apowerb.core.invocation_context import set_current_invoker
+from apowerb.tools_store.portfolio import google_auth
 
 INVOKER = "elom.gnaglo@example.com"
 ENV_KEY = "GOOGLE_GMAIL_REFRESH_TOKEN"
@@ -45,7 +45,7 @@ def test_failed_load_is_not_latched_and_recovers_once_user_connects(
         )
 
     monkeypatch.setattr(
-        "th2agent.integrations.helpers.fetch_integration_configs", _fetch_no_row
+        "apowerb.integrations.helpers.fetch_integration_configs", _fetch_no_row
     )
     google_auth._ensure_integration_tokens("GOOGLE_GMAIL")
 
@@ -58,7 +58,7 @@ def test_failed_load_is_not_latched_and_recovers_once_user_connects(
         return {"access_token": "at", "refresh_token": "rt-after-connect", "meta": {}}
 
     monkeypatch.setattr(
-        "th2agent.integrations.helpers.fetch_integration_configs", _fetch_connected
+        "apowerb.integrations.helpers.fetch_integration_configs", _fetch_connected
     )
     google_auth._ensure_integration_tokens("GOOGLE_GMAIL")
 
@@ -82,21 +82,21 @@ def test_other_invokers_failed_load_does_not_strand_a_connected_user(
         raise RuntimeError("No google_gmail integration found for user_id=42.")
 
     monkeypatch.setattr(
-        "th2agent.integrations.helpers.fetch_integration_configs", _fetch_user_a
+        "apowerb.integrations.helpers.fetch_integration_configs", _fetch_user_a
     )
     google_auth._ensure_integration_tokens("GOOGLE_GMAIL")
     assert os.environ.get(ENV_KEY) == "rt-user-a"
 
     set_current_invoker("user-b@example.com")
     monkeypatch.setattr(
-        "th2agent.integrations.helpers.fetch_integration_configs", _fetch_no_row
+        "apowerb.integrations.helpers.fetch_integration_configs", _fetch_no_row
     )
     google_auth._ensure_integration_tokens("GOOGLE_GMAIL")
     assert os.environ.get(ENV_KEY) is None
 
     set_current_invoker(INVOKER)
     monkeypatch.setattr(
-        "th2agent.integrations.helpers.fetch_integration_configs", _fetch_user_a
+        "apowerb.integrations.helpers.fetch_integration_configs", _fetch_user_a
     )
     google_auth._ensure_integration_tokens("GOOGLE_GMAIL")
     assert os.environ.get(ENV_KEY) == "rt-user-a"
@@ -107,7 +107,7 @@ def test_oauth_callback_reset_clears_latch_and_forces_db_refetch(
 ):
     """The reset run by /google/callback (and DELETE /{provider}) must clear
     the lazy-load latch so the next tool call refetches from the DB."""
-    from th2agent.routers.integrations import _reset_google_gmail_module_state
+    from apowerb.routers.integrations import _reset_google_gmail_module_state
 
     google_auth._integration_loaded_for["GOOGLE_GMAIL"] = INVOKER
     monkeypatch.setenv(ENV_KEY, "stale-token")
@@ -122,7 +122,7 @@ def test_oauth_callback_reset_clears_latch_and_forces_db_refetch(
         return {"access_token": "at", "refresh_token": "rt-fresh", "meta": {}}
 
     monkeypatch.setattr(
-        "th2agent.integrations.helpers.fetch_integration_configs", _fetch_fresh
+        "apowerb.integrations.helpers.fetch_integration_configs", _fetch_fresh
     )
     google_auth._ensure_integration_tokens("GOOGLE_GMAIL")
 

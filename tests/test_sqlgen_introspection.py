@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import th2agent.tools_store.portfolio.text_to_sql as t2s
+import apowerb.tools_store.portfolio.text_to_sql as t2s
 
 
 class _FakeCursor:

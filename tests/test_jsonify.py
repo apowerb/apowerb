@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from th2agent.helpers.jsonify import to_jsonable
+from apowerb.helpers.jsonify import to_jsonable
 
 
 def test_passes_native_primitives_untouched():

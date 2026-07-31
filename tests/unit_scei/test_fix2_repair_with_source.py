@@ -42,7 +42,7 @@ def _ctx_with_events(events):
 # --- 1. extraction du texte source ---------------------------------------
 
 def test_extract_pdf_source_text_finds_latest():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     events = [
         _event([_fr("tool_pdf_first_page", {"status": "success", "text": "VIEUX"})]),
         _event([_fr("other_tool", {"x": 1})]),
@@ -53,13 +53,13 @@ def test_extract_pdf_source_text_finds_latest():
 
 
 def test_extract_pdf_source_text_none_when_absent():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     ctx = _ctx_with_events([_event([_fr("other_tool", {"x": 1})])])
     assert _extract_pdf_source_text(ctx) is None
 
 
 def test_extract_pdf_source_text_none_when_no_session():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     ctx = MagicMock()
     # acceder a .events leve -> robustesse
     ctx._invocation_context.session.events = None
@@ -70,7 +70,7 @@ def test_extract_pdf_source_text_none_when_no_session():
 
 @pytest.mark.asyncio
 async def test_repair_prompt_includes_source_text():
-    from th2agent.core.agent_helpers import callbacks
+    from apowerb.core.agent_helpers import callbacks
     resp = MagicMock()
     resp.choices = [MagicMock()]
     resp.choices[0].message.content = "{\"commande_number_sql\": \"100688\"}"
@@ -89,7 +89,7 @@ async def test_repair_prompt_includes_source_text():
 
 @pytest.mark.asyncio
 async def test_repair_prompt_truncates_source_text():
-    from th2agent.core.agent_helpers import callbacks
+    from apowerb.core.agent_helpers import callbacks
     resp = MagicMock()
     resp.choices = [MagicMock()]
     resp.choices[0].message.content = "{\"commande_number_sql\": \"100688\"}"
@@ -105,7 +105,7 @@ async def test_repair_prompt_truncates_source_text():
 
 @pytest.mark.asyncio
 async def test_repair_prompt_omits_source_when_absent():
-    from th2agent.core.agent_helpers import callbacks
+    from apowerb.core.agent_helpers import callbacks
     resp = MagicMock()
     resp.choices = [MagicMock()]
     resp.choices[0].message.content = "{\"commande_number_sql\": \"100688\"}"
@@ -124,7 +124,7 @@ async def test_repair_prompt_omits_source_when_absent():
 # d erreur. Ignorer l event en echec et chercher un success plus ancien.
 
 def test_extract_ignores_failed_pdf_event():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     events = [
         _event([_fr("tool_pdf_first_page", {"status": "error", "text": "ERREUR"})]),
     ]
@@ -133,7 +133,7 @@ def test_extract_ignores_failed_pdf_event():
 
 
 def test_extract_skips_recent_error_returns_older_success():
-    from th2agent.core.agent_helpers.callbacks import _extract_pdf_source_text
+    from apowerb.core.agent_helpers.callbacks import _extract_pdf_source_text
     events = [
         _event([_fr("tool_pdf_first_page", {"status": "success", "text": "BON TEXTE CF100688"})]),
         _event([_fr("tool_pdf_first_page", {"status": "error", "text": "ERREUR RECENTE"})]),

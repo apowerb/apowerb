@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from th2agent.tools_store.portfolio import onedrive_core
+from apowerb.tools_store.portfolio import onedrive_core
 
 
 # ---------------------------------------------------------------------------

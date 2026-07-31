@@ -36,7 +36,7 @@ def two_page_pdf():
 
 class TestPdfFirstPage:
     def test_extracts_first_page_text(self, two_page_pdf):
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             _make_pdf_first_page,
         )
 
@@ -55,7 +55,7 @@ class TestPdfFirstPage:
         assert "data" not in res and "page" not in res
 
     def test_missing_file_returns_error(self, two_page_pdf):
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             _make_pdf_first_page,
         )
 
@@ -65,7 +65,7 @@ class TestPdfFirstPage:
         assert "sample.pdf" in res["available_files"]
 
     def test_tool_name(self):
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             _make_pdf_first_page,
         )
 
@@ -74,10 +74,10 @@ class TestPdfFirstPage:
 
 class TestBindPdfFirstPage:
     def test_replaces_placeholder(self):
-        from th2agent.core.agent_helpers.tools_binder import (
+        from apowerb.core.agent_helpers.tools_binder import (
             bind_pdf_first_page,
         )
-        from th2agent.tools_store.portfolio.basic import tool_pdf_first_page
+        from apowerb.tools_store.portfolio.basic import tool_pdf_first_page
 
         funcs = [tool_pdf_first_page]
         out = bind_pdf_first_page("agent12", funcs)
@@ -86,7 +86,7 @@ class TestBindPdfFirstPage:
 
     def test_noop_when_not_declared(self):
         """Replace-only: agents that don't declare the tool don't get it."""
-        from th2agent.core.agent_helpers.tools_binder import (
+        from apowerb.core.agent_helpers.tools_binder import (
             bind_pdf_first_page,
         )
 
@@ -100,7 +100,7 @@ class TestBindPdfFirstPage:
 
 class TestPdfFirstPageRobustness:
     def test_corrupt_pdf_returns_error(self, two_page_pdf):
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             _make_pdf_first_page,
         )
 
@@ -112,7 +112,7 @@ class TestPdfFirstPageRobustness:
 
     def test_path_traversal_filename_is_neutralised(self, two_page_pdf):
         """A crafted '../' filename must not escape the uploads dir."""
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             _make_pdf_first_page,
         )
 

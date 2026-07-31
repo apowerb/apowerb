@@ -11,9 +11,9 @@ import uuid as uuid_mod
 
 import pytest
 
-from th2agent.bi.charts.core import Chart, ChartType, DataSource
-from th2agent.bi.charts.service import ChartService, InMemoryChartStore
-from th2agent.tools_store.portfolio.business_intelligence import _resolve_chart_ref
+from apowerb.bi.charts.core import Chart, ChartType, DataSource
+from apowerb.bi.charts.service import ChartService, InMemoryChartStore
+from apowerb.tools_store.portfolio.business_intelligence import _resolve_chart_ref
 
 
 @pytest.fixture

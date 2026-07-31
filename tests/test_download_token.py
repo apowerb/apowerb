@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.helpers.security import (
+from apowerb.helpers.security import (
     generate_download_token,
     verify_download_token,
 )
@@ -42,7 +42,7 @@ class TestDownloadTokenClaims:
         # A legacy/unscoped token (no sub, no agent_id) must be rejected.
         from datetime import datetime, timedelta, timezone
         from jose import jwt
-        from th2agent.helpers.security import get_secret_key, get_algorithm
+        from apowerb.helpers.security import get_secret_key, get_algorithm
 
         expire = datetime.now(timezone.utc) + timedelta(minutes=5)
         bad_token = jwt.encode(
@@ -64,8 +64,8 @@ class TestDownloadEndpointUsesTokenClaims:
 
     @pytest.fixture()
     def app_and_dir(self):
-        from th2agent.routers.files import router
-        from th2agent.auth.dependencies import get_optional_user
+        from apowerb.routers.files import router
+        from apowerb.auth.dependencies import get_optional_user
 
         app = FastAPI()
         app.include_router(router, prefix="/api")
@@ -89,8 +89,8 @@ class TestDownloadEndpointUsesTokenClaims:
         settings_mock = MagicMock()
         settings_mock.storage_mode = "local"
 
-        with patch("th2agent.routers.files.uploads_dir", return_value=Path(tmp_root)), \
-             patch("th2agent.routers.files.get_settings", return_value=settings_mock):
+        with patch("apowerb.routers.files.uploads_dir", return_value=Path(tmp_root)), \
+             patch("apowerb.routers.files.get_settings", return_value=settings_mock):
             yield app, tmp_root
         shutil.rmtree(tmp_root, ignore_errors=True)
 

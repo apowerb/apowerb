@@ -188,7 +188,7 @@ class TestFixAKeyLcctpunet:
         pdf_path = _FIXTURE_DIR / "CF101197.PDF"
         if not pdf_path.exists():
             pytest.skip("Fixture CF101197.PDF absente")
-        from th2agent.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
+        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
         result_pdf = extract_all_pages_text(str(pdf_path))
         pdf_text = result_pdf.get("text", "")
         result = _reextract_lines_from_pmi_and_text(_PMI_CF101197, pdf_text)

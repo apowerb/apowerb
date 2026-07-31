@@ -64,9 +64,9 @@ class _FakeSession:
 
 
 def _build_app(session: _FakeSession, *, user_id: int | None = USER_A_ID, email: str | None = USER_A_EMAIL):
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
-    from th2agent.routers.webhooks import router
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
+    from apowerb.routers.webhooks import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -129,7 +129,7 @@ class TestAttachmentEndpoint:
     def _prepare_log_with_file(self, tmp_path, log_id: int, filename: str, content: bytes, content_type: str):
         # Mirror the production layout under ATTACHMENT_ROOT and patch it
         # for the duration of this test.
-        from th2agent.storage import webhook_attachments as wa
+        from apowerb.storage import webhook_attachments as wa
         wa.ATTACHMENT_ROOT = tmp_path  # type: ignore[attr-defined]
 
         target = tmp_path / "2026" / "05" / str(log_id) / filename
@@ -212,7 +212,7 @@ class TestAttachmentEndpoint:
     def test_404_when_file_missing_on_disk(self, tmp_path):
         # Declared in DB but file removed (or PR #188 wasn't deployed yet
         # when the row was created).
-        from th2agent.storage import webhook_attachments as wa
+        from apowerb.storage import webhook_attachments as wa
         wa.ATTACHMENT_ROOT = tmp_path
         log = _make_log(106, attachments=[{
             "filename": "lost.pdf", "path": "/nope", "content_type": "application/pdf", "size": 0

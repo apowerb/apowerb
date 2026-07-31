@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 class TestAgentParseResponse:
     def _parse(self, result):
-        from th2agent.bi.data.agent_executor import AgentQueryExecutor
+        from apowerb.bi.data.agent_executor import AgentQueryExecutor
 
         return AgentQueryExecutor._parse_response(result)
 
@@ -50,8 +50,8 @@ class TestAgentParseResponse:
 
 
 def _build_app():
-    from th2agent.bi.data.router import router as data_router
-    from th2agent.helpers.database import get_db
+    from apowerb.bi.data.router import router as data_router
+    from apowerb.helpers.database import get_db
 
     app = FastAPI()
     app.include_router(data_router, prefix="/api/v1")
@@ -65,7 +65,7 @@ def _build_app():
 
 class TestRouterMapsExecutionError:
     def test_public_endpoint_returns_502_on_query_execution_error(self):
-        from th2agent.bi.data.service import QueryExecutionError
+        from apowerb.bi.data.service import QueryExecutionError
 
         app = _build_app()
         fake_chart = MagicMock()
@@ -77,8 +77,8 @@ class TestRouterMapsExecutionError:
             side_effect=QueryExecutionError("chart1", "agent", RuntimeError("boom"))
         )
 
-        with patch("th2agent.bi.charts.service.ChartService") as MockChartSvc, patch(
-            "th2agent.bi.data.service.ChartDataService"
+        with patch("apowerb.bi.charts.service.ChartService") as MockChartSvc, patch(
+            "apowerb.bi.data.service.ChartDataService"
         ) as MockDataSvc:
             MockChartSvc.return_value.get = mock_get
             MockDataSvc.return_value.fetch = mock_fetch
@@ -95,11 +95,11 @@ class TestAuthRouteNoLeak:
     """The authenticated /charts/{id}/data must also not leak the raw cause."""
 
     def test_authenticated_endpoint_returns_502_without_leaking_cause(self):
-        from th2agent.bi.data.router import router as data_router
-        from th2agent.bi.data.service import QueryExecutionError
-        from th2agent.bi.dependencies import get_data_service
-        from th2agent.auth.dependencies import get_current_user
-        from th2agent.helpers.database import get_db
+        from apowerb.bi.data.router import router as data_router
+        from apowerb.bi.data.service import QueryExecutionError
+        from apowerb.bi.dependencies import get_data_service
+        from apowerb.auth.dependencies import get_current_user
+        from apowerb.helpers.database import get_db
 
         app = FastAPI()
         app.include_router(data_router, prefix="/api/v1")

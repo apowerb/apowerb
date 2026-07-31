@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from th2agent.tools_store.portfolio.database import _execute_and_format
+from apowerb.tools_store.portfolio.database import _execute_and_format
 
 
 def _mock_cursor(rowcount: int = 1, fetched: list | None = None):
@@ -132,7 +132,7 @@ def test_bound_tool_run_sql_executes_insert(monkeypatch):
     """End-to-end: a bound ``tool_run_sql_suiviar`` with
     ``DB_ALLOWED_OPS=SELECT,INSERT,UPDATE`` accepts an INSERT and
     triggers commit."""
-    from th2agent.tools_store.portfolio import database as db_mod
+    from apowerb.tools_store.portfolio import database as db_mod
 
     fake_cursor = _mock_cursor(rowcount=1)
     fake_conn = MagicMock()
@@ -164,7 +164,7 @@ def test_bound_tool_run_sql_executes_insert(monkeypatch):
     # _validate_sql_against_whitelist + _execute_and_format).
     # We validate the gate accepts INSERT via DB_ALLOWED_OPS — the actual
     # pyodbc connection call is tested separately.
-    from th2agent.tools_store.portfolio.database import (
+    from apowerb.tools_store.portfolio.database import (
         _parse_allowed_ops,
         _validate_sql_against_whitelist,
     )

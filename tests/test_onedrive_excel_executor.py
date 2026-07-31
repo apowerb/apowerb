@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import pytest
 
-from th2agent.bi.charts.core import DataSource, SourceType
-from th2agent.bi.data.onedrive_excel_executor import OnedriveExcelQueryExecutor
+from apowerb.bi.charts.core import DataSource, SourceType
+from apowerb.bi.data.onedrive_excel_executor import OnedriveExcelQueryExecutor
 
 
 # ---------------------------------------------------------------------------
@@ -141,13 +141,13 @@ class TestOnedriveExcelExecutorHappyPath:
         )
 
         with patch(
-            "th2agent.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
+            "apowerb.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
             return_value=(df, None),
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor._graph_headers",
+            "apowerb.bi.data.onedrive_excel_executor._graph_headers",
             return_value={"Authorization": "Bearer fake"},
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor.decrypt_value",
+            "apowerb.bi.data.onedrive_excel_executor.decrypt_value",
             side_effect=lambda v: v,
         ):
             rows = await executor.run(_make_source())
@@ -173,13 +173,13 @@ class TestOnedriveExcelExecutorHappyPath:
         )
 
         with patch(
-            "th2agent.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
+            "apowerb.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
             return_value=(df, None),
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor._graph_headers",
+            "apowerb.bi.data.onedrive_excel_executor._graph_headers",
             return_value={"Authorization": "Bearer fake"},
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor.decrypt_value",
+            "apowerb.bi.data.onedrive_excel_executor.decrypt_value",
             side_effect=lambda v: v,
         ):
             rows = await executor.run(_make_source(limit=2))
@@ -198,13 +198,13 @@ class TestOnedriveExcelExecutorHappyPath:
         df = pd.DataFrame([{"A": 1}])
 
         with patch(
-            "th2agent.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
+            "apowerb.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
             return_value=(df, None),
         ) as mock_parse, patch(
-            "th2agent.bi.data.onedrive_excel_executor._graph_headers",
+            "apowerb.bi.data.onedrive_excel_executor._graph_headers",
             return_value={"Authorization": "Bearer fake"},
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor.decrypt_value",
+            "apowerb.bi.data.onedrive_excel_executor.decrypt_value",
             side_effect=lambda v: v,
         ):
             rows = await executor.run(
@@ -232,13 +232,13 @@ class TestOnedriveExcelExecutorHappyPath:
         df = pd.DataFrame([{"name": "Alice", "age": 30}])
 
         with patch(
-            "th2agent.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
+            "apowerb.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
             return_value=(df, None),
         ) as mock_parse, patch(
-            "th2agent.bi.data.onedrive_excel_executor._graph_headers",
+            "apowerb.bi.data.onedrive_excel_executor._graph_headers",
             return_value={"Authorization": "Bearer fake"},
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor.decrypt_value",
+            "apowerb.bi.data.onedrive_excel_executor.decrypt_value",
             side_effect=lambda v: v,
         ):
             rows = await executor.run(_make_source(item_path="Reports/people.csv"))
@@ -255,13 +255,13 @@ class TestOnedriveExcelExecutorHappyPath:
         executor = OnedriveExcelQueryExecutor(owner_id="7", db_session=db)
 
         with patch(
-            "th2agent.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
+            "apowerb.bi.data.onedrive_excel_executor.download_and_parse_spreadsheet",
             return_value=(None, "Download failed (HTTP 404)"),
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor._graph_headers",
+            "apowerb.bi.data.onedrive_excel_executor._graph_headers",
             return_value={"Authorization": "Bearer fake"},
         ), patch(
-            "th2agent.bi.data.onedrive_excel_executor.decrypt_value",
+            "apowerb.bi.data.onedrive_excel_executor.decrypt_value",
             side_effect=lambda v: v,
         ):
             rows = await executor.run(_make_source())

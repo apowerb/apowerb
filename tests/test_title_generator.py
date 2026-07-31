@@ -9,7 +9,7 @@ import types
 
 import pytest
 
-from th2agent.helpers import title_generator as tg
+from apowerb.helpers import title_generator as tg
 
 
 # ── clean_title ─────────────────────────────────────────────────────────────

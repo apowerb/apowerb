@@ -39,10 +39,10 @@ _SRC = pathlib.Path(__file__).parent.parent / "src"
 
 def _load_callbacks():
     """Charge callbacks.py directement par chemin pour eviter la DB."""
-    name = "_th2agent_callbacks_token_debug"
+    name = "_apowerb_callbacks_token_debug"
     if name in sys.modules:
         del sys.modules[name]
-    full = _SRC / "th2agent/core/agent_helpers/callbacks.py"
+    full = _SRC / "apowerb/core/agent_helpers/callbacks.py"
     spec = importlib.util.spec_from_file_location(name, str(full))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
@@ -124,7 +124,7 @@ class TestTokenDebugEnabled:
         req = _mk_request(contents)
         ctx = _mk_ctx("my_agent")
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=ctx, llm_request=req)
 
         token_debug_records = [r for r in caplog.records if "[TOKEN_DEBUG]" in r.message]
@@ -140,7 +140,7 @@ class TestTokenDebugEnabled:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -156,7 +156,7 @@ class TestTokenDebugEnabled:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -173,7 +173,7 @@ class TestTokenDebugEnabled:
         req = _mk_request(contents)
         ctx = _mk_ctx("scei_agent_42")
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=ctx, llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -187,7 +187,7 @@ class TestTokenDebugEnabled:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -213,7 +213,7 @@ class TestTokenDebugEnabled:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -236,7 +236,7 @@ class TestTokenDebugEnabled:
         si = "Tu es un assistant specialise SCEI."
         req = _mk_request(contents, system_instruction=si)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -262,7 +262,7 @@ class TestTokenDebugEnabled:
         tools = [Tool(function_declarations=[fd])]
         req = _mk_request(contents, tools=tools)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -283,7 +283,7 @@ class TestTokenDebugEnabled:
             contents.append(_mk_content("model", [known_text]))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -320,7 +320,7 @@ class TestFunctionCallResponseMeasurement:
         contents = self._build_history_with_fc_fr(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -337,7 +337,7 @@ class TestFunctionCallResponseMeasurement:
         contents = self._build_history_with_fc_fr(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -361,7 +361,7 @@ class TestFunctionCallResponseMeasurement:
         contents.append(_mk_content_with_fr("tool", "tool_sql", big_response))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -393,7 +393,7 @@ class TestFunctionCallResponseMeasurement:
         contents.append(_mk_content_with_fr("tool", "my_tool", fr_resp))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -423,7 +423,7 @@ class TestFunctionCallResponseMeasurement:
         contents.append(_mk_content_with_fc("model", fc_name, fc_args))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -450,7 +450,7 @@ class TestFunctionCallResponseMeasurement:
         contents.append(_mk_content_with_fr("tool", "tool_sql", fr_response))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -474,7 +474,7 @@ class TestTokenDebugDisabled:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.DEBUG, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.DEBUG, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         token_debug_records = [r for r in caplog.records if "[TOKEN_DEBUG]" in r.message]
@@ -490,7 +490,7 @@ class TestTokenDebugDisabled:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.DEBUG, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.DEBUG, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         token_debug_records = [r for r in caplog.records if "[TOKEN_DEBUG]" in r.message]
@@ -556,7 +556,7 @@ class TestRgpdNoTextInLog:
             contents.append(_mk_content("model", [secret_text]))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         for record in caplog.records:
@@ -578,7 +578,7 @@ class TestRgpdNoTextInLog:
         contents.append(_mk_content_with_fc("model", "tool_sql", {"query": secret_query}))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         for record in caplog.records:
@@ -599,7 +599,7 @@ class TestRgpdNoTextInLog:
         contents.append(_mk_content_with_fr("tool", "tool_sql", {"data": secret_data}))
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         for record in caplog.records:
@@ -616,7 +616,7 @@ class TestRgpdNoTextInLog:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         data = _extract_debug_data(caplog.records)
@@ -636,7 +636,7 @@ class TestRgpdNoTextInLog:
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents, system_instruction=secret_si)
 
-        with caplog.at_level(logging.INFO, logger="th2agent.truncate_history"):
+        with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=_mk_ctx(), llm_request=req)
 
         for record in caplog.records:

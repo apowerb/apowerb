@@ -42,7 +42,7 @@ def two_page_words_pdf(tmp_path):
 
 class TestExtractAllPagesWords:
     def test_returns_words_from_all_pages_with_page_index(self, two_page_words_pdf):
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             extract_all_pages_words,
         )
 
@@ -68,7 +68,7 @@ class TestExtractAllPagesWords:
 
     def test_word_dict_matches_reconstruct_rows_contract(self, two_page_words_pdf):
         """Every word must carry the exact keys reconstruct_rows reads."""
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             extract_all_pages_words,
         )
 
@@ -84,7 +84,7 @@ class TestExtractAllPagesWords:
         assert p0["BETA"]["x0"] > p0["ALPHA"]["x0"]
 
     def test_missing_pymupdf_returns_error(self, monkeypatch, two_page_words_pdf):
-        import th2agent.core.agent_helpers.pdf_to_images_tool as mod
+        import apowerb.core.agent_helpers.pdf_to_images_tool as mod
 
         real_import = __import__
 
@@ -99,7 +99,7 @@ class TestExtractAllPagesWords:
         assert "no_pymupdf" in res["error"]
 
     def test_corrupt_pdf_returns_error_not_raise(self, tmp_path):
-        from th2agent.core.agent_helpers.pdf_to_images_tool import (
+        from apowerb.core.agent_helpers.pdf_to_images_tool import (
             extract_all_pages_words,
         )
 

@@ -25,7 +25,7 @@ def stored_pdf():
 
 class TestStageStoredAttachments:
     def test_stages_pdf_into_agent_uploads(self, stored_pdf):
-        from th2agent.routers.webhook_handlers.outlook import (
+        from apowerb.routers.webhook_handlers.outlook import (
             _stage_stored_attachments,
         )
 
@@ -37,7 +37,7 @@ class TestStageStoredAttachments:
             assert f.read()[:5] == b"%PDF-"
 
     def test_skips_non_pdf_and_missing(self):
-        from th2agent.routers.webhook_handlers.outlook import (
+        from apowerb.routers.webhook_handlers.outlook import (
             _stage_stored_attachments,
         )
 
@@ -52,7 +52,7 @@ class TestStageStoredAttachments:
         assert staged == []
 
     def test_empty_list(self):
-        from th2agent.routers.webhook_handlers.outlook import (
+        from apowerb.routers.webhook_handlers.outlook import (
             _stage_stored_attachments,
         )
 
@@ -62,7 +62,7 @@ class TestStageStoredAttachments:
 
 class TestReplayInstruction:
     def test_mentions_files_and_bans_graph_tools(self):
-        from th2agent.routers.webhook_handlers.outlook import _replay_instruction
+        from apowerb.routers.webhook_handlers.outlook import _replay_instruction
 
         note = _replay_instruction(["AR_CF101085.pdf"])
         assert "AR_CF101085.pdf" in note
@@ -71,7 +71,7 @@ class TestReplayInstruction:
         assert "tool_pdf_first_page" in note
 
     def test_handles_no_files(self):
-        from th2agent.routers.webhook_handlers.outlook import _replay_instruction
+        from apowerb.routers.webhook_handlers.outlook import _replay_instruction
 
         note = _replay_instruction([])
         assert "(none)" in note
@@ -86,7 +86,7 @@ class TestReplayPathIntegration:
         import contextlib
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
-        import th2agent.routers.webhook_handlers.outlook as ol
+        import apowerb.routers.webhook_handlers.outlook as ol
 
         # Fake log row: attachments is a LIST (ORM JSON column), agent_message set
         log_row = SimpleNamespace(
@@ -147,7 +147,7 @@ class TestReplayPathIntegration:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
         import pytest as _pytest
-        import th2agent.routers.webhook_handlers.outlook as ol
+        import apowerb.routers.webhook_handlers.outlook as ol
 
         @contextlib.asynccontextmanager
         async def _session():

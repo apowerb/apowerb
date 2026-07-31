@@ -1,4 +1,4 @@
-"""Tests for ``th2agent.scheduler.events_retention``.
+"""Tests for ``apowerb.scheduler.events_retention``.
 
 ADK's DatabaseSessionService keeps the ``events`` table forever; this
 module purges old rows daily. These tests pin the contract: retention
@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from th2agent.scheduler import events_retention as er
+from apowerb.scheduler import events_retention as er
 
 
 # ── retention window parsing ──────────────────────────────────────────

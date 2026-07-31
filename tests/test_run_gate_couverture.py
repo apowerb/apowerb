@@ -11,7 +11,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-RACINE = Path(__file__).resolve().parents[1] / "src" / "th2agent"
+RACINE = Path(__file__).resolve().parents[1] / "src" / "apowerb"
 
 # Le module qui DEFINIT les appels sortants vers le serveur ADK : c'est lui
 # qu'on appelle, il ne s'appelle pas lui-meme.

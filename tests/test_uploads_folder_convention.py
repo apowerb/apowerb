@@ -37,9 +37,9 @@ def _source_of(module_path: str) -> str:
 @pytest.mark.parametrize(
     "module_path,fn_name",
     [
-        ("th2agent.tools_store.portfolio.outlook_mail", "tool_download_attachment"),
-        ("th2agent.tools_store.portfolio.onedrive_read", "tool_download_file"),
-        ("th2agent.tools_store.portfolio.google_drive", "tool_download_file"),
+        ("apowerb.tools_store.portfolio.outlook_mail", "tool_download_attachment"),
+        ("apowerb.tools_store.portfolio.onedrive_read", "tool_download_file"),
+        ("apowerb.tools_store.portfolio.google_drive", "tool_download_file"),
     ],
 )
 def test_download_tool_uses_agent_prefixed_folder(module_path, fn_name):
@@ -61,7 +61,7 @@ def test_download_tool_uses_agent_prefixed_folder(module_path, fn_name):
 def test_onedrive_s3_key_matches_local_folder():
     """S3 mode uses the same folder convention as local mode, otherwise
     files uploaded to S3 are unreachable from ``read_uploaded_file``."""
-    src = _source_of("th2agent.tools_store.portfolio.onedrive_read")
+    src = _source_of("apowerb.tools_store.portfolio.onedrive_read")
     s3_key_old = re.compile(r"""s3_key\s*=\s*f["']uploads/\{agent_id\}/""")
     assert not s3_key_old.search(src), (
         "onedrive_read uploads to S3 with `uploads/{agent_id}/...` — "
@@ -72,7 +72,7 @@ def test_onedrive_s3_key_matches_local_folder():
 def test_outlook_download_save_dir(monkeypatch, tmp_path):
     """End-to-end check at the os.makedirs level — the dir actually created
     by the tool must end with ``/agentX``."""
-    from th2agent.tools_store.portfolio import outlook_mail
+    from apowerb.tools_store.portfolio import outlook_mail
 
     monkeypatch.setenv("ROOT_AGENT_ID", "42")
     monkeypatch.chdir(tmp_path)

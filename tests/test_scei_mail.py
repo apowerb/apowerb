@@ -528,20 +528,20 @@ class TestToolSendSceiMail:
 
 class TestCcRecipients:
     def test_single_address(self):
-        from th2agent.tools_store.portfolio.outlook_mail import _cc_recipients
+        from apowerb.tools_store.portfolio.outlook_mail import _cc_recipients
         assert _cc_recipients("a@x.fr") == [
             {"emailAddress": {"address": "a@x.fr"}}
         ]
 
     def test_multiple_csv(self):
-        from th2agent.tools_store.portfolio.outlook_mail import _cc_recipients
+        from apowerb.tools_store.portfolio.outlook_mail import _cc_recipients
         assert _cc_recipients("a@x.fr, b@y.fr") == [
             {"emailAddress": {"address": "a@x.fr"}},
             {"emailAddress": {"address": "b@y.fr"}},
         ]
 
     def test_none_and_blank(self):
-        from th2agent.tools_store.portfolio.outlook_mail import _cc_recipients
+        from apowerb.tools_store.portfolio.outlook_mail import _cc_recipients
         assert _cc_recipients(None) == []
         assert _cc_recipients("") == []
         assert _cc_recipients(" , ") == []

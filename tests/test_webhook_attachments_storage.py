@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from th2agent.storage import webhook_attachments as wa
+from apowerb.storage import webhook_attachments as wa
 
 
 @pytest.fixture

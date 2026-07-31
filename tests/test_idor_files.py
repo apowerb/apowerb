@@ -30,8 +30,8 @@ def _fake_user(email: str):
 @pytest.fixture()
 def client():
     """TestClient authenticated as USER_A, where agent1 belongs to USER_B."""
-    from th2agent.routers.files import router
-    from th2agent.auth.dependencies import get_current_user, get_optional_user
+    from apowerb.routers.files import router
+    from apowerb.auth.dependencies import get_current_user, get_optional_user
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -64,10 +64,10 @@ def client():
         settings_mock = MagicMock()
         settings_mock.storage_mode = "local"
 
-        with patch("th2agent.routers.files._validate_agent_ownership",
+        with patch("apowerb.routers.files._validate_agent_ownership",
                    new=AsyncMock(side_effect=deny_for_other_agents)), \
-             patch("th2agent.routers.files.uploads_dir", return_value=Path(tmp_root)), \
-             patch("th2agent.routers.files.get_settings", return_value=settings_mock):
+             patch("apowerb.routers.files.uploads_dir", return_value=Path(tmp_root)), \
+             patch("apowerb.routers.files.get_settings", return_value=settings_mock):
             yield TestClient(app)
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)

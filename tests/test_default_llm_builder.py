@@ -7,8 +7,8 @@ thaink2 sur son propre endpoint.
 """
 import pytest
 
-from th2agent.core.agent_helpers import default_llm as dl
-from th2agent.core.agent_helpers import llm_model_builder as builder
+from apowerb.core.agent_helpers import default_llm as dl
+from apowerb.core.agent_helpers import llm_model_builder as builder
 
 
 class _FakeSettings:

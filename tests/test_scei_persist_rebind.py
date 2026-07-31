@@ -181,7 +181,7 @@ def _tool_func(name):
 
 def _patch_list_configs(configs):
     return patch(
-        "th2agent.tools_store.tools_helpers.list_user_tool_configs",
+        "apowerb.tools_store.tools_helpers.list_user_tool_configs",
         return_value=configs,
     )
 

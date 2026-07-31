@@ -47,7 +47,7 @@ def _ctx(state: dict | None = None):
 class TestSkipShortCircuitCallback:
     @pytest.mark.asyncio
     async def test_no_short_circuit_when_upstream_is_process(self):
-        from th2agent.core.agent_helpers.callbacks import (
+        from apowerb.core.agent_helpers.callbacks import (
             build_skip_short_circuit_callback,
         )
 
@@ -73,7 +73,7 @@ class TestSkipShortCircuitCallback:
         The original test expected None (no short-circuit) which was wrong.
         Updated 2026-05-23 to assert the correct defensive behaviour.
         """
-        from th2agent.core.agent_helpers.callbacks import (
+        from apowerb.core.agent_helpers.callbacks import (
             build_skip_short_circuit_callback,
         )
 
@@ -95,7 +95,7 @@ class TestSkipShortCircuitCallback:
 
     @pytest.mark.asyncio
     async def test_short_circuit_when_upstream_is_skip(self):
-        from th2agent.core.agent_helpers.callbacks import (
+        from apowerb.core.agent_helpers.callbacks import (
             build_skip_short_circuit_callback,
         )
 
@@ -119,7 +119,7 @@ class TestSkipShortCircuitCallback:
         """The returned LlmResponse must have content.parts with a text
         body so ADK's downstream after_agent_callback (and the agent's
         own output_key plumbing) sees a coherent final response."""
-        from th2agent.core.agent_helpers.callbacks import (
+        from apowerb.core.agent_helpers.callbacks import (
             build_skip_short_circuit_callback,
         )
 
@@ -142,7 +142,7 @@ class TestSkipShortCircuitCallback:
         """A 3-hop cascade: if matcher already wrote a skip sentinel,
         recorder also short-circuits without re-checking the original
         upstream."""
-        from th2agent.core.agent_helpers.callbacks import (
+        from apowerb.core.agent_helpers.callbacks import (
             build_skip_short_circuit_callback,
         )
 

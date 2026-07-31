@@ -1,4 +1,4 @@
-"""Tests for ``th2agent.core.agent_helpers.backlog_status_tool``.
+"""Tests for ``apowerb.core.agent_helpers.backlog_status_tool``.
 
 The factory ``_make_get_backlog_status(agent_id)`` is what
 ``to_agent`` swaps in for the agent-facing
@@ -27,9 +27,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from th2agent.scheduler import backlog_status_tool
-from th2agent.helpers.database import Base
-from th2agent.models import User, WebhookLog, WebhookSubscription
+from apowerb.scheduler import backlog_status_tool
+from apowerb.helpers.database import Base
+from apowerb.models import User, WebhookLog, WebhookSubscription
 
 
 @pytest.fixture

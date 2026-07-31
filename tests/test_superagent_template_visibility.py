@@ -21,8 +21,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from th2agent.configs.settings import get_settings
-from th2agent.core.superagents import (
+from apowerb.configs.settings import get_settings
+from apowerb.core.superagents import (
     SUPERAGENT_TEMPLATES,
     _user_org_slugs,
     get_superagent_template,

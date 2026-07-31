@@ -3,7 +3,7 @@
 import copy
 import pytest
 
-from th2agent.helpers.litellm_config import OVHCloudMessageHandler
+from apowerb.helpers.litellm_config import OVHCloudMessageHandler
 
 
 @pytest.fixture

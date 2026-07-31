@@ -5,8 +5,8 @@ import types
 
 import pytest
 
-from th2agent.core.extensions import loader
-from th2agent.core.extensions.registry import registry
+from apowerb.core.extensions import loader
+from apowerb.core.extensions.registry import registry
 
 
 def test_no_env_is_noop(monkeypatch):

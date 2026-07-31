@@ -9,10 +9,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.auth import router as auth_router_module
-from th2agent.auth import service
-from th2agent.auth.dependencies import get_db
-from th2agent.helpers.security import get_password_hash
+from apowerb.auth import router as auth_router_module
+from apowerb.auth import service
+from apowerb.auth.dependencies import get_db
+from apowerb.helpers.security import get_password_hash
 
 EMAIL = "flow@example.com"
 PASSWORD = "GoodP@ss1"
@@ -108,7 +108,7 @@ def test_resend_verification_always_200(client, monkeypatch):
     from unittest.mock import AsyncMock
 
     monkeypatch.setattr(
-        "th2agent.helpers.system_mailer.send_system_email", AsyncMock()
+        "apowerb.helpers.system_mailer.send_system_email", AsyncMock()
     )
     r = c.post("/api/auth/resend-verification", json={"email": "stranger@example.com"})
     assert r.status_code == 200

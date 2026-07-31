@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from th2agent.configs import paths
-from th2agent.configs.settings import get_settings
+from apowerb.configs import paths
+from apowerb.configs.settings import get_settings
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def racine_configurée(monkeypatch, tmp_path):
 class TestArtefacts:
     def test_l_endpoint_cherche_là_où_adk_écrit(self, racine_configurée):
         """Les deux côtés doivent résoudre la même racine, par construction."""
-        from th2agent.routers import artifacts
+        from apowerb.routers import artifacts
 
         chemin = artifacts._get_session_artifacts_dir("agent1", "u", "s")
 
@@ -53,7 +53,7 @@ class TestArtefacts:
         courant diffère au moment de l'import — donc jamais en CI, jamais en
         déploiement, et systématiquement chez lui.
         """
-        from th2agent.routers import artifacts
+        from apowerb.routers import artifacts
 
         monkeypatch.setattr(get_settings(), "runtime_root", str(tmp_path / "a"), raising=False)
         premier = artifacts._get_session_artifacts_dir("agent1", "u", "s")

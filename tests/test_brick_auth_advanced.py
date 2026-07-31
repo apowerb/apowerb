@@ -21,7 +21,7 @@ import importlib
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[1]
-NOYAU = RACINE / "src" / "th2agent"
+NOYAU = RACINE / "src" / "apowerb"
 
 
 class TestLeNoyauNeConnaitPlusLaBrique:
@@ -54,7 +54,7 @@ class TestLeNoyauNeConnaitPlusLaBrique:
     def test_le_noyau_garde_les_colonnes_mfa(self):
         """Décision assumée : inertes sans la brique, les sortir imposerait de
         découper les migrations pour un gain nul."""
-        from th2agent.models import User
+        from apowerb.models import User
 
         for colonne in ("mfa_enabled", "mfa_secret", "mfa_backup_codes"):
             assert hasattr(User, colonne), colonne
@@ -66,12 +66,12 @@ class TestLeNoyauResteComplet:
 
         C'est le comportement complet du noyau open source, pas un mode dégradé.
         """
-        from th2agent.core.extensions.registry import ExtensionRegistry
+        from apowerb.core.extensions.registry import ExtensionRegistry
 
         assert ExtensionRegistry().second_factor() is None
 
     def test_les_endpoints_d_auth_du_noyau_sont_toujours_la(self):
-        from th2agent.auth.router import router
+        from apowerb.auth.router import router
 
         chemins = {r.path for r in router.routes}
         for attendu in ("/auth/token", "/auth/logout", "/auth/forgot-password",
@@ -79,8 +79,8 @@ class TestLeNoyauResteComplet:
             assert attendu in chemins, attendu
 
     def test_les_endpoints_commerciaux_ont_disparu_du_noyau(self):
-        from th2agent.auth.router import router as routeur_auth
-        from th2agent.users.router import router as routeur_users
+        from apowerb.auth.router import router as routeur_auth
+        from apowerb.users.router import router as routeur_users
 
         chemins = {r.path for r in routeur_auth.routes} | {r.path for r in routeur_users.routes}
         commerciaux = {c for c in chemins if "/mfa/" in c or c.split("/")[-1] in
@@ -90,5 +90,5 @@ class TestLeNoyauResteComplet:
     def test_les_integrations_restent_dans_le_noyau(self):
         """Le piège : OAuth sert aussi à brancher Drive/Gmail/Outlook comme
         outils d'agent. Le tableau d'offres les garde en open source."""
-        for module in ("th2agent.integrations.google", "th2agent.integrations.microsoft"):
+        for module in ("apowerb.integrations.google", "apowerb.integrations.microsoft"):
             assert importlib.import_module(module) is not None

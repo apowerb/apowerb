@@ -159,7 +159,7 @@ class TestSceiV2PromptSafety:
         from th2customers.scei.templates.scei_v2 import (
             SCEI_V2_TEMPLATES,
         )
-        from th2agent.core.validation.prompt_safety import (
+        from apowerb.core.validation.prompt_safety import (
             validate_templates,
             collect_known_keys,
         )
@@ -183,8 +183,8 @@ class TestSceiV2PromptSafety:
     def test_shipped_templates_still_clean_with_v2_appended(self):
         """When we register v2 in templates/__init__.py, the full
         SUPERAGENT_TEMPLATES list must still pass the boot gate."""
-        from th2agent.core.superagents.templates import SUPERAGENT_TEMPLATES
-        from th2agent.core.validation.prompt_safety import validate_templates
+        from apowerb.core.superagents.templates import SUPERAGENT_TEMPLATES
+        from apowerb.core.validation.prompt_safety import validate_templates
 
         results = validate_templates(SUPERAGENT_TEMPLATES)
         errors = [
@@ -212,7 +212,7 @@ class TestV2RegisteredInSuperagentTemplates:
         # registry into the catalog (same path as init_overlay at startup).
         import th2customers.scei.templates.scei  # noqa: F401
         import th2customers.scei.templates.scei_v2  # noqa: F401
-        from th2agent.core.superagents.templates import _build_templates
+        from apowerb.core.superagents.templates import _build_templates
 
         return {t["name"] for t in _build_templates()}
 

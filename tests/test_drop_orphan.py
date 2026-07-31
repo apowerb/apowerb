@@ -1,5 +1,5 @@
 """Tests : filet anti-orphelin LiteLLM (_drop_orphan_tool_results, Layer B)."""
-from th2agent.helpers.litellm_config import (
+from apowerb.helpers.litellm_config import (
     _drop_orphan_tool_results, _strip_thought_signatures,
 )
 

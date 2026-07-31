@@ -1,6 +1,6 @@
 """Aucun chemin d'authentification ne doit accepter une clé de signature vide.
 
-Contexte. Rendre `th2agent` importable comme library a imposé de donner une
+Contexte. Rendre `apowerb` importable comme library a imposé de donner une
 valeur par défaut aux champs de configuration, dont ``encrypt_key``. Un premier
 correctif a traité ``helpers/security.py`` — la constante ``SECRET_KEY`` y était
 figée à l'import — en la remplaçant par ``get_secret_key()``, qui refuse une clé
@@ -30,7 +30,7 @@ import pathlib
 import pytest
 from jose import jwt
 
-from th2agent.configs.settings import get_settings
+from apowerb.configs.settings import get_settings
 
 ALGO = "HS256"
 
@@ -57,7 +57,7 @@ class TestAuthentificationPrincipale:
     async def test_get_current_user_refuse_un_jeton_forgé(self, clé_vide):
         from fastapi.security import HTTPAuthorizationCredentials
 
-        from th2agent.auth import dependencies
+        from apowerb.auth import dependencies
 
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=clé_vide)
         with pytest.raises(RuntimeError, match="ENCRYPT_KEY"):
@@ -72,7 +72,7 @@ class TestAuthentificationPrincipale:
         """
         from fastapi.security import HTTPAuthorizationCredentials
 
-        from th2agent.auth import dependencies
+        from apowerb.auth import dependencies
 
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=clé_vide)
         with pytest.raises(RuntimeError, match="ENCRYPT_KEY"):
@@ -85,7 +85,7 @@ class TestEndpointsNatifsADK:
         """``/run_sse`` exécute des agents : c'est le pire endroit où céder."""
         from starlette.requests import Request
 
-        from th2agent.main import ADKAuthMiddleware
+        from apowerb.main import ADKAuthMiddleware
 
         scope = {
             "type": "http",
@@ -108,7 +108,7 @@ class TestEndpointsNatifsADK:
 class TestWebSocketAudio:
     @pytest.mark.asyncio
     async def test_le_ws_refuse_un_jeton_forgé(self, clé_vide):
-        from th2agent.routers import audio_stream
+        from apowerb.routers import audio_stream
 
         with pytest.raises(RuntimeError, match="ENCRYPT_KEY"):
             await audio_stream._validate_ws_token(clé_vide)
@@ -126,7 +126,7 @@ class TestWebSocketAudio:
         Le code doit aussi être *distinct* de 4003 : « ta clé est mauvaise » et
         « mon serveur est mal configuré » ne sont pas le même diagnostic.
         """
-        from th2agent.routers import audio_stream
+        from apowerb.routers import audio_stream
 
         class WebSocketFactice:
             def __init__(self):
@@ -155,7 +155,7 @@ class TestRafraîchissementDeSession:
         laisserait croire à un problème de jeton. La clé doit donc être résolue
         avant d'entrer dans le bloc.
         """
-        from th2agent.auth import service
+        from apowerb.auth import service
 
         monkeypatch.setattr(get_settings(), "encrypt_key", "", raising=False)
         token = forge({"sub": "victime@example.com", "type": "refresh"})
@@ -181,7 +181,7 @@ class TestMiddlewareDormant:
 
         from starlette.requests import Request
 
-        from th2agent.middleware.auth import AuthMiddleware
+        from apowerb.middleware.auth import AuthMiddleware
 
         monkeypatch.setattr(get_settings(), "test_token", "", raising=False)
         scope = {
@@ -233,7 +233,7 @@ class TestGardeStructurelle:
         critère que ni l'extraction en variable ni le renommage du module JWT
         ne contournent.
         """
-        racine = pathlib.Path(__file__).resolve().parent.parent / "src" / "th2agent"
+        racine = pathlib.Path(__file__).resolve().parent.parent / "src" / "apowerb"
         coupables: list[str] = []
 
         for fichier in sorted(racine.rglob("*.py")):
@@ -243,7 +243,7 @@ class TestGardeStructurelle:
             arbre = ast.parse(fichier.read_text(encoding="utf-8"), filename=str(fichier))
             for nœud in ast.walk(arbre):
                 if isinstance(nœud, ast.Attribute) and nœud.attr == "encrypt_key":
-                    coupables.append(f"th2agent/{relatif}:{nœud.lineno}")
+                    coupables.append(f"apowerb/{relatif}:{nœud.lineno}")
 
         assert not coupables, (
             "encrypt_key ne doit être lue que par get_secret_key(), qui refuse "
@@ -256,7 +256,7 @@ class TestGardeStructurelle:
         Sans ce test, rien ne dit que la garde garde encore quoi que ce soit :
         elle passerait au vert sur un dépôt sain comme sur une garde cassée.
         """
-        piège = tmp_path / "src" / "th2agent" / "faux.py"
+        piège = tmp_path / "src" / "apowerb" / "faux.py"
         piège.parent.mkdir(parents=True)
         piège.write_text(
             "key = settings.encrypt_key\n"

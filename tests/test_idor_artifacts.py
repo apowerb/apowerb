@@ -29,8 +29,8 @@ def _fake_user(email: str):
 @pytest.fixture()
 def client():
     """Build a TestClient where get_current_user returns USER_A."""
-    from th2agent.routers.artifacts import router
-    from th2agent.auth.dependencies import get_current_user
+    from apowerb.routers.artifacts import router
+    from apowerb.auth.dependencies import get_current_user
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -51,7 +51,7 @@ def client():
 
         # La racine des artefacts était une constante de module figée à
         # l'import ; c'est désormais `_artifacts_dir()`, résolu à l'appel.
-        with patch("th2agent.routers.artifacts._artifacts_dir", return_value=tmp_root):
+        with patch("apowerb.routers.artifacts._artifacts_dir", return_value=tmp_root):
             yield TestClient(app)
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)

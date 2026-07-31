@@ -5,7 +5,7 @@ toujours sur un call -> la garde n'est pas exercee. On construit donc explicitem
 des historiques OU la fenetre COMMENCE sur un function_response orphelin.
 """
 from types import SimpleNamespace as NS
-from th2agent.core.agent_helpers.callbacks import (
+from apowerb.core.agent_helpers.callbacks import (
     create_truncate_history_callback, _content_has_function_response,
 )
 

@@ -6,10 +6,10 @@ InMemoryDashboardStore — no real database connection required.
 
 import pytest
 
-from th2agent.bi.charts.core import Chart, ChartType, DataSource
-from th2agent.bi.charts.schemas import ChartCreateRequest, ChartUpdateRequest, DataSourceSchema
-from th2agent.bi.charts.service import ChartNotFoundError, ChartService, InMemoryChartStore
-from th2agent.bi.dashboards.core import (
+from apowerb.bi.charts.core import Chart, ChartType, DataSource
+from apowerb.bi.charts.schemas import ChartCreateRequest, ChartUpdateRequest, DataSourceSchema
+from apowerb.bi.charts.service import ChartNotFoundError, ChartService, InMemoryChartStore
+from apowerb.bi.dashboards.core import (
     Dashboard,
     DashboardComponent,
     DashboardStatus,
@@ -20,7 +20,7 @@ from th2agent.bi.dashboards.core import (
     TrendDirection,
     TrendSentiment,
 )
-from th2agent.bi.dashboards.schema import (
+from apowerb.bi.dashboards.schema import (
     AddComponentRequest,
     ChartWidgetSchema,
     ComponentCreateSchema,
@@ -29,7 +29,7 @@ from th2agent.bi.dashboards.schema import (
     KeyValueCreateSchema,
     TrendSchema,
 )
-from th2agent.bi.dashboards.service import (
+from apowerb.bi.dashboards.service import (
     DashboardNotFoundError,
     DashboardService,
     InMemoryDashboardStore,

@@ -17,8 +17,8 @@ prometheus_client = pytest.importorskip("prometheus_client")
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.helpers import metrics as metrics_mod
-from th2agent.helpers.metrics_middleware import MetricsMiddleware
+from apowerb.helpers import metrics as metrics_mod
+from apowerb.helpers.metrics_middleware import MetricsMiddleware
 
 
 def _build_app() -> FastAPI:

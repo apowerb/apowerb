@@ -87,9 +87,9 @@ def _make_db_mock(token_by_user_id: dict[int, str]):
 
 class TestGoogleDriveBrowserNoLeak:
     def _build_client(self, user_email: str, tool_observer):
-        from th2agent.routers.google_drive_browser import router
-        from th2agent.auth.dependencies import get_current_user
-        from th2agent.helpers.database import get_db
+        from apowerb.routers.google_drive_browser import router
+        from apowerb.auth.dependencies import get_current_user
+        from apowerb.helpers.database import get_db
 
         app = FastAPI()
         app.include_router(router)
@@ -121,7 +121,7 @@ class TestGoogleDriveBrowserNoLeak:
         # Clean slate
         os.environ.pop("GOOGLE_DRIVE_REFRESH_TOKEN", None)
 
-        with patch("th2agent.routers.google_drive_browser.tool_list_files",
+        with patch("apowerb.routers.google_drive_browser.tool_list_files",
                    side_effect=fake_tool):
             client = self._build_client(USER_A, observed)
             resp = client.get("/api/googledrivebrowser/list")
@@ -140,9 +140,9 @@ class TestGoogleDriveBrowserNoLeak:
 
 class TestOneDriveBrowserNoLeak:
     def _build_client(self, user_email: str):
-        from th2agent.routers.onedrive_browser import router
-        from th2agent.auth.dependencies import get_current_user
-        from th2agent.helpers.database import get_db
+        from apowerb.routers.onedrive_browser import router
+        from apowerb.auth.dependencies import get_current_user
+        from apowerb.helpers.database import get_db
 
         app = FastAPI()
         app.include_router(router)
@@ -173,7 +173,7 @@ class TestOneDriveBrowserNoLeak:
 
         os.environ.pop("ONEDRIVE_REFRESH_TOKEN", None)
 
-        with patch("th2agent.routers.onedrive_browser.tool_list_files",
+        with patch("apowerb.routers.onedrive_browser.tool_list_files",
                    side_effect=fake_tool):
             client = self._build_client(USER_A)
             resp = client.get("/api/onedrivebrowser/list")
@@ -199,7 +199,7 @@ class TestBrowsersConcurrentNoCrossTenantLeak:
         the lock, the two threads could interleave their env var writes and
         observe the wrong value.
         """
-        from th2agent.routers import google_drive_browser as gdb
+        from apowerb.routers import google_drive_browser as gdb
 
         # Each fake tool invocation waits a tick to encourage interleaving.
         call_order: list[tuple[str, str | None]] = []
@@ -267,7 +267,7 @@ class TestBrowsersConcurrentNoCrossTenantLeak:
 
     @pytest.mark.asyncio
     async def test_concurrent_onedrive_calls_isolated(self):
-        from th2agent.routers import onedrive_browser as odb
+        from apowerb.routers import onedrive_browser as odb
 
         call_order: list[tuple[str, str | None]] = []
 

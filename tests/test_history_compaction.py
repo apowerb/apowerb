@@ -1,4 +1,4 @@
-"""Tests for ``th2agent.core.history_compaction``."""
+"""Tests for ``apowerb.core.history_compaction``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from th2agent.core.history_compaction import (
+from apowerb.core.history_compaction import (
     _strip_payload,
     create_strip_large_payloads_callback,
 )

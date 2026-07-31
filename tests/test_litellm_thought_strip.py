@@ -1,6 +1,6 @@
 """Tests du strip des signatures __thought__ Gemini (réparation function-calling multi-tours)."""
 
-from th2agent.helpers.litellm_config import _strip_thought_signatures
+from apowerb.helpers.litellm_config import _strip_thought_signatures
 
 
 def test_strip_tool_call_id_cote_reponse():

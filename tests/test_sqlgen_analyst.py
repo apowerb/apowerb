@@ -6,7 +6,7 @@ exercised with NO database and NO LLM — same purity contract as test_sqlgen.py
 
 from __future__ import annotations
 
-from th2agent.sqlgen.analyst import (
+from apowerb.sqlgen.analyst import (
     AnalysisResult,
     InvestigationStep,
     run_investigation,

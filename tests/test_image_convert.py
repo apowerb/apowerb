@@ -8,7 +8,7 @@ import tempfile
 import pytest
 from PIL import Image as PILImage
 
-from th2agent.tools_store.portfolio.basic import tool_convert_image_to_base64
+from apowerb.tools_store.portfolio.basic import tool_convert_image_to_base64
 
 
 # ---------------------------------------------------------------------------

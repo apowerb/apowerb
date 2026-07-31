@@ -17,7 +17,7 @@ import re
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from th2agent.helpers.request_id_middleware import (
+from apowerb.helpers.request_id_middleware import (
     REQUEST_ID_HEADER,
     RequestIdMiddleware,
     get_request_id,

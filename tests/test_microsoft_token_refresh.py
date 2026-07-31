@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from th2agent.integrations.microsoft import (
+from apowerb.integrations.microsoft import (
     IntegrationTokenExpiredError,
     MicrosoftIntegrationService,
     _decode_jwt_exp,
@@ -98,7 +98,7 @@ class TestGetValidAccessToken:
         db = _db_with_integration(integ)
 
         with patch(
-            "th2agent.integrations.microsoft.httpx.AsyncClient"
+            "apowerb.integrations.microsoft.httpx.AsyncClient"
         ) as mock_client:
             token = await MicrosoftIntegrationService.get_valid_access_token(
                 db, user_id=1, service="outlook"
@@ -123,7 +123,7 @@ class TestGetValidAccessToken:
         }
 
         with patch(
-            "th2agent.integrations.microsoft.httpx.AsyncClient"
+            "apowerb.integrations.microsoft.httpx.AsyncClient"
         ) as mock_client_cls:
             client = AsyncMock()
             client.post = AsyncMock(return_value=resp)
@@ -161,7 +161,7 @@ class TestGetValidAccessToken:
         resp.text = '{"error":"invalid_grant"}'
 
         with patch(
-            "th2agent.integrations.microsoft.httpx.AsyncClient"
+            "apowerb.integrations.microsoft.httpx.AsyncClient"
         ) as mock_client_cls:
             client = AsyncMock()
             client.post = AsyncMock(return_value=resp)
@@ -192,7 +192,7 @@ class TestGetValidAccessToken:
         resp.json.return_value = {"token_type": "Bearer"}  # missing access_token
 
         with patch(
-            "th2agent.integrations.microsoft.httpx.AsyncClient"
+            "apowerb.integrations.microsoft.httpx.AsyncClient"
         ) as mock_client_cls:
             client = AsyncMock()
             client.post = AsyncMock(return_value=resp)

@@ -5,7 +5,7 @@ pas par compte) ; `user.onboarding_completed` etait du code mort (colonne absent
 On materialise le flag serveur pour un onboarding par compte.
 """
 from datetime import datetime
-from th2agent.users.schemas import User, UserUpdate
+from apowerb.users.schemas import User, UserUpdate
 
 
 def test_user_schema_expose_onboarding_defaut_false():

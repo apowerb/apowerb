@@ -120,9 +120,9 @@ def store():
 @pytest.fixture()
 def app_with_overrides(store):
     """Build a FastAPI app mounting the integrations router with stubs."""
-    from th2agent.routers import integrations as integrations_module
-    from th2agent.auth.dependencies import get_current_user
-    from th2agent.helpers.database import get_db
+    from apowerb.routers import integrations as integrations_module
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.helpers.database import get_db
 
     # Replace the singleton oauth state store with our in-memory stub.
     # The router module is expected to expose the store via a module-level
@@ -258,15 +258,15 @@ class TestGitHubStateValidation:
         ok_state = _seed_state(store, provider=GITHUB, user_id=1)
 
         with patch(
-            "th2agent.routers.integrations.GitHubIntegrationService."
+            "apowerb.routers.integrations.GitHubIntegrationService."
             "exchange_code_for_token",
             new_callable=AsyncMock,
         ) as exch, patch(
-            "th2agent.routers.integrations.GitHubIntegrationService."
+            "apowerb.routers.integrations.GitHubIntegrationService."
             "get_github_user",
             new_callable=AsyncMock,
         ) as gu, patch(
-            "th2agent.routers.integrations.GitHubIntegrationService."
+            "apowerb.routers.integrations.GitHubIntegrationService."
             "save_integration",
             new_callable=AsyncMock,
         ) as save:
@@ -343,19 +343,19 @@ class TestMicrosoftStateValidation:
         ok_state = _seed_state(store, provider=MICROSOFT_OUTLOOK, user_id=1)
 
         with patch(
-            "th2agent.routers.integrations.MicrosoftIntegrationService."
+            "apowerb.routers.integrations.MicrosoftIntegrationService."
             "exchange_code_for_token",
             new_callable=AsyncMock,
         ) as exch, patch(
-            "th2agent.routers.integrations.MicrosoftIntegrationService."
+            "apowerb.routers.integrations.MicrosoftIntegrationService."
             "get_microsoft_user",
             new_callable=AsyncMock,
         ) as mu, patch(
-            "th2agent.routers.integrations.MicrosoftIntegrationService."
+            "apowerb.routers.integrations.MicrosoftIntegrationService."
             "save_integration",
             new_callable=AsyncMock,
         ) as save, patch(
-            "th2agent.routers.integrations._reset_outlook_module_state"
+            "apowerb.routers.integrations._reset_outlook_module_state"
         ):
             exch.return_value = {
                 "access_token": "ms_xxx",
@@ -446,19 +446,19 @@ class TestGoogleStateValidation:
         ok_state = _seed_state(store, provider=GOOGLE_DRIVE, user_id=1)
 
         with patch(
-            "th2agent.routers.integrations.GoogleIntegrationService."
+            "apowerb.routers.integrations.GoogleIntegrationService."
             "exchange_code_for_token",
             new_callable=AsyncMock,
         ) as exch, patch(
-            "th2agent.routers.integrations.GoogleIntegrationService."
+            "apowerb.routers.integrations.GoogleIntegrationService."
             "get_google_user",
             new_callable=AsyncMock,
         ) as gu, patch(
-            "th2agent.routers.integrations.GoogleIntegrationService."
+            "apowerb.routers.integrations.GoogleIntegrationService."
             "save_integration",
             new_callable=AsyncMock,
         ) as save, patch(
-            "th2agent.routers.integrations._reset_google_drive_module_state"
+            "apowerb.routers.integrations._reset_google_drive_module_state"
         ):
             exch.return_value = {
                 "access_token": "g_xxx",
