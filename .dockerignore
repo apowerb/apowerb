@@ -1,0 +1,24 @@
+# VCS and local metadata
+.git
+.github
+.idea
+.vscode
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# Test and scratch data
+tests/
+.env*
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db

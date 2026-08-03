@@ -8,10 +8,9 @@ authors = [
 ]
 license = "MIT"
 license-files = ["LICENSE"]
-# 3.12 is the real floor: the code nests identical quotes inside an f-string
-# (PEP 701), which 3.11 rejects. Checked by compiling all of src/ on 3.11
-# (fails) then on 3.12 and 3.13 (both fine).
-requires-python = ">=3.12"
+# Compatibility target: the package should install on Python 3.10+.
+# The runtime code is expected to stay compatible across that range.
+requires-python = ">=3.10"
 keywords = ["agents", "adk", "llm", "rag", "text-to-sql", "fastapi", "postgresql", "orchestration"]
 classifiers = [
     "Development Status :: 4 - Beta",
