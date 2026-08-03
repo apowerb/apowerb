@@ -81,11 +81,57 @@ root_agent = to_agent(agent_name = '{agent_name}')
     print(f"Agent module '{agent_name}' created successfully in {agent_dir}")
 
 
-def ensure_agent_modules(agents_pool_path: str | None = None) -> None:
-    """Auto-repair: regenerate missing agent.py files for all agents in the DB.
+# The stub below is entirely derived from the agent id: no business logic ever
+# lives in it. Model, instruction and tools are resolved at runtime by
+# ``to_agent`` from the database. That is precisely what makes rewriting a
+# stale one safe -- there is nothing in the file to lose.
+_AGENT_STUB_IMPORT = "from apowerb.core.agent_helpers import to_agent"
 
-    Called at startup to fix agents whose pool directory exists (with .adk session data)
-    but whose agent.py was lost (e.g. different environment, partial sync, manual deletion).
+
+def _agent_stub_source(folder_name: str) -> str:
+    """The canonical content of an agent module."""
+    return (
+        "\n# apowerb modules\n"
+        f"{_AGENT_STUB_IMPORT}\n\n"
+        "# declare env variables from stored in agent_model_params\n"
+        f"root_agent = to_agent(agent_name = '{folder_name}')\n"
+        "# Create the agent\n\n"
+    )
+
+
+def _stub_cannot_import_the_core(agent_file: str) -> bool:
+    """A stub that cannot import the core is as good as a missing one.
+
+    The package was renamed ``th2agent`` -> ``apowerb`` on 2026-07-31. The
+    generator here was updated; the files already written were not, and a stub
+    is only rewritten when its agent is saved again. On 2026-08-03 that left
+    124 of 128 agents on production importing a module that no longer exists --
+    each one a ``ModuleNotFoundError`` at its first run. Nobody had run an
+    agent since the rename, so nothing had surfaced it.
+
+    Deliberately narrow: only a stub that cannot import the core is rewritten.
+    A file someone has genuinely customised, which still imports it, is left
+    alone.
+    """
+    try:
+        with open(agent_file, encoding="utf-8") as f:
+            return _AGENT_STUB_IMPORT not in f.read()
+    except OSError:
+        return True
+
+
+def ensure_agent_modules(agents_pool_path: str | None = None) -> None:
+    """Auto-repair: regenerate missing *or stale* agent.py files for every agent.
+
+    Called at startup, so an environment heals itself on its next restart
+    rather than waiting for someone to save each agent by hand.
+
+    Missing: the pool directory survived (with its .adk session data) but the
+    module was lost -- another environment, a partial sync, a manual deletion.
+
+    Stale: the module is there but can no longer import the core, which is what
+    a package rename leaves behind. Both cases end the same way, as a
+    ModuleNotFoundError at the agent's first run, so both are repaired.
     """
     agents_pool_path = agents_pool_path or str(agents_pool_dir())
     try:
@@ -104,7 +150,10 @@ def ensure_agent_modules(agents_pool_path: str | None = None) -> None:
         agent_dir = os.path.join(agents_pool_path, folder_name)
         agent_file = os.path.join(agent_dir, "agent.py")
 
-        if not os.path.exists(agent_file):
+        missing = not os.path.exists(agent_file)
+        stale = not missing and _stub_cannot_import_the_core(agent_file)
+
+        if missing or stale:
             os.makedirs(agent_dir, exist_ok=True)
             # Write __init__.py
             init_file = os.path.join(agent_dir, "__init__.py")
@@ -112,16 +161,9 @@ def ensure_agent_modules(agents_pool_path: str | None = None) -> None:
                 with open(init_file, "w") as f:
                     f.write("# Agent module\n")
             # Write agent.py
-            agent_code = (
-                "\n# th2agent modules\n"
-                "from apowerb.core.agent_helpers import to_agent\n\n"
-                f"# declare env variables from stored in agent_model_params\n"
-                f"root_agent = to_agent(agent_name = '{folder_name}')\n"
-                "# Create the agent\n\n"
-            )
             with open(agent_file, "w") as f:
-                f.write(agent_code)
-            repaired.append(folder_name)
+                f.write(_agent_stub_source(folder_name))
+            repaired.append(f"{folder_name} ({'missing' if missing else 'stale'})")
 
     if repaired:
         print(f"[ensure_agent_modules] Repaired {len(repaired)} agent(s): {repaired}")
