@@ -241,3 +241,42 @@ def test_status_mapping_covers_all_th2etl_statuses():
     assert th2etl_client._to_mage_run({"id": 3, "status": None})["status"] is None
     # non-dict input is returned untouched
     assert th2etl_client._to_mage_run(None) is None
+class TestAnUnreachableOrchestratorIsNotAnEmptyOne:
+    """The distinction that went missing for three weeks.
+
+    th2etl died on the dev VM on 2026-07-11. `get_all_pipelines` caught the
+    connection error, returned `[]`, and the Orchestrator page rendered
+    "no pipelines" — a perfectly healthy-looking screen over a dead service.
+    83 logged errors and nobody could see it. An empty list is an answer; a
+    dead orchestrator is not.
+    """
+
+    def test_it_raises_instead_of_looking_empty(self, fake, monkeypatch):
+        def refused(url, **kw):
+            raise th2etl_client.requests.RequestException("connection refused")
+
+        monkeypatch.setattr(fake, "get", refused)
+        client = Th2etlAPIClient("http://127.0.0.1:8009")
+
+        with pytest.raises(th2etl_client.OrchestratorUnavailable) as caught:
+            client.get_all_pipelines()
+
+        # The message must name where we failed to reach: "unreachable" alone
+        # sends the reader hunting for the address.
+        assert "127.0.0.1:8009" in str(caught.value)
+
+    def test_a_reachable_orchestrator_still_returns_its_pipelines(self, fake):
+        client = Th2etlAPIClient("http://127.0.0.1:8009")
+        fake.responses[("GET", "http://127.0.0.1:8009/pipelines/")] = _Resp(
+            200, [{"name": "agents"}]
+        )
+
+        assert client.get_all_pipelines() == [{"name": "agents"}]
+
+    def test_no_pipelines_is_still_a_plain_empty_list(self, fake):
+        """The genuinely empty case must stay quiet — this is the answer the
+        exception is meant to be told apart from."""
+        client = Th2etlAPIClient("http://127.0.0.1:8009")
+        fake.responses[("GET", "http://127.0.0.1:8009/pipelines/")] = _Resp(200, [])
+
+        assert client.get_all_pipelines() == []

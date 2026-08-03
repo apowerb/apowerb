@@ -89,6 +89,21 @@ def _to_mage_run(run: dict[str, Any]) -> dict[str, Any]:
     return mapped
 
 
+class OrchestratorUnavailable(RuntimeError):
+    """The orchestrator could not be reached at all.
+
+    Raised rather than returning an empty list, because "unreachable" and "no
+    pipelines" are not the same answer and only the caller can decide what to
+    do with the difference. Returning ``[]`` made a dead orchestrator read as
+    an empty dashboard: on the dev VM the service stopped on 2026-07-11 and
+    nobody could see it until 2026-08-03, because the page it broke kept
+    rendering perfectly.
+
+    Kept in this module on purpose: it has no apowerb imports, so both clients
+    and the tests that load it by file path can use it.
+    """
+
+
 class Th2etlAPIClient:
     """HTTP client for th2etl, exposing the MageAPIClient method surface."""
 
@@ -132,7 +147,9 @@ class Th2etlAPIClient:
             return resp.json()
         except requests.RequestException as e:
             logger.error("th2etl get_all_pipelines failed: %s", e)
-            return []
+            raise OrchestratorUnavailable(
+                f"th2etl is unreachable at {self.base_url}: {e}"
+            ) from e
 
     # --- block lifecycle (orchestrator init) -------------------------------
     # In Mage the orchestrator injects an ``agent_exe`` code block that POSTs
