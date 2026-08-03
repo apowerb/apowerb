@@ -20,7 +20,7 @@ RUN apt-get update \
 COPY pyproject.toml uv.lock ./
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && /root/.local/bin/uv sync --locked --no-dev --no-install-project \
+    && /root/.local/bin/uv sync --no-dev --no-install-project \
     && /root/.local/bin/uv pip install --system --no-cache-dir "apowerb==${APPOWERB_VERSION}"
 
 EXPOSE 8000
