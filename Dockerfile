@@ -3,7 +3,7 @@ FROM python:3.13-slim AS runtime
 ARG APPOWERB_VERSION
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    UV_NO_CACHE=1
 
 WORKDIR /app
 
@@ -14,10 +14,14 @@ RUN apt-get update \
         g++ \
         unixodbc-dev \
         libpq-dev \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir "apowerb==${APPOWERB_VERSION}"
+COPY pyproject.toml uv.lock ./
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && /root/.local/bin/uv sync --locked --no-dev --no-install-project \
+    && /root/.local/bin/uv pip install --system --no-cache-dir "apowerb==${APPOWERB_VERSION}"
 
 EXPOSE 8000
 
