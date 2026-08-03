@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from apowerb.auth.dependencies import get_current_user
 from apowerb.users import schemas as user_schemas
 from apowerb.scheduler.mage import get_orchestrator, process_agent_registration
+from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
 from apowerb.core.agent_main import fetch_agents
 from apowerb.configs.th2logger import setup_logging
 
@@ -61,7 +62,13 @@ class CreateTriggerRequest(BaseModel):
 @router.get("/pipelines", tags=["scheduler"])
 async def list_pipelines(current_user: user_schemas.User = Depends(get_current_user)):
     """Endpoint to list all available pipelines."""
-    return scheduler_client.get_all_pipelines()
+    try:
+        return scheduler_client.get_all_pipelines()
+    except OrchestratorUnavailable as e:
+        # 503, never 200 with an empty list: the dashboard must be able to say
+        # "the orchestrator is down" instead of "you have no pipelines".
+        logger.error("orchestrator unreachable while listing pipelines: %s", e)
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 
 @router.post("/pipelines/agents/triggers", tags=["scheduler"])

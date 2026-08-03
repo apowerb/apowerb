@@ -3,6 +3,7 @@ from apowerb.configs.th2logger import setup_logging
 from typing import Any
 import requests
 from apowerb.configs.settings import get_settings
+from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
 
 logger = setup_logging(__name__)
 
@@ -165,7 +166,13 @@ class MageAPIClient:
             return []
 
     def get_all_pipelines(self) -> list:
-        """Get all pipelines."""
+        """Get all pipelines.
+
+        Raises ``OrchestratorUnavailable`` rather than returning ``[]``: the
+        caller in ``_initialize_pipeline`` was already written around an
+        exception it never got, and printed "Successfully connected" over a
+        dead Mage.
+        """
         url = f"{self.base_url}/api/pipelines"
         try:
             response = requests.get(url, headers=self._get_headers(), timeout=15)
@@ -173,7 +180,9 @@ class MageAPIClient:
             return response.json().get("pipelines", [])
         except Exception as e:
             print(f"Error fetching pipelines: {e}")
-            return []
+            raise OrchestratorUnavailable(
+                f"Mage is unreachable at {self.base_url}: {e}"
+            ) from e
 
     def get_pipeline_runs(self, schedule_id: int) -> list:
         """Get pipeline runs for a specific schedule."""
