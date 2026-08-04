@@ -107,6 +107,12 @@ async def _get_owner_token() -> str | None:
     """
     settings = get_settings()
     owner = settings.notification_integration_owner
+    # Not configured is not a failure: no owner means the shared mailbox is not
+    # in use at all. Querying the database for an empty address would log an
+    # ERROR on every single send.
+    if not owner.strip():
+        logger.debug("system_mailer: no notification owner configured")
+        return None
     async with sessionmanager.session() as db:
         row = (
             await db.execute(select(User.user_id).where(User.email == owner))

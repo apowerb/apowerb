@@ -8,6 +8,14 @@ from apowerb.helpers import notify_etl
 
 
 @pytest.fixture(autouse=True)
+def _configured_recipients(monkeypatch):
+    """The recipients are a deployment identity, with no default any more."""
+    settings = notify_etl.get_settings()
+    monkeypatch.setattr(settings, "super_admin_email", "admin@example.com")
+    monkeypatch.setattr(settings, "etl_alert_recipients", "support@example.com")
+
+
+@pytest.fixture(autouse=True)
 def _clear_throttle():
     notify_etl._last_sent.clear()
     yield
@@ -22,9 +30,21 @@ async def test_sends_to_super_admin(monkeypatch):
     assert ok is True
     sent.assert_awaited_once()
     kwargs = sent.call_args.kwargs
-    assert kwargs["to"] == [notify_etl.get_settings().super_admin_email, "support@thaink2.com", "david.gnaglo@thaink2.com"]
+    assert kwargs["to"] == ["admin@example.com", "support@example.com"]
     assert kwargs["subject"] == "[ETL][FAILED] agents-pipeline"
     assert "boom" in kwargs["html"]
+
+
+@pytest.mark.asyncio
+async def test_no_recipient_configured_sends_nothing(monkeypatch):
+    """With no recipient, the alert is dropped instead of failing to send."""
+    settings = notify_etl.get_settings()
+    monkeypatch.setattr(settings, "super_admin_email", "")
+    monkeypatch.setattr(settings, "etl_alert_recipients", "")
+    sent = AsyncMock(return_value=True)
+    monkeypatch.setattr(notify_etl.system_mailer, "send_system_email", sent)
+    assert await notify_etl.notify_job_failure("job", "err", now=1000.0) is False
+    sent.assert_not_awaited()
 
 
 @pytest.mark.asyncio

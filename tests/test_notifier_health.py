@@ -34,6 +34,19 @@ class _FakeSession:
         return r
 
 
+@pytest.fixture(autouse=True)
+def _configured_owner(monkeypatch):
+    """These tests describe a configured mailer.
+
+    The owner address has no default any more -- an installation that never set
+    one has no system mailer at all, which is the separate case covered by
+    ``test_unconfigured_owner_is_not_a_failure``.
+    """
+    settings = notifier_health.get_settings()
+    monkeypatch.setattr(settings, "notification_integration_owner", "owner@example.com")
+    monkeypatch.setattr(settings, "super_admin_email", "admin@example.com")
+
+
 def _patch_session(monkeypatch, session):
     @contextlib.asynccontextmanager
     async def _cm():
@@ -46,6 +59,32 @@ def _integration(refresh_token="rt"):
     ig = MagicMock()
     ig.refresh_token = refresh_token
     return ig
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_owner_is_not_a_failure(monkeypatch):
+    """No owner configured means the mailer is off, not broken.
+
+    Reporting it unhealthy would answer 503 on /health/notifier and alert every
+    six hours about a feature the operator never enabled.
+    """
+    settings = notifier_health.get_settings()
+    monkeypatch.setattr(settings, "notification_integration_owner", "")
+    res = await notifier_health.check_notifier_owner()
+    assert res["healthy"] is True
+    assert res["configured"] is False
+    assert "not configured" in res["detail"]
+
+
+@pytest.mark.asyncio
+async def test_watch_loop_does_not_start_when_unconfigured(monkeypatch):
+    settings = notifier_watch.get_settings()
+    monkeypatch.setattr(settings, "notification_integration_owner", "")
+    checked = AsyncMock()
+    monkeypatch.setattr(notifier_watch, "check_notifier_owner", checked)
+    # Returns immediately instead of looping forever.
+    await notifier_watch.notifier_watch_loop()
+    checked.assert_not_awaited()
 
 
 @pytest.mark.asyncio
