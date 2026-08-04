@@ -38,12 +38,25 @@ def racine_configurée(monkeypatch, tmp_path):
 
 class TestArtefacts:
     def test_l_endpoint_cherche_là_où_adk_écrit(self, racine_configurée):
-        """Les deux côtés doivent résoudre la même racine, par construction."""
+        """Les deux côtés doivent résoudre le même chemin, par construction.
+
+        Ce test affirmait ``racine/<agent>/<user>/<session>``. La racine était
+        bonne, la structure non : relevé sur la dev le 2026-08-04, ADK écrit
+        ``users/<user>/sessions/<session>/artifacts/<nom>/versions/<n>/<nom>``.
+        L'endpoint listait donc un répertoire inexistant et renvoyait ``[]``
+        sans erreur, pour des artefacts pourtant présents sur le disque.
+
+        ⚠️ Le nom de l'agent n'entre pas dans le chemin : ADK borne les
+        artefacts à (utilisateur, session).
+        """
         from apowerb.routers import artifacts
 
-        chemin = artifacts._get_session_artifacts_dir("agent1", "u", "s")
+        chemin = artifacts._get_session_artifacts_dir("u", "s")
 
-        assert Path(chemin) == paths.artifacts_store_dir() / "agent1" / "u" / "s"
+        attendu = (
+            paths.artifacts_store_dir() / "users" / "u" / "sessions" / "s" / "artifacts"
+        )
+        assert Path(chemin) == attendu
         assert str(racine_configurée) in chemin
 
     def test_le_chemin_n_est_pas_figé_à_l_import(self, monkeypatch, tmp_path):
@@ -56,10 +69,10 @@ class TestArtefacts:
         from apowerb.routers import artifacts
 
         monkeypatch.setattr(get_settings(), "runtime_root", str(tmp_path / "a"), raising=False)
-        premier = artifacts._get_session_artifacts_dir("agent1", "u", "s")
+        premier = artifacts._get_session_artifacts_dir("u", "s")
 
         monkeypatch.setattr(get_settings(), "runtime_root", str(tmp_path / "b"), raising=False)
-        second = artifacts._get_session_artifacts_dir("agent1", "u", "s")
+        second = artifacts._get_session_artifacts_dir("u", "s")
 
         assert premier != second, "le chemin des artefacts est figé à l'import"
 
