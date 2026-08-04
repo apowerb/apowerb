@@ -82,6 +82,7 @@ from apowerb.configs.paths import (
 )
 from apowerb.helpers import encryptor as _encryptor
 from apowerb.helpers.user_migration import ensure_user_columns
+from apowerb.helpers.core_tables import ensure_core_tables
 from apowerb.helpers.store_migrations import ensure_store_tables
 from apowerb.core.adk_agent_builder import ensure_agent_modules
 
@@ -128,6 +129,12 @@ def bootstrap(force: bool = False) -> None:
     # Tables des stores (agents, tool configs, skills, hub, api keys) — leur
     # DDL tournait à l'import des modules concernés.
     ensure_store_tables()
+
+    # Tables of the core model (user, integrations, webhooks, notifications…).
+    # Must run before the ensure_* migrations below: they add columns to those
+    # tables, or reference them, but none of them ever creates `user`. On an
+    # existing deployment this is a no-op.
+    ensure_core_tables()
 
     # Auto-migrate user table columns (OAuth + Billing)
     ensure_user_columns()
