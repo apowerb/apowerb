@@ -4,7 +4,28 @@ import os
 import time
 from logging import getLogger
 
+from apowerb.configs.paths import runtime_root
+
 logger = getLogger(__name__)
+
+
+def _exec_workspace_root() -> str:
+    """Racine des répertoires de travail passés à Docker.
+
+    ⚠️ **Pas ``/tmp``.** Docker est installé depuis snap sur les VM, et snap
+    confine ``/tmp`` : un bind mount d'un répertoire ``/tmp`` de l'hôte apparaît
+    **vide** dans le conteneur. ``execute_artifact`` écrivait le code avec
+    ``tempfile.TemporaryDirectory()``, donc sous ``/tmp``, et toute exécution
+    échouait sur ``can't open file '/tmp/code/<nom>'`` — le conteneur démarrait
+    bien, il ne voyait simplement aucun fichier.
+
+    Mesuré sur la dev le 2026-08-04 : monté depuis ``/tmp``, le répertoire est
+    vide ; le même fichier monté depuis ``/home/ubuntu`` s'exécute et rend sa
+    sortie. La racine runtime est hors de ``/tmp`` sur tous les déploiements.
+    """
+    workspace = runtime_root() / "exec"
+    workspace.mkdir(parents=True, exist_ok=True)
+    return str(workspace)
 
 # Language to Docker image mapping
 LANGUAGE_IMAGES = {
@@ -66,8 +87,9 @@ async def execute_artifact(
     if args:
         cmd.extend(args)
 
-    # Write code to a temp directory
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # Write code to a temp directory Docker can actually read (see
+    # _exec_workspace_root: snap confines /tmp).
+    with tempfile.TemporaryDirectory(dir=_exec_workspace_root()) as tmpdir:
         code_path = os.path.join(tmpdir, filename)
         with open(code_path, "w", encoding="utf-8") as f:
             f.write(code)
