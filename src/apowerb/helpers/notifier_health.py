@@ -36,6 +36,16 @@ async def check_notifier_owner(*, deep: bool = False) -> dict:
     """
     settings = get_settings()
     owner = settings.notification_integration_owner
+    # No owner configured: the system mailer is off by choice, not broken.
+    # Reporting it unhealthy would raise a 503 and alert hourly about a feature
+    # the operator never enabled.
+    if not owner.strip():
+        return {
+            "healthy": True,
+            "configured": False,
+            "owner": "",
+            "detail": "system mailer not configured (NOTIFICATION_INTEGRATION_OWNER unset)",
+        }
     try:
         async with sessionmanager.session() as db:
             row = (

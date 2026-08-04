@@ -175,14 +175,18 @@ class Settings(BaseSettings):
     auth_basic_enabled: bool = True
 
     # ── Notifications / system mailer ───────────────────────────────
-    # Shared Outlook mailbox used as the From for all system emails.
-    notification_email: str = "notifications@thaink2.com"
+    # All three are deployment identities and have no sensible default: a
+    # hardcoded address would make every installation mail a third party.
+    # Left empty, the system mailer is simply off — no alert, no 503, one
+    # log line saying so.
+    # Shared mailbox used as the From for all system emails.
+    notification_email: str = ""
     notification_email_provider: str = "outlook"
-    # Login (in DB) that owns the Outlook integration with access to the
-    # shared mailbox above. Its refresh_token sends headless mail.
-    notification_integration_owner: str = "farid.azouaou@thaink2.com"
+    # Login (in DB) that owns the mailbox integration above. Its refresh_token
+    # sends headless mail.
+    notification_integration_owner: str = ""
     # Principal admin — recipient of ETL/system alerts.
-    super_admin_email: str = "farid.azouaou@thaink2.com"
+    super_admin_email: str = ""
     # Public base URL of the front app, for verify/reset links.
     app_public_url: str = "http://localhost:3000"
     # Email-verification gate. OFF by default; never enable on SCEI until

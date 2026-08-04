@@ -50,6 +50,17 @@ async def notify_job_failure(
     send failed. Never raises — alerting must not mask the original failure.
     """
     settings = get_settings()
+
+    # No recipient configured: nothing to alert to. Bail out before building
+    # the message, otherwise every failed job logs a mailer error instead of
+    # the failure itself.
+    if not (
+        settings.super_admin_email.strip()
+        or (settings.etl_alert_recipients or "").strip()
+    ):
+        logger.debug("notify_etl: no recipient configured, alert for job=%s dropped", job)
+        return False
+
     sig = _signature(job, error)
     ts = now if now is not None else time.time()
 

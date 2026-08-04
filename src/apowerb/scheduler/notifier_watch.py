@@ -58,6 +58,12 @@ async def _alert_owner_down(detail: str, owner: str) -> None:
 
 async def notifier_watch_loop() -> None:
     """Forever loop. Hourly deep health check, edge-triggered alert on failure."""
+    if not get_settings().notification_integration_owner.strip():
+        logger.info(
+            "notifier_watch: no notifier owner configured — system mailer off, "
+            "watch not started"
+        )
+        return
     logger.info("notifier_watch: loop started (interval=%ds)", CHECK_INTERVAL_SECONDS)
     await asyncio.sleep(60)  # let startup settle
     was_healthy = True
