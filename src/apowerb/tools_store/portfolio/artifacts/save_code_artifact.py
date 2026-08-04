@@ -2,7 +2,7 @@ import json
 from google.genai import types
 
 
-async def save_code_artifact(
+async def tool_save_code_artifact(
     tool_context,
     filename: str,
     code: str,
