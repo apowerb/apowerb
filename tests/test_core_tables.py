@@ -11,43 +11,48 @@ from sqlalchemy.pool import StaticPool
 from apowerb.configs.settings import get_settings
 from apowerb.helpers.core_tables import ensure_core_tables
 
+# Empty in the unit workflow, "public" against a real database. When it is set,
+# the models qualify their tables with it and SQLite needs that name attached.
+SCHEMA = get_settings().db_schema or None
+
 
 @pytest.fixture
 def sqlite_engine():
     """In-memory SQLite standing in for the target schema.
 
-    The project MetaData carries ``schema=<DB_SCHEMA>``, so the tables are
-    emitted as ``public.user`` and SQLite needs that name attached. StaticPool
-    keeps a single connection, otherwise the ATTACH only holds for the first.
+    StaticPool keeps a single connection: otherwise the ATTACH would only hold
+    for the first one and the qualified tables would vanish.
     """
-    schema = get_settings().db_schema
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    with engine.begin() as conn:
-        conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS {schema}")
+    if SCHEMA:
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f'ATTACH DATABASE \':memory:\' AS "{SCHEMA}"')
     yield engine
     engine.dispose()
 
 
+def _tables(engine):
+    return inspect(engine).get_table_names(schema=SCHEMA)
+
+
 def test_creates_the_user_table_on_an_empty_database(sqlite_engine):
-    schema = get_settings().db_schema
-    assert "user" not in inspect(sqlite_engine).get_table_names(schema=schema)
+    assert "user" not in _tables(sqlite_engine)
 
     ensure_core_tables(engine=sqlite_engine)
 
-    tables = inspect(sqlite_engine).get_table_names(schema=schema)
+    tables = _tables(sqlite_engine)
     assert "user" in tables
     assert "integrations" in tables
 
 
 def test_is_idempotent(sqlite_engine):
     ensure_core_tables(engine=sqlite_engine)
-    before = sorted(inspect(sqlite_engine).get_table_names(schema=get_settings().db_schema))
+    before = sorted(_tables(sqlite_engine))
 
     ensure_core_tables(engine=sqlite_engine)
 
-    after = sorted(inspect(sqlite_engine).get_table_names(schema=get_settings().db_schema))
-    assert before == after
+    assert sorted(_tables(sqlite_engine)) == before
