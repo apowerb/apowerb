@@ -193,9 +193,10 @@ class Settings(BaseSettings):
     # the email_verified backfill is confirmed in prod.
     auth_email_verification_enabled: bool = False
     email_verify_token_expire_hours: int = 24
-    # Destinataires additionnels des alertes ETL (en plus de super_admin_email),
-    # séparés par des virgules.
-    etl_alert_recipients: str = "support@thaink2.com,david.gnaglo@thaink2.com"
+    # Extra recipients of the ETL alerts, on top of super_admin_email, comma
+    # separated. Deployment identity: no default, or every installation would
+    # mail its alerts to whoever is named here.
+    etl_alert_recipients: str = ""
 
     # Scheduler configuration (Mage) - matches .env variable names
     base_url: str = "http://localhost:6789"
@@ -213,9 +214,10 @@ class Settings(BaseSettings):
     # B8 — Explicit CORS whitelist (comma-separated). When set, supersedes
     # ``frontend_urls``. Lets us restrict allowed origins independently of the
     # frontend_urls plumbing in the codebase.
-    cors_allowed_origins: str = (
-        "http://localhost:3000,https://th2ai.thaink2.com"
-    )
+    # Deployment-specific: only the local frontend is a sensible default. A
+    # third-party domain here would be trusted by every installation, and
+    # localhost stays allowed in production for no reason.
+    cors_allowed_origins: str = "http://localhost:3000"
     cors_allowed_methods: str = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
     cors_allowed_headers: str = (
         "Authorization,Content-Type,Accept,X-Requested-With,Agent-Id,X-Webhook-Signature,X-Webhook-Timestamp"
