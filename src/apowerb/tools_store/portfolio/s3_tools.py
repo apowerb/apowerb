@@ -69,11 +69,11 @@ def _parse_s3_url(url: str) -> tuple[str, str]:
 
 
 def _extract_pdf_text(pdf_bytes: bytes, truncate_chars: int = 15_000) -> str:
-    """Extract text from a PDF byte string via PyPDF2."""
+    """Extract text from a PDF byte string via pypdf."""
     try:
-        from PyPDF2 import PdfReader
+        from pypdf import PdfReader
     except ImportError:
-        raise ImportError("PyPDF2 is required: pip install PyPDF2")
+        raise ImportError("pypdf is required: pip install pypdf")
 
     reader = PdfReader(BytesIO(pdf_bytes))
     pages = []
