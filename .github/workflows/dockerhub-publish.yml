@@ -29,6 +29,37 @@ jobs:
           VERSION="${HEAD_BRANCH#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: pip install uv
+
+      # This workflow starts as soon as "Upload Python Package" reports
+      # success, but PyPI's index takes some time to propagate a freshly
+      # published release. The Docker build below installs
+      # "apowerb==${VERSION}" straight from PyPI via `uv pip install
+      # --system`, so building immediately is a race. Releases 0.1.11 and
+      # 0.1.12 both hit it: the build failed with "Because there is no
+      # version of apowerb==X and you require apowerb==X, we can conclude
+      # that your requirements are unsatisfiable", and both succeeded on
+      # manual re-run once PyPI had caught up.
+      #
+      # This step runs the same `uv pip install --dry-run --system` the
+      # Dockerfile runs, so it fails and succeeds under exactly the
+      # condition the real build depends on. Polling PyPI's JSON metadata
+      # endpoint instead (an earlier version of this fix did) would check a
+      # different code path than the Simple index the resolver reads, and
+      # could report "available" before the resolver agrees.
+      - name: Wait for the release to resolve on PyPI
+        shell: bash
+        env:
+          PACKAGE_NAME: apowerb
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: .github/scripts/wait-for-pypi-release.sh
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
