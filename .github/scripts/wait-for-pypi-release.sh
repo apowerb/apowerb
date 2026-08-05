@@ -28,7 +28,7 @@
 #   PACKAGE_NAME     - PyPI project name, e.g. apowerb
 #   PACKAGE_VERSION  - exact release version to wait for, e.g. 0.1.12
 # Optional env vars:
-#   MAX_ATTEMPTS     - default 30
+#   MAX_ATTEMPTS     - default 90
 #   SLEEP_SECONDS    - default 10
 #   EXTRA_UV_ARGS    - extra space-separated arguments forwarded to
 #                      `uv pip install` (tests use this to point uv at a
@@ -37,7 +37,15 @@ set -euo pipefail
 
 : "${PACKAGE_NAME:?PACKAGE_NAME is required}"
 : "${PACKAGE_VERSION:?PACKAGE_VERSION is required}"
-MAX_ATTEMPTS="${MAX_ATTEMPTS:-30}"
+# 90 x 10s = 15 minutes. The first budget was 5 minutes and it was not enough:
+# the 0.1.13 release exhausted all 30 attempts on 2026-08-05 and failed the
+# publish, while 0.1.11 and 0.1.12 had resolved comfortably inside it earlier
+# the same day. Propagation time is not a constant, so the budget is sized for
+# the slow case rather than the median.
+#
+# A wide budget costs nothing when propagation is quick -- the loop exits on
+# the first successful resolution, it does not wait out its allowance.
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-90}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 
 IFS=' ' read -r -a extra_uv_args <<< "${EXTRA_UV_ARGS:-}"
