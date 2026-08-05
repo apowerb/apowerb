@@ -80,6 +80,8 @@ from apowerb.configs.paths import (
     artifacts_store_dir,
     ensure_runtime_dirs,
 )
+from apowerb.configs.artifact_service_config import resolve_artifact_service_uri
+from apowerb.artifacts.s3_artifact_service import register_s3_artifact_service
 from apowerb.helpers import encryptor as _encryptor
 from apowerb.helpers.user_migration import ensure_user_columns
 from apowerb.helpers.core_tables import ensure_core_tables
@@ -289,6 +291,16 @@ _SESSION_DB_URI = (
     f"@{_dbc.db_host}:{_dbc.db_port}/{_dbc.db_name}"
 )
 
+# Artefacts : un seul stockage, sur S3, quand il est configure (dev ET prod
+# le sont) ; repli sur le disque local sinon, pour qu'un deploiement sans S3
+# demarre quand meme (cf apowerb.configs.artifact_service_config). ADK ne
+# fournit nativement que file://, gs:// et la memoire -- le scheme "s3" est
+# enregistre a la main via register_s3_artifact_service().
+register_s3_artifact_service()
+_artifact_service_uri = resolve_artifact_service_uri(
+    get_settings(), artifacts_dir=artifacts_dir
+)
+
 app = get_fast_api_app(
     host=api_host,
     port=api_port,
@@ -310,7 +322,7 @@ app = get_fast_api_app(
         # dev, DB_SCHEMA en prod) pour qu'ADK y cree/lise ses tables.
         "connect_args": {"server_settings": {"search_path": _dbc.db_schema}},
     },
-    artifact_service_uri="file:///" + os.path.abspath(artifacts_dir).replace("\\", "/"),
+    artifact_service_uri=_artifact_service_uri,
 )
 # Levier 3 : cap d'appels LLM (adapte au contexte 32k OVHcloud)
 # Patche AdkWebServer.RunConfig pour injecter max_llm_calls=LLM_MAX_CALLS (defaut 25)
