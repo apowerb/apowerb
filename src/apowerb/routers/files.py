@@ -66,6 +66,29 @@ def _safe_agent_id(agent_id: str) -> str:
     return agent_id
 
 
+def _contained_upload_path(*parts: str) -> str:
+    """Join *parts* under uploads_dir() and prove the result stays inside it.
+
+    The format guards above reject the values we know how to name, but they
+    cannot see the filesystem: a symlink planted inside uploads_dir() points
+    somewhere else while every component still matches ``[A-Za-z0-9_-]``.
+    Resolving the candidate and comparing it to the resolved base closes that,
+    and it is the only construction CodeQL's py/path-injection accepts as a
+    sanitiser -- it tracks two states and requires a normalisation call
+    (``os.path.realpath`` here) followed by a ``.startswith()`` check on the
+    branch that reaches the sink. Two regex-guard revisions were reported
+    anyway, correctly: a rejected shape is not a proven location.
+
+    Written in the positive form (check, then return) so the value callers
+    receive only ever comes from the branch where containment held.
+    """
+    base = os.path.realpath(str(uploads_dir()))
+    candidate = os.path.realpath(os.path.join(base, *parts))
+    if candidate.startswith(base + os.sep):
+        return candidate
+    raise HTTPException(status_code=400, detail="Invalid path")
+
+
 class UploadCompleteRequest(BaseModel):
     upload_id: str
     agent_id: str
@@ -112,9 +135,9 @@ async def upload_file(
                 content_type=file.content_type,
             )
         else:
-            agent_dir = str(uploads_dir() / agent_id)
+            agent_dir = _contained_upload_path(agent_id)
             os.makedirs(agent_dir, exist_ok=True)
-            file_path = os.path.join(agent_dir, filename)
+            file_path = _contained_upload_path(agent_id, filename)
             with open(file_path, "wb") as f:
                 f.write(content)
 
@@ -153,10 +176,12 @@ async def upload_chunk(
     if chunk_index < 0 or chunk_index >= total_chunks:
         raise HTTPException(status_code=400, detail="Invalid chunk_index")
 
-    chunk_dir = str(uploads_dir() / "_chunks" / upload_id)
+    chunk_dir = _contained_upload_path("_chunks", upload_id)
     os.makedirs(chunk_dir, exist_ok=True)
 
-    chunk_path = os.path.join(chunk_dir, f"{chunk_index}.part")
+    chunk_path = _contained_upload_path(
+        "_chunks", upload_id, f"{chunk_index}.part"
+    )
 
     try:
         with open(chunk_path, "wb") as f:
@@ -192,7 +217,7 @@ async def upload_complete(
     if not safe_filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    chunk_dir = str(uploads_dir() / "_chunks" / body.upload_id)
+    chunk_dir = _contained_upload_path("_chunks", body.upload_id)
 
     # Verify all chunks exist
     missing = []
@@ -229,9 +254,9 @@ async def upload_complete(
                 data=buffer.getvalue(),
             )
         else:
-            agent_dir = str(uploads_dir() / safe_agent_id)
+            agent_dir = _contained_upload_path(safe_agent_id)
             os.makedirs(agent_dir, exist_ok=True)
-            final_path = os.path.join(agent_dir, safe_filename)
+            final_path = _contained_upload_path(safe_agent_id, safe_filename)
 
             with open(final_path, "wb") as out_f:
                 for i in range(body.total_chunks):
@@ -304,7 +329,7 @@ async def list_files(
                     "path": f"/api/files/{agent_id}/{fname}",
                 }
 
-    agent_dir = str(uploads_dir() / agent_id)
+    agent_dir = _contained_upload_path(agent_id)
     if os.path.exists(agent_dir):
         for fname in os.listdir(agent_dir):
             fpath = os.path.join(agent_dir, fname)
@@ -377,7 +402,7 @@ async def download_file(
                 logger.error(f"[FILES] S3 Download failed: {e}")
                 raise HTTPException(status_code=500, detail="Failed to fetch from S3")
 
-    file_path = str(uploads_dir() / agent_id / safe_filename)
+    file_path = _contained_upload_path(agent_id, safe_filename)
     if os.path.exists(file_path):
         return FileResponse(file_path, filename=safe_filename)
 
