@@ -1,14 +1,19 @@
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import Optional
-from apowerb.auth.dependencies import get_current_user
-from apowerb.users import schemas as user_schemas
-from apowerb.configs.paths import artifacts_store_dir
-from apowerb.core.artifact_executor import execute_artifact
-from apowerb.helpers.ownership import enforce_user_id_match as _enforce_user_id_match
-from logging import getLogger
 import json
 import os
+from logging import getLogger
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from apowerb.artifacts.s3_artifact_service import S3ArtifactService
+from apowerb.auth.dependencies import get_current_user
+from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+from apowerb.configs.paths import artifacts_store_dir
+from apowerb.configs.settings import get_settings
+from apowerb.core.artifact_executor import execute_artifact
+from apowerb.helpers.ownership import enforce_user_id_match as _enforce_user_id_match
+from apowerb.users import schemas as user_schemas
 
 logger = getLogger(__name__)
 router = APIRouter()
@@ -64,8 +69,21 @@ def _safe_path_component(name: str) -> str:
     return safe
 
 
+# -- storage backend selection -------------------------------------------
+#
+# ADK writes artifacts to S3 when STORAGE_MODE=S3 is fully configured (see
+# apowerb.configs.artifact_service_config, wired in main.py) -- true on both
+# dev and prod. This router must read from wherever ADK actually wrote, or
+# the Artifacts tab renders empty while the objects sit in the bucket: the
+# same failure mode PR #17 already fixed once for the local-disk layout.
+
+
+def _s3_artifacts_active() -> bool:
+    return is_s3_artifact_storage_configured(get_settings())
+
+
 def _get_session_artifacts_dir(user_id: str, session_id: str) -> str:
-    """Répertoire où ADK range les artefacts d'une session.
+    """Répertoire où ADK range les artefacts d'une session, sur disque.
 
     Le layout réel, relevé sur la dev le 2026-08-04 après deux appels à
     ``tool_save_code_artifact`` :
@@ -82,6 +100,12 @@ def _get_session_artifacts_dir(user_id: str, session_id: str) -> str:
     ⚠️ Le **nom de l'agent n'apparaît pas** dans le chemin réel : ADK borne les
     artefacts à (utilisateur, session). Il reste dans la signature des routes
     pour ne pas casser les appelants, mais il n'entre pas dans la résolution.
+
+    Only used for the file:// backend -- see ``_list_artifacts_s3`` /
+    ``_resolve_artifact_s3`` for the S3 counterpart, where the key is scoped
+    by (agent_name, session_id) instead: user_id has no role there beyond
+    authorization (``_enforce_user_id_match``), already enforced by callers
+    before either branch runs.
     """
     return os.path.join(
         _artifacts_dir(), "users", user_id, "sessions", session_id, "artifacts"
@@ -107,7 +131,7 @@ def _latest_version_dir(artifact_dir: str):
 
 
 def _read_artifact_payload(version_dir: str, name: str) -> dict:
-    """Lit le corps d'un artefact.
+    """Lit le corps d'un artefact sur disque.
 
     ADK dépose deux fichiers par version : l'artefact lui-même, qui porte le
     nom de l'artefact, et un ``metadata.json`` qui lui appartient. Le premier
@@ -125,6 +149,14 @@ def _read_artifact_payload(version_dir: str, name: str) -> dict:
     except (IOError, UnicodeDecodeError):
         return {}
 
+    return _parse_artifact_content(content)
+
+
+def _parse_artifact_content(content: str) -> dict:
+    """Shared payload parsing for both backends: ``tool_save_code_artifact``
+    writes a ``{"filename", "language", "code"}`` JSON body regardless of
+    where it lands (disk or S3) -- a plain-text artifact falls back to
+    ``{"code": content}``."""
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
@@ -134,7 +166,7 @@ def _read_artifact_payload(version_dir: str, name: str) -> dict:
 
 
 def _resolve_artifact(user_id: str, session_id: str, filename: str):
-    """Résout un artefact vers ``(version, dossier_de_version, contenu)``."""
+    """Résout un artefact depuis le disque vers ``(version, contenu)``."""
     safe_name = _safe_path_component(filename)
     artifact_dir = os.path.join(
         _get_session_artifacts_dir(user_id, session_id), safe_name
@@ -144,7 +176,77 @@ def _resolve_artifact(user_id: str, session_id: str, filename: str):
         return None
 
     version, version_dir = found
-    return version, version_dir, _read_artifact_payload(version_dir, safe_name)
+    return version, _read_artifact_payload(version_dir, safe_name)
+
+
+# -- S3 backend ------------------------------------------------------------
+#
+# Reuses S3ArtifactService (apowerb.artifacts.s3_artifact_service) rather
+# than re-deriving the key layout here: it already imposes and tests
+# "artifacts/{app_name}/{session_id}/output/{filename}/{version}/{filename}"
+# against the real bucket (tests/test_s3_artifact_service_real_bucket.py).
+# user_id is threaded through for API compatibility with the service (it
+# only matters for the "user:"-namespaced scheme, unused by this router);
+# the actual scoping is (agent_name, session_id).
+
+
+def _parse_artifact_part(part) -> dict:
+    """S3ArtifactService.load_artifact always returns content via
+    ``inline_data`` -- ``Part.text`` is never populated on load, verified
+    against the real ``google.genai.types.Part`` behavior in
+    tests/test_s3_artifact_service.py."""
+    raw = part.inline_data.data if part.inline_data else b""
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {}
+    return _parse_artifact_content(content)
+
+
+async def _resolve_artifact_s3(
+    service: S3ArtifactService, agent_name: str, user_id: str, session_id: str,
+    filename: str,
+):
+    """Résout un artefact depuis S3 vers ``(version, contenu)``, ou ``None``."""
+    safe_name = _safe_path_component(filename)
+    versions = await service.list_versions(
+        app_name=agent_name, user_id=user_id, session_id=session_id, filename=safe_name,
+    )
+    if not versions:
+        return None
+
+    version = max(versions)
+    part = await service.load_artifact(
+        app_name=agent_name, user_id=user_id, session_id=session_id,
+        filename=safe_name, version=version,
+    )
+    if part is None:
+        return None
+
+    return version, _parse_artifact_part(part)
+
+
+async def _list_artifacts_s3(agent_name: str, user_id: str, session_id: str) -> list[dict]:
+    service = S3ArtifactService()
+    filenames = await service.list_artifact_keys(
+        app_name=agent_name, user_id=user_id, session_id=session_id,
+    )
+
+    artifacts = []
+    for name in sorted(filenames):
+        resolved = await _resolve_artifact_s3(service, agent_name, user_id, session_id, name)
+        if resolved is None:
+            continue
+
+        version, data = resolved
+        artifacts.append({
+            "filename": data.get("filename", name),
+            "language": data.get("language", "text"),
+            "version": version,
+            "source": "adk",
+        })
+
+    return artifacts
 
 
 @router.get("/artifacts/{agent_name}/{user_id}/{session_id}", tags=["artifacts"])
@@ -158,6 +260,9 @@ async def list_artifacts(
     _enforce_user_id_match(user_id, current_user)
     _validate_session_id(session_id)
     try:
+        if _s3_artifacts_active():
+            return await _list_artifacts_s3(agent_name, user_id, session_id)
+
         artifacts_dir = _get_session_artifacts_dir(user_id, session_id)
         logger.info(f"[ARTIFACTS] Listing artifacts at: {artifacts_dir}")
 
@@ -197,11 +302,17 @@ async def get_artifact(
     _enforce_user_id_match(user_id, current_user)
     _validate_session_id(session_id)
 
-    resolved = _resolve_artifact(user_id, session_id, filename)
+    if _s3_artifacts_active():
+        resolved = await _resolve_artifact_s3(
+            S3ArtifactService(), agent_name, user_id, session_id, filename
+        )
+    else:
+        resolved = _resolve_artifact(user_id, session_id, filename)
+
     if resolved is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{filename}' not found")
 
-    version, _version_dir, data = resolved
+    version, data = resolved
     safe_name = _safe_path_component(filename)
     return {
         "filename": data.get("filename", safe_name),
@@ -226,11 +337,18 @@ async def execute_artifact_endpoint(
     _validate_session_id(session_id)
 
     safe_filename = _safe_path_component(filename)
-    resolved = _resolve_artifact(user_id, session_id, safe_filename)
+
+    if _s3_artifacts_active():
+        resolved = await _resolve_artifact_s3(
+            S3ArtifactService(), agent_name, user_id, session_id, safe_filename
+        )
+    else:
+        resolved = _resolve_artifact(user_id, session_id, safe_filename)
+
     if resolved is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{safe_filename}' not found")
 
-    _version, _version_dir, data = resolved
+    _version, data = resolved
     code = data.get("code", "")
     language = data.get("language") or _guess_language(safe_filename)
 
