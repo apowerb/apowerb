@@ -99,6 +99,31 @@ def _should_inject_chat_action_tools(agent_details: dict) -> bool:
     return not bool(agent_details.get("output_schema_name"))
 
 
+def _should_inject_artifact_tool(agent_details: dict) -> bool:
+    """Return True iff this agent should receive the artifact-saving tool.
+
+    The agent editor exposes a "Code Artifacts" switch stored as
+    ``artifacts_enabled``. That column was written, read back, cloned and
+    seeded -- but nothing ever turned it into a tool, so an agent with the
+    switch on behaved exactly like one with it off. Measured on 2026-08-05:
+    0 of 184 agents carried the tool, and a live demo failed because it had to
+    be added by hand.
+
+    The value arrives either as a bool (API schema) or as the strings
+    "true"/"false" (the DB column is VARCHAR), so both shapes are honoured.
+
+    Structured-output agents are excluded for the same reason as the chat
+    action-card tools above: they must emit their JSON, not a tool call.
+    """
+    if not _should_inject_chat_action_tools(agent_details):
+        return False
+
+    value = agent_details.get("artifacts_enabled")
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
 
 def get_agent_details(agent_id: int, items_to_select: str = "*") -> dict:
     """Get a specific agent by name from the agent store."""
@@ -571,6 +596,15 @@ def to_agent(agent_name: str) -> LlmAgent:
                 "chat action-card tools + interactive instruction suppressed",
                 agent_name,
             )
+        # The "Code Artifacts" switch, finally wired: with it on, the agent
+        # gets the saving tool without anyone having to add it by hand.
+        if _should_inject_artifact_tool(agent_details):
+            from apowerb.tools_store.portfolio.artifacts import (
+                tool_save_code_artifact,
+            )
+
+            _add_auto_tool(tool_save_code_artifact)
+
         _add_auto_tool(request_file_from_user)
         _add_auto_tool(propose_agent_upgrade)
         _add_auto_tool(embed_chart)
