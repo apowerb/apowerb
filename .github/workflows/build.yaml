@@ -29,6 +29,11 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      - name: Run Safety CLI to check for vulnerabilities
+        uses: pyupio/safety-action@v1
+        with:
+          api-key: ${{ secrets.SAFETY_API_KEY }}
+
       - name: Build wheel and sdist
         run: uv build
 
