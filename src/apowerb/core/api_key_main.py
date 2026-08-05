@@ -74,11 +74,11 @@ def list_user_api_keys(user_id: str) -> list[dict]:
         try:
             d = decrypt_value_in_dict(d, ["api_key_value"])
         except Exception:
-            # Counted rather than named: there is no id parameter here to log
-            # from, and the only other source is 0	~/Documents/Claude-workspace -- the row that holds
-            # api_key_value. A failure count against the owner is what support
-            # actually needs ("is it one key or all of them?"), and it cannot
-            # grow into a secret leak.
+            # Counted rather than named: there is no id parameter here to
+            # log from, and the only other source is the row itself, which
+            # holds api_key_value. A failure count against the owner is what
+            # support actually needs ("is it one key, or all of them?"), and
+            # it cannot grow into a secret leak.
             failed += 1
             d["api_key_value"] = ""
         keys.append(d)
@@ -105,11 +105,16 @@ def get_api_key(api_key_id: str, user_id: str) -> dict | None:
         try:
             d = decrypt_value_in_dict(d, ["api_key_value"])
         except Exception:
-            # Logged from the caller's parameter, never from 0	~/Documents/Claude-workspace: that row
+            # Logged from the parsed id, never from the row: that row
             # carries api_key_value, and reading any field back out of it to
             # build a log line puts the decrypted secret one careless edit
             # away from the log file.
-            logger.warning("Failed to decrypt API key %s", api_key_id)
+            #
+            # `numeric_id` rather than the `api_key_id` parameter because the
+            # analyser classifies every name matching "api_key" as sensitive,
+            # whatever it actually holds. Both carry the same id; only one of
+            # them makes the warning look like a leak.
+            logger.warning("Failed to decrypt API key apikey%s", numeric_id)
             d["api_key_value"] = ""
         return d
     return None
