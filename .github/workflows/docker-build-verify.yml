@@ -1,0 +1,108 @@
+name: Build and verify Docker image
+
+# dockerhub-publish.yml only runs after a PyPI release, and only pushes --
+# it never verifies the build on a pull request. A broken Dockerfile, or a
+# regression from stripping down the runtime image (see the perl-base /
+# build-toolchain removal in this same PR), would only surface at release
+# time, against the real Docker Hub tags. This workflow builds the image on
+# every PR that touches it and smoke-tests the result, so that risk is
+# caught before merge instead of after a release.
+#
+# The Dockerfile installs the already-published `apowerb` PyPI package
+# (via APPOWERB_VERSION), not this PR's checked-out source -- it has no way
+# to build from local source. This job therefore verifies the Dockerfile's
+# own mechanics (base image, system packages, venv layout) against the
+# latest published release, not this PR's Python changes. That is the
+# correct scope for a Dockerfile-focused check; app code changes are
+# already covered by build.yaml and tests.yml.
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/docker-build-verify.yml
+  workflow_dispatch:
+
+jobs:
+  docker-build-verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve latest published apowerb version from PyPI
+        id: pypi
+        run: |
+          VERSION=$(curl -sf https://pypi.org/pypi/apowerb/json | python3 -c "import json,sys; print(json.load(sys.stdin)['info']['version'])")
+          test -n "$VERSION"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # No push, no Docker Hub credentials: this only ever builds and loads
+      # the image into the local Docker daemon for the smoke test below.
+      - name: Build image (local only, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            APPOWERB_VERSION=${{ steps.pypi.outputs.version }}
+          tags: apowerb:pr-verify
+
+      - name: Smoke test — system packages
+        run: |
+          set -e
+
+          echo "== perl must be fully absent =="
+          docker run --rm apowerb:pr-verify sh -c '
+            if command -v perl >/dev/null 2>&1; then
+              echo "FAIL: perl binary found on PATH"; exit 1
+            fi
+            if dpkg -l 2>/dev/null | grep -Eqi "^ii +perl"; then
+              echo "FAIL: a perl* package is still installed"
+              dpkg -l | grep -Ei "perl"
+              exit 1
+            fi
+            echo "OK: no perl binary, no perl* package"
+          '
+
+          echo "== compiler toolchain must not ship in the runtime image =="
+          docker run --rm apowerb:pr-verify sh -c '
+            for pkg in gcc g++ build-essential; do
+              if dpkg -l 2>/dev/null | grep -Eqi "^ii +${pkg} "; then
+                echo "FAIL: ${pkg} is present in the runtime image"; exit 1
+              fi
+            done
+            echo "OK: no gcc/g++/build-essential"
+          '
+
+          echo "== venv and console script must be in place =="
+          docker run --rm apowerb:pr-verify sh -c '
+            test -x /opt/venv/bin/python || { echo "FAIL: /opt/venv/bin/python missing"; exit 1; }
+            /opt/venv/bin/apowerb --help >/dev/null || { echo "FAIL: apowerb --help failed"; exit 1; }
+            echo "OK: venv and console script work"
+          '
+
+      - name: Smoke test — heavy dependency imports
+        run: |
+          set -e
+          docker run --rm apowerb:pr-verify /opt/venv/bin/python -c "
+          import google.adk
+          import litellm
+          import sqlalchemy
+          import cryptography
+          import pandas
+          import pyodbc
+          import psycopg2
+          print('OK: google-adk, litellm, sqlalchemy, cryptography, pandas, pyodbc, psycopg2 all import cleanly')
+          "
