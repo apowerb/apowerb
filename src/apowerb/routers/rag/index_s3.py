@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
 from apowerb.configs.paths import uploads_dir
+from apowerb.helpers.safe_paths import contained_path
 from apowerb.tools_store.portfolio.rag import tool_create_knowledge
 from apowerb.tools_store.tools_helpers import set_tool_config_params_as_envvar
 from apowerb.users import schemas as user_schemas
@@ -41,7 +42,7 @@ async def index_s3(
     from apowerb.tools_store.portfolio.s3_tools import _get_s3_client, _parse_s3_url
 
     scope = data.session_id or data.agent_id
-    upload_dir = str(uploads_dir() / scope)
+    upload_dir = contained_path(uploads_dir(), scope)
     os.makedirs(upload_dir, exist_ok=True)
 
     # S1c — Lock to prevent concurrent os.environ mutations for S3 credentials.
@@ -72,7 +73,7 @@ async def index_s3(
             filename = re.sub(r"[^a-zA-Z0-9_\-.]", "_", raw_filename)[:120]
             if not filename or filename.startswith("."):
                 filename = "s3_file"
-            filepath = os.path.join(upload_dir, filename)
+            filepath = contained_path(upload_dir, filename)
 
             # Download from S3 — run synchronous boto3 call in thread (S1d)
             try:

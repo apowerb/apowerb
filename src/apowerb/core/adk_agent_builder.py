@@ -2,6 +2,7 @@ import os
 from typing import List
 import ast
 from apowerb.configs.paths import agents_pool_dir
+from apowerb.helpers.safe_paths import contained_path
 from apowerb.core.agent_helpers import get_agent_details
 from apowerb.agent_store.agent_manager import AgentStore
 
@@ -188,7 +189,7 @@ def delete_agent_module(
 
     agents_pool_path = agents_pool_path or str(agents_pool_dir())
     agent_adk_name = f"agent{agent_name}"
-    agent_dir = os.path.join(agents_pool_path, agent_adk_name)
+    agent_dir = contained_path(agents_pool_path, agent_adk_name)
     if os.path.exists(agent_dir):
         shutil.rmtree(agent_dir)
         print(f"Agent module '{agent_adk_name}' deleted successfully from {agent_dir}")

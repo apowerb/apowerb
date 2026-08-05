@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from apowerb.artifacts.s3_artifact_service import S3ArtifactService
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+from apowerb.helpers.safe_paths import contained_path
 from apowerb.configs.paths import artifacts_store_dir
 from apowerb.configs.settings import get_settings
 from apowerb.core.artifact_executor import execute_artifact
@@ -107,7 +108,7 @@ def _get_session_artifacts_dir(user_id: str, session_id: str) -> str:
     authorization (``_enforce_user_id_match``), already enforced by callers
     before either branch runs.
     """
-    return os.path.join(
+    return contained_path(
         _artifacts_dir(), "users", user_id, "sessions", session_id, "artifacts"
     )
 
@@ -118,7 +119,7 @@ def _latest_version_dir(artifact_dir: str):
     ⚠️ Le tri est **numérique** : en ordre lexical ``"10" < "2"``, donc la
     version 10 d'un artefact édité dix fois serait ignorée au profit de la 2.
     """
-    versions_root = os.path.join(artifact_dir, "versions")
+    versions_root = contained_path(artifact_dir, "versions")
     if not os.path.isdir(versions_root):
         return None
 
@@ -127,7 +128,7 @@ def _latest_version_dir(artifact_dir: str):
         return None
 
     latest = max(versions, key=int)
-    return int(latest), os.path.join(versions_root, latest)
+    return int(latest), contained_path(versions_root, latest)
 
 
 def _read_artifact_payload(version_dir: str, name: str) -> dict:
@@ -139,7 +140,7 @@ def _read_artifact_payload(version_dir: str, name: str) -> dict:
     ``{"filename", "language", "code"}``. Un artefact produit autrement peut
     n'être que du texte brut — d'où le repli.
     """
-    path = os.path.join(version_dir, name)
+    path = contained_path(version_dir, name)
     if not os.path.isfile(path):
         return {}
 
@@ -271,7 +272,7 @@ async def list_artifacts(
 
         artifacts = []
         for name in sorted(os.listdir(artifacts_dir)):
-            found = _latest_version_dir(os.path.join(artifacts_dir, name))
+            found = _latest_version_dir(contained_path(artifacts_dir, name))
             if found is None:
                 continue
 

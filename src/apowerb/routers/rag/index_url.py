@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
 from apowerb.configs.paths import uploads_dir
+from apowerb.helpers.safe_paths import contained_path
 from apowerb.tools_store.portfolio.rag import tool_create_knowledge
 from apowerb.users import schemas as user_schemas
 
@@ -73,7 +74,7 @@ async def index_url(
     safe_url = _validate_url_not_internal(data.url)
 
     scope = data.session_id or data.agent_id
-    upload_dir = str(uploads_dir() / scope)
+    upload_dir = contained_path(uploads_dir(), scope)
     os.makedirs(upload_dir, exist_ok=True)
 
     # Sanitize filename from name or URL. `.` is kept for extensions, but a
@@ -82,7 +83,7 @@ async def index_url(
     safe_name = re.sub(r"[^a-zA-Z0-9_\-.]", "_", data.name)[:120]
     if not safe_name or safe_name.startswith("."):
         safe_name = "url_download"
-    filepath = os.path.join(upload_dir, safe_name)
+    filepath = contained_path(upload_dir, safe_name)
 
     # Download the URL (S1g — redirects are re-validated hop by hop)
     try:

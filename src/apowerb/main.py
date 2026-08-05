@@ -75,6 +75,8 @@ from apowerb.bi.refresh_router import router as bi_refresh_router
 from apowerb.bi.chart_refresh_router import router as bi_chart_refresh_router
 
 from apowerb.configs.settings import get_settings
+import logging as _logging
+from apowerb.helpers.safe_paths import PathEscape
 from apowerb.configs.paths import (
     agents_pool_dir,
     artifacts_store_dir,
@@ -337,6 +339,21 @@ app.state.adk_agent_loader = _ADK_HANDLES.get("agent_loader")
 from apowerb.core.extensions.loader import load_overlay  # noqa: E402
 load_overlay()
 register_exception_handlers(app)
+
+
+# A path that resolved outside its base directory is a bad request, not a
+# server fault. Without this handler `contained_path` would surface as a 500
+# with a traceback, which is both the wrong status and more than the caller
+# should learn. The detail is fixed text: the exception carries the offending
+# components, and echoing those back tells a prober exactly what was parsed.
+@app.exception_handler(PathEscape)
+async def _path_escape_handler(request, exc: PathEscape):  # noqa: ANN001
+    # Resolved at call time: this module's own logger is configured further
+    # down the file, after this handler is registered.
+    _logging.getLogger(__name__).warning(
+        "[SECURITY] Path escaped its base directory on %s: %s", request.url.path, exc
+    )
+    return JSONResponse(status_code=400, content={"detail": "Invalid path"})
 # ``bootstrap()`` (validation, migrations, auto-réparation, charts) est appelé
 # depuis ``_wrapped_lifespan`` plus bas — le wrapper de lifespan que ce module
 # installe déjà pour contourner celui d'ADK. Surtout pas à l'import.
