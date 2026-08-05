@@ -12,8 +12,15 @@ Key layout is imposed by product, not copied from GCS:
 
     artifacts/{app_name}/{session_id}/output/{filename}/{version}/{filename}
 
-``output`` distinguishes generated artifacts from a future ``input`` sibling
-(uploads) — not implemented here, but the layout leaves room for it.
+``output`` distinguishes generated artifacts from their ``input`` sibling
+(uploads, routers/files.py) — same key scheme, same S3 primitives, "input"
+swapped in for "output" via the private ``segment`` parameter threaded
+through ``_key``/``_key_prefix``/``_list_versions``. See the
+``save_input_artifact``/``load_input_artifact``/``list_input_artifact_filenames``
+methods below: no ADK ``types.Part`` wrapping (uploads are raw bytes) and no
+``user_id``/``"user:"`` namespace (input artifacts are always scoped by
+``(app_name, session_id)``, ``session_id`` being a real session or the
+literal ``"_shared"`` scope — see ``apowerb.artifacts.input_scope``).
 
 GCS's own scheme for user-scoped artifacts (filename starting with
 ``user:``, no session) swaps ``session_id`` for the literal ``"user"``
@@ -66,6 +73,7 @@ logger = logging.getLogger("apowerb.artifacts.s3_artifact_service")
 
 _ARTIFACTS_ROOT = "artifacts"
 _OUTPUT_SEGMENT = "output"
+_INPUT_SEGMENT = "input"
 _USER_NAMESPACE_PREFIX = "user:"
 
 
@@ -193,14 +201,15 @@ class S3ArtifactService(BaseArtifactService):
         user_id: str,
         filename: str,
         session_id: Optional[str],
+        segment: str = _OUTPUT_SEGMENT,
     ) -> str:
         if self._has_user_namespace(filename):
-            return f"{_ARTIFACTS_ROOT}/{app_name}/user/{user_id}/{_OUTPUT_SEGMENT}/{filename}"
+            return f"{_ARTIFACTS_ROOT}/{app_name}/user/{user_id}/{segment}/{filename}"
         if session_id is None:
             raise InputValidationError(
                 "Session ID must be provided for session-scoped artifacts."
             )
-        return f"{_ARTIFACTS_ROOT}/{app_name}/{session_id}/{_OUTPUT_SEGMENT}/{filename}"
+        return f"{_ARTIFACTS_ROOT}/{app_name}/{session_id}/{segment}/{filename}"
 
     def _key(
         self,
@@ -209,8 +218,9 @@ class S3ArtifactService(BaseArtifactService):
         filename: str,
         version: int,
         session_id: Optional[str],
+        segment: str = _OUTPUT_SEGMENT,
     ) -> str:
-        prefix = self._key_prefix(app_name, user_id, filename, session_id)
+        prefix = self._key_prefix(app_name, user_id, filename, session_id, segment)
         return f"{prefix}/{version}/{filename}"
 
     # -- sync implementations, run via asyncio.to_thread ---------------------
@@ -327,6 +337,7 @@ class S3ArtifactService(BaseArtifactService):
         user_id: str,
         session_id: Optional[str],
         filename: str,
+        segment: str = _OUTPUT_SEGMENT,
     ) -> list[int]:
         """Lists versions of an artifact.
 
@@ -334,7 +345,7 @@ class S3ArtifactService(BaseArtifactService):
         raw key strings would put "10" before "2" (lexical order), silently
         hiding the latest version behind an older one.
         """
-        prefix = self._key_prefix(app_name, user_id, filename, session_id) + "/"
+        prefix = self._key_prefix(app_name, user_id, filename, session_id, segment) + "/"
         versions: set[int] = set()
         for key in list_files_in_s3(prefix=prefix):
             rest = key[len(prefix):]
@@ -389,6 +400,112 @@ class S3ArtifactService(BaseArtifactService):
             if av is not None:
                 result.append(av)
         return result
+
+
+    # -- input artifacts (uploads) --------------------------------------
+    #
+    # Not part of ADK's artifact protocol (ADK only ever writes "output" --
+    # what a tool produces). Uploads are a product concept -- see routers
+    # /files.py -- layered on the exact same key scheme and S3 primitives
+    # as the output side above, with "input" swapped in for "output" via
+    # the `segment` parameter already threaded through _key/_key_prefix/
+    # _list_versions. No ADK `types.Part` wrapping: uploads are raw bytes
+    # with a content type, not ADK inline_data/text/file_data. No user_id/
+    # "user:" namespace either -- input artifacts are always (app_name,
+    # session_id) scoped, session_id being either a real session or the
+    # literal "_shared" scope (see apowerb.artifacts.input_scope).
+
+    async def save_input_artifact(
+        self,
+        *,
+        app_name: str,
+        session_id: str,
+        filename: str,
+        data: bytes,
+        content_type: Optional[str] = None,
+        custom_metadata: Optional[dict[str, Any]] = None,
+    ) -> int:
+        return await asyncio.to_thread(
+            self._save_input_artifact,
+            app_name,
+            session_id,
+            filename,
+            data,
+            content_type,
+            custom_metadata,
+        )
+
+    async def load_input_artifact(
+        self,
+        *,
+        app_name: str,
+        session_id: str,
+        filename: str,
+        version: Optional[int] = None,
+    ) -> Optional[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._load_input_artifact, app_name, session_id, filename, version
+        )
+
+    async def list_input_artifact_filenames(
+        self, *, app_name: str, session_id: str
+    ) -> list[str]:
+        return await asyncio.to_thread(
+            self._list_input_artifact_filenames, app_name, session_id
+        )
+
+    def _save_input_artifact(
+        self,
+        app_name: str,
+        session_id: str,
+        filename: str,
+        data: bytes,
+        content_type: Optional[str],
+        custom_metadata: Optional[dict[str, Any]],
+    ) -> int:
+        versions = self._list_versions(app_name, "", session_id, filename, segment=_INPUT_SEGMENT)
+        version = 0 if not versions else max(versions) + 1
+        metadata = (
+            {k: str(v) for k, v in custom_metadata.items()} if custom_metadata else None
+        )
+        key = self._key(app_name, "", filename, version, session_id, segment=_INPUT_SEGMENT)
+        upload_bytes_to_s3(
+            data, key, content_type=content_type or "application/octet-stream", metadata=metadata
+        )
+        return version
+
+    def _load_input_artifact(
+        self,
+        app_name: str,
+        session_id: str,
+        filename: str,
+        version: Optional[int],
+    ) -> Optional[dict[str, Any]]:
+        if version is None:
+            versions = self._list_versions(app_name, "", session_id, filename, segment=_INPUT_SEGMENT)
+            if not versions:
+                return None
+            version = max(versions)
+
+        key = self._key(app_name, "", filename, version, session_id, segment=_INPUT_SEGMENT)
+        try:
+            obj = get_object_with_metadata(key)
+        except ClientError as exc:
+            if _not_found(exc):
+                return None
+            raise
+        if not obj["body"]:
+            return None
+
+        return {
+            "data": obj["body"],
+            "content_type": obj.get("content_type"),
+            "version": version,
+        }
+
+    def _list_input_artifact_filenames(self, app_name: str, session_id: str) -> list[str]:
+        prefix = f"{_ARTIFACTS_ROOT}/{app_name}/{session_id}/{_INPUT_SEGMENT}/"
+        return sorted(self._filenames_under(prefix))
 
 
 def register_s3_artifact_service() -> None:
