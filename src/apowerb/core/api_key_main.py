@@ -105,16 +105,18 @@ def get_api_key(api_key_id: str, user_id: str) -> dict | None:
         try:
             d = decrypt_value_in_dict(d, ["api_key_value"])
         except Exception:
-            # Logged from the parsed id, never from the row: that row
-            # carries api_key_value, and reading any field back out of it to
-            # build a log line puts the decrypted secret one careless edit
-            # away from the log file.
+            # Reported against the owner, like list_user_api_keys above, and
+            # for the same reason: every other value in scope here traces back
+            # either to the row that carries api_key_value or to the
+            # `api_key_id` parameter. Neither is a source a log line should
+            # read from.
             #
-            # `numeric_id` rather than the `api_key_id` parameter because the
-            # analyser classifies every name matching "api_key" as sensitive,
-            # whatever it actually holds. Both carry the same id; only one of
-            # them makes the warning look like a leak.
-            logger.warning("Failed to decrypt API key apikey%s", numeric_id)
+            # Little is lost. A decryption failure is systemic -- the active
+            # ENCRYPT_KEY does not match the one the value was written with --
+            # so it is never one key out of an owner's set, and the owner is
+            # what makes the failure findable. Both paths now answer the same
+            # question the same way.
+            logger.warning("Failed to decrypt an API key for owner %s", user_id)
             d["api_key_value"] = ""
         return d
     return None

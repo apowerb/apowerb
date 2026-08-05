@@ -109,12 +109,18 @@ def test_get_never_logs_the_secret(rows, caplog, monkeypatch):
     assert got["api_key_value"] == ""
 
 
-def test_get_names_the_key_from_the_caller_parameter(rows, caplog, monkeypatch):
-    """The id the caller asked for is a safe source; the row is not."""
+def test_get_reports_against_the_owner(rows, caplog, monkeypatch):
+    """Same contract as the list path.
+
+    Every other value in scope traces back to the key row or to the
+    api_key_id parameter; the owner is the one safe source, and it is what
+    makes a systemic decryption failure findable.
+    """
     rows(1)
     monkeypatch.setattr(api_key_main, "_parse_api_key_id", lambda v: 1)
 
     with caplog.at_level(logging.WARNING):
         api_key_main.get_api_key("apikey1", "u1")
 
-    assert "apikey1" in caplog.text
+    assert "u1" in caplog.text
+    assert "apikey1" not in caplog.text
