@@ -67,15 +67,26 @@ def list_user_api_keys(user_id: str) -> list[dict]:
     )
     result = api_key_store.get_list(select_q)
     keys = []
+    failed = 0
     for row in result:
         d = row._asdict()
         d["api_key_id"] = f"apikey{d['api_key_id']}"
         try:
             d = decrypt_value_in_dict(d, ["api_key_value"])
         except Exception:
-            logger.warning(f"Failed to decrypt API key {d['api_key_id']}")
+            # Counted rather than named: there is no id parameter here to log
+            # from, and the only other source is 0	~/Documents/Claude-workspace -- the row that holds
+            # api_key_value. A failure count against the owner is what support
+            # actually needs ("is it one key or all of them?"), and it cannot
+            # grow into a secret leak.
+            failed += 1
             d["api_key_value"] = ""
         keys.append(d)
+    if failed:
+        logger.warning(
+            "Failed to decrypt %d of %d API keys for owner %s",
+            failed, len(keys), user_id,
+        )
     return keys
 
 
@@ -94,7 +105,11 @@ def get_api_key(api_key_id: str, user_id: str) -> dict | None:
         try:
             d = decrypt_value_in_dict(d, ["api_key_value"])
         except Exception:
-            logger.warning(f"Failed to decrypt API key {d['api_key_id']}")
+            # Logged from the caller's parameter, never from 0	~/Documents/Claude-workspace: that row
+            # carries api_key_value, and reading any field back out of it to
+            # build a log line puts the decrypted secret one careless edit
+            # away from the log file.
+            logger.warning("Failed to decrypt API key %s", api_key_id)
             d["api_key_value"] = ""
         return d
     return None
