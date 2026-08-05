@@ -40,6 +40,23 @@ def _validate_upload_id(upload_id: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid upload_id format")
 
 
+# agent_id reaches a filesystem path in four places here and was never
+# format-checked, unlike upload_id above. `_validate_agent_ownership()` proves
+# the caller owns the agent; it says nothing about the *shape* of the string,
+# so an id carrying ".." passes ownership and still walks out of
+# uploads_dir(). CodeQL reports it as py/path-injection (high).
+#
+# Rejecting outright rather than sanitising: os.path.basename("..") returns
+# ".." unchanged -- there is no separator to strip -- so stripping directory
+# components is not enough, as the artifacts router found on 2026-08-04.
+_AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _validate_agent_id(agent_id: str) -> None:
+    if not _AGENT_ID_RE.match(agent_id):
+        raise HTTPException(status_code=400, detail="Invalid agent_id format")
+
+
 class UploadCompleteRequest(BaseModel):
     upload_id: str
     agent_id: str
@@ -63,6 +80,7 @@ async def upload_file(
     no current caller sends one -- and an absent one scopes the upload to
     a shared, agent-wide namespace rather than a real session (Option C).
     """
+    _validate_agent_id(agent_id)
     await _validate_agent_ownership(agent_id, current_user)
 
     # Sanitize filename
@@ -115,6 +133,7 @@ async def upload_chunk(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Upload a single chunk of a large file."""
+    _validate_agent_id(agent_id)
     await _validate_agent_ownership(agent_id, current_user)
     _validate_upload_id(upload_id)
 
@@ -156,6 +175,7 @@ async def upload_complete(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Assemble all uploaded chunks into the final file."""
+    _validate_agent_id(body.agent_id)
     await _validate_agent_ownership(body.agent_id, current_user)
     _validate_upload_id(body.upload_id)
 
@@ -246,6 +266,7 @@ async def list_files(
     lookup is scoped to ``_shared`` -- the same scope an unsessioned upload
     writes to.
     """
+    _validate_agent_id(agent_id)
     await _validate_agent_ownership(agent_id, current_user)
 
     settings = get_settings()
@@ -303,6 +324,7 @@ async def download_file(
     authenticated = False
     if current_user is not None:
         # Bearer path: enforce agent ownership
+        _validate_agent_id(agent_id)
         await _validate_agent_ownership(agent_id, current_user)
         authenticated = True
     elif token:
