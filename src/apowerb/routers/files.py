@@ -52,9 +52,18 @@ def _validate_upload_id(upload_id: str) -> None:
 _AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
-def _validate_agent_id(agent_id: str) -> None:
+def _safe_agent_id(agent_id: str) -> str:
+    """Return the id only if it is safe to join into a path.
+
+    Returns rather than merely raising so callers use the *checked* value:
+    a guard that only raises leaves the raw parameter in scope, and CodeQL
+    keeps reporting py/path-injection because the tainted value is what
+    reaches the path expression. Same shape as ``_safe_path_component`` in
+    routers/artifacts.py.
+    """
     if not _AGENT_ID_RE.match(agent_id):
         raise HTTPException(status_code=400, detail="Invalid agent_id format")
+    return agent_id
 
 
 class UploadCompleteRequest(BaseModel):
@@ -80,7 +89,7 @@ async def upload_file(
     no current caller sends one -- and an absent one scopes the upload to
     a shared, agent-wide namespace rather than a real session (Option C).
     """
-    _validate_agent_id(agent_id)
+    agent_id = _safe_agent_id(agent_id)
     await _validate_agent_ownership(agent_id, current_user)
 
     # Sanitize filename
@@ -133,7 +142,7 @@ async def upload_chunk(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Upload a single chunk of a large file."""
-    _validate_agent_id(agent_id)
+    agent_id = _safe_agent_id(agent_id)
     await _validate_agent_ownership(agent_id, current_user)
     _validate_upload_id(upload_id)
 
@@ -175,7 +184,7 @@ async def upload_complete(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Assemble all uploaded chunks into the final file."""
-    _validate_agent_id(body.agent_id)
+    safe_agent_id = _safe_agent_id(body.agent_id)
     await _validate_agent_ownership(body.agent_id, current_user)
     _validate_upload_id(body.upload_id)
 
@@ -214,13 +223,13 @@ async def upload_complete(
 
             resolved_session_id = resolve_input_session_id(body.session_id)
             await S3ArtifactService().save_input_artifact(
-                app_name=body.agent_id,
+                app_name=safe_agent_id,
                 session_id=resolved_session_id,
                 filename=safe_filename,
                 data=buffer.getvalue(),
             )
         else:
-            agent_dir = str(uploads_dir() / body.agent_id)
+            agent_dir = str(uploads_dir() / safe_agent_id)
             os.makedirs(agent_dir, exist_ok=True)
             final_path = os.path.join(agent_dir, safe_filename)
 
@@ -266,7 +275,7 @@ async def list_files(
     lookup is scoped to ``_shared`` -- the same scope an unsessioned upload
     writes to.
     """
-    _validate_agent_id(agent_id)
+    agent_id = _safe_agent_id(agent_id)
     await _validate_agent_ownership(agent_id, current_user)
 
     settings = get_settings()
@@ -324,7 +333,7 @@ async def download_file(
     authenticated = False
     if current_user is not None:
         # Bearer path: enforce agent ownership
-        _validate_agent_id(agent_id)
+        agent_id = _safe_agent_id(agent_id)
         await _validate_agent_ownership(agent_id, current_user)
         authenticated = True
     elif token:
