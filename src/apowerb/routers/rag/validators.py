@@ -101,9 +101,56 @@ def _is_disallowed_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
     )
 
 
-def _validate_url_not_internal(url: str) -> None:
+# The shape allowlist below runs before the host checks, and it is not
+# redundant with them. `urlparse` decides what we *validate*; httpx decides
+# what we *connect to*; the two do not parse identically. A userinfo component
+# ("https://expected.com@attacker.com"), an embedded control character, or a
+# backslash are three documented sources of parser differential where the host
+# that was checked is not the host that is reached. Restricting the URL to a
+# shape both parsers read the same way removes the gap.
+#
+# It is also the only sanitiser CodeQL's py/full-ssrf recognises -- an
+# `re.match`/`re.fullmatch` guard on the branch that reaches the request. The
+# previous revision was right on the substance (it does re-validate every
+# redirect hop) and still reported, because a guard that only raises leaves the
+# raw URL in scope and the raw URL is what reaches `client.get`.
+#
+# Worth noting the two queries disagree: py/path-injection accepts no regex at
+# all, only realpath-then-startswith. Read the query before assuming.
+_SAFE_URL_RE = re.compile(
+    r"(?i:https?)://"                            # explicit scheme, never protocol-relative
+    r"(?![^/?#]*@)"                              # no userinfo component
+    r"(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~\-]+)"  # host: IPv6 literal, or name / IPv4
+    r"(?::[0-9]{1,5})?"                          # optional port
+    r"(?:[/?#][^\s\\]*)?"                        # path / query / fragment
+)
+
+
+def _validate_url_shape(url: str) -> str:
+    """Return *url* only if every URL parser reads it the same way.
+
+    Check-then-return rather than raise-on-failure, so the value callers
+    receive can only come from the branch where the shape held.
+    """
+    if _SAFE_URL_RE.fullmatch(url):
+        return url
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "URL must be a plain http(s) URL, without credentials, "
+            "whitespace or backslashes"
+        ),
+    )
+
+
+def _validate_url_not_internal(url: str) -> str:
     """Block SSRF: reject localhost, private/reserved IPs (including via DNS
-    resolution of the hostname), and non-HTTP schemes."""
+    resolution of the hostname), and non-HTTP schemes.
+
+    Returns the checked URL so callers request *that* rather than the raw
+    parameter they still hold.
+    """
+    url = _validate_url_shape(url)
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="Only HTTP/HTTPS URLs are allowed")
@@ -121,7 +168,7 @@ def _validate_url_not_internal(url: str) -> None:
     if ip is not None:
         if _is_disallowed_ip(ip):
             raise HTTPException(status_code=400, detail="URLs pointing to private networks are not allowed")
-        return
+        return url
 
     # Domain name: resolve it and check every address it can come back as.
     # A DNS answer under attacker control (their own domain, or a rebinding
@@ -143,3 +190,5 @@ def _validate_url_not_internal(url: str) -> None:
                 status_code=400,
                 detail="URLs resolving to private networks are not allowed",
             )
+
+    return url

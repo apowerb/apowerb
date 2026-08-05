@@ -42,7 +42,7 @@ async def _fetch_url_with_ssrf_guard(url: str) -> httpx.Response:
     current_url = url
     async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
         for _ in range(MAX_REDIRECTS + 1):
-            _validate_url_not_internal(current_url)
+            current_url = _validate_url_not_internal(current_url)
             resp = await client.get(current_url)
             if resp.is_redirect:
                 location = resp.headers.get("location")
@@ -70,7 +70,7 @@ async def index_url(
     _validate_session_id(data.session_id)
 
     # S1g — SSRF protection: reject internal/private URLs before any request
-    _validate_url_not_internal(data.url)
+    safe_url = _validate_url_not_internal(data.url)
 
     scope = data.session_id or data.agent_id
     upload_dir = str(uploads_dir() / scope)
@@ -86,7 +86,7 @@ async def index_url(
 
     # Download the URL (S1g — redirects are re-validated hop by hop)
     try:
-        resp = await _fetch_url_with_ssrf_guard(data.url)
+        resp = await _fetch_url_with_ssrf_guard(safe_url)
     except HTTPException:
         raise
     except Exception as exc:
