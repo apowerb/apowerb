@@ -24,7 +24,11 @@ COPY pyproject.toml uv.lock ./
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && /root/.local/bin/uv venv /opt/venv \
     && VIRTUAL_ENV=/opt/venv /root/.local/bin/uv sync --no-dev --no-install-project \
-    && VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir "apowerb==${APPOWERB_VERSION}"
+    && if [ -z "${APPOWERB_VERSION}" ]; then \
+        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir apowerb; \
+    else \
+        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir "apowerb==${APPOWERB_VERSION}"; \
+    fi
 
 FROM python:3.13-slim AS runtime
 
