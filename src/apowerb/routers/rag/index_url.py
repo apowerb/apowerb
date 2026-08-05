@@ -25,6 +25,36 @@ logger = getLogger(__name__)
 
 router = APIRouter()
 
+# S1g — bound on manual redirect-following (see _fetch_url_with_ssrf_guard).
+MAX_REDIRECTS = 5
+
+
+async def _fetch_url_with_ssrf_guard(url: str) -> httpx.Response:
+    """GET *url*, re-validating every redirect hop against the SSRF guard.
+
+    httpx's built-in ``follow_redirects=True`` does NOT re-run our own
+    validation on the ``Location`` header it follows — only the original
+    URL was ever checked. An externally-hosted URL that 302s to an internal
+    address (metadata service, admin panel, ...) would sail straight
+    through. So redirects are followed one hop at a time, here, with
+    ``_validate_url_not_internal`` re-applied before every request.
+    """
+    current_url = url
+    async with httpx.AsyncClient(timeout=60, follow_redirects=False) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            _validate_url_not_internal(current_url)
+            resp = await client.get(current_url)
+            if resp.is_redirect:
+                location = resp.headers.get("location")
+                if not location:
+                    resp.raise_for_status()
+                    return resp
+                current_url = str(httpx.URL(current_url).join(location))
+                continue
+            resp.raise_for_status()
+            return resp
+    raise HTTPException(status_code=400, detail="Too many redirects while downloading URL")
+
 
 @router.post("/rag/index-url", tags=["rag"])
 async def index_url(
@@ -46,17 +76,19 @@ async def index_url(
     upload_dir = str(uploads_dir() / scope)
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Sanitize filename from name or URL
+    # Sanitize filename from name or URL. `.` is kept for extensions, but a
+    # value made entirely of dots (e.g. "..") must not survive: os.path.join
+    # would then point one directory above upload_dir.
     safe_name = re.sub(r"[^a-zA-Z0-9_\-.]", "_", data.name)[:120]
-    if not safe_name:
+    if not safe_name or safe_name.startswith("."):
         safe_name = "url_download"
     filepath = os.path.join(upload_dir, safe_name)
 
-    # Download the URL
+    # Download the URL (S1g — redirects are re-validated hop by hop)
     try:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            resp = await client.get(data.url)
-            resp.raise_for_status()
+        resp = await _fetch_url_with_ssrf_guard(data.url)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("[RAG_ROUTER] Failed to download URL %s: %s", data.url, exc)
         raise HTTPException(status_code=400, detail=f"Failed to download URL: {exc}")

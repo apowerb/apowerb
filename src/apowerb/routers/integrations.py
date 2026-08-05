@@ -465,8 +465,9 @@ async def debug_outlook_token_scopes(
         payload_b64 = access_token.split(".")[1]
         payload_b64 += "=" * (-len(payload_b64) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload_b64))
-    except Exception as exc:
-        return {"error": str(exc)}
+    except Exception:
+        logger.exception("[INTEGRATIONS] Failed to decode Outlook access token for debug endpoint")
+        return {"error": "Failed to decode access token"}
     return {
         "scp": claims.get("scp"),
         "roles": claims.get("roles"),

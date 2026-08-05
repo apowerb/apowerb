@@ -16,6 +16,7 @@ Three endpoints:
 from __future__ import annotations
 
 import asyncio
+from logging import getLogger
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -24,6 +25,7 @@ from sqlalchemy import text
 DEPENDENCY_TIMEOUT_S: float = 2.0
 
 router = APIRouter(prefix="/health", tags=["health"])
+logger = getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -39,8 +41,14 @@ async def _check_db() -> tuple[bool, Optional[str]]:
         async with sessionmanager.session() as session:
             await session.execute(text("SELECT 1"))
         return True, None
-    except Exception as exc:  # pragma: no cover - depends on live DB
-        return False, str(exc)
+    except Exception:  # pragma: no cover - depends on live DB
+        # /health/ready is unauthenticated (k8s-style probe). The raw
+        # exception can carry internal DB host/port/driver details
+        # ("could not connect to server ... on host 10.0.x.x ...") — log it
+        # for operators, but don't hand it to whoever is polling this over
+        # the network.
+        logger.exception("[HEALTH] DB check failed")
+        return False, "database check failed"
 
 
 def _check_fernet() -> tuple[bool, Optional[str]]:
@@ -51,8 +59,9 @@ def _check_fernet() -> tuple[bool, Optional[str]]:
         if encryptor.fernet is None:
             return False, "ENCRYPT_KEY not configured"
         return True, None
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, str(exc)
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("[HEALTH] Fernet check failed")
+        return False, "fernet check failed"
 
 
 async def _run_with_timeout(coro, timeout: float) -> tuple[bool, Optional[str]]:
@@ -63,8 +72,9 @@ async def _run_with_timeout(coro, timeout: float) -> tuple[bool, Optional[str]]:
         return bool(result), None
     except asyncio.TimeoutError:
         return False, f"timeout after {timeout:.1f}s"
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, str(exc)
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("[HEALTH] Dependency check crashed")
+        return False, "check failed"
 
 
 # ---------------------------------------------------------------------------

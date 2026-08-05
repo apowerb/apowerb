@@ -81,16 +81,29 @@ async def execute_artifact(
             "duration_ms": 0,
         }
 
+    # os.path.basename() strips directory components but passes a bare "."
+    # or ".." through unchanged (no "/" to strip). tmpdir below is a fresh,
+    # randomly-named directory, so the practical impact is limited to an
+    # IsADirectoryError, but validate defensively rather than rely on that.
+    safe_filename = os.path.basename(filename)
+    if not safe_filename or safe_filename in (".", ".."):
+        return {
+            "stdout": "",
+            "stderr": "Invalid filename",
+            "exit_code": 1,
+            "duration_ms": 0,
+        }
+
     # Build the command template
     cmd_template = LANGUAGE_COMMANDS.get(lang, [lang, "/tmp/code/{filename}"])
-    cmd = [part.format(filename=filename) for part in cmd_template]
+    cmd = [part.format(filename=safe_filename) for part in cmd_template]
     if args:
         cmd.extend(args)
 
     # Write code to a temp directory Docker can actually read (see
     # _exec_workspace_root: snap confines /tmp).
     with tempfile.TemporaryDirectory(dir=_exec_workspace_root()) as tmpdir:
-        code_path = os.path.join(tmpdir, filename)
+        code_path = os.path.join(tmpdir, safe_filename)
         with open(code_path, "w", encoding="utf-8") as f:
             f.write(code)
 

@@ -726,17 +726,28 @@ def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
 
 
 def delete_agent(agent_id: str, user_id: str) -> None:
-    """Delete an agent by ID from the agent store."""
+    """Delete an agent by ID from the agent store.
+
+    The filesystem module is only removed when the DB row actually matched
+    (id + owner_id) and was deleted. It used to run unconditionally: any
+    authenticated user could DELETE /agents/{any_id} and, even though the
+    owner_id filter above correctly left the DB row untouched for an agent
+    they don't own, delete_agent_module() still ran on that same id and
+    shutil.rmtree()'d the target agent's ADK folder — an unauthenticated-by-
+    row-match, IDOR-driven destructive filesystem delete.
+    """
     delete_query = agent_store.agent_table.delete().where(
         agent_store.agent_table.c.agent_id == agent_id,
         agent_store.agent_table.c.owner_id == user_id,
     )
     with agent_store.engine.connect() as conn:
-        conn.execute(delete_query)
+        result = conn.execute(delete_query)
         conn.commit()
-    delete_agent_module(
-        agent_name=agent_id,
-    )
+        deleted = result.rowcount > 0
+    if deleted:
+        delete_agent_module(
+            agent_name=agent_id,
+        )
 
 
 def get_agent_folder_name(agent_name: str) -> str:

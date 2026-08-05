@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import zipfile
 from datetime import datetime
 
@@ -19,6 +20,15 @@ from apowerb.skills_store.skills_loader import (
 )
 
 router = APIRouter()
+
+# Portfolio skill directory names are our own kebab-case identifiers
+# (dashboard-builder, rag-search, ...) — never arbitrary user input in
+# practice, but skill_name still arrives as an unvalidated path parameter
+# and was joined straight into _PORTFOLIO_DIR. A single ".." segment (a
+# path parameter can't contain "/", so this is the only traversal a caller
+# can reach) walked the export up one directory and, for the ZIP branch,
+# would happily archive and return everything under it.
+_PORTFOLIO_SKILL_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 @router.get("/skills", tags=["skills"])
@@ -45,6 +55,8 @@ async def export_portfolio_skill(
     _current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Export a built-in portfolio skill as JSON or ADK ZIP."""
+    if not _PORTFOLIO_SKILL_NAME_RE.match(skill_name):
+        raise HTTPException(status_code=404, detail="Portfolio skill not found")
     skill_dir = _PORTFOLIO_DIR / skill_name
     skill_md_path = skill_dir / "SKILL.md"
     if not skill_dir.is_dir() or not skill_md_path.exists():

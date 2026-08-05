@@ -174,7 +174,18 @@ def ensure_agent_modules(agents_pool_path: str | None = None) -> None:
 def delete_agent_module(
     agent_name: str = "", agents_pool_path: str | None = None
 ) -> None:
+    import re
     import shutil
+
+    # agent_name is always meant to be a bare numeric agent ID. Reject
+    # anything else instead of concatenating it into a path: this is a
+    # destructive shutil.rmtree() and callers have historically passed the
+    # raw agent_id straight through from a request (see delete_agent in
+    # core/agent_main.py) without a format check.
+    if not re.fullmatch(r"\d+", str(agent_name)):
+        print(f"[delete_agent_module] Refusing invalid agent_name: {agent_name!r}")
+        return
+
     agents_pool_path = agents_pool_path or str(agents_pool_dir())
     agent_adk_name = f"agent{agent_name}"
     agent_dir = os.path.join(agents_pool_path, agent_adk_name)

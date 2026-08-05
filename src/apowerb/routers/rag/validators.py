@@ -8,6 +8,7 @@ locks) reused across the RAG endpoint sub-modules.
 import asyncio
 import ipaddress
 import re
+import socket
 from logging import getLogger
 from urllib.parse import urlparse
 
@@ -74,19 +75,71 @@ async def _validate_agent_ownership(agent_id: str, current_user: user_schemas.Us
 
 # ---------------------------------------------------------------------------
 # S1g — SSRF protection: block requests to internal / private networks
+#
+# Two bypasses of the original IP-literal-only check, both real (not just
+# theoretical CodeQL noise):
+#   1. DNS rebinding — a domain name (not a literal IP) can resolve to a
+#      private/link-local/loopback address (e.g. the 169.254.169.254 cloud
+#      metadata endpoint). The old check only inspected the hostname string
+#      and never resolved it, so any attacker-controlled domain sailed
+#      through.
+#   2. Redirects — httpx.AsyncClient(follow_redirects=True) re-requests
+#      whatever Location header the server returns, without re-validating
+#      it. An external URL that 302s to an internal one bypassed the
+#      up-front check entirely. index_url.py now revalidates every hop
+#      (see _fetch_url_with_ssrf_guard) instead of blindly following.
 # ---------------------------------------------------------------------------
 
+def _is_disallowed_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
 def _validate_url_not_internal(url: str) -> None:
-    """Block SSRF: reject localhost, private IPs, and non-HTTP schemes."""
+    """Block SSRF: reject localhost, private/reserved IPs (including via DNS
+    resolution of the hostname), and non-HTTP schemes."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="Only HTTP/HTTPS URLs are allowed")
     hostname = parsed.hostname or ""
-    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+    if not hostname:
+        raise HTTPException(status_code=400, detail="URL must include a hostname")
+    if hostname in ("localhost", "0.0.0.0"):
         raise HTTPException(status_code=400, detail="URLs pointing to localhost are not allowed")
+
     try:
         ip = ipaddress.ip_address(hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local:
-            raise HTTPException(status_code=400, detail="URLs pointing to private networks are not allowed")
     except ValueError:
-        pass  # hostname is a domain, not an IP — OK
+        ip = None  # hostname is a domain name, not an IP literal
+
+    if ip is not None:
+        if _is_disallowed_ip(ip):
+            raise HTTPException(status_code=400, detail="URLs pointing to private networks are not allowed")
+        return
+
+    # Domain name: resolve it and check every address it can come back as.
+    # A DNS answer under attacker control (their own domain, or a rebinding
+    # attack against a domain they don't fully control) must not be able to
+    # point this server at its own private network.
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail="Could not resolve URL hostname")
+
+    for family, _type, _proto, _canonname, sockaddr in addr_infos:
+        raw_ip = sockaddr[0]
+        try:
+            resolved_ip = ipaddress.ip_address(raw_ip)
+        except ValueError:
+            continue
+        if _is_disallowed_ip(resolved_ip):
+            raise HTTPException(
+                status_code=400,
+                detail="URLs resolving to private networks are not allowed",
+            )
