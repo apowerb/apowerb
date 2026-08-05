@@ -25,6 +25,22 @@ jobs:
           VERSION="${VERSION#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+      # This workflow starts as soon as "Upload Python Package" reports
+      # success, but PyPI's index takes some time to propagate a freshly
+      # published release. The Docker build below installs
+      # "apowerb==${VERSION}" straight from PyPI, so building immediately is
+      # a race. Releases 0.1.11 and 0.1.12 both hit it: the build failed
+      # with "Because there is no version of apowerb==X and you require
+      # apowerb==X, we can conclude that your requirements are
+      # unsatisfiable", and both succeeded on manual re-run once PyPI had
+      # caught up. Poll for the exact release instead of guessing a sleep.
+      - name: Wait for the release to be installable from PyPI
+        shell: bash
+        env:
+          PACKAGE_NAME: apowerb
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: .github/scripts/wait-for-pypi-release.sh
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
