@@ -3,6 +3,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -71,8 +72,15 @@ class TestFallbackSTT:
                 assert stt._callback is callback
                 mock_connect.assert_called_once()
                 call_url = mock_connect.call_args[0][0]
-                assert "api.deepgram.com" in call_url
-                assert "model=nova-2" in call_url
+                # Assert on the parsed host, not on a substring of the URL.
+                # "api.deepgram.com" in call_url also passes for
+                # wss://api.deepgram.com.evil.test/ and for a URL that merely
+                # mentions the host in a query parameter, so the substring form
+                # would not catch the redirection it looks like it is guarding.
+                parsed = urlparse(call_url)
+                assert parsed.hostname == "api.deepgram.com"
+                assert parsed.scheme == "wss"
+                assert "model=nova-2" in parse_qs(parsed.query).get("model", []) or                     parsed.query.count("model=nova-2") == 1
 
     @pytest.mark.asyncio
     async def test_start_without_deepgram_key_uses_fallback(self) -> None:
