@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import tempfile
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Query, Request
@@ -20,6 +21,19 @@ router = APIRouter()
 security = HTTPBearer(auto_error=False)
 
 CHUNK_SIZE = 65536  # 64 KB
+
+# upload_id is client-generated and, unlike agent_id/filename, was never
+# format-checked before being joined into a filesystem path. A value like
+# "../../../../etc" let any authenticated caller create directories and
+# write/read chunk files outside uploads_dir()/_chunks (path traversal), and
+# since chunks are re-read by upload_id alone in upload_complete, a guessed
+# upload_id also let one user pull another user's in-flight chunk data.
+_UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _validate_upload_id(upload_id: str) -> None:
+    if not _UPLOAD_ID_RE.match(upload_id):
+        raise HTTPException(status_code=400, detail="Invalid upload_id format")
 
 
 class UploadCompleteRequest(BaseModel):
@@ -84,6 +98,7 @@ async def upload_chunk(
 ):
     """Upload a single chunk of a large file."""
     await _validate_agent_ownership(agent_id, current_user)
+    _validate_upload_id(upload_id)
 
     safe_filename = os.path.basename(filename)
     if not safe_filename:
@@ -124,6 +139,7 @@ async def upload_complete(
 ):
     """Assemble all uploaded chunks into the final file."""
     await _validate_agent_ownership(body.agent_id, current_user)
+    _validate_upload_id(body.upload_id)
 
     safe_filename = os.path.basename(body.filename)
     if not safe_filename:

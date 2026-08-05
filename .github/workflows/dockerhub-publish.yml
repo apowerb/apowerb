@@ -20,9 +20,13 @@ jobs:
       - name: Resolve release version from the PyPI workflow tag
         id: release
         shell: bash
+        env:
+          # Passed as an env var (not interpolated into the script body) so an
+          # attacker-controlled branch/tag name can't break out of the string
+          # and inject arbitrary shell commands into this step.
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          VERSION="${{ github.event.workflow_run.head_branch }}"
-          VERSION="${VERSION#v}"
+          VERSION="${HEAD_BRANCH#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU

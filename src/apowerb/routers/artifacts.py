@@ -36,6 +36,34 @@ class ExecuteRequest(BaseModel):
     timeout: Optional[int] = 30
 
 
+# Unlike agent_name/user_id here, session_id was never validated before
+# being joined into the artifacts path, so a single ".." segment (no "/"
+# required — a plain path parameter already forbids "/") could walk the
+# lookup up one directory level. This endpoint deliberately tolerates
+# unknown/free-form session_id values (test_unknown_session_stays_empty_
+# not_an_error: an unrecognised session just yields an empty artifact list,
+# not a 400), unlike the stricter "session_<digits>" formats enforced
+# elsewhere (rag/validators.py, core/guardrails.py) — so only the actual
+# traversal values are rejected here, not the whole free-form space.
+_UNSAFE_SESSION_ID = (".", "..")
+
+
+def _validate_session_id(session_id: str) -> None:
+    if not session_id or session_id in _UNSAFE_SESSION_ID:
+        raise HTTPException(status_code=400, detail="Invalid session_id format")
+
+
+def _safe_path_component(name: str) -> str:
+    """os.path.basename() strips directory components but passes a bare
+    "." or ".." straight through unchanged (there's no "/" to strip), which
+    still resolves to the current/parent directory when joined. Reject that
+    case explicitly."""
+    safe = os.path.basename(name)
+    if not safe or safe in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return safe
+
+
 def _get_session_artifacts_dir(user_id: str, session_id: str) -> str:
     """Répertoire où ADK range les artefacts d'une session.
 
@@ -107,7 +135,7 @@ def _read_artifact_payload(version_dir: str, name: str) -> dict:
 
 def _resolve_artifact(user_id: str, session_id: str, filename: str):
     """Résout un artefact vers ``(version, dossier_de_version, contenu)``."""
-    safe_name = os.path.basename(filename)
+    safe_name = _safe_path_component(filename)
     artifact_dir = os.path.join(
         _get_session_artifacts_dir(user_id, session_id), safe_name
     )
@@ -128,6 +156,7 @@ async def list_artifacts(
 ):
     """List all artifacts for a session."""
     _enforce_user_id_match(user_id, current_user)
+    _validate_session_id(session_id)
     try:
         artifacts_dir = _get_session_artifacts_dir(user_id, session_id)
         logger.info(f"[ARTIFACTS] Listing artifacts at: {artifacts_dir}")
@@ -166,13 +195,14 @@ async def get_artifact(
 ):
     """Get a specific artifact's content."""
     _enforce_user_id_match(user_id, current_user)
+    _validate_session_id(session_id)
 
     resolved = _resolve_artifact(user_id, session_id, filename)
     if resolved is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{filename}' not found")
 
     version, _version_dir, data = resolved
-    safe_name = os.path.basename(filename)
+    safe_name = _safe_path_component(filename)
     return {
         "filename": data.get("filename", safe_name),
         "language": data.get("language", "text"),
@@ -193,8 +223,9 @@ async def execute_artifact_endpoint(
 ):
     """Execute an artifact in a Docker container."""
     _enforce_user_id_match(user_id, current_user)
+    _validate_session_id(session_id)
 
-    safe_filename = os.path.basename(filename)
+    safe_filename = _safe_path_component(filename)
     resolved = _resolve_artifact(user_id, session_id, safe_filename)
     if resolved is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{safe_filename}' not found")

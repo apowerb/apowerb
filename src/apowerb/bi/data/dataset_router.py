@@ -387,12 +387,16 @@ async def preview_onedrive_spreadsheet(
                 {"status": "error", "message": msg},
                 status_code=code,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
+            # Broad catch around a Graph API call — unlike the RuntimeError
+            # branch above (our own, safe message), an arbitrary exception
+            # here isn't ours to control and shouldn't be echoed to the
+            # client. Full detail is already captured by logger.exception.
             logger.exception("OneDrive item_id resolution crashed for %s", item_id)
             return JSONResponse(
                 {
                     "status": "error",
-                    "message": f"Failed to resolve item_id '{item_id}': {exc}",
+                    "message": f"Failed to resolve item_id '{item_id}'",
                 },
                 status_code=500,
             )
@@ -420,14 +424,14 @@ async def preview_onedrive_spreadsheet(
             headers,
             sheet_name=sheet_arg,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception(
             "OneDrive preview parser crashed for %s", item_path
         )
         return JSONResponse(
             {
                 "status": "error",
-                "message": f"Failed to read OneDrive file: {exc}",
+                "message": "Failed to read OneDrive file",
             },
             status_code=500,
         )

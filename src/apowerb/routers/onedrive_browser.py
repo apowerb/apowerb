@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from logging import getLogger
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -27,6 +28,7 @@ from apowerb.tools_store.portfolio.onedrive_read import (
 )
 
 router = APIRouter(prefix="/api/onedrivebrowser", tags=["onedrive-browser"])
+logger = getLogger(__name__)
 
 _MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024  # 20 MB hard limit for chat attachments
 
@@ -371,10 +373,18 @@ async def get_excel_preview(
             sheet_name=sheet_arg,
         )
     except Exception as exc:
+        # Unlike the RuntimeError branches above (deliberately-raised, safe
+        # messages), this is a broad catch around a pandas/openpyxl parse of
+        # attacker-influenced content — the exception text isn't ours to
+        # control and can include local/library internals. Log it, don't
+        # forward it.
+        logger.exception(
+            "[ONEDRIVE] Failed to download/parse %s", item_path
+        )
         return JSONResponse(
             {
                 "status": "error",
-                "message": f"Failed to download OneDrive file: {exc}",
+                "message": "Failed to download OneDrive file",
             },
             status_code=502,
         )
