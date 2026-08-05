@@ -52,7 +52,7 @@ def _write_pdf(file_path: str, content: str) -> None:
 def _extract_pdf_text(file_path: str) -> str | None:
     """Extract text from a PDF file. Returns None if extraction fails."""
     try:
-        from PyPDF2 import PdfReader
+        from pypdf import PdfReader
 
         reader = PdfReader(file_path)
         pages = []
