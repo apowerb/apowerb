@@ -1,0 +1,87 @@
+"""End-to-end proof, through the actual HTTP router, against the real dev
+bucket (th2agent-dev). Complements tests/test_s3_artifact_service_real_bucket.py
+(which proves the service layer alone) by proving the router's S3 branch
+wiring: get_settings() must see S3 as configured from real environment
+variables (no monkeypatching), and list_artifacts/get_artifact must return
+the same 2 artifacts Farid migrated into agent1164/session_1785833154778.
+
+READ-ONLY: never writes or deletes anything in the bucket. Two of the
+migrated objects are real client demo reports.
+
+Requires real S3 credentials in the environment; skipped otherwise, same
+convention as tests/test_s3_artifact_service_real_bucket.py.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from apowerb.configs.settings import get_settings
+
+pytestmark = pytest.mark.integration
+
+USER = "irrelevant-for-session-scoped-artifacts"
+AGENT = "agent1164"
+SESSION = "session_1785833154778"
+
+
+def _s3_configured() -> bool:
+    s = get_settings()
+    return bool(s.s3_bucket_name and s.s3_access_key and s.s3_endpoint)
+
+
+skip_without_s3 = pytest.mark.skipif(
+    not _s3_configured(), reason="S3 credentials not set in this environment"
+)
+
+
+@pytest.fixture()
+def client():
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.routers.artifacts import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+
+    async def _user():
+        u = MagicMock()
+        u.email = USER
+        u.user_id = 1
+        u.role = "USER"
+        return u
+
+    app.dependency_overrides[get_current_user] = _user
+    return TestClient(app)
+
+
+@skip_without_s3
+class TestRouterAgainstRealBucket:
+    def test_router_sees_s3_as_active(self):
+        from apowerb.routers.artifacts import _s3_artifacts_active
+        assert _s3_artifacts_active() is True
+
+    def test_lists_the_two_migrated_artifacts(self, client):
+        r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}")
+        assert r.status_code == 200, r.text
+        by_name = {a["filename"]: a for a in r.json()}
+        assert set(by_name) == {"fizzbuzz.py", "rapport.html"}
+        assert by_name["fizzbuzz.py"]["language"] == "python"
+        assert by_name["rapport.html"]["language"] == "html"
+
+    def test_reads_fizzbuzz_code(self, client):
+        r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/fizzbuzz.py")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["language"] == "python"
+        assert body["code"]
+
+    def test_reads_rapport_html_code(self, client):
+        r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/rapport.html")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["language"] == "html"
+        assert body["code"]
