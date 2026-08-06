@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from apowerb.artifacts.input_scope import SHARED_INPUT_SCOPE
 from apowerb.artifacts.languages import language_for_filename
 from apowerb.artifacts.s3_artifact_service import S3ArtifactService
 from apowerb.auth.dependencies import get_current_user
@@ -274,7 +275,14 @@ async def _list_artifacts_s3(agent_name: str, user_id: str, session_id: str) -> 
         })
 
     artifacts.extend(await _list_input_artifacts_s3(service, agent_name, session_id))
-    artifacts.extend(await _list_legacy_files(agent_name, {a["filename"] for a in artifacts}))
+    # Only in the shared scope. A legacy file carries no session -- the old
+    # path never had one -- so returning it for every session would show the
+    # same document once per conversation of that agent.
+    if session_id == SHARED_INPUT_SCOPE:
+        artifacts.extend(
+            await _list_legacy_files(agent_name, {a["filename"] for a in artifacts})
+        )
+
     return artifacts
 
 
