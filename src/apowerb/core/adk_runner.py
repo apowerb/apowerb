@@ -9,6 +9,7 @@ import json
 from logging import getLogger
 
 from apowerb.configs.settings import get_settings
+from apowerb.helpers.error_responses import safe_error_message
 
 logger = getLogger(__name__)
 
@@ -28,6 +29,38 @@ _CHAT_RATE_LIMIT_DEFAULT_DELAY = 30.0
 # Cap on how long we'll keep the user waiting on a single retry. Above
 # this, we surface the error and let the UI tell the user to try again.
 _CHAT_RATE_LIMIT_MAX_DELAY = 60.0
+
+
+# What the browser is told when the ADK server fails. The upstream body and
+# `str(exc)` never go with it: either can carry a provider traceback, a DSN or
+# an internal host. Both keep going to the log.
+_UPSTREAM_ERROR_MESSAGE = "The agent runtime returned an error. Try again in a moment."
+
+# Kept distinct from the generic message on purpose: the frontend matches
+# "session not found" to tell the user their conversation state is gone and to
+# start a new chat (th2agent-app `src/hooks/useStreaming.js`). Folding this into
+# the generic message would leave that branch dead and the user with a raw
+# error banner. The upstream body names the session; this one does not.
+_SESSION_LOST_MESSAGE = "Session not found."
+
+
+def _error_event(message: str, **extra: Any) -> str:
+    """Render a client-visible SSE error envelope."""
+    return f"data: {json.dumps({'error': message, **extra})}\n\n"
+
+
+def _upstream_error_event(status: int, body: str) -> str:
+    """Envelope for a non-200 from the ADK server, without its body.
+
+    `code` carries the HTTP status because `_chunk_signals_rate_limit` reads
+    the forwarded chunk to decide whether to retry. Before this envelope
+    existed the raw body happened to contain "429"; dropping the body without
+    putting the status back would have made rate-limit retries stop firing
+    silently -- the exact failure the retry was written to prevent.
+    """
+    lost_session = status == 404 and "session not found" in body.lower()
+    message = _SESSION_LOST_MESSAGE if lost_session else _UPSTREAM_ERROR_MESSAGE
+    return _error_event(message, status=status, code=status)
 
 
 def _chunk_signals_rate_limit(chunk: str) -> bool:
@@ -263,8 +296,10 @@ async def _stream_adk_agent_once(
             async with session.post(url, headers=headers, json=payload) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(f"[STREAM] ADK server error: {response.status} - {error_text}")
-                    yield f"data: {json.dumps({'error': error_text, 'status': response.status})}\n\n"
+                    logger.error(
+                        "[STREAM] ADK server error: %s - %s", response.status, error_text
+                    )
+                    yield _upstream_error_event(response.status, error_text)
                     return
 
                 content_type = response.headers.get("Content-Type", "")
@@ -293,11 +328,23 @@ async def _stream_adk_agent_once(
                     yield "data: [DONE]\n\n"
 
         except aiohttp.ClientError as e:
-            logger.error(f"[STREAM] Connection error: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield _error_event(
+                safe_error_message(
+                    e,
+                    logger=logger,
+                    context="[STREAM] connecting to the ADK server",
+                    client_message=_UPSTREAM_ERROR_MESSAGE,
+                )
+            )
         except Exception as e:
-            logger.error(f"[STREAM] Unexpected error: {e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield _error_event(
+                safe_error_message(
+                    e,
+                    logger=logger,
+                    context="[STREAM] forwarding the ADK stream",
+                    client_message=_UPSTREAM_ERROR_MESSAGE,
+                )
+            )
 
 
 async def stream_adk_agent(
