@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from logging import getLogger
@@ -6,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from apowerb.artifacts.languages import language_for_filename
 from apowerb.artifacts.s3_artifact_service import S3ArtifactService
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
@@ -45,12 +47,18 @@ def _artifacts_dir() -> str:
 # this field is what the UI filters on.
 KIND_INPUT = "input"
 KIND_OUTPUT = "output"
+# Files written before the artifact layout existed, under uploads/{agent}/.
+# 455 of them on the dev bucket: uploads from the old flow and everything
+# create_downloadable_file produced until it started writing output
+# artifacts. Nothing distinguishes the two after the fact, so claiming
+# either kind would be a guess -- they get their own, and the tab says so.
+KIND_LEGACY = "legacy"
 
 # A session can hold an input and an output under the same filename (upload
 # report.html, have the agent regenerate report.html). The listing keeps
 # both -- they differ by kind -- but a read by filename alone would be
 # ambiguous, hence the optional ?kind= on the single-artifact routes.
-_KINDS = (KIND_INPUT, KIND_OUTPUT)
+_KINDS = (KIND_INPUT, KIND_OUTPUT, KIND_LEGACY)
 
 
 class ExecuteRequest(BaseModel):
@@ -266,7 +274,35 @@ async def _list_artifacts_s3(agent_name: str, user_id: str, session_id: str) -> 
         })
 
     artifacts.extend(await _list_input_artifacts_s3(service, agent_name, session_id))
+    artifacts.extend(await _list_legacy_files(agent_name, {a["filename"] for a in artifacts}))
     return artifacts
+
+
+async def _list_legacy_files(agent_name: str, already_listed: set[str]) -> list[dict]:
+    """Files under ``uploads/{agent}/``, which no writer targets any more.
+
+    Listed against the agent rather than a session -- the old layout carried
+    none -- so they appear in every session of that agent. Duplicating a name
+    that already exists as a real artifact would show the same file twice, so
+    those are dropped: the artifact is the better record of the two.
+    """
+    from apowerb.storage.s3 import list_files_in_s3
+
+    prefix = f"uploads/{agent_name}/"
+    entries = []
+    for key in await asyncio.to_thread(lambda: list(list_files_in_s3(prefix=prefix))):
+        name = key[len(prefix):]
+        if not name or "/" in name or name in already_listed:
+            continue
+        entries.append({
+            "filename": name,
+            "language": _guess_language(name),
+            "version": 0,
+            "source": "legacy",
+            "kind": KIND_LEGACY,
+        })
+
+    return sorted(entries, key=lambda e: e["filename"])
 
 
 async def _list_input_artifacts_s3(
@@ -398,10 +434,37 @@ async def _resolve_any_artifact_s3(
         if kind == KIND_OUTPUT:
             return None
 
-    resolved = await _resolve_input_artifact_s3(
-        service, agent_name, session_id, filename
-    )
-    return None if resolved is None else (KIND_INPUT, *resolved)
+    if kind != KIND_LEGACY:
+        resolved = await _resolve_input_artifact_s3(
+            service, agent_name, session_id, filename
+        )
+        if resolved is not None:
+            return (KIND_INPUT, *resolved)
+        if kind == KIND_INPUT:
+            return None
+
+    resolved = await _resolve_legacy_file(agent_name, filename)
+    return None if resolved is None else (KIND_LEGACY, *resolved)
+
+
+async def _resolve_legacy_file(agent_name: str, filename: str):
+    """Résout un fichier de l'ancien emplacement vers ``(version, contenu)``.
+
+    The old layout has no versions, hence the constant 0 -- the tab needs a
+    number and there was never more than one file per name.
+    """
+    from apowerb.storage.s3 import download_file_from_s3, file_exists_in_s3
+
+    safe_name = _safe_path_component(filename)
+    key = f"uploads/{agent_name}/{safe_name}"
+    if not await asyncio.to_thread(file_exists_in_s3, key):
+        return None
+
+    raw = await asyncio.to_thread(download_file_from_s3, key)
+    try:
+        return 0, {"code": raw.decode("utf-8")}
+    except UnicodeDecodeError:
+        return 0, {"binary": True, "code": ""}
 
 
 @router.get("/artifacts/{agent_name}/{user_id}/{session_id}/{filename}", tags=["artifacts"])
@@ -487,13 +550,10 @@ async def execute_artifact_endpoint(
 
 
 def _guess_language(filename: str) -> str:
-    """Guess language from file extension."""
-    ext_map = {
-        ".py": "python",
-        ".js": "javascript",
-        ".sh": "bash",
-        ".rb": "ruby",
-        ".go": "go",
-    }
-    _, ext = os.path.splitext(filename)
-    return ext_map.get(ext, "text")
+    """Guess language from file extension.
+
+    Delegates to the shared table: this one knew five extensions and not
+    ".html", so a generated report was listed as plain text and lost its
+    preview.
+    """
+    return language_for_filename(filename)

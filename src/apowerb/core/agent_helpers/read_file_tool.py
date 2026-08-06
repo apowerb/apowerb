@@ -9,11 +9,7 @@ import os
 from apowerb.configs.th2logger import setup_logging
 from apowerb.configs.paths import uploads_dir
 from apowerb.configs.settings import get_settings
-from apowerb.storage.s3 import (
-    download_file_from_s3,
-    file_exists_in_s3,
-    list_files_in_s3,
-)
+from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
 from apowerb.core.agent_helpers.text_utils import _truncate_content
 from apowerb.core.agent_helpers.pdf_writer import _extract_pdf_text
 from apowerb.core.agent_helpers.file_readers import (
@@ -161,23 +157,15 @@ def _make_read_uploaded_file(folder_name: str):
             logger.info("==================================================USING S3 NOW in _make_read_uploaded_file\n ===================================================\n========================================\n==================\n===================")
             import os
             import tempfile
-            s3_key = f"uploads/{folder_name}/{filename}"
-            prefix = f"uploads/{folder_name}/"
+            content_bytes = read_file_bytes(folder_name, filename)
 
-            if not file_exists_in_s3(s3_key):
-                available = []
-                for key in list_files_in_s3(prefix):
-                    short_name = key.removeprefix(prefix)
-                    if short_name and "/" not in short_name:
-                        available.append(short_name)
-
+            if content_bytes is None:
                 return {
                     "status": "error",
                     "message": f"File '{filename}' not found in {folder_name}",
-                    "available_files": available,
+                    "available_files": available_filenames(folder_name),
                 }
 
-            content_bytes = download_file_from_s3(s3_key)
             file_size = len(content_bytes)
 
             if file_size > 10 * 1024 * 1024:
