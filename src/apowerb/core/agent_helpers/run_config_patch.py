@@ -1,6 +1,6 @@
 """Levier 3 : cap d'appels LLM via RunConfig(max_llm_calls).
 
-Patche le serveur ADK (AdkWebServer) pour injecter max_llm_calls
+Patche le serveur ADK (ApiServer) pour injecter max_llm_calls
 dans chaque RunConfig cree par les endpoints /run et /run_sse.
 
 Usage dans main.py apres get_fast_api_app() :
@@ -76,18 +76,24 @@ def patch_runner_run_async(runner: object) -> None:
 
 
 def apply_adk_run_config_patch() -> None:
-    """Monkey-patche AdkWebServer pour injecter max_llm_calls dans RunConfig.
+    """Monkey-patche ApiServer pour injecter max_llm_calls dans RunConfig.
 
-    1) Remplace RunConfig dans adk_web_server par _CappedRunConfig : couvre /run_sse.
-    2) Patche AdkWebServer.get_runner_async pour appliquer patch_runner_run_async
+    1) Remplace RunConfig dans api_server par _CappedRunConfig : couvre /run_sse.
+    2) Patche ApiServer.get_runner_async pour appliquer patch_runner_run_async
        sur chaque runner retourne : couvre le chemin /run (webhook).
+
+    Cible api_server et non adk_web_server : depuis ADK 2.x, AdkWebServer
+    n'est qu'une sous-classe vide et depreciee de DevServer, et
+    get_fast_api_app(web=False) -- notre appel -- instancie ApiServer.
+    Patcher l'ancien module ne levait rien et ne plafonnait plus rien :
+    le log annoncait meme un succes.
 
     Cette fonction doit etre appelee UNE FOIS apres get_fast_api_app()
     dans main.py.
     """
     try:
         from google.adk.agents.run_config import RunConfig
-        import google.adk.cli.adk_web_server as _aws_mod
+        import google.adk.cli.api_server as _aws_mod
     except ImportError as e:
         _logger.warning(
             "[RUN_CONFIG_PATCH] ADK non disponible, patch non applique : %s", e
@@ -104,14 +110,14 @@ def apply_adk_run_config_patch() -> None:
                 kwargs["max_llm_calls"] = get_llm_max_calls()
             super().__init__(**kwargs)
 
-    # Patch dans le module adk_web_server (ou il est importe)
+    # Patch dans le module api_server (ou il est importe)
     _aws_mod.RunConfig = _CappedRunConfig
 
-    # Patch AdkWebServer.get_runner_async pour couvrir le chemin /run (webhook).
+    # Patch ApiServer.get_runner_async pour couvrir le chemin /run (webhook).
     # /run appelle runner.run_async() SANS run_config -> patch_runner_run_async
     # injecte le run_config avant chaque appel si l'appelant ne le fournit pas.
-    AdkWebServer = _aws_mod.AdkWebServer
-    _orig_get_runner_async = AdkWebServer.get_runner_async
+    _ServerClass = _aws_mod.ApiServer
+    _orig_get_runner_async = _ServerClass.get_runner_async
     _PATCHED_ATTR = "_th2_run_config_patched"
 
     async def _patched_get_runner_async(self, app_name: str):
@@ -124,9 +130,9 @@ def apply_adk_run_config_patch() -> None:
             )
         return runner
 
-    AdkWebServer.get_runner_async = _patched_get_runner_async
+    _ServerClass.get_runner_async = _patched_get_runner_async
 
     _logger.info(
-        "[RUN_CONFIG_PATCH] AdkWebServer.RunConfig patche -> max_llm_calls=%d",
+        "[RUN_CONFIG_PATCH] ApiServer.RunConfig patche -> max_llm_calls=%d",
         get_llm_max_calls(),
     )

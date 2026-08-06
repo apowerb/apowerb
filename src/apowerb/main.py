@@ -181,12 +181,18 @@ def bootstrap(force: bool = False) -> None:
 
 # load Google ADK FastAPI app
 from google.adk.cli.fast_api import get_fast_api_app
-from google.adk.cli.adk_web_server import AdkWebServer as _AdkWebServer
+# ApiServer, not AdkWebServer: in ADK 2.x the latter is a deprecated empty
+# subclass of DevServer, and `get_fast_api_app(web=False)` -- the call below
+# -- instantiates ApiServer directly. Patching the deprecated class would
+# capture nothing and fail silently: the hot-reload endpoint would answer 503
+# and app.state would hold None, with no error anywhere. ApiServer exposes the
+# same `agent_loader` / `runner_dict` / `get_runner_async` surface.
+from google.adk.cli.api_server import ApiServer as _AdkServer
 
 # Capture the AdkWebServer instance created inside get_fast_api_app() so the
 # hot-reload endpoint can reach its agent_loader + runners_to_clean set.
 _ADK_HANDLES: dict = {}
-_orig_adk_init = _AdkWebServer.__init__
+_orig_adk_init = _AdkServer.__init__
 
 
 def _capture_adk_init(self, *args, **kwargs):
@@ -195,7 +201,7 @@ def _capture_adk_init(self, *args, **kwargs):
     _ADK_HANDLES["agent_loader"] = self.agent_loader
 
 
-_AdkWebServer.__init__ = _capture_adk_init
+_AdkServer.__init__ = _capture_adk_init
 
 # Configure LiteLLM for OVHCloud compatibility
 from apowerb.helpers.litellm_config import configure_litellm_for_ovhcloud
@@ -462,7 +468,6 @@ from apowerb.scheduler.notifier_watch import notifier_watch_loop
 from apowerb.routers.webhook_handlers.outlook import process_webhook_log_row
 
 
-@app.on_event("startup")
 async def _start_webhook_renewal():
     import asyncio
     # Debug breadcrumbs (cf. SCEI prod 2026-05-07 where this hook was
@@ -539,13 +544,13 @@ async def _start_webhook_renewal():
     print("[STARTUP HOOK] _start_webhook_renewal done", flush=True)
 
 
-# Belt and suspenders: explicitly register the same callback via the
-# add_event_handler API. ADK's get_fast_api_app(...) wraps the app in
-# its own lifespan; depending on FastAPI version, the @app.on_event
-# decorator above is sometimes silently shadowed by that lifespan.
-# add_event_handler is the long-standing API the lifespan-shadowing
-# defaults respect.
-app.add_event_handler("startup", _start_webhook_renewal)
+# The two legacy registrations that used to sit here -- an
+# ``@app.on_event("startup")`` decorator and an ``app.add_event_handler``
+# call -- are gone. Starlette 1.0 removed both APIs, and they had never
+# fired anyway: ADK installs its own lifespan, Starlette honours only that,
+# and the comments here already recorded it (SCEI prod, 2026-05-07: neither
+# hook ever printed, the backlog worker never started). The lifespan wrapper
+# below is the one that works, and it is now the only one.
 
 
 # Final fallback: ADK builds the FastAPI app with its own lifespan
