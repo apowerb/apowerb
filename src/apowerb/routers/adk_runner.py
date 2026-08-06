@@ -121,10 +121,14 @@ async def run_agent(
     try:
         NewMessage(**request.new_message)
     except Exception as e:
-        logger.error(f"[ADK RUN] Invalid message format: {str(e)}")
         raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid message format: {str(e)}"
+            status_code=400,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_agent.validate_message",
+                client_message="Invalid message format: 'new_message' must match the expected schema (role and parts).",
+            ),
         )
 
     # Resolve agent name to folder name
@@ -138,10 +142,14 @@ async def run_agent(
             detail=f"Agent not found: {request.agent_name}"
         )
     except Exception as e:
-        logger.error(f"[ADK RUN] Error resolving agent name: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error resolving agent: {str(e)}"
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_agent.resolve_agent",
+                client_message="Failed to resolve the requested agent.",
+            ),
         )
 
     # Quota du modele mutualise -- avant toute execution, et avant meme de
@@ -183,10 +191,14 @@ async def run_agent(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[ADK RUN] Error handling session: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error creating/checking session: {str(e)}"
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_agent.ensure_session",
+                client_message="Failed to create or verify the agent session. Try again in a moment.",
+            ),
         )
 
     # Run the agent
@@ -212,28 +224,44 @@ async def run_agent(
         # Re-raise HTTP exceptions as-is
         raise
     except ValueError as e:
-        logger.error(f"[ADK RUN] Validation error: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_agent.run",
+                client_message="The agent run request or the agent's response could not be validated.",
+            ),
+        )
     except ConnectionError as e:
-        logger.error(f"[ADK RUN] Connection error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=503,
-            detail=f"Service temporarily unavailable: {str(e)}"
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_agent.connection_error",
+                client_message="Service temporarily unavailable. Try again in a moment.",
+            ),
         )
     except TimeoutError as e:
-        logger.error(f"[ADK RUN] Timeout error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=504,
-            detail=f"Request timeout: {str(e)}"
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_agent.timeout",
+                client_message="The agent run timed out. Try again in a moment.",
+            ),
         )
     except Exception as e:
-        logger.error(
-            f"[ADK RUN] Unexpected error running agent {request.agent_name}: {str(e)}",
-            exc_info=True,
-        )
         raise HTTPException(
             status_code=500,
-            detail=f"Internal server error: {str(e)}"
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context=f"adk_runner.run_agent.unexpected_error (agent={request.agent_name})",
+                client_message="Internal server error while running the agent.",
+            ),
         )
 
 
@@ -401,7 +429,15 @@ async def create_session(
         )
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.create_session",
+                client_message="Failed to create the agent session.",
+            ),
+        )
 
 
 @router.get("/sessions/{agent_name}/{user_id}/{session_id}", tags=["adk"])
@@ -463,8 +499,15 @@ async def get_session_history(
         logger.error(f"[ADK] ADK responded with {e.status}: {e.message}")
         raise HTTPException(status_code=e.status, detail=e.message)
     except Exception as e:
-        logger.error(f"[ADK] Error fetching session history: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.get_session_history",
+                client_message="Failed to fetch the session history.",
+            ),
+        )
 
 
 @router.get("/sessions/{agent_name}/{user_id}/{session_id}/trace", tags=["adk"])
@@ -488,8 +531,15 @@ async def get_session_trace(
         trace = parse_session_to_trace(session_data, agent_name)
         return trace
     except Exception as e:
-        logger.error(f"[ADK] Error fetching session trace: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.get_session_trace",
+                client_message="Failed to fetch the session trace.",
+            ),
+        )
 
 
 @router.patch("/sessions/{agent_name}/{user_id}/{session_id}", tags=["adk"])
@@ -514,7 +564,15 @@ async def update_session(
         )
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.update_session",
+                client_message="Failed to update the agent session.",
+            ),
+        )
 
 
 @router.delete("/sessions/{agent_name}/{user_id}/{session_id}", tags=["adk"])
@@ -537,7 +595,15 @@ async def delete_session(
         )
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.delete_session",
+                client_message="Failed to delete the agent session.",
+            ),
+        )
 
 
 class RunFromJWTRequest(BaseModel):
@@ -591,8 +657,15 @@ async def run_agent_from_jwt_endpoint(
         return result
 
     except ValueError as e:
-        logger.error(f"[JWT RUN] Validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_from_jwt.validation_error",
+                client_message="Invalid or expired token, or the agent session could not be initialized.",
+            ),
+        )
     except Exception as e:
         logger.error(f"[JWT RUN] Error: {str(e)}", exc_info=True)
         # Alert on failure of the live scheduled/Run-Now execution path. This is
@@ -652,10 +725,17 @@ async def schedule_agent_run_endpoint(
         
         logger.info(f"[SCHEDULE] Successfully scheduled: run_id={result.get('run_id')}")
         return result
-        
+
     except Exception as e:
-        logger.error(f"[SCHEDULE] Error scheduling agent run: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.schedule_run",
+                client_message="Failed to schedule the agent run. Check the agent_id and schedule_interval.",
+            ),
+        )
 
 
 @router.post("/run_now", tags=["adk"])
@@ -762,8 +842,15 @@ async def run_agent_now_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[RUN NOW] Error: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_now",
+                client_message="Failed to trigger the agent run.",
+            ),
+        )
 
 
 # Add this to your adk_runner.py file
@@ -806,8 +893,22 @@ async def run_agent_from_refresh_token_endpoint(
         return result
         
     except ValueError as e:
-        logger.error(f"[REFRESH] Validation error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(
+            status_code=400,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_from_refresh_token.validation_error",
+                client_message="Invalid or expired refresh token, or the agent session could not be initialized.",
+            ),
+        )
     except Exception as e:
-        logger.error(f"[REFRESH] Error: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))    
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context="adk_runner.run_from_refresh_token.unexpected_error",
+                client_message="Agent execution failed.",
+            ),
+        )
