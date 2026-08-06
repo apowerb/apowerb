@@ -74,6 +74,7 @@ from apowerb.bi.refresh_router import router as bi_refresh_router
 from apowerb.bi.chart_refresh_router import router as bi_chart_refresh_router
 
 from apowerb.configs.settings import get_settings
+from apowerb.helpers.api_schema import hide_api_schema, publishes_api_schema
 import logging as _logging
 from apowerb.helpers.safe_paths import PathEscape
 from apowerb.configs.paths import (
@@ -364,6 +365,29 @@ apply_adk_run_config_patch()
 # Expose the captured ADK handles on app.state so routers can reach them.
 app.state.adk_web_server = _ADK_HANDLES.get("web_server")
 app.state.adk_agent_loader = _ADK_HANDLES.get("agent_loader")
+
+# The API does not publish its own route inventory unless a deployment asks
+# for it. FastAPI adds /openapi.json, /docs and /redoc itself, ahead of
+# ADKAuthMiddleware's path list, so the 401 that guards everything else never
+# applies to them -- measured from the internet on 2026-08-06: 215 routes
+# readable with no credentials on prod, 216 on the SCEI deployment.
+#
+# Removed rather than guarded: Swagger UI cannot send a bearer token on its
+# first load, so requiring one yields a broken page, not a protected one.
+# That is why these paths were commented out of ADK_PROTECTED_PATHS above.
+#
+# Closed by default rather than keyed on WORKING_MODE: that variable lives in
+# each VM's hand-written .env, the deploy workflow never sets it, and there is
+# no way to read production's from outside. A guard keyed on a value we cannot
+# observe is a guard that does nothing on the one host that matters. A
+# deployment that wants a browsable Swagger sets PUBLISH_API_SCHEMA=true.
+if not publishes_api_schema(settings):
+    _hidden = hide_api_schema(app)
+    # Same reason as the PathEscape handler below: this module's logger is
+    # configured further down the file, well after the app is built.
+    _logging.getLogger(__name__).info(
+        "[SCHEMA] not published, routes removed: %s", _hidden
+    )
 # Câblage pur (routes + tools de l'overlay client) : doit rester à la
 # construction de l'app, avant l'inclusion des routers. Aucun accès base.
 from apowerb.core.extensions.loader import load_overlay  # noqa: E402
