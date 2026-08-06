@@ -67,15 +67,26 @@ def list_user_api_keys(user_id: str) -> list[dict]:
     )
     result = api_key_store.get_list(select_q)
     keys = []
+    failed = 0
     for row in result:
         d = row._asdict()
         d["api_key_id"] = f"apikey{d['api_key_id']}"
         try:
             d = decrypt_value_in_dict(d, ["api_key_value"])
         except Exception:
-            logger.warning(f"Failed to decrypt API key {d['api_key_id']}")
+            # Counted rather than named: there is no id parameter here to
+            # log from, and the only other source is the row itself, which
+            # holds api_key_value. A failure count against the owner is what
+            # support actually needs ("is it one key, or all of them?"), and
+            # it cannot grow into a secret leak.
+            failed += 1
             d["api_key_value"] = ""
         keys.append(d)
+    if failed:
+        logger.warning(
+            "Failed to decrypt %d of %d API keys for owner %s",
+            failed, len(keys), user_id,
+        )
     return keys
 
 
@@ -94,7 +105,18 @@ def get_api_key(api_key_id: str, user_id: str) -> dict | None:
         try:
             d = decrypt_value_in_dict(d, ["api_key_value"])
         except Exception:
-            logger.warning(f"Failed to decrypt API key {d['api_key_id']}")
+            # Reported against the owner, like list_user_api_keys above, and
+            # for the same reason: every other value in scope here traces back
+            # either to the row that carries api_key_value or to the
+            # `api_key_id` parameter. Neither is a source a log line should
+            # read from.
+            #
+            # Little is lost. A decryption failure is systemic -- the active
+            # ENCRYPT_KEY does not match the one the value was written with --
+            # so it is never one key out of an owner's set, and the owner is
+            # what makes the failure findable. Both paths now answer the same
+            # question the same way.
+            logger.warning("Failed to decrypt an API key for owner %s", user_id)
             d["api_key_value"] = ""
         return d
     return None
