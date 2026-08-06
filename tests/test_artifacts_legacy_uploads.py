@@ -67,9 +67,9 @@ def s3_env(monkeypatch):
     yield TestClient(app), fake
 
 
-def _listing(client):
+def _listing(client, scope="_shared"):
     return {a["filename"]: a for a in
-            client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}").json()}
+            client.get(f"/api/artifacts/{AGENT}/{USER}/{scope}").json()}
 
 
 def test_a_legacy_file_shows_up_in_the_tab(s3_env):
@@ -82,10 +82,18 @@ def test_a_legacy_file_shows_up_in_the_tab(s3_env):
 
 def test_its_body_reads_back(s3_env):
     client, _ = s3_env
-    r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/rapport_ia_sante_v2.html")
+    r = client.get(f"/api/artifacts/{AGENT}/{USER}/_shared/rapport_ia_sante_v2.html")
     assert r.status_code == 200, r.text
     assert r.json()["code"] == "<h1>rapport</h1>"
     assert r.json()["kind"] == "legacy"
+
+
+def test_a_legacy_file_is_not_repeated_for_every_conversation(s3_env):
+    """It carries no session -- the old path never had one -- so listing it
+    per session would show the same document once per conversation."""
+    client, _ = s3_env
+    assert "rapport_ia_sante_v2.html" not in _listing(client, SESSION)
+    assert "rapport_ia_sante_v2.html" in _listing(client)
 
 
 def test_a_real_artifact_hides_its_legacy_namesake(s3_env):
@@ -94,9 +102,9 @@ def test_a_real_artifact_hides_its_legacy_namesake(s3_env):
     client, fake = s3_env
     body = json.dumps({"filename": "rapport_ia_sante_v2.html", "language": "html",
                        "code": "<h1>nouveau</h1>"}).encode()
-    _put(fake, f"artifacts/{AGENT}/{SESSION}/output/rapport_ia_sante_v2.html/0/rapport_ia_sante_v2.html", body)
+    _put(fake, f"artifacts/{AGENT}/_shared/output/rapport_ia_sante_v2.html/0/rapport_ia_sante_v2.html", body)
 
-    entries = [a for a in client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}").json()
+    entries = [a for a in client.get(f"/api/artifacts/{AGENT}/{USER}/_shared").json()
                if a["filename"] == "rapport_ia_sante_v2.html"]
     assert len(entries) == 1
     assert entries[0]["kind"] == "output"
@@ -106,7 +114,7 @@ def test_a_binary_legacy_file_is_flagged_not_mangled(s3_env):
     client, fake = s3_env
     _put(fake, f"uploads/{AGENT}/contrat.pdf", b"%PDF-1.4\x00\xff\xfe")
 
-    r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/contrat.pdf")
+    r = client.get(f"/api/artifacts/{AGENT}/{USER}/_shared/contrat.pdf")
     assert r.status_code == 200
     assert r.json()["binary"] is True
 
@@ -120,6 +128,6 @@ def test_legacy_files_of_another_agent_stay_out(s3_env):
 def test_kind_legacy_filters_to_them(s3_env):
     client, _ = s3_env
     r = client.get(
-        f"/api/artifacts/{AGENT}/{USER}/{SESSION}/rapport_ia_sante_v2.html?kind=legacy")
+        f"/api/artifacts/{AGENT}/{USER}/_shared/rapport_ia_sante_v2.html?kind=legacy")
     assert r.status_code == 200
     assert r.json()["kind"] == "legacy"
