@@ -1,5 +1,6 @@
 import asyncio
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -334,6 +335,17 @@ async def list_files(
     return {"files": sorted(files_by_name.values(), key=lambda f: f["filename"])}
 
 
+def _media_type_for(filename: str) -> str:
+    """Content type from the filename, not a blanket octet-stream.
+
+    A browser decides whether it can display something from this header: a
+    PDF served as application/octet-stream is a download and nothing else,
+    so the Artifacts tab had no way to preview one.
+    """
+    guessed, _ = mimetypes.guess_type(filename)
+    return guessed or "application/octet-stream"
+
+
 def _downloadable_body(raw: bytes) -> bytes:
     """Unwraps the artifact envelope so a download returns the file itself.
 
@@ -401,7 +413,7 @@ async def download_file(
         if content_bytes is not None:
             return Response(
                 content=_downloadable_body(content_bytes),
-                media_type="application/octet-stream",
+                media_type=_media_type_for(safe_filename),
                 headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
             )
 
