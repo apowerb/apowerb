@@ -5,7 +5,6 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from fastapi import APIRouter
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -305,6 +304,12 @@ _SESSION_DB_URI = (
 # fournit nativement que file://, gs:// et la memoire -- le scheme "s3" est
 # enregistre a la main via register_s3_artifact_service().
 register_s3_artifact_service()
+
+
+def _split_csv(value: str) -> list[str]:
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
 _artifact_service_uri = resolve_artifact_service_uri(
     get_settings(), artifacts_dir=artifacts_dir
 )
@@ -331,6 +336,25 @@ app = get_fast_api_app(
         "connect_args": {"server_settings": {"search_path": _dbc.db_schema}},
     },
     artifact_service_uri=_artifact_service_uri,
+    # B8 — the CORS whitelist lives HERE, not in a CORSMiddleware of our own.
+    #
+    # ADK 2.6 added `_OriginCheckMiddleware`, which rejects every
+    # state-changing request (POST/PUT/PATCH/DELETE) carrying an `Origin` it
+    # was not told about -- with a 403 raised *before* authentication. Our
+    # front-end and our API live on separate domains by design
+    # (agent-dev.thaink2.fr -> api-agent-dev.thaink2.fr), so every direct
+    # browser call is cross-origin: artifact execution, chat attachments and
+    # BI CSV uploads all broke the moment 2.6.2 was deployed, while GETs kept
+    # working. Passing the origins here is what makes that guard aware of
+    # them.
+    #
+    # It also means ADK installs its own CORSMiddleware. Keeping ours as well
+    # would emit `Access-Control-Allow-Origin` twice, which browsers reject
+    # outright -- so ours is gone, and this list is the single source of
+    # truth. What we lose is the explicit method/header enumeration ADK
+    # replaces with "*"; the origin whitelist, which is what actually gates
+    # access, is unchanged.
+    allow_origins=_split_csv(settings.cors_allowed_origins),
 )
 # Levier 3 : cap d'appels LLM (adapte au contexte 32k OVHcloud)
 # Patche AdkWebServer.RunConfig pour injecter max_llm_calls=LLM_MAX_CALLS (defaut 25)
@@ -380,19 +404,6 @@ app.add_middleware(MetricsMiddleware)
 # Added BEFORE CORS so its headers survive OPTIONS pre-flight responses.
 from apowerb.helpers.security_headers import SecurityHeadersMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
-
-# B8 — Strict CORS whitelist. Origins/methods/headers explicitly enumerated
-# (no wildcards) so misconfigured frontends can't bypass CSRF assumptions.
-def _split_csv(value: str) -> list[str]:
-    return [v.strip() for v in value.split(",") if v.strip()]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_split_csv(settings.cors_allowed_origins),
-    allow_credentials=True,
-    allow_methods=_split_csv(settings.cors_allowed_methods),
-    allow_headers=_split_csv(settings.cors_allowed_headers),
-)
 
 # B19 — Request-ID middleware is the outermost wrapper: it must see every
 # request before any other middleware logs or branches, and its header must

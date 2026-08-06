@@ -218,10 +218,11 @@ class Settings(BaseSettings):
     # third-party domain here would be trusted by every installation, and
     # localhost stays allowed in production for no reason.
     cors_allowed_origins: str = "http://localhost:3000"
-    cors_allowed_methods: str = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-    cors_allowed_headers: str = (
-        "Authorization,Content-Type,Accept,X-Requested-With,Agent-Id,X-Webhook-Signature,X-Webhook-Timestamp"
-    )
+    # `cors_allowed_methods` / `cors_allowed_headers` were dropped when the
+    # CORS layer moved to ADK (main.py), which enumerates neither -- keeping
+    # them would have been two settings that read as configurable and changed
+    # nothing. Deployments that still define them are unaffected: the model
+    # ignores unknown env vars.
 
     # oauth settings
     ## Github
