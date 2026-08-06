@@ -14,17 +14,24 @@ is why this module removes the routes instead of guarding them.
 
 ## Why an opt-in flag rather than WORKING_MODE
 
-The obvious design is "hide it when WORKING_MODE is production". It would
-not work here. `WORKING_MODE` lives in each VM's `.env`, written by hand
-and never touched by the deploy workflow -- the dev VM carries
-`WORKING_MODE="dev"`, and there is no way to read production's from
-outside. A guard keyed on a value we cannot observe is a guard that
-silently does nothing on the one host that matters.
+The obvious design is "hide it when WORKING_MODE is production", and it
+would in fact fire today: both production VMs carry `WORKING_MODE="prod"`.
+That was checked on the machines after this module was written, correcting
+an earlier claim in its history that production's value could not be read.
+
+It is still not what this keys on, for a reason that survives the
+correction: `WORKING_MODE` lives in each VM's `.env`, written by hand and
+never touched by the deploy workflow, which only patches `TH2_EXTENSIONS`.
+Nothing keeps it right. A new host, a restored `.env`, a typo -- and a
+guard that reads it silently stops guarding, with no signal that anything
+changed. Disclosure defaults belong to the code, not to a file no pipeline
+owns.
 
 So the default is closed and the exception is explicit: a deployment that
 wants a browsable Swagger says so with `PUBLISH_API_SCHEMA=true`. Getting
 it wrong costs a developer a page; the other way round costs the route map
-of a client's production.
+of a client's production. `WORKING_MODE=production` still overrides the
+flag, as a second lock rather than the only one.
 """
 
 from __future__ import annotations
