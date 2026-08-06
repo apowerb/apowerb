@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import re
 import shutil
@@ -17,6 +19,7 @@ from apowerb.configs.settings import get_settings
 from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
 from apowerb.artifacts.s3_artifact_service import S3ArtifactService
 from apowerb.artifacts.input_scope import resolve_input_session_id
+from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
 from apowerb.helpers.ownership import validate_agent_ownership as _validate_agent_ownership
 
 logger = getLogger(__name__)
@@ -307,27 +310,15 @@ async def list_files(
     files_by_name: dict[str, dict] = {}
 
     if is_s3_artifact_storage_configured(settings):
-        shared_scope = resolve_input_session_id(None)
-        filenames = await S3ArtifactService().list_input_artifact_filenames(
-            app_name=agent_id, session_id=shared_scope,
-        )
-        for fname in filenames:
+        # Every session of this agent plus the legacy key, not just the
+        # `_shared` scope: a file attached to a conversation belongs to that
+        # conversation's scope and was missing from this list.
+        for fname in await asyncio.to_thread(available_filenames, agent_id):
             files_by_name[fname] = {
                 "filename": fname,
                 "size": 0,
                 "path": f"/api/files/{agent_id}/{fname}",
             }
-
-        from apowerb.storage.s3 import list_files_in_s3
-        prefix = f"uploads/{agent_id}/"
-        for key in list_files_in_s3(prefix=prefix):
-            fname = key.replace(prefix, "")
-            if fname and "/" not in fname and fname not in files_by_name:
-                files_by_name[fname] = {
-                    "filename": fname,
-                    "size": 0,
-                    "path": f"/api/files/{agent_id}/{fname}",
-                }
 
     agent_dir = _contained_upload_path(agent_id)
     if os.path.exists(agent_dir):
@@ -341,6 +332,24 @@ async def list_files(
                 }
 
     return {"files": sorted(files_by_name.values(), key=lambda f: f["filename"])}
+
+
+def _downloadable_body(raw: bytes) -> bytes:
+    """Unwraps the artifact envelope so a download returns the file itself.
+
+    Generated artifacts are stored as ``{"filename", "language", "code"}``
+    (see tool_save_code_artifact and create_downloadable_file). Serving that
+    JSON verbatim would hand the user a wrapper instead of their report.
+    Anything else -- a PDF, an upload -- passes through untouched.
+    """
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return raw
+
+    if isinstance(payload, dict) and "code" in payload and "filename" in payload:
+        return str(payload["code"]).encode("utf-8")
+    return raw
 
 
 @router.get("/files/{agent_id}/{filename}", tags=["files"])
@@ -375,32 +384,26 @@ async def download_file(
 
     settings = get_settings()
 
-    # Same three-source fallback as list_files, in read order: newest
-    # convention first, then what's already on record. No session_id on
-    # this route, so the S3 input-artifact lookup is scoped to `_shared`.
+    # This route has no session_id, and looking only at the `_shared` scope
+    # missed two things at once: an upload filed under its own session, and
+    # anything an agent generated (create_downloadable_file now writes an
+    # output artifact). The lookup below scans the agent's artifact prefixes
+    # instead, then falls back to the legacy `uploads/` key.
     if is_s3_artifact_storage_configured(settings):
-        shared_scope = resolve_input_session_id(None)
-        loaded = await S3ArtifactService().load_input_artifact(
-            app_name=agent_id, session_id=shared_scope, filename=safe_filename,
-        )
-        if loaded is not None:
+        try:
+            content_bytes = await asyncio.to_thread(
+                read_file_bytes, agent_id, safe_filename
+            )
+        except Exception as e:
+            logger.error(f"[FILES] S3 Download failed: {e}")
+            raise HTTPException(status_code=500, detail="Failed to fetch from S3")
+
+        if content_bytes is not None:
             return Response(
-                content=loaded["data"],
-                media_type=loaded.get("content_type") or "application/octet-stream",
+                content=_downloadable_body(content_bytes),
+                media_type="application/octet-stream",
                 headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
             )
-
-        from apowerb.storage.s3 import download_file_from_s3, file_exists_in_s3
-        s3_key = f"uploads/{agent_id}/{safe_filename}"
-        if file_exists_in_s3(s3_key):
-            try:
-                content_bytes = download_file_from_s3(s3_key)
-                return Response(content=content_bytes, media_type="application/octet-stream", headers={
-                    "Content-Disposition": f'attachment; filename="{safe_filename}"'
-                })
-            except Exception as e:
-                logger.error(f"[FILES] S3 Download failed: {e}")
-                raise HTTPException(status_code=500, detail="Failed to fetch from S3")
 
     file_path = _contained_upload_path(agent_id, safe_filename)
     if os.path.exists(file_path):

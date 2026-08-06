@@ -15,6 +15,7 @@ from apowerb.storage.s3 import (
     upload_bytes_to_s3,
     upload_file_to_s3,
 )
+from apowerb.artifacts.languages import language_for_filename
 from apowerb.core.agent_helpers.pdf_writer import _write_pdf
 from apowerb.core.agent_helpers.read_file_tool import _make_read_uploaded_file
 from apowerb.core.agent_helpers.ingest_file_tool import _make_ingest_file
@@ -49,7 +50,7 @@ _TEXT_TO_SQL_TOOL_NAMES = {
 def _make_create_downloadable_file(folder_name: str):
     """Create a create_downloadable_file tool bound to the agent's upload folder."""
 
-    def create_downloadable_file(filename: str, content: str) -> dict:
+    def create_downloadable_file(filename: str, content: str, tool_context=None) -> dict:
         """Create a file that the user can download.
         Use this tool when the user asks you to generate a file, export data, create a report, etc.
 
@@ -125,10 +126,21 @@ def _make_create_downloadable_file(folder_name: str):
             except Exception as e:
                 return {"status": "error", "message": f"Failed to create file: {e}"}
         else:
-            logger.info(f"STORAGE MODE = {settings.storage_mode}")
-            logger.info("USING S3 NOW in create_downloadable_file")
+            import json
             import tempfile
-            s3_key = f"uploads/{folder_name}/{safe_name}"
+
+            from google.genai import types
+
+            from apowerb.artifacts.input_scope import resolve_input_session_id
+            from apowerb.artifacts.s3_artifact_service import S3ArtifactService
+
+            # The session the file belongs to. ADK injects `tool_context` by
+            # parameter name; the default keeps the tool working if it ever
+            # arrives without one -- an unsessioned file lands in the shared
+            # scope instead of failing, same rule as an unsessioned upload.
+            session_id = resolve_input_session_id(
+                getattr(getattr(tool_context, "session", None), "id", None)
+            )
 
             try:
                 ext = os.path.splitext(safe_name)[1].lower()
@@ -140,18 +152,31 @@ def _make_create_downloadable_file(folder_name: str):
                     try:
                         _write_pdf(tmp_path, content)
                         size = os.path.getsize(tmp_path)
-                        upload_file_to_s3(tmp_path, s3_key)
+                        with open(tmp_path, "rb") as f:
+                            body = f.read()
                     finally:
                         if os.path.exists(tmp_path):
                             os.remove(tmp_path)
+
+                    # A PDF has no source to show, so it is stored as-is
+                    # rather than wrapped in the JSON envelope below.
+                    part = types.Part.from_bytes(data=body, mime_type="application/pdf")
                 else:
-                    content_bytes = content.encode("utf-8")
-                    size = len(content_bytes)
-                    upload_bytes_to_s3(
-                        content_bytes,
-                        s3_key,
-                        content_type="text/plain; charset=utf-8",
-                    )
+                    size = len(content.encode("utf-8"))
+                    part = types.Part.from_text(text=json.dumps({
+                        "filename": safe_name,
+                        "language": language_for_filename(safe_name),
+                        "code": content,
+                    }))
+
+                # Written where the platform reads: the Artifacts tab, the
+                # download route and read_uploaded_file all resolve
+                # artifacts/{agent}/{session}/output/... The previous key,
+                # uploads/{agent}/{name}, was outside all three.
+                S3ArtifactService().save_artifact_sync(
+                    app_name=folder_name, user_id="", session_id=session_id,
+                    filename=safe_name, artifact=part,
+                )
 
                 download_path = f"/api/files/{folder_name}/{safe_name}"
                 return {

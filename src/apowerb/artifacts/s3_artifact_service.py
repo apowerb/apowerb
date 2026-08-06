@@ -456,6 +456,26 @@ class S3ArtifactService(BaseArtifactService):
             self._list_input_artifact_filenames, app_name, session_id
         )
 
+    def save_artifact_sync(
+        self,
+        *,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        filename: str,
+        artifact,
+        custom_metadata=None,
+    ) -> int:
+        """Blocking counterpart of save_artifact.
+
+        create_downloadable_file is a synchronous tool and is called
+        directly by code that is not inside an event loop; turning it into a
+        coroutine to reach the async API would break every such caller.
+        """
+        return self._save_artifact(
+            app_name, user_id, session_id, filename, artifact, custom_metadata
+        )
+
     async def list_input_versions(
         self, *, app_name: str, session_id: str, filename: str
     ) -> list[int]:
