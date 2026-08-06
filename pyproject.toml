@@ -27,6 +27,17 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi>=0.123.10",
     "google-adk[toolbox,mcp]>=2.6.2,<3.0.0",
+    # ADK reads OTEL_EXPORTER_OTLP_ENDPOINT at startup and, when it is set,
+    # imports opentelemetry.exporter.otlp.proto.http to build a span exporter.
+    # In ADK 2.x that package only ships with the `gcp` / `all` extras, which
+    # also drag in the whole google-cloud stack we do not use. Declaring the
+    # exporter directly keeps the telemetry path working without it.
+    #
+    # Not optional in practice: every deployment of this core sets that
+    # variable. Leaving it to an extra took the dev VM down on 2026-08-06 --
+    # `ModuleNotFoundError: No module named 'opentelemetry.exporter'` at boot,
+    # invisible in any test run without the deployment env loaded.
+    "opentelemetry-exporter-otlp-proto-http>=1.36",
     "litellm>=1.84.0",
     "psycopg2-binary>=2.9.11",
     "pydantic[email]>=2.12.5",
