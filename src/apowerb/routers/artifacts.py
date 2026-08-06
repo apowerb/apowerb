@@ -3,7 +3,7 @@ import os
 from logging import getLogger
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from apowerb.artifacts.s3_artifact_service import S3ArtifactService
@@ -34,6 +34,23 @@ def _artifacts_dir() -> str:
     construction : les deux côtés lisent la même source.
     """
     return str(artifacts_store_dir())
+
+
+# -- artifact kinds --------------------------------------------------------
+#
+# Farid, 05/08: uploads must show up in the Artifacts tab next to generated
+# artifacts, with a tag to tell them apart. Both live in the same bucket
+# under the same key scheme (apowerb.artifacts.s3_artifact_service), only
+# the "input"/"output" segment differs -- so the tab lists them together and
+# this field is what the UI filters on.
+KIND_INPUT = "input"
+KIND_OUTPUT = "output"
+
+# A session can hold an input and an output under the same filename (upload
+# report.html, have the agent regenerate report.html). The listing keeps
+# both -- they differ by kind -- but a read by filename alone would be
+# ambiguous, hence the optional ?kind= on the single-artifact routes.
+_KINDS = (KIND_INPUT, KIND_OUTPUT)
 
 
 class ExecuteRequest(BaseModel):
@@ -245,9 +262,69 @@ async def _list_artifacts_s3(agent_name: str, user_id: str, session_id: str) -> 
             "language": data.get("language", "text"),
             "version": version,
             "source": "adk",
+            "kind": KIND_OUTPUT,
+        })
+
+    artifacts.extend(await _list_input_artifacts_s3(service, agent_name, session_id))
+    return artifacts
+
+
+async def _list_input_artifacts_s3(
+    service: S3ArtifactService, agent_name: str, session_id: str,
+) -> list[dict]:
+    """Uploads stored for this session, as listing entries.
+
+    Only the key layout is read here -- never the object bodies. An upload is
+    an arbitrary file (PDF, archive, image); downloading each one to build a
+    listing would transfer the whole session on every page load, and its
+    bytes say nothing the listing shows anyway.
+    """
+    filenames = await service.list_input_artifact_filenames(
+        app_name=agent_name, session_id=session_id,
+    )
+
+    artifacts = []
+    for name in sorted(filenames):
+        versions = await service.list_input_versions(
+            app_name=agent_name, session_id=session_id, filename=name,
+        )
+        if not versions:
+            continue
+
+        artifacts.append({
+            "filename": name,
+            "language": _guess_language(name),
+            "version": max(versions),
+            "source": "upload",
+            "kind": KIND_INPUT,
         })
 
     return artifacts
+
+
+async def _resolve_input_artifact_s3(
+    service: S3ArtifactService, agent_name: str, session_id: str, filename: str,
+):
+    """Résout un upload depuis S3 vers ``(version, contenu)``, ou ``None``.
+
+    An upload is raw bytes, not the ``{"filename", "language", "code"}`` body
+    ``tool_save_code_artifact`` writes. Text decodes into the same ``code``
+    field the tab already renders; anything else is reported as binary rather
+    than mangled into replacement characters.
+    """
+    safe_name = _safe_path_component(filename)
+    loaded = await service.load_input_artifact(
+        app_name=agent_name, session_id=session_id, filename=safe_name,
+    )
+    if loaded is None:
+        return None
+
+    try:
+        code = loaded["data"].decode("utf-8")
+    except UnicodeDecodeError:
+        return loaded["version"], {"binary": True, "code": ""}
+
+    return loaded["version"], {"code": code}
 
 
 @router.get("/artifacts/{agent_name}/{user_id}/{session_id}", tags=["artifacts"])
@@ -283,6 +360,9 @@ async def list_artifacts(
                 "language": data.get("language", "text"),
                 "version": version,
                 "source": "adk",
+                # The file:// backend has no input side: uploads only reach
+                # the artifact store through S3 (routers/files.py, PR #30).
+                "kind": KIND_OUTPUT,
             })
 
         return artifacts
@@ -291,36 +371,74 @@ async def list_artifacts(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _validate_kind(kind: Optional[str]) -> Optional[str]:
+    if kind is not None and kind not in _KINDS:
+        raise HTTPException(status_code=400, detail="Invalid kind")
+    return kind
+
+
+async def _resolve_any_artifact_s3(
+    agent_name: str, user_id: str, session_id: str, filename: str,
+    kind: Optional[str],
+):
+    """Résout un artefact S3, sortie ou entrée, vers ``(kind, version, contenu)``.
+
+    Without ``kind`` the generated artifact wins and an upload only answers
+    when no output carries that name -- the behaviour every existing caller
+    already relies on.
+    """
+    service = S3ArtifactService()
+
+    if kind != KIND_INPUT:
+        resolved = await _resolve_artifact_s3(
+            service, agent_name, user_id, session_id, filename
+        )
+        if resolved is not None:
+            return (KIND_OUTPUT, *resolved)
+        if kind == KIND_OUTPUT:
+            return None
+
+    resolved = await _resolve_input_artifact_s3(
+        service, agent_name, session_id, filename
+    )
+    return None if resolved is None else (KIND_INPUT, *resolved)
+
+
 @router.get("/artifacts/{agent_name}/{user_id}/{session_id}/{filename}", tags=["artifacts"])
 async def get_artifact(
     agent_name: str,
     user_id: str,
     session_id: str,
     filename: str,
+    kind: Optional[str] = Query(None),
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Get a specific artifact's content."""
     _enforce_user_id_match(user_id, current_user)
     _validate_session_id(session_id)
+    _validate_kind(kind)
 
     if _s3_artifacts_active():
-        resolved = await _resolve_artifact_s3(
-            S3ArtifactService(), agent_name, user_id, session_id, filename
+        found = await _resolve_any_artifact_s3(
+            agent_name, user_id, session_id, filename, kind
         )
     else:
         resolved = _resolve_artifact(user_id, session_id, filename)
+        found = None if resolved is None else (KIND_OUTPUT, *resolved)
 
-    if resolved is None:
+    if found is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{filename}' not found")
 
-    version, data = resolved
+    resolved_kind, version, data = found
     safe_name = _safe_path_component(filename)
     return {
         "filename": data.get("filename", safe_name),
-        "language": data.get("language", "text"),
+        "language": data.get("language") or _guess_language(safe_name),
         "code": data.get("code", ""),
         "version": version,
-        "source": "adk",
+        "source": "adk" if resolved_kind == KIND_OUTPUT else "upload",
+        "kind": resolved_kind,
+        "binary": bool(data.get("binary")),
     }
 
 
@@ -331,18 +449,21 @@ async def execute_artifact_endpoint(
     session_id: str,
     filename: str,
     request: ExecuteRequest = ExecuteRequest(),
+    kind: Optional[str] = Query(None),
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Execute an artifact in a Docker container."""
     _enforce_user_id_match(user_id, current_user)
     _validate_session_id(session_id)
+    _validate_kind(kind)
 
     safe_filename = _safe_path_component(filename)
 
     if _s3_artifacts_active():
-        resolved = await _resolve_artifact_s3(
-            S3ArtifactService(), agent_name, user_id, session_id, safe_filename
+        found = await _resolve_any_artifact_s3(
+            agent_name, user_id, session_id, safe_filename, kind
         )
+        resolved = None if found is None else found[1:]
     else:
         resolved = _resolve_artifact(user_id, session_id, safe_filename)
 

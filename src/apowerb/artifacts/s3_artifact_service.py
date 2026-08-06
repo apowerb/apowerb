@@ -349,9 +349,11 @@ class S3ArtifactService(BaseArtifactService):
         versions: set[int] = set()
         for key in list_files_in_s3(prefix=prefix):
             rest = key[len(prefix):]
-            segment = rest.split("/", 1)[0]
-            if segment.isdigit():
-                versions.add(int(segment))
+            # Not named `segment`: that would shadow the parameter this
+            # prefix was built from.
+            head = rest.split("/", 1)[0]
+            if head.isdigit():
+                versions.add(int(head))
         return sorted(versions)
 
     def _get_artifact_version(
@@ -452,6 +454,19 @@ class S3ArtifactService(BaseArtifactService):
     ) -> list[str]:
         return await asyncio.to_thread(
             self._list_input_artifact_filenames, app_name, session_id
+        )
+
+    async def list_input_versions(
+        self, *, app_name: str, session_id: str, filename: str
+    ) -> list[int]:
+        """Versions of one input artifact, read from the key layout alone.
+
+        The listing endpoint needs a version number per upload; going through
+        ``load_input_artifact`` would download every object body just to read
+        it -- a full transfer of every file in the session on each page load.
+        """
+        return await asyncio.to_thread(
+            self._list_versions, app_name, "", session_id, filename, _INPUT_SEGMENT
         )
 
     def _save_input_artifact(
