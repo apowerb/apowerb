@@ -5,6 +5,7 @@ import time
 from logging import getLogger
 
 from apowerb.configs.paths import runtime_root
+from apowerb.helpers.safe_paths import contained_path
 
 logger = getLogger(__name__)
 
@@ -103,7 +104,7 @@ async def execute_artifact(
     # Write code to a temp directory Docker can actually read (see
     # _exec_workspace_root: snap confines /tmp).
     with tempfile.TemporaryDirectory(dir=_exec_workspace_root()) as tmpdir:
-        code_path = os.path.join(tmpdir, safe_filename)
+        code_path = contained_path(tmpdir, safe_filename)
         with open(code_path, "w", encoding="utf-8") as f:
             f.write(code)
 

@@ -2,6 +2,7 @@ import io
 import json
 import re
 import zipfile
+from pathlib import Path
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
@@ -11,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from apowerb.auth.dependencies import get_current_user
 from apowerb.users import schemas as user_schemas
 from apowerb.helpers.emails import get_domain_from_email
+from apowerb.helpers.safe_paths import contained_path
 from apowerb.schema.skill_schema import SkillCreateSchema, SkillUpdateSchema
 from apowerb.skills_store.skill_manager import skill_store
 from apowerb.skills_store.skills_loader import (
@@ -57,8 +59,8 @@ async def export_portfolio_skill(
     """Export a built-in portfolio skill as JSON or ADK ZIP."""
     if not _PORTFOLIO_SKILL_NAME_RE.match(skill_name):
         raise HTTPException(status_code=404, detail="Portfolio skill not found")
-    skill_dir = _PORTFOLIO_DIR / skill_name
-    skill_md_path = skill_dir / "SKILL.md"
+    skill_dir = Path(contained_path(_PORTFOLIO_DIR, skill_name))
+    skill_md_path = Path(contained_path(skill_dir, "SKILL.md"))
     if not skill_dir.is_dir() or not skill_md_path.exists():
         raise HTTPException(status_code=404, detail="Portfolio skill not found")
 
@@ -80,7 +82,7 @@ async def export_portfolio_skill(
 
     # Collect references
     references = {}
-    refs_dir = skill_dir / "references"
+    refs_dir = Path(contained_path(skill_dir, "references"))
     if refs_dir.is_dir():
         for ref_file in sorted(refs_dir.iterdir()):
             if ref_file.is_file():
