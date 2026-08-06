@@ -31,6 +31,7 @@ from apowerb.bi.db_stores import DatabaseDataStore
 from apowerb.helpers.database import get_db
 from apowerb.helpers.encryptor import decrypt_value
 from apowerb.helpers.env_scope import env_scope
+from apowerb.helpers.error_responses import safe_error_message
 from apowerb.models import BusinessIntelligence, Integration, User
 from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
 from apowerb.tools_store.portfolio.onedrive_core import (
@@ -336,7 +337,18 @@ async def preview_onedrive_spreadsheet(
         )
     except RuntimeError as exc:
         return JSONResponse(
-            {"status": "error", "message": str(exc)},
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="bi.onedrive_preview.resolve_token",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
             status_code=401,
         )
 
@@ -359,7 +371,18 @@ async def preview_onedrive_spreadsheet(
         )
     except RuntimeError as exc:
         return JSONResponse(
-            {"status": "error", "message": str(exc)},
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="bi.onedrive_preview.graph_headers",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
             status_code=401,
         )
 
@@ -381,10 +404,22 @@ async def preview_onedrive_spreadsheet(
                 status_code=exc.http_status_code,
             )
         except RuntimeError as exc:
-            msg = str(exc)
-            code = 404 if "404" in msg else 500
+            code = 404 if "404" in str(exc) else 500
+            client_message = (
+                "The requested OneDrive item was not found."
+                if code == 404
+                else "Failed to resolve the OneDrive item. Try again later."
+            )
             return JSONResponse(
-                {"status": "error", "message": msg},
+                {
+                    "status": "error",
+                    "message": safe_error_message(
+                        exc,
+                        logger=logger,
+                        context="bi.onedrive_preview.resolve_item_id",
+                        client_message=client_message,
+                    ),
+                },
                 status_code=code,
             )
         except Exception:  # noqa: BLE001

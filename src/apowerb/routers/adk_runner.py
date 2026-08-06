@@ -42,6 +42,7 @@ from pydantic import BaseModel
 from apowerb.helpers.security import create_access_token
 from apowerb.helpers.ownership import enforce_user_id_match as _enforce_user_id_match
 from apowerb.helpers import notify_etl
+from apowerb.helpers.error_responses import safe_error_message
 
 logger = getLogger(__name__)
 router = APIRouter()
@@ -302,11 +303,15 @@ async def run_agent_sse(
             },
         )
     except Exception as e:
-        logger.error(
-            f"[ADK SSE] Error starting stream for agent {request.agent_name}: {str(e)}",
-            exc_info=True,
+        raise HTTPException(
+            status_code=500,
+            detail=safe_error_message(
+                e,
+                logger=logger,
+                context=f"[ADK SSE] starting stream for agent {request.agent_name}",
+                client_message="Failed to start the agent stream. Try again in a moment.",
+            ),
         )
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/sessions/list", tags=["adk"])

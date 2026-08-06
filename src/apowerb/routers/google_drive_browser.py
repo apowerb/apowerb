@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from logging import getLogger
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apowerb.auth.dependencies import get_current_user
 from apowerb.helpers.database import get_db
 from apowerb.helpers.env_scope import env_scope
+from apowerb.helpers.error_responses import safe_error_message, sanitize_tool_error
 from apowerb.models import Integration, User
 
 from apowerb.tools_store.portfolio.google_drive import (
@@ -23,6 +25,7 @@ from apowerb.tools_store.portfolio.google_drive import (
 from apowerb.tools_store.portfolio.google_auth import google_auth_headers
 
 router = APIRouter(prefix="/api/googledrivebrowser", tags=["google-drive-browser"])
+logger = getLogger(__name__)
 
 _MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024  # 20 MB hard limit for chat attachments
 _SERVICE_PREFIX = "GOOGLE_DRIVE"
@@ -89,17 +92,37 @@ async def list_files(
     try:
         refresh_token = await _resolve_google_drive_refresh_token(current_user, db)
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="google_drive.list_files.resolve_token",
+                    client_message=(
+                        "Your Google Drive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     async with env_scope(
         {"GOOGLE_DRIVE_REFRESH_TOKEN": refresh_token},
         lock=_gdrive_env_lock,
     ):
-        return tool_list_files(
+        result = tool_list_files(
             max_results=max_results,
             folder_id=folder_id,
             mime_type=mime_type,
         )
+    return sanitize_tool_error(
+        result,
+        logger=logger,
+        context="google_drive.list_files",
+        client_message="Unable to list Google Drive files right now. Try again in a moment.",
+    )
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
@@ -115,13 +138,33 @@ async def search_files(
     try:
         refresh_token = await _resolve_google_drive_refresh_token(current_user, db)
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="google_drive.search_files.resolve_token",
+                    client_message=(
+                        "Your Google Drive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     async with env_scope(
         {"GOOGLE_DRIVE_REFRESH_TOKEN": refresh_token},
         lock=_gdrive_env_lock,
     ):
-        return tool_search_files(query=q, max_results=max_results)
+        result = tool_search_files(query=q, max_results=max_results)
+    return sanitize_tool_error(
+        result,
+        logger=logger,
+        context="google_drive.search_files",
+        client_message="Unable to search Google Drive files right now. Try again in a moment.",
+    )
 
 
 # ── Download file content as base64 ──────────────────────────────────────────
@@ -144,7 +187,21 @@ async def get_file_content(
     try:
         refresh_token = await _resolve_google_drive_refresh_token(current_user, db)
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="google_drive.get_file_content.resolve_token",
+                    client_message=(
+                        "Your Google Drive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     # Acquire a short-lived access token under the env scope (minimal time
     # holding the lock); the returned bearer header is safe to reuse after
@@ -157,7 +214,21 @@ async def get_file_content(
         ):
             headers = google_auth_headers(_SERVICE_PREFIX)
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="google_drive.get_file_content.auth_headers",
+                    client_message=(
+                        "Your Google Drive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     # ── 1. Fetch metadata ─────────────────────────────────────────────────────
     try:

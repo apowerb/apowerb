@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apowerb.auth.dependencies import get_current_user
 from apowerb.helpers.database import get_db
 from apowerb.helpers.env_scope import env_scope
+from apowerb.helpers.error_responses import safe_error_message, sanitize_tool_error
 from apowerb.models import Integration, User
 from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
 
@@ -104,18 +105,38 @@ async def list_files(
             status_code=exc.http_status_code,
         )
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="onedrive.list_files.resolve_token",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     async with env_scope(
         {"ONEDRIVE_REFRESH_TOKEN": refresh_token},
         lock=_onedrive_env_lock,
     ):
-        return tool_list_files(
+        result = tool_list_files(
             folder_id=folder_id,
             folder_path=folder_path,
             file_type=file_type,
             top=top,
         )
+    return sanitize_tool_error(
+        result,
+        logger=logger,
+        context="onedrive.list_files",
+        client_message="Unable to list OneDrive files right now. Try again in a moment.",
+    )
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
@@ -142,13 +163,33 @@ async def search_files(
             status_code=exc.http_status_code,
         )
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="onedrive.search_files.resolve_token",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     async with env_scope(
         {"ONEDRIVE_REFRESH_TOKEN": refresh_token},
         lock=_onedrive_env_lock,
     ):
-        return tool_search_files(query=q, top=top)
+        result = tool_search_files(query=q, top=top)
+    return sanitize_tool_error(
+        result,
+        logger=logger,
+        context="onedrive.search_files",
+        client_message="Unable to search OneDrive files right now. Try again in a moment.",
+    )
 
 
 # ── Download file content as base64 ──────────────────────────────────────────
@@ -181,7 +222,21 @@ async def get_file_content(
             status_code=exc.http_status_code,
         )
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="onedrive.get_file_content.resolve_token",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     # Acquire short-lived access token under env scope, then release the
     # lock — bearer headers are safe to reuse after scope exit.
@@ -203,7 +258,21 @@ async def get_file_content(
             status_code=exc.http_status_code,
         )
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="onedrive.get_file_content.graph_headers",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     # ── 1. Fetch metadata WITHOUT $select ─────────────────────────────────────
     # @microsoft.graph.downloadUrl is an instance annotation that Graph silently
@@ -329,7 +398,21 @@ async def get_excel_preview(
             status_code=exc.http_status_code,
         )
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="onedrive.excel_preview.resolve_token",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     # Acquire bearer header under env scope, then release the lock.
     try:
@@ -350,7 +433,21 @@ async def get_excel_preview(
             status_code=exc.http_status_code,
         )
     except RuntimeError as exc:
-        return JSONResponse({"status": "error", "message": str(exc)}, status_code=401)
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": safe_error_message(
+                    exc,
+                    logger=logger,
+                    context="onedrive.excel_preview.graph_headers",
+                    client_message=(
+                        "Your OneDrive connection is no longer valid. "
+                        "Reconnect the integration."
+                    ),
+                ),
+            },
+            status_code=401,
+        )
 
     # Normalise sheet_name: pandas accepts str or int. Digit strings must be
     # converted to int so "1" selects the second worksheet (not a sheet named
