@@ -82,16 +82,56 @@ def test_downloads_nothing(bucket, monkeypatch):
     assert len(library.build_library({AGENT: "Invoice reader"})) == 2
 
 
-def test_one_listing_pair_per_agent(bucket):
-    """Two listings per agent — artifacts and legacy — whatever the number
-    of sessions. The old screen paid three per session."""
-    for i in range(20):
-        _put(bucket, f"artifacts/{AGENT}/session_{i}/output/f{i}.py/0/f{i}.py")
+def test_two_listings_whatever_the_number_of_agents(bucket):
+    """One sweep of each root, not one pair per agent.
+
+    Listing per agent cost 24 calls for an account owning 12 agents — 1 896 ms
+    sequentially, for seven artifacts."""
+    agents = {}
+    for a in range(12):
+        folder = f"agent{a}"
+        agents[folder] = f"Agent {a}"
+        for i in range(3):
+            _put(bucket, f"artifacts/{folder}/session_{i}/output/f{i}.py/0/f{i}.py")
 
     bucket.list_calls = 0
-    items = library.build_library({AGENT: "Invoice reader"})
-    assert len(items) == 20
-    assert bucket.list_calls == 2, f"{bucket.list_calls} listings"
+    items = library.build_library(agents)
+    assert len(items) == 36
+    assert bucket.list_calls == 2, f"{bucket.list_calls} listings for 12 agents"
+
+
+def test_the_sweep_never_leaks_another_owner_s_files(bucket):
+    """The sweep sees the whole bucket, so ownership is what keeps one
+    user's artifacts out of another's library. It is applied while
+    collecting, not on the way out."""
+    _put(bucket, f"artifacts/{AGENT}/{SESSION}/output/a_moi.py/0/a_moi.py")
+    _put(bucket, f"artifacts/{OTHER}/{SESSION}/output/prive.py/0/prive.py")
+    _put(bucket, f"artifacts/{OTHER}/{SESSION}/input/confidentiel.pdf/0/confidentiel.pdf")
+    _put(bucket, f"uploads/{OTHER}/vieux_secret.csv")
+
+    items = library.build_library({AGENT: "A"})
+    assert [i["filename"] for i in items] == ["a_moi.py"]
+    assert all(i["agent_folder"] == AGENT for i in items)
+
+
+def test_no_agents_means_no_listing_at_all(bucket):
+    _put(bucket, f"artifacts/{OTHER}/{SESSION}/output/prive.py/0/prive.py")
+
+    bucket.list_calls = 0
+    assert library.build_library({}) == []
+    assert bucket.list_calls == 0
+
+
+def test_a_legacy_name_is_hidden_only_for_its_own_agent(bucket):
+    """Two agents can hold a file of the same name; masking must not cross
+    the agent boundary."""
+    _put(bucket, f"artifacts/{AGENT}/{SESSION}/output/rapport.html/0/rapport.html")
+    _put(bucket, f"uploads/{AGENT}/rapport.html")
+    _put(bucket, "uploads/agent77/rapport.html")
+
+    items = library.build_library({AGENT: "A", "agent77": "B"})
+    kinds = sorted((i["agent_folder"], i["kind"]) for i in items)
+    assert kinds == [(AGENT, "output"), ("agent77", "legacy")]
 
 
 def test_latest_version_wins_numerically(bucket):

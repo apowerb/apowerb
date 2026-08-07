@@ -14,7 +14,15 @@ Every field the screen shows is already in the key:
 Agent, session, input-or-output, name and version all come from the path;
 the language comes from the extension; the date and size come from the
 listing response itself. So the library is built without downloading a
-single object body — one listing per agent instead of three per session.
+single object body.
+
+**Two listings in total**, not two per agent. Listing each agent's prefix
+separately cost 24 calls for an account owning 12 agents — 1 896 ms,
+sequentially, for seven artifacts. Sweeping both roots costs 151 ms and
+238 ms whatever the number of agents, and the ownership filter runs in
+memory. That trade holds while the bucket stays small (470 objects here);
+if it ever grows past the point where a full sweep is slower than N
+targeted listings, this is the decision to revisit.
 """
 
 from __future__ import annotations
@@ -46,29 +54,33 @@ def _entry(agent: str, session: str, kind: str, filename: str, version: int,
     }
 
 
-def _artifact_entries(agent: str) -> dict[tuple, dict]:
-    """Latest version of every artifact of one agent, keyed by identity.
+def _artifact_entries(owned: set[str]) -> dict[tuple, dict]:
+    """Latest version of every artifact, for owned agents only.
+
+    The sweep sees every agent in the bucket, so the ownership test is what
+    keeps one user's files out of another's library. It is applied here,
+    before anything is collected — never on the way out.
 
     ADK writes a ``metadata.json`` next to each artifact; both live under
-    the same version folder, so the leaf is skipped and the artifact name
-    is taken from the path instead.
+    the same version folder, so the leaf is ignored and the artifact name
+    comes from the path instead.
     """
     best: dict[tuple, dict] = {}
-    prefix = f"{_ARTIFACTS_ROOT}/{agent}/"
+    root = f"{_ARTIFACTS_ROOT}/"
 
-    for obj in list_objects_in_s3(prefix=prefix):
-        parts = obj["key"][len(prefix):].split("/")
-        # {session}/{segment}/{filename…}/{version}/{leaf}
-        if len(parts) < 5:
+    for obj in list_objects_in_s3(prefix=root):
+        parts = obj["key"][len(root):].split("/")
+        # {agent}/{session}/{segment}/{filename…}/{version}/{leaf}
+        if len(parts) < 6:
             continue
-        session, segment = parts[0], parts[1]
-        if segment not in (INPUT, OUTPUT):
+        agent, session, segment = parts[0], parts[1], parts[2]
+        if agent not in owned or segment not in (INPUT, OUTPUT):
             continue
         version_raw = parts[-2]
         if not version_raw.isdigit():
             continue
 
-        filename = "/".join(parts[2:-2])
+        filename = "/".join(parts[3:-2])
         if not filename:
             continue
 
@@ -82,18 +94,22 @@ def _artifact_entries(agent: str) -> dict[tuple, dict]:
     return best
 
 
-def _legacy_entries(agent: str, taken: set[str]) -> list[dict]:
+def _legacy_entries(owned: set[str], taken: dict[str, set[str]]) -> list[dict]:
     """Files under the pre-artifact layout, which carry no session.
 
-    A name that also exists as a real artifact is dropped: it is the same
-    document, and showing both would read as two.
+    A name that also exists as a real artifact of the same agent is
+    dropped: it is the same document, and showing both would read as two.
     """
-    prefix = f"{_LEGACY_ROOT}/{agent}/"
+    root = f"{_LEGACY_ROOT}/"
     entries = []
 
-    for obj in list_objects_in_s3(prefix=prefix):
-        name = obj["key"][len(prefix):]
-        if not name or "/" in name or name in taken:
+    for obj in list_objects_in_s3(prefix=root):
+        parts = obj["key"][len(root):].split("/")
+        # {agent}/{filename} — nothing deeper belongs to this layout.
+        if len(parts) != 2:
+            continue
+        agent, name = parts
+        if agent not in owned or not name or name in taken.get(agent, ()):
             continue
         entries.append(_entry(agent, "_shared", LEGACY, name, 0, obj))
 
@@ -105,14 +121,19 @@ def build_library(agents: dict[str, str]) -> list[dict]:
 
     ``agents`` maps folder name ("agent12") to the name a human reads.
     """
-    items: list[dict] = []
+    if not agents:
+        return []
 
-    for folder, display_name in agents.items():
-        by_identity = _artifact_entries(folder)
-        names = {e["filename"] for e in by_identity.values()}
-        for entry in list(by_identity.values()) + _legacy_entries(folder, names):
-            entry["agent_name"] = display_name
-            items.append(entry)
+    owned = set(agents)
+    by_identity = _artifact_entries(owned)
+
+    names_by_agent: dict[str, set[str]] = {}
+    for entry in by_identity.values():
+        names_by_agent.setdefault(entry["agent_folder"], set()).add(entry["filename"])
+
+    items = list(by_identity.values()) + _legacy_entries(owned, names_by_agent)
+    for entry in items:
+        entry["agent_name"] = agents[entry["agent_folder"]]
 
     items.sort(key=lambda e: (e["updated_at"] or 0), reverse=True)
     return items
