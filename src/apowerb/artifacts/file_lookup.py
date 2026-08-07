@@ -35,35 +35,43 @@ INPUT = "input"
 OUTPUT = "output"
 
 
-def _artifact_keys(agent: str, filename: str, segment: str) -> list[tuple[int, str]]:
-    """``(version, key)`` for every version of ``filename`` under ``segment``.
+def _latest_by_segment(agent: str, filename: str) -> dict[str, str]:
+    """Latest key of ``filename`` per segment, from a single listing.
 
-    Versions are compared as integers: sorting the raw keys would place "10"
-    before "2" and serve a stale version.
+    One LIST over the agent's artifact prefix answers for both segments:
+    asking per segment doubled the round trips for every file an agent
+    reads, for the same bytes.
+
+    Versions are compared as integers: sorting the raw keys would place
+    "10" before "2" and serve a stale version.
     """
-    found: list[tuple[int, str]] = []
     prefix = f"{_ARTIFACTS_ROOT}/{agent}/"
-    marker = f"/{segment}/{filename}/"
+    leaf_name = filename.split("/")[-1]
+    best: dict[str, tuple[int, str]] = {}
 
     for key in list_files_in_s3(prefix=prefix):
-        if marker not in key:
-            continue
-        # ...{segment}/{filename}/{version}/{leaf}
-        tail = key.split(marker, 1)[1].split("/")
-        if len(tail) != 2 or not tail[0].isdigit():
-            continue
-        if tail[1] != filename.split("/")[-1] and tail[1] != filename:
-            # metadata.json and other siblings are not the artifact itself.
-            continue
-        found.append((int(tail[0]), key))
+        for segment in (INPUT, OUTPUT):
+            marker = f"/{segment}/{filename}/"
+            if marker not in key:
+                continue
+            # ...{segment}/{filename}/{version}/{leaf}
+            tail = key.split(marker, 1)[1].split("/")
+            if len(tail) != 2 or not tail[0].isdigit():
+                break
+            if tail[1] != leaf_name and tail[1] != filename:
+                # metadata.json and other siblings are not the artifact.
+                break
+            version = int(tail[0])
+            if segment not in best or version > best[segment][0]:
+                best[segment] = (version, key)
+            break
 
-    return sorted(found)
+    return {segment: key for segment, (_, key) in best.items()}
 
 
 def find_artifact_key(agent: str, filename: str, segment: str = INPUT) -> Optional[str]:
     """Key of the latest version of ``filename``, or ``None``."""
-    versions = _artifact_keys(agent, filename, segment)
-    return versions[-1][1] if versions else None
+    return _latest_by_segment(agent, filename).get(segment)
 
 
 def resolve_file_key(agent: str, filename: str) -> Optional[str]:
@@ -72,10 +80,10 @@ def resolve_file_key(agent: str, filename: str) -> Optional[str]:
     Inputs win over outputs on a name collision, mirroring what the reader
     expects: ``read_uploaded_file`` is asked about a file the *user* sent.
     """
+    latest = _latest_by_segment(agent, filename)
     for segment in (INPUT, OUTPUT):
-        key = find_artifact_key(agent, filename, segment)
-        if key is not None:
-            return key
+        if segment in latest:
+            return latest[segment]
 
     legacy = _LEGACY_PREFIX.format(agent=agent) + filename
     return legacy if file_exists_in_s3(legacy) else None
