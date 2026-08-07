@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from apowerb.artifacts.input_scope import SHARED_INPUT_SCOPE
 from apowerb.artifacts.languages import language_for_filename
+from apowerb.artifacts.library import build_library
 from apowerb.artifacts.s3_artifact_service import S3ArtifactService
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
@@ -369,6 +370,53 @@ async def _resolve_input_artifact_s3(
         return loaded["version"], {"binary": True, "code": ""}
 
     return loaded["version"], {"code": code}
+
+
+@router.get("/artifacts/library", tags=["artifacts"])
+async def list_artifact_library(
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Every artifact the caller owns, in one call.
+
+    Declared before the "/{agent_name}/{user_id}/{session_id}" route on
+    purpose: FastAPI matches in declaration order, and "library" would
+    otherwise be read as an agent name.
+
+    The tab used to ask once per session plus once per agent — 386 sessions
+    on a real dev account, ~200 ms each even when the session held nothing,
+    so about fifteen seconds of waiting. Everything it displays is already
+    in the S3 keys, so this builds the whole answer from listings and
+    downloads no object body at all.
+    """
+    if not _s3_artifacts_active():
+        # The file:// backend has no equivalent sweep: it is a development
+        # fallback, and the per-session route still serves it.
+        return {"items": [], "supported": False}
+
+    agents = await asyncio.to_thread(_owned_agents, current_user.email)
+    items = await asyncio.to_thread(build_library, agents)
+    return {"items": items, "supported": True}
+
+
+def _owned_agents(owner_email: str) -> dict[str, str]:
+    """Folder name -> display name, for the agents this user owns.
+
+    The folder is what the S3 key carries ("agent12"); the display name is
+    what the screen shows.
+    """
+    from apowerb.core.agent_main import agent_store
+
+    table = agent_store.agent_table
+    rows = agent_store.get_list_agents(
+        table.select().where(table.c.owner_id == owner_email)
+    )
+
+    agents: dict[str, str] = {}
+    for row in rows:
+        data = row._asdict()
+        folder = f"agent{data['agent_id']}"
+        agents[folder] = data.get("agent_name") or folder
+    return agents
 
 
 @router.get("/artifacts/{agent_name}/{user_id}/{session_id}", tags=["artifacts"])
