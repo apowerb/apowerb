@@ -83,6 +83,73 @@ def _warn_duplicate_env_keys(env_path: str = _ENV_FILE) -> None:
             )
 
 
+def _warn_env_keys_dropped_by_the_parser(env_path: str = _ENV_FILE) -> None:
+    """Name every variable the file declares that the parser does not return.
+
+    The symmetric case of the duplicate check above, and the one that bites
+    harder. When a line does not parse, python-dotenv drops the whole
+    statement and logs `could not parse statement starting at line N` — one
+    line, once, at boot, among hundreds. The variable is simply absent, and
+    a `grep` on the file says it is present. Both readings disagree, and the
+    quiet one wins.
+
+    Production carried this for an unknown stretch (found 2026-08-07): a
+    missing newline had crammed two assignments together,
+    `GOOGLE_WEBHOOK_AUDIENCE="tbd"NOTIFICATION_EMAIL="..."`. The first key
+    took the placeholder as its value, the second did not exist at all —
+    notifications had no recipient — and nothing said so.
+
+    Note that dotenv's own warning counts *statements*, not file lines, so
+    the number it prints does not point at the offending line. This one
+    reports keys, which do.
+
+    Best-effort, like its neighbour: never raises, never blocks boot.
+    """
+    if not os.path.isfile(env_path):
+        return
+
+    try:
+        from dotenv import dotenv_values
+    except ImportError:  # pragma: no cover - dotenv ships with the settings dep
+        return
+
+    declared: dict[str, int] = {}
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            for lineno, raw in enumerate(f, start=1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].lstrip()
+                if "=" not in line:
+                    continue
+                key = line.split("=", 1)[0].strip()
+                if len(key) >= 2 and key[0] == key[-1] and key[0] in ('"', "'"):
+                    key = key[1:-1]
+                if not key or any(c.isspace() for c in key):
+                    continue
+                declared.setdefault(key, lineno)
+
+        parsed = set(dotenv_values(env_path))
+    except (OSError, UnicodeDecodeError) as exc:
+        _logger.debug("Could not scan %s for dropped keys: %s", env_path, exc)
+        return
+
+    for key, lineno in declared.items():
+        if key not in parsed:
+            _logger.warning(
+                "variable %r is written in %s (line %d) but the parser does "
+                "not return it — the statement did not parse, so the setting "
+                "is ABSENT at runtime however present it looks in the file. "
+                "Check that line for a missing newline between two "
+                "assignments, or an unbalanced quote.",
+                key,
+                env_path,
+                lineno,
+            )
+
+
 # Champs indispensables au *runtime serveur* mais pas à l'import du paquet.
 # Ils ont une valeur par défaut vide pour que ``import apowerb.<module>``
 # fonctionne sans ``.env`` (th2agent doit être consommable comme library) ;
@@ -449,4 +516,5 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get application settings from environment variables or .env file."""
     _warn_duplicate_env_keys()
+    _warn_env_keys_dropped_by_the_parser()
     return Settings()
