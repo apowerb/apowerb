@@ -31,7 +31,7 @@ from apowerb.artifacts.languages import language_for_filename
 from apowerb.storage.s3 import list_objects_in_s3
 
 _ARTIFACTS_ROOT = "artifacts"
-_LEGACY_ROOT = "uploads"
+_LEGACY_PREFIX = "uploads/"
 INPUT = "input"
 OUTPUT = "output"
 LEGACY = "legacy"
@@ -100,7 +100,7 @@ def _legacy_entries(owned: set[str], taken: dict[str, set[str]]) -> list[dict]:
     A name that also exists as a real artifact of the same agent is
     dropped: it is the same document, and showing both would read as two.
     """
-    root = f"{_LEGACY_ROOT}/"
+    root = _LEGACY_PREFIX
     entries = []
 
     for obj in list_objects_in_s3(prefix=root):

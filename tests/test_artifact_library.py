@@ -9,7 +9,6 @@ already in the S3 key, so a listing per agent answers the whole thing.
 from __future__ import annotations
 
 import datetime
-import json
 from unittest.mock import MagicMock
 
 import pytest
