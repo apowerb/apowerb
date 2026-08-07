@@ -1,4 +1,5 @@
 import os
+import re
 
 from apowerb.configs.th2logger import setup_logging
 
@@ -114,22 +115,42 @@ def _warn_env_keys_dropped_by_the_parser(env_path: str = _ENV_FILE) -> None:
         return
 
     declared: dict[str, int] = {}
+    source_lines: dict[int, str] = {}
     try:
         with open(env_path, encoding="utf-8") as f:
+            # A value may span several lines when it is quoted -- a PEM key, a
+            # JSON blob, base64 with its `=` padding. Those continuation lines
+            # are not declarations, and reading them as such invented a warning
+            # per line: exactly the noise that teaches operators to skip this
+            # message. Track the open quote and skip until it closes.
+            open_quote: str | None = None
             for lineno, raw in enumerate(f, start=1):
-                line = raw.strip()
+                line = raw.rstrip("\n")
+                if open_quote is not None:
+                    if open_quote in line:
+                        open_quote = None
+                    continue
+
+                line = line.strip()
                 if not line or line.startswith("#"):
                     continue
                 if line.startswith("export "):
                     line = line[len("export "):].lstrip()
                 if "=" not in line:
                     continue
-                key = line.split("=", 1)[0].strip()
+                key, _, value = line.partition("=")
+                key = key.strip()
                 if len(key) >= 2 and key[0] == key[-1] and key[0] in ('"', "'"):
                     key = key[1:-1]
                 if not key or any(c.isspace() for c in key):
                     continue
+
+                value = value.lstrip()
+                if value[:1] in ('"', "'") and value.count(value[0]) < 2:
+                    open_quote = value[0]
+
                 declared.setdefault(key, lineno)
+                source_lines[lineno] = line
 
         parsed = set(dotenv_values(env_path))
     except (OSError, UnicodeDecodeError) as exc:
@@ -138,15 +159,27 @@ def _warn_env_keys_dropped_by_the_parser(env_path: str = _ENV_FILE) -> None:
 
     for key, lineno in declared.items():
         if key not in parsed:
+            # The scan records the first key of a line. When two assignments
+            # were crammed together, the second one is the more damaging of
+            # the two -- it is absent entirely rather than merely wrong -- so
+            # name it too instead of leaving it to be found by reading.
+            others = [
+                name
+                for name in re.findall(
+                    r"([A-Za-z_][A-Za-z0-9_]*)=", source_lines.get(lineno, "")
+                )
+                if name != key
+            ]
             _logger.warning(
                 "variable %r is written in %s (line %d) but the parser does "
                 "not return it — the statement did not parse, so the setting "
                 "is ABSENT at runtime however present it looks in the file. "
                 "Check that line for a missing newline between two "
-                "assignments, or an unbalanced quote.",
+                "assignments, or an unbalanced quote.%s",
                 key,
                 env_path,
                 lineno,
+                f" The same line also assigns {', '.join(others)}." if others else "",
             )
 
 

@@ -94,3 +94,57 @@ def test_a_quoted_key_is_reported_because_dotenv_really_drops_it(tmp_path, caplo
         _warn_env_keys_dropped_by_the_parser(path)
 
     assert "QUOTED_KEY" in caplog.text
+
+
+def test_a_multi_line_quoted_value_is_not_read_as_declarations(tmp_path, caplog):
+    """A PEM key spans lines and its body contains `=`.
+
+    Reading those continuation lines as declarations invented one warning per
+    line -- precisely the noise `test_a_clean_file_says_nothing` exists to
+    prevent. Reported by review before this check ever shipped.
+    """
+    path = _env(
+        tmp_path,
+        'API_KEY=fine\n'
+        'PRIVATE_KEY="-----BEGIN KEY-----\n'
+        'abc=def\n'
+        'ghi==\n'
+        '-----END KEY-----"\n'
+        'OTHER=fine\n',
+    )
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        _warn_env_keys_dropped_by_the_parser(path)
+
+    assert caplog.text == "", caplog.text
+
+
+def test_base64_padding_inside_a_quoted_value_stays_quiet(tmp_path, caplog):
+    path = _env(tmp_path, 'BLOB="aGVsbG8=\nd29ybGQ=="\nAFTER=fine\n')
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        _warn_env_keys_dropped_by_the_parser(path)
+
+    assert caplog.text == ""
+
+
+def test_a_real_problem_after_a_multi_line_value_is_still_caught(tmp_path, caplog):
+    """Skipping continuation lines must not skip what follows them."""
+    path = _env(
+        tmp_path,
+        'PRIVATE_KEY="-----BEGIN KEY-----\nabc=def\n-----END KEY-----"\n'
+        'GOOD="x"BAD="y"\n',
+    )
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        _warn_env_keys_dropped_by_the_parser(path)
+
+    assert "GOOD" in caplog.text
+    assert "line 4" in caplog.text
+
+
+def test_the_second_key_of_a_crammed_line_is_named(tmp_path, caplog):
+    """It is the more damaging of the two: absent entirely, not merely wrong."""
+    path = _env(tmp_path, 'GOOGLE_WEBHOOK_AUDIENCE="tbd"NOTIFICATION_EMAIL="ops@x.fr"\n')
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        _warn_env_keys_dropped_by_the_parser(path)
+
+    assert "GOOGLE_WEBHOOK_AUDIENCE" in caplog.text
+    assert "NOTIFICATION_EMAIL" in caplog.text
