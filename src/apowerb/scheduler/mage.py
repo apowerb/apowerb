@@ -864,7 +864,9 @@ def _build_client():
     if settings.orchestrator == "th2etl":
         from apowerb.scheduler.th2etl_client import Th2etlAPIClient
 
-        return Th2etlAPIClient(settings.th2etl_base_url)
+        return Th2etlAPIClient(
+            settings.th2etl_base_url, api_key=settings.th2etl_api_key
+        )
     return MageAPIClient()
 
 

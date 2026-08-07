@@ -208,6 +208,11 @@ class Settings(BaseSettings):
     # Orchestrator selection: "mage" (default, no behaviour change) or "th2etl".
     orchestrator: str = "mage"
     th2etl_base_url: str = "http://localhost:8009"
+    # th2etl requires `Authorization: Bearer <key>` on its business routes and
+    # compares it in constant time. Without this the client is answered 401 and
+    # scheduling stops -- quietly, since the client swallows request errors.
+    # Must equal the `API_KEY` of the th2etl instance being addressed.
+    th2etl_api_key: str | None = None
 
     # Authentication settings
     frontend_urls: str = "http://localhost:3000"  # Allowed origins for CORS

@@ -52,6 +52,17 @@ class _FakeRequests:
     def put(self, url, **kw):
         return self._handle("PUT", url, **kw)
 
+    def delete(self, url, **kw):
+        return self._handle("DELETE", url, **kw)
+
+    def Session(self):
+        # The client routes every call through a Session so the bearer token
+        # cannot be forgotten on a method added later. The fake hands back
+        # itself, with the `headers` mapping the real one exposes, so the
+        # recorded calls stay exactly where these tests look for them.
+        self.headers = {}
+        return self
+
 
 @pytest.fixture
 def fake(monkeypatch):
@@ -61,8 +72,10 @@ def fake(monkeypatch):
 
 
 @pytest.fixture
-def client():
-    return Th2etlAPIClient("http://th2etl:8009")
+def client(fake):
+    # Built AFTER `fake` is installed: the session is created in __init__, so a
+    # client made before the patch would keep the real requests module.
+    return Th2etlAPIClient("http://th2etl:8009", api_key="test-key")
 
 
 # --- interval mapping ---

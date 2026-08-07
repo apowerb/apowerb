@@ -24,6 +24,8 @@ from typing import Any
 
 import requests
 
+from apowerb.configs.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 # Mage "@interval" shortcuts -> 5-field cron expressions used by th2etl triggers.
@@ -107,11 +109,24 @@ class OrchestratorUnavailable(RuntimeError):
 class Th2etlAPIClient:
     """HTTP client for th2etl, exposing the MageAPIClient method surface."""
 
-    def __init__(self, base_url: str, timeout: int = 15) -> None:
+    def __init__(self, base_url: str, timeout: int = 15, api_key: str | None = None) -> None:
         if not base_url:
             raise ValueError("Th2etlAPIClient requires a base_url")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+
+        # Every request goes through this session so the bearer token cannot be
+        # forgotten on a call added later -- the failure it would cause is a 401
+        # swallowed by the caller, i.e. scheduling that stops without a trace.
+        self._http = requests.Session()
+        key = api_key if api_key is not None else get_settings().th2etl_api_key
+        if key:
+            self._http.headers["Authorization"] = f"Bearer {key}"
+        else:
+            logger.warning(
+                "th2etl: no TH2ETL_API_KEY configured — the orchestrator will "
+                "answer 401 on every business route."
+            )
 
     # --- low-level helpers -------------------------------------------------
     def _url(self, path: str) -> str:
@@ -123,7 +138,7 @@ class Th2etlAPIClient:
     # --- pipeline lifecycle (orchestrator init) ----------------------------
     def pipeline_exists(self, pipeline_uuid: str) -> bool:
         try:
-            resp = requests.get(self._url(f"/pipelines/{pipeline_uuid}"), timeout=self.timeout)
+            resp = self._http.get(self._url(f"/pipelines/{pipeline_uuid}"), timeout=self.timeout)
             return resp.status_code == 200
         except requests.RequestException as e:
             logger.error("th2etl pipeline_exists failed: %s", e)
@@ -142,7 +157,7 @@ class Th2etlAPIClient:
 
     def get_all_pipelines(self) -> list:
         try:
-            resp = requests.get(self._url("/pipelines/"), timeout=self.timeout)
+            resp = self._http.get(self._url("/pipelines/"), timeout=self.timeout)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
@@ -206,7 +221,7 @@ class Th2etlAPIClient:
         Each entry exposes ``id`` and ``name`` both set to the scheduler name
         (callers filter by ``name == agent_id`` and pass ``id`` back)."""
         try:
-            resp = requests.get(self._url("/schedulers/"), timeout=self.timeout)
+            resp = self._http.get(self._url("/schedulers/"), timeout=self.timeout)
             resp.raise_for_status()
             schedulers = resp.json()
         except requests.RequestException as e:
@@ -234,12 +249,12 @@ class Th2etlAPIClient:
         cron = interval_to_cron(schedule_interval)
         active = start_time is None  # future start -> create disabled, activate later
         try:
-            requests.post(
+            self._http.post(
                 self._url("/triggers/"),
                 json={"name": self._trigger_name(agent_id), "pipeline_name": pipeline_uuid, "cron_expression": cron},
                 timeout=self.timeout,
             ).raise_for_status()
-            resp = requests.post(
+            resp = self._http.post(
                 self._url("/schedulers/"),
                 json={
                     "name": agent_id,
@@ -266,14 +281,14 @@ class Th2etlAPIClient:
         """Update a scheduler's active status and/or its trigger's cron."""
         agent_id = schedule_id
         if status is not None:
-            requests.put(
+            self._http.put(
                 self._url(f"/schedulers/{agent_id}"),
                 json={"active": status == "active"},
                 timeout=self.timeout,
             ).raise_for_status()
         if schedule_interval is not None:
             cron = interval_to_cron(schedule_interval)
-            requests.put(
+            self._http.put(
                 self._url(f"/triggers/{self._trigger_name(agent_id)}"),
                 json={"cron_expression": cron},
                 timeout=self.timeout,
@@ -282,7 +297,7 @@ class Th2etlAPIClient:
 
     def update_schedule_variables(self, schedule_id: str, variables: dict[str, Any]) -> dict[str, Any]:
         """Replace a scheduler's runtime variables (token rotation)."""
-        resp = requests.put(
+        resp = self._http.put(
             self._url(f"/schedulers/{schedule_id}/variables"),
             json={"variables": variables},
             timeout=self.timeout,
@@ -296,7 +311,7 @@ class Th2etlAPIClient:
     ) -> dict[str, Any]:
         """Trigger the scheduler's pipeline now, merging the scheduler's stored
         variables with ``run_variables``."""
-        resp = requests.post(
+        resp = self._http.post(
             self._url(f"/schedulers/{schedule_id}/run"),
             json={"variables": run_variables or {}},
             timeout=self.timeout,
@@ -317,7 +332,7 @@ class Th2etlAPIClient:
     def get_pipeline_runs(self, schedule_id: str) -> list:
         """Runs for a scheduler (== agent_id), most recent first."""
         try:
-            resp = requests.get(self._url(f"/schedulers/{schedule_id}/runs"), timeout=self.timeout)
+            resp = self._http.get(self._url(f"/schedulers/{schedule_id}/runs"), timeout=self.timeout)
             resp.raise_for_status()
             return [_to_mage_run(r) for r in resp.json()]
         except requests.RequestException as e:
@@ -325,7 +340,7 @@ class Th2etlAPIClient:
             return []
 
     def get_pipeline_run(self, run_id: int) -> dict[str, Any]:
-        resp = requests.get(self._url(f"/runs/{run_id}"), timeout=self.timeout)
+        resp = self._http.get(self._url(f"/runs/{run_id}"), timeout=self.timeout)
         resp.raise_for_status()
         return _to_mage_run(resp.json())
 
@@ -335,7 +350,7 @@ class Th2etlAPIClient:
         logger_name, message}`` in chronological order. Returns ``[]`` on error
         so the dashboard degrades gracefully rather than 500-ing."""
         try:
-            resp = requests.get(self._url(f"/runs/{run_id}/logs"), timeout=self.timeout)
+            resp = self._http.get(self._url(f"/runs/{run_id}/logs"), timeout=self.timeout)
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
@@ -343,6 +358,6 @@ class Th2etlAPIClient:
             return []
 
     def cancel_pipeline_run(self, run_id: int) -> dict[str, Any]:
-        resp = requests.post(self._url(f"/runs/{run_id}/cancel"), timeout=self.timeout)
+        resp = self._http.post(self._url(f"/runs/{run_id}/cancel"), timeout=self.timeout)
         resp.raise_for_status()
         return _to_mage_run(resp.json())
