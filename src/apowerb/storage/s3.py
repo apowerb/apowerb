@@ -48,6 +48,37 @@ def list_files_in_s3(prefix: str = ""):
         if not token:
             return keys
 
+def list_objects_in_s3(prefix: str = "") -> list[dict]:
+    """Keys under ``prefix`` with their modification time and size.
+
+    ``list_files_in_s3`` returns names only, which forces a caller that
+    needs a date to fetch each object. S3 already hands both back in the
+    listing response — the artifact library builds an entire screen from
+    this, downloading nothing.
+    """
+    s3 = _get_s3_client()
+    objects: list[dict] = []
+    token = None
+
+    while True:
+        kwargs = {"Bucket": settings.s3_bucket_name, "Prefix": prefix}
+        if token:
+            kwargs["ContinuationToken"] = token
+        response = s3.list_objects_v2(**kwargs)
+        for obj in response.get("Contents", []):
+            objects.append({
+                "key": obj["Key"],
+                "last_modified": obj.get("LastModified"),
+                "size": obj.get("Size", 0),
+            })
+
+        if not response.get("IsTruncated"):
+            return objects
+        token = response.get("NextContinuationToken")
+        if not token:
+            return objects
+
+
 def file_exists_in_s3(s3_key: str) -> bool:
     """True when the object exists.
 
