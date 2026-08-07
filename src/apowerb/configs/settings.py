@@ -1,4 +1,5 @@
 import os
+import re
 
 from apowerb.configs.th2logger import setup_logging
 
@@ -85,6 +86,105 @@ def _warn_duplicate_env_keys(env_path: str = _ENV_FILE) -> None:
                 key,
                 env_path,
                 ", ".join(str(n) for n in lines),
+            )
+
+
+def _warn_env_keys_dropped_by_the_parser(env_path: str = _ENV_FILE) -> None:
+    """Name every variable the file declares that the parser does not return.
+
+    The symmetric case of the duplicate check above, and the one that bites
+    harder. When a line does not parse, python-dotenv drops the whole
+    statement and logs `could not parse statement starting at line N` — one
+    line, once, at boot, among hundreds. The variable is simply absent, and
+    a `grep` on the file says it is present. Both readings disagree, and the
+    quiet one wins.
+
+    Production carried this for an unknown stretch (found 2026-08-07): a
+    missing newline had crammed two assignments together,
+    `GOOGLE_WEBHOOK_AUDIENCE="tbd"NOTIFICATION_EMAIL="..."`. The first key
+    took the placeholder as its value, the second did not exist at all —
+    notifications had no recipient — and nothing said so.
+
+    Note that dotenv's own warning counts *statements*, not file lines, so
+    the number it prints does not point at the offending line. This one
+    reports keys, which do.
+
+    Best-effort, like its neighbour: never raises, never blocks boot.
+    """
+    if not os.path.isfile(env_path):
+        return
+
+    try:
+        from dotenv import dotenv_values
+    except ImportError:  # pragma: no cover - dotenv ships with the settings dep
+        return
+
+    declared: dict[str, int] = {}
+    source_lines: dict[int, str] = {}
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            # A value may span several lines when it is quoted -- a PEM key, a
+            # JSON blob, base64 with its `=` padding. Those continuation lines
+            # are not declarations, and reading them as such invented a warning
+            # per line: exactly the noise that teaches operators to skip this
+            # message. Track the open quote and skip until it closes.
+            open_quote: str | None = None
+            for lineno, raw in enumerate(f, start=1):
+                line = raw.rstrip("\n")
+                if open_quote is not None:
+                    if open_quote in line:
+                        open_quote = None
+                    continue
+
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].lstrip()
+                if "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if len(key) >= 2 and key[0] == key[-1] and key[0] in ('"', "'"):
+                    key = key[1:-1]
+                if not key or any(c.isspace() for c in key):
+                    continue
+
+                value = value.lstrip()
+                if value[:1] in ('"', "'") and value.count(value[0]) < 2:
+                    open_quote = value[0]
+
+                declared.setdefault(key, lineno)
+                source_lines[lineno] = line
+
+        parsed = set(dotenv_values(env_path))
+    except (OSError, UnicodeDecodeError) as exc:
+        _logger.debug("Could not scan %s for dropped keys: %s", env_path, exc)
+        return
+
+    for key, lineno in declared.items():
+        if key not in parsed:
+            # The scan records the first key of a line. When two assignments
+            # were crammed together, the second one is the more damaging of
+            # the two -- it is absent entirely rather than merely wrong -- so
+            # name it too instead of leaving it to be found by reading.
+            others = [
+                name
+                for name in re.findall(
+                    r"([A-Za-z_][A-Za-z0-9_]*)=", source_lines.get(lineno, "")
+                )
+                if name != key
+            ]
+            _logger.warning(
+                "variable %r is written in %s (line %d) but the parser does "
+                "not return it — the statement did not parse, so the setting "
+                "is ABSENT at runtime however present it looks in the file. "
+                "Check that line for a missing newline between two "
+                "assignments, or an unbalanced quote.%s",
+                key,
+                env_path,
+                lineno,
+                f" The same line also assigns {', '.join(others)}." if others else "",
             )
 
 
@@ -466,4 +566,5 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get application settings from environment variables or .env file."""
     _warn_duplicate_env_keys()
+    _warn_env_keys_dropped_by_the_parser()
     return Settings()
