@@ -94,9 +94,16 @@ def test_existence_does_not_match_a_longer_name(bucket):
     assert s3_storage.file_exists_in_s3(f"uploads/{AGENT}/report.html.bak") is True
 
 
-def test_existence_costs_no_listing(bucket):
+def test_existence_uses_a_listing_not_a_head(bucket, monkeypatch):
+    """head_object is the cheaper call, and this deployment's S3 endpoint
+    answers 400 to it — for keys that exist as much as for keys that do not.
+    Switching to it made every existence check raise, and reading a legacy
+    file 500ed on dev. The listing form stays."""
     _put(bucket, f"uploads/{AGENT}/brief.md")
 
-    bucket.list_calls = 0
+    def _refuse(*args, **kwargs):
+        raise AssertionError("head_object is not usable against this endpoint")
+
+    monkeypatch.setattr(bucket, "head_object", _refuse)
     assert s3_storage.file_exists_in_s3(f"uploads/{AGENT}/brief.md") is True
-    assert bucket.list_calls == 0
+    assert s3_storage.file_exists_in_s3(f"uploads/{AGENT}/absent.md") is False
