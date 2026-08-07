@@ -32,10 +32,22 @@ def test_a_real_audience_boots():
     assert _settings().google_webhook_audience.startswith("https://")
 
 
-@pytest.mark.parametrize("value", ["tbd", "TBD", "  tbd  ", ""])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "tbd",
+        # These three were a `pytest.skip` in the first version of this file:
+        # the guard compared the exact string, so a capital letter walked past
+        # it. A test that documents a hole instead of closing it is worse than
+        # no test -- it makes the gap look considered.
+        "TBD",
+        "Tbd",
+        "  TBD  ",
+        "  tbd  ",
+        "",
+    ],
+)
 def test_production_refuses_the_placeholder_and_the_blank(value):
-    if value.strip().lower() == "tbd" and value.strip() != _UNSET_PLACEHOLDER:
-        pytest.skip("la garde compare la valeur exacte, pas la casse")
     with pytest.raises(ValueError, match="GOOGLE_WEBHOOK_AUDIENCE"):
         _settings(google_webhook_audience=value)
 
@@ -49,6 +61,6 @@ def test_the_message_names_the_placeholder():
 
 @pytest.mark.parametrize("mode", ["development", "dev"])
 def test_outside_production_the_placeholder_is_tolerated(mode):
-    """Refusing in dev would break every checkout that has not been configured."""
+    """Refusing in dev would break every checkout that is not configured yet."""
     s = _settings(working_mode=mode, google_webhook_audience=_UNSET_PLACEHOLDER)
     assert s.google_webhook_audience == _UNSET_PLACEHOLDER

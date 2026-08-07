@@ -383,7 +383,10 @@ class Settings(BaseSettings):
         # configured in the file, and Gmail push notifications were being
         # verified against a value that means nothing. Same shape as the RAG
         # secret above -- a placeholder in quotes looks like configuration.
-        if is_prod and audience in {"", _UNSET_PLACEHOLDER}:
+        # Case-folded on purpose: `TBD` and `Tbd` are the same non-answer as
+        # `tbd`, and a guard whose subject is "a placeholder is not a
+        # configuration" cannot be defeated by a capital letter.
+        if is_prod and audience.lower() in {"", _UNSET_PLACEHOLDER}:
             raise ValueError(
                 "GOOGLE_WEBHOOK_AUDIENCE is empty or still the placeholder "
                 f"({_UNSET_PLACEHOLDER!r}) when WORKING_MODE=production. "
