@@ -15,6 +15,11 @@ _ENV_FILE = ".env"
 # refuses to boot on it (see _refuse_default_webhook_secret).
 _DEFAULT_RAG_WEBHOOK_SECRET = "th2-webhook-default-secret"
 
+# The value this codebase uses to mean "not configured yet" -- see the OAuth
+# client ids below, which all default to it. A setting left on it is unset,
+# whatever a `grep` on the .env file suggests.
+_UNSET_PLACEHOLDER = "tbd"
+
 
 def _warn_duplicate_env_keys(env_path: str = _ENV_FILE) -> None:
     """Log a warning for any variable declared more than once in *env_path*.
@@ -371,10 +376,22 @@ class Settings(BaseSettings):
         """Refuse to boot in production without a Gmail webhook audience,
         or with the dev signature-skip flag enabled."""
         is_prod = self.working_mode.lower() in {"prod", "production"}
-        if is_prod and not self.google_webhook_audience:
+        audience = (self.google_webhook_audience or "").strip()
+        # Emptiness was the only test, so the placeholder walked through it.
+        # Production carried GOOGLE_WEBHOOK_AUDIENCE="tbd" for an unknown
+        # stretch (found 2026-08-07): the guard passed, the key read as
+        # configured in the file, and Gmail push notifications were being
+        # verified against a value that means nothing. Same shape as the RAG
+        # secret above -- a placeholder in quotes looks like configuration.
+        # Case-folded on purpose: `TBD` and `Tbd` are the same non-answer as
+        # `tbd`, and a guard whose subject is "a placeholder is not a
+        # configuration" cannot be defeated by a capital letter.
+        if is_prod and audience.lower() in {"", _UNSET_PLACEHOLDER}:
             raise ValueError(
-                "GOOGLE_WEBHOOK_AUDIENCE must be set in production "
-                "(required to verify Gmail Pub/Sub push notifications)."
+                "GOOGLE_WEBHOOK_AUDIENCE is empty or still the placeholder "
+                f"({_UNSET_PLACEHOLDER!r}) when WORKING_MODE=production. "
+                "Refusing to start -- it is what Gmail Pub/Sub push "
+                "notifications are verified against."
             )
         if is_prod and self.webhook_dev_skip_sig:
             raise ValueError(
