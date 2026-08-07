@@ -17,8 +17,12 @@ from botocore.exceptions import ClientError
 
 
 class FakeS3Client:
-    def __init__(self) -> None:
+    def __init__(self, page_size: int | None = None) -> None:
         self._objects: dict[str, dict[str, Any]] = {}
+        # Real S3 caps a listing at 1000 keys per call; a small page size
+        # exercises the continuation path without inventing 1000 objects.
+        self._page_size = page_size
+        self.list_calls = 0
 
     def upload_fileobj(self, fileobj, bucket: str, key: str, ExtraArgs=None) -> None:
         extra = ExtraArgs or {}
@@ -59,9 +63,22 @@ class FakeS3Client:
             "LastModified": obj["last_modified"],
         }
 
-    def list_objects_v2(self, Bucket: str, Prefix: str = "") -> dict:
+    def list_objects_v2(self, Bucket: str, Prefix: str = "",
+                        ContinuationToken: str | None = None) -> dict:
+        self.list_calls += 1
         keys = sorted(k for k in self._objects if k.startswith(Prefix))
-        return {"Contents": [{"Key": k} for k in keys]} if keys else {}
+
+        start = int(ContinuationToken) if ContinuationToken else 0
+        page = keys[start:] if self._page_size is None else keys[start:start + self._page_size]
+        if not page:
+            return {}
+
+        result: dict[str, Any] = {"Contents": [{"Key": k} for k in page]}
+        nxt = start + len(page)
+        if nxt < len(keys):
+            result["IsTruncated"] = True
+            result["NextContinuationToken"] = str(nxt)
+        return result
 
     def delete_object(self, Bucket: str, Key: str) -> dict:
         self._objects.pop(Key, None)
