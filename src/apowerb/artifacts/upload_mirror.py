@@ -42,6 +42,13 @@ async def mirror_as_input_artifact(
     of this call's outcome.
     """
     if not is_s3_artifact_storage_configured(get_settings()):
+        # Silence here reads as "the feature is broken" to whoever uploaded
+        # a file and cannot find it. Say it once, at debug level.
+        logger.debug(
+            "[ARTIFACT_MIRROR] S3 artifact storage is not configured; %s "
+            "upload %r stays out of the Artifacts tab",
+            source, filename,
+        )
         return
 
     resolved_session_id = resolve_input_session_id(session_id)
