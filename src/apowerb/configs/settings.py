@@ -279,6 +279,20 @@ class Settings(BaseSettings):
     # OAuth flows (Google/Microsoft/etc.) are unaffected.
     auth_basic_enabled: bool = True
 
+    # ── Agent evaluation (POC) ──────────────────────────────────────
+    # Set EVALUATION_ENABLED=true to allow `apowerb.evaluation.poc_runner`
+    # to run. Off by default: this is offline scaffolding (a library plus a
+    # manually-run script), not a route, and never touches the agent
+    # request path. See `apowerb/evaluation/__init__.py`.
+    evaluation_enabled: bool = False
+    # Judge model for the LLM-judge evaluator (litellm model string, e.g.
+    # "gemini/gemini-2.5-flash"). Must differ from the model being judged —
+    # `evaluate_task_completion` refuses to run otherwise (self-preference
+    # bias). No default: an unconfigured judge must fail loudly, not silently
+    # score everything with whatever happens to be `default_llm_model`.
+    evaluation_judge_model: str = ""
+    evaluation_judge_api_key: str = ""
+
     # ── Notifications / system mailer ───────────────────────────────
     # All three are deployment identities and have no sensible default: a
     # hardcoded address would make every installation mail a third party.
