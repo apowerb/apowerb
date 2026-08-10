@@ -24,7 +24,7 @@ from apowerb.configs.settings import get_settings
 from apowerb.storage import s3 as s3_storage
 from tests.helpers.fake_s3 import FakeS3Client
 
-USER = "dev@thaink2.com"
+USER = "dev@example.com"
 ORG = "thaink2.com"
 CSV_BODY = b"name,age\nalice,30\nbob,25\n"
 

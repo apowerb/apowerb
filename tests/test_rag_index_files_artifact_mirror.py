@@ -25,7 +25,7 @@ from tests.helpers.fake_s3 import FakeS3Client
 
 AGENT = "agent1164"
 SESSION = "session_1785833154778"
-USER = "dev@thaink2.com"
+USER = "dev@example.com"
 
 
 class _FakeAgentStore:
@@ -76,6 +76,11 @@ def rag_env(monkeypatch, tmp_path):
     fake = FakeS3Client()
     monkeypatch.setattr(s3_storage, "_get_s3_client", lambda: fake)
 
+    # Indexation authenticates against the RAG API, which since #59 refuses
+    # to invent a credential. Stand in for a configured install.
+    monkeypatch.setenv("RAG_SERVICE_ACCOUNT_EMAIL", "service@example.com")
+    monkeypatch.setenv("th2password", "test-password")
+
     settings = get_settings()
     monkeypatch.setattr(settings, "storage_mode", "S3", raising=False)
     monkeypatch.setattr(settings, "s3_bucket_name", "test-bucket", raising=False)
@@ -106,8 +111,12 @@ def rag_env(monkeypatch, tmp_path):
 
     app.dependency_overrides[get_current_user] = _user
 
+    # index_files binds tool_create_knowledge at import time, so patching it
+    # on its defining module leaves the router calling the real one -- which
+    # is how this test was quietly reaching the live RAG service until the
+    # hardcoded credential went away.
     with patch("apowerb.core.agent_main.agent_store", fake_agent_store), patch(
-        "apowerb.tools_store.portfolio.rag.tool_create_knowledge",
+        "apowerb.routers.rag.index_files.tool_create_knowledge",
         return_value={"status": "ok", "knowledge_id": "kb-1"},
     ), patch(
         "apowerb.routers.rag.append_source",
