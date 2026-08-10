@@ -313,7 +313,7 @@ async def _fetch_integration_configs_async(
 
     The resolved value may be either:
     - An integer user_id (e.g. "1")  → query Integration directly
-    - An email address (e.g. "ib@thaink2.com") → resolve User first, then Integration
+    - An email address (e.g. "user@example.com") → resolve User first, then Integration
     """
     if user is None:
         from apowerb.core.invocation_context import resolve_integration_user
