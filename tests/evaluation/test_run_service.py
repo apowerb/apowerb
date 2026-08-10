@@ -266,6 +266,10 @@ async def test_judge_not_configured_becomes_not_applicable():
     judge_row = [r for r in rows if r.evaluator_name == "task_completion_judge"][0]
     assert judge_row.score is None
     assert "not configured" in judge_row.details["not_applicable"]
+    # An unconfigured judge has no real model string to record -- storing
+    # "" (settings' default) would be indistinguishable from a genuinely
+    # blank-but-set value.
+    assert judge_row.judge_model is None
 
 
 @pytest.mark.asyncio

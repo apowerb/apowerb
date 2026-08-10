@@ -199,7 +199,7 @@ async def run_and_persist(
             invocation_id=None,
             evaluator_name=outcome.evaluator,
             evaluator_kind=outcome.kind,
-            judge_model=settings.evaluation_judge_model if outcome.kind == "llm_judge" else None,
+            judge_model=(settings.evaluation_judge_model or None) if outcome.kind == "llm_judge" else None,
             score=outcome.score,
             passed=outcome.passed,
             details=outcome.details,
