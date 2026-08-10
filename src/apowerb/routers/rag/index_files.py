@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from apowerb.artifacts.upload_mirror import mirror_as_input_artifact
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
 from apowerb.configs.paths import uploads_dir
@@ -69,6 +70,27 @@ async def index_files(
             f.write(content)
 
         logger.info("[RAG_ROUTER] Saved %s (%d bytes) for scope %s (agent %s)", filename, len(content), scope, agent_id)
+
+        # Additive mirror into the artifact chain so the upload shows up in
+        # the Artifacts tab (kind=input) -- the disk write above is what
+        # tool_create_knowledge indexes and is unaffected. Never fails
+        # indexation: caught again here even though mirror_as_input_artifact
+        # already swallows its own errors, per the "best-effort, log loud"
+        # rule this chain has broken silently three times before.
+        try:
+            await mirror_as_input_artifact(
+                app_name=agent_id,
+                session_id=session_id,
+                filename=filename,
+                data=content,
+                content_type=upload_file.content_type,
+                source="rag",
+            )
+        except Exception:
+            logger.error(
+                "[RAG_ROUTER] Artifact mirror raised for %r (agent=%s, session=%s)",
+                filename, agent_id, session_id, exc_info=True,
+            )
 
         # Build callback_url for webhook notifications from th2llm
         settings = get_settings()
