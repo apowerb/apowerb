@@ -35,6 +35,19 @@ def _get_extension(filename: str) -> str:
     return ext if ext else ".bin"
 
 
+def bi_artifact_app_name(organization_id: str) -> str:
+    """Pseudo-agent folder for mirroring a BI upload into the artifact chain.
+
+    BI has no agent concept -- uploads are scoped by organization_id/
+    project_id only (see upload_router.py), unlike RAG where agent_id is a
+    real, owned ``agent<digits>`` folder. The "bi-" prefix keeps this out of
+    that namespace so it can never be mistaken for one (see
+    apowerb.helpers.ownership / routers.rag.validators, both anchored on
+    ``^agent\\d+$``).
+    """
+    return f"bi-{_safe_segment(organization_id)}"
+
+
 def build_file_key(
     organization_id: str,
     project_id: str,
