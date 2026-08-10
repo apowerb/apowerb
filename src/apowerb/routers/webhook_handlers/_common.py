@@ -117,7 +117,7 @@ async def run_agent_for_webhook(
 
     # Resolve the User row's email and use it as the ADK ``user_id``.
     # The frontend lists/opens sessions via the authenticated user's
-    # email (e.g. ``com@scei88.fr``), so the webhook handler MUST store
+    # email (e.g. ``buyer@example.com``), so the webhook handler MUST store
     # them under the same key — otherwise the operator opens the
     # "Webhook — <agent>" conversation and sees an empty chat because
     # ADK has the events filed under the stringified user_id int

@@ -23,7 +23,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-USER = "testt@gmail.com"
+USER = "user@example.com"
 SESSION = "session_1785833154778"
 AGENT = "agent12"
 
