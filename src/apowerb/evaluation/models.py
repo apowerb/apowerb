@@ -1,20 +1,33 @@
-"""Proposed v1 data model for stored evaluation results.
+"""Data model for stored evaluation results.
 
-NOT migrated by this PR: no `create_all` call and no Alembic-equivalent
-revision ships alongside it. `poc_runner.py` prints its report to stdout
-and never writes here -- scoring a real DEV conversation must not change
-the DEV schema before this model has been reviewed. Kept in the OSS core
-(not `apowerb-commercial`) because evaluation, like tracing and usage, is a
-cross-cutting concern the commercial extensions need too (see the OSS/
-commercial split documented in `apowerb-commercial/CLAUDE.md`).
+Migrated on boot by `helpers/agent_evaluation_migration.py`
+(`ensure_agent_evaluation_table`), the same idempotent, purely-additive
+pattern as every other `ensure_*` table in this project. `poc_runner.py`
+still prints its own report to stdout and never writes here -- it is a
+standalone script, unrelated to the HTTP path that now persists through
+this model. Kept in the OSS core (not `apowerb-commercial`) because
+evaluation, like tracing and usage, is a cross-cutting concern the
+commercial extensions need too (see the OSS/commercial split documented in
+`apowerb-commercial/CLAUDE.md`).
 """
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, String, func
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from apowerb.helpers.database import Base
+
+# Real jsonb on Postgres (production, and every environment this table is
+# actually created in) -- but SQLite, used only as a stand-in engine by
+# tests/test_core_tables.py, cannot compile `dialects.postgresql.JSONB`.
+# `Base.metadata` is shared process-wide: any test that imports this module
+# registers `EvaluationResult` on it, so `ensure_core_tables()`'s SQLite
+# fixture would otherwise fail to create the *unrelated* `user` table too,
+# the moment both are collected in the same pytest run. `with_variant` keeps
+# jsonb where it has always run, and only swaps the type where SQLAlchemy's
+# generic JSON already stood in for it.
+_DETAILS_TYPE = JSONB().with_variant(JSON(), "sqlite")
 
 
 class EvaluationResult(Base):
@@ -43,7 +56,7 @@ class EvaluationResult(Base):
     # non-instrumented session indistinguishable from a failing agent.
     score = Column(Float, nullable=True)
     passed = Column(Boolean, nullable=True)
-    details = Column(JSONB, nullable=False, server_default="{}")
+    details = Column(_DETAILS_TYPE, nullable=False, server_default="{}")
 
     __table_args__ = (
         Index("ix_agent_eval_agent_created", "agent_id", "created_at"),

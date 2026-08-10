@@ -50,12 +50,14 @@ from apowerb.routers.share import router as share_router
 from apowerb.routers.skills import router as skills_router
 from apowerb.routers.audio_stream import router as audio_stream_router
 from apowerb.routers.workflows import router as workflows_router
+from apowerb.routers.evaluations import router as evaluations_router
 from apowerb.routers.health import router as health_router
 from apowerb.helpers.integrations_migration import ensure_integrations_table
 from apowerb.helpers.webhook_migration import ensure_webhook_subscriptions_table, ensure_webhook_subscriptions_columns
 from apowerb.helpers.webhook_log_migration import ensure_webhook_logs_table
 from apowerb.helpers.notification_migration import ensure_notifications_table
 from apowerb.helpers.business_intelligence_migration import ensure_business_intelligence_table
+from apowerb.helpers.agent_evaluation_migration import ensure_agent_evaluation_table
 from apowerb.helpers.share_migration import ensure_shared_conversations_columns
 from apowerb.helpers.oauth_states_migration import ensure_oauth_states_table
 from apowerb.helpers.security import get_algorithm, get_secret_key
@@ -148,6 +150,7 @@ def bootstrap(force: bool = False) -> None:
     ensure_webhook_logs_table()
     ensure_notifications_table()
     ensure_business_intelligence_table()
+    ensure_agent_evaluation_table()
     ensure_shared_conversations_columns()
     ensure_oauth_states_table()
 
@@ -480,6 +483,7 @@ api_router.include_router(skills_router, prefix="/api")
 api_router.include_router(models_router, prefix="/api")
 api_router.include_router(audio_stream_router, prefix="/api")
 api_router.include_router(workflows_router, prefix="/api")
+api_router.include_router(evaluations_router, prefix="/api")
 
 # Routeurs apportes par les briques branchees (TH2_EXTENSIONS). Montes apres
 # ceux du noyau, donc une brique ajoute des routes sans pouvoir masquer les
