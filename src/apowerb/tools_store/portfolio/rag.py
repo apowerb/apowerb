@@ -1,10 +1,19 @@
-"""RAG tools — Knowledge base management via the Thaink2 RAG API (rag.thaink2.fr).
+"""RAG tools — Knowledge base management via a hosted RAG API.
 
 Provides 5 tools for creating, listing, getting, deleting, and searching
 knowledge bases backed by the hosted RAG service.
 
-Auth credentials: environment variables ``th2username`` / ``th2password``.
-Falls back to the current user's email (``AGENT_OWNER`` env var) for both.
+Auth credentials come from the environment, and only from there:
+
+* ``RAG_SERVICE_ACCOUNT_EMAIL`` — the shared account these tools log in as
+* ``th2username`` / ``th2password`` — override the account and supply its
+  password
+
+Nothing is hardcoded and nothing is derived: until 0.1.22 the account address
+was a literal in this file *and* doubled as its own password, which published
+a working credential for the RAG service in a public repository. The password
+now has to be configured, and an unconfigured install fails loudly instead of
+silently authenticating with something everyone can read.
 """
 
 import os
@@ -24,18 +33,38 @@ _DEFAULT_MAX_WAIT = 120  # default poll timeout
 # Internal auth helpers (self-contained — no dependency on thaink2.py)
 # ---------------------------------------------------------------------------
 
-_SERVICE_ACCOUNT_EMAIL = "th2agent-service@thaink2.com"
+_CREDENTIALS_HELP = (
+    "RAG credentials are not configured. Set th2username and th2password, or "
+    "set RAG_SERVICE_ACCOUNT_EMAIL together with th2password, in the "
+    "environment of the service."
+)
+
+
+def _credentials() -> tuple[str, str]:
+    """Return (username, password) for the RAG API, or raise.
+
+    Read at call time, not at import: the environment of a long-lived worker
+    can be reloaded, and tests need to set these without reimporting.
+
+    The password is never derived from the username. That fallback is what
+    made a public repository carry a working credential.
+    """
+    username = os.environ.get("th2username", "") or os.environ.get(
+        "RAG_SERVICE_ACCOUNT_EMAIL", ""
+    )
+    password = os.environ.get("th2password", "")
+    if not username or not password:
+        raise RuntimeError(_CREDENTIALS_HELP)
+    return username, password
 
 
 def _login() -> str:
     """Authenticate against the RAG API and return a bearer token.
 
-    Uses a shared service account (th2agent-service@thaink2.com) by default.
-    Can be overridden with th2username/th2password env vars.
-    If the service account does not exist, auto-creates it.
+    Logs in as the configured shared account. If that account does not exist
+    on the RAG service yet, it is created with the configured password.
     """
-    username = os.environ.get("th2username", "") or _SERVICE_ACCOUNT_EMAIL
-    password = os.environ.get("th2password", "") or _SERVICE_ACCOUNT_EMAIL
+    username, password = _credentials()
 
     resp = httpx.post(
         f"{_RAG_BASE_URL}/auth/token",
@@ -52,7 +81,7 @@ def _login() -> str:
     # Auto-create the service account if it doesn't exist
     body = resp.text.lower()
     if resp.status_code == 404 or "does not exist" in body:
-        _ensure_service_account()
+        _ensure_service_account(username, password)
         resp = httpx.post(
             f"{_RAG_BASE_URL}/auth/token",
             data={"username": username, "password": password},
@@ -67,16 +96,16 @@ def _login() -> str:
     return token
 
 
-def _ensure_service_account() -> None:
-    """Create the shared th2agent service account on the RAG API if missing."""
+def _ensure_service_account(username: str, password: str) -> None:
+    """Create the shared service account on the RAG API if it is missing."""
     try:
         httpx.post(
             f"{_RAG_BASE_URL}/users/",
             json={
-                "first_name": "th2agent",
+                "first_name": "apowerb",
                 "last_name": "service",
-                "email": _SERVICE_ACCOUNT_EMAIL,
-                "password": _SERVICE_ACCOUNT_EMAIL,
+                "email": username,
+                "password": password,
             },
             timeout=15,
         )

@@ -21,7 +21,7 @@ from apowerb.configs.settings import get_settings
 from apowerb.storage import s3 as s3_storage
 from tests.helpers.fake_s3 import FakeS3Client
 
-USER = "testt@gmail.com"
+USER = "user@example.com"
 AGENT = "agent1238"
 SESSION = "session_1785927822560"
 
