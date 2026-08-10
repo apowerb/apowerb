@@ -71,13 +71,9 @@ INTERNAL_DOMAINS = (
 )
 
 # Files that already carry an internal or customer address, frozen on
-# 2026-08-10. This set may shrink, never grow.
-#
-# `tools_store/portfolio/rag.py` is the one worth fixing first: it hardcodes a
-# real service account under which every installation authenticates. It belongs
-# in an environment variable, not in the source of a public package.
+# 2026-08-10. This set may shrink, never grow — `rag.py` left it the same day,
+# once its service account moved to the environment.
 _DOMAIN_DEBT = {
-    "src/apowerb/tools_store/portfolio/rag.py",
     "tests/conftest.py",
     "tests/test_artifact_library.py",
     "tests/test_cli_agents.py",
