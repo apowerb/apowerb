@@ -6,6 +6,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import distinct, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.artifacts.input_scope import SHARED_INPUT_SCOPE
 from apowerb.artifacts.languages import language_for_filename
@@ -17,6 +19,7 @@ from apowerb.helpers.safe_paths import contained_path
 from apowerb.configs.paths import artifacts_store_dir
 from apowerb.configs.settings import get_settings
 from apowerb.core.artifact_executor import execute_artifact
+from apowerb.helpers.database import get_db
 from apowerb.helpers.ownership import enforce_user_id_match as _enforce_user_id_match
 from apowerb.users import schemas as user_schemas
 
@@ -375,6 +378,7 @@ async def _resolve_input_artifact_s3(
 @router.get("/artifacts/library", tags=["artifacts"])
 async def list_artifact_library(
     current_user: user_schemas.User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Every artifact the caller owns, in one call.
 
@@ -393,9 +397,51 @@ async def list_artifact_library(
         # fallback, and the per-session route still serves it.
         return {"items": [], "supported": False}
 
-    agents = await asyncio.to_thread(_owned_agents, current_user.email)
-    items = await asyncio.to_thread(build_library, agents)
+    scopes = await asyncio.to_thread(_owned_agents, current_user.email)
+    # A BI upload has no agent to belong to, so it is filed under a folder
+    # of its own. Without this the CSV is written correctly and stays
+    # invisible: the sweep only ever visited owned agents.
+    scopes.update(await _owned_bi_scopes(db, current_user.email))
+    items = await asyncio.to_thread(build_library, scopes)
     return {"items": items, "supported": True}
+
+
+async def _owned_bi_scopes(db: AsyncSession, owner_email: str) -> dict[str, str]:
+    """Folder name -> display name, for the BI organizations this user owns.
+
+    BI knows nothing about agents: an upload is scoped by organization, and
+    every upload writes a row carrying both the owner and that organization
+    (``bi/data/upload_router.py``). Those rows are therefore the ownership
+    test for a ``bi-<organization>`` folder, exactly as ``agent_table`` is
+    for an ``agent<id>`` one.
+
+    Best-effort: the library is a read-only screen, and a BI table that is
+    missing or unreachable must not take the artifacts of every agent down
+    with it.
+    """
+    from apowerb.bi.data._bi_storage import bi_artifact_app_name
+    from apowerb.models import BusinessIntelligence
+
+    try:
+        rows = await db.execute(
+            select(distinct(BusinessIntelligence.organization_id)).where(
+                BusinessIntelligence.owner == owner_email
+            )
+        )
+        organizations = [row[0] for row in rows.fetchall() if row[0]]
+    except Exception:
+        logger.error(
+            "[ARTIFACTS] Could not read the BI organizations of %s; its BI "
+            "uploads will be missing from the library",
+            owner_email,
+            exc_info=True,
+        )
+        return {}
+
+    return {
+        bi_artifact_app_name(organization): f"BI — {organization}"
+        for organization in organizations
+    }
 
 
 def _owned_agents(owner_email: str) -> dict[str, str]:

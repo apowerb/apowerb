@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid as _uuid
+from logging import getLogger
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
@@ -22,11 +23,13 @@ from apowerb.users import schemas as user_schemas
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apowerb.bi.data._bi_storage import save_file
+from apowerb.artifacts.upload_mirror import mirror_as_input_artifact
+from apowerb.bi.data._bi_storage import bi_artifact_app_name, save_file
 from apowerb.bi.db_stores import DatabaseDataStore
 from apowerb.tools_store.tools_helpers import list_user_tool_configs
 from apowerb.helpers.database import get_db
 
+logger = getLogger(__name__)
 
 router = APIRouter(tags=["bi-upload"])
 
@@ -164,6 +167,27 @@ async def upload_csv(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A data source with this name already exists in this organization/project.",
+        )
+
+    # Additive mirror into the artifact chain so the upload shows up in the
+    # Artifacts tab (kind=input) -- bi/data storage above is unaffected and
+    # stays the source csv_executor reads. Never fails the upload: caught
+    # again here even though mirror_as_input_artifact already swallows its
+    # own errors, per the "best-effort, log loud" rule this chain has broken
+    # silently three times before.
+    try:
+        await mirror_as_input_artifact(
+            app_name=bi_artifact_app_name(organization_id),
+            session_id=None,
+            filename=filename,
+            data=raw_bytes,
+            content_type=content_type,
+            source="bi",
+        )
+    except Exception:
+        logger.error(
+            "[BI_UPLOAD] Artifact mirror raised for %r (org=%s)",
+            filename, organization_id, exc_info=True,
         )
 
     return {
