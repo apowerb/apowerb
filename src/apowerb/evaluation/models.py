@@ -38,8 +38,11 @@ class EvaluationResult(Base):
     evaluator_kind = Column(String(20), nullable=False)
     # Null for deterministic evaluators.
     judge_model = Column(String(255), nullable=True)
-    score = Column(Float, nullable=False)
-    passed = Column(Boolean, nullable=False)
+    # Nullable: an evaluator that had nothing to judge stores no score. See
+    # EvaluationOutcome.not_applicable -- flattening that to 0.0 would make a
+    # non-instrumented session indistinguishable from a failing agent.
+    score = Column(Float, nullable=True)
+    passed = Column(Boolean, nullable=True)
     details = Column(JSONB, nullable=False, server_default="{}")
 
     __table_args__ = (

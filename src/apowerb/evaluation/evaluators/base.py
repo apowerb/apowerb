@@ -19,13 +19,44 @@ EvaluatorKind = Literal["deterministic", "llm_judge"]
 class EvaluationOutcome:
     """Result of running one evaluator against one target.
 
-    ``score`` is always normalized to [0.0, 1.0], higher is better, so
-    results from different evaluators can be compared or aggregated
-    without each caller re-deriving a scale.
+    ``score`` is normalized to [0.0, 1.0], higher is better, so results from
+    different evaluators can be compared or aggregated without each caller
+    re-deriving a scale.
+
+    ``score`` and ``passed`` are ``None`` when the evaluator could not judge
+    at all — no telemetry for the session, no tool call to score. That is a
+    third state, and it must never be flattened into 0.0: averaged together,
+    a session nobody instrumented would drag a dashboard down exactly like an
+    agent that failed every single call, and no reader could tell them apart.
+    ``None`` was chosen over a boolean flag on purpose — a flag can be
+    forgotten, while ``sum(o.score for o in outcomes)`` raises on ``None``.
     """
 
     evaluator: str
     kind: EvaluatorKind
-    score: float
-    passed: bool
+    score: float | None
+    passed: bool | None
     details: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def applicable(self) -> bool:
+        """False when this evaluator had nothing to judge."""
+        return self.score is not None
+
+    @classmethod
+    def not_applicable(
+        cls,
+        *,
+        evaluator: str,
+        kind: EvaluatorKind,
+        reason: str,
+        **details: Any,
+    ) -> "EvaluationOutcome":
+        """An outcome that carries why it could not be produced."""
+        return cls(
+            evaluator=evaluator,
+            kind=kind,
+            score=None,
+            passed=None,
+            details={"not_applicable": reason, **details},
+        )

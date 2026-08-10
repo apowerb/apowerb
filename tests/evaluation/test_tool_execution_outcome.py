@@ -16,15 +16,55 @@ def _result(rows):
 
 
 @pytest.mark.asyncio
-async def test_no_trace_mapped_returns_zero_score():
+async def test_no_trace_mapped_is_not_applicable_rather_than_zero():
+    """A session nobody instrumented is not a session that failed.
+
+    Scored 0.0, it would sit in an average next to an agent that failed
+    every tool call, and no reader of that average could tell them apart.
+    """
     db = AsyncMock()
     db.execute.return_value = _result([])
 
     outcome = await evaluate_tool_execution_outcome(db, "session_unknown")
 
-    assert outcome.score == 0.0
-    assert outcome.passed is False
-    assert "no trace mapped" in outcome.details["error"]
+    assert outcome.score is None
+    assert outcome.passed is None
+    assert outcome.applicable is False
+    assert "no trace mapped" in outcome.details["not_applicable"]
+
+
+@pytest.mark.asyncio
+async def test_a_session_without_tool_calls_is_not_a_total_failure():
+    """Traces exist, but the agent simply never called a tool."""
+    db = AsyncMock()
+
+    async def execute_side_effect(query, params=None):
+        if "pulse_conversation_map" in str(query):
+            return _result([("trace-1",)])
+        return _result([])
+
+    db.execute.side_effect = execute_side_effect
+
+    outcome = await evaluate_tool_execution_outcome(db, "session_quiet")
+
+    assert outcome.score is None
+    assert outcome.applicable is False
+    assert "no tool call" in outcome.details["not_applicable"]
+
+
+@pytest.mark.asyncio
+async def test_missing_telemetry_tables_are_a_missing_prerequisite():
+    """th2pulse is optional: an install without it must not get a 500."""
+    from sqlalchemy.exc import ProgrammingError
+
+    db = AsyncMock()
+    db.execute.side_effect = ProgrammingError("SELECT", {}, Exception("no table"))
+
+    outcome = await evaluate_tool_execution_outcome(db, "session_untraced")
+
+    assert outcome.applicable is False
+    assert "th2pulse" in outcome.details["not_applicable"]
+    db.rollback.assert_awaited_once()
 
 
 @pytest.mark.asyncio

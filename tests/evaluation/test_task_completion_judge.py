@@ -140,7 +140,7 @@ async def test_scores_a_real_shaped_transcript():
 
 
 @pytest.mark.asyncio
-async def test_empty_transcript_short_circuits_without_calling_the_judge():
+async def test_empty_transcript_is_not_applicable_not_a_zero():
     db = AsyncMock()
     db.execute.return_value = _events_result([])
 
@@ -160,5 +160,43 @@ async def test_empty_transcript_short_circuits_without_calling_the_judge():
             judged_model="openai/Mistral-Small-3.2-24B-Instruct-2506",
         )
 
-    assert outcome.score == 0.0
+    assert outcome.score is None
     mock_completion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_judge_of_the_same_provider_is_recorded_in_the_details():
+    """Not refused — an install with one provider must still evaluate — but
+    self-preference is documented at the provider level, so the score must
+    carry the caveat that may have tilted it."""
+    db = AsyncMock()
+    db.execute.return_value = _events_result(
+        [({"content": {"role": "user", "parts": [{"text": "hello"}]}},)]
+    )
+
+    judge_reply = MagicMock()
+    judge_reply.choices = [
+        MagicMock(
+            message=MagicMock(
+                content='{"task_completion": 1.0, "intent_resolution": 1.0, "rationale": "fine"}'
+            )
+        )
+    ]
+
+    with patch(f"{_MODULE}.get_settings") as mock_settings, patch(
+        "litellm.acompletion", new_callable=AsyncMock, return_value=judge_reply
+    ):
+        mock_settings.return_value = MagicMock(
+            evaluation_judge_model="gemini/gemini-2.5-flash",
+            evaluation_judge_api_key="k",
+        )
+
+        outcome = await evaluate_task_completion(
+            db,
+            app_name="agent1201",
+            user_id="u",
+            session_id="s",
+            judged_model="gemini/gemini-2.5-pro",
+        )
+
+    assert outcome.details["judge_shares_provider_with_judged"] is True

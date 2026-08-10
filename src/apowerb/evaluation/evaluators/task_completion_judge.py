@@ -113,6 +113,23 @@ def _same_model(judge_model: str, judged_model: str) -> bool:
     return _norm(judge_model) == _norm(judged_model)
 
 
+def _same_provider(judge_model: str, judged_model: str) -> bool:
+    """Same litellm provider prefix, e.g. both ``gemini/``.
+
+    Self-preference is documented at the family and provider level, not only
+    for the exact checkpoint, so a flash model judging a pro model of the
+    same family is still exposed to it. Not an error — refusing it would
+    leave installs with a single provider unable to evaluate at all — but it
+    belongs in the record, next to the score it may have tilted.
+    """
+
+    def _provider(model: str) -> str:
+        return model.split("/", 1)[0].strip().lower() if "/" in model else ""
+
+    judge_provider = _provider(judge_model)
+    return bool(judge_provider) and judge_provider == _provider(judged_model)
+
+
 async def evaluate_task_completion(
     db: AsyncSession,
     *,
@@ -142,12 +159,13 @@ async def evaluate_task_completion(
     ).fetchall()
     transcript = _extract_transcript(rows)
     if not transcript:
-        return EvaluationOutcome(
+        # Nothing was said, so nothing can be judged. Scoring this 0.0 would
+        # rank an empty session next to an agent that answered wrongly.
+        return EvaluationOutcome.not_applicable(
             evaluator="task_completion_judge",
             kind="llm_judge",
-            score=0.0,
-            passed=False,
-            details={"error": "empty transcript", "session_id": session_id},
+            reason="the session has no transcript to judge",
+            session_id=session_id,
         )
 
     transcript_text = "\n".join(f"{turn['role']}: {turn['text']}" for turn in transcript)
@@ -183,5 +201,10 @@ async def evaluate_task_completion(
             "intent_resolution": intent_resolution,
             "rationale": parsed.get("rationale"),
             "turns": len(transcript),
+            # Recorded next to the score it may have tilted, not raised: an
+            # install with a single provider must still be able to evaluate.
+            "judge_shares_provider_with_judged": _same_provider(
+                judge_model, judged_model
+            ),
         },
     )

@@ -26,6 +26,7 @@ import json
 import logging
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import quoted_name
 
@@ -85,20 +86,37 @@ async def evaluate_tool_execution_outcome(
     have concluded -- so the gap is visible in `details` instead of being
     silently absorbed into a single, misleadingly clean number.
     """
-    trace_rows = (
-        await db.execute(_trace_ids_sql(), {"session_id": session_id})
-    ).fetchall()
-    trace_ids = [row[0] for row in trace_rows]
-    if not trace_ids:
-        return EvaluationOutcome(
+    try:
+        trace_rows = (
+            await db.execute(_trace_ids_sql(), {"session_id": session_id})
+        ).fetchall()
+    except SQLAlchemyError:
+        # th2pulse is a separate, optional service: on an install that never
+        # deployed it these tables do not exist, and that is a missing
+        # prerequisite, not a failing agent.
+        logger.info(
+            "[EVAL] Telemetry tables are unavailable; tool outcomes cannot be "
+            "scored for session %s",
+            session_id,
+        )
+        await db.rollback()
+        return EvaluationOutcome.not_applicable(
             evaluator="tool_execution_outcome",
             kind="deterministic",
-            score=0.0,
-            passed=False,
-            details={
-                "error": "no trace mapped for this session_id in pulse_conversation_map",
-                "session_id": session_id,
-            },
+            reason=(
+                "telemetry tables are unavailable — this evaluator needs "
+                "th2pulse (pulse_conversation_map, pulse_spans)"
+            ),
+            session_id=session_id,
+        )
+
+    trace_ids = [row[0] for row in trace_rows]
+    if not trace_ids:
+        return EvaluationOutcome.not_applicable(
+            evaluator="tool_execution_outcome",
+            kind="deterministic",
+            reason="no trace mapped for this session_id in pulse_conversation_map",
+            session_id=session_id,
         )
 
     rows = (await db.execute(_tool_spans_sql(), {"trace_ids": trace_ids})).fetchall()
@@ -128,8 +146,19 @@ async def evaluate_tool_execution_outcome(
             }
         )
 
-    success_rate = 1.0 - (real_failures / total) if total else 0.0
-    naive_success_rate = 1.0 - (naive_failures / total) if total else 0.0
+    if not total:
+        # A session that called no tool is not a session whose every tool
+        # call failed.
+        return EvaluationOutcome.not_applicable(
+            evaluator="tool_execution_outcome",
+            kind="deterministic",
+            reason="the session made no tool call",
+            session_id=session_id,
+            trace_ids=trace_ids,
+        )
+
+    success_rate = 1.0 - (real_failures / total)
+    naive_success_rate = 1.0 - (naive_failures / total)
 
     return EvaluationOutcome(
         evaluator="tool_execution_outcome",
