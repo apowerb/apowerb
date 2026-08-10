@@ -125,7 +125,7 @@ async def test_scores_a_real_shaped_transcript():
         outcome = await evaluate_task_completion(
             db,
             app_name="agent1201",
-            user_id="elom.gnaglo@gmail.com",
+            user_id="user@example.com",
             session_id="dashboard-chat-b59ebab5-9e8c-44b1-b113-b56ae179c6ce",
             judged_model="openai/Mistral-Small-3.2-24B-Instruct-2506",
         )

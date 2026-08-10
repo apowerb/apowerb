@@ -13,7 +13,7 @@ Usage (from the repo root, with the venv active)::
     EVALUATION_ENABLED=true EVALUATION_JUDGE_MODEL=gemini/gemini-2.5-flash \\
     EVALUATION_JUDGE_API_KEY=... PYTHONPATH=src python -m apowerb.evaluation.poc_runner \\
         --session dashboard-chat-b59ebab5-9e8c-44b1-b113-b56ae179c6ce \\
-        --app-name agent1201 --user-id elom.gnaglo@gmail.com \\
+        --app-name agent1201 --user-id user@example.com \\
         --judged-model openai/Mistral-Small-3.2-24B-Instruct-2506 --run-judge
 """
 
