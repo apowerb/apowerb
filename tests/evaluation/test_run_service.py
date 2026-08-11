@@ -209,7 +209,14 @@ async def test_default_runs_both_evaluators_and_persists_both():
             new=AsyncMock(return_value=judged),
         ),
     ):
-        rows = await run_and_persist(db, _ctx(), "session_x", None)
+        # Explicit list, not None: KNOWN_EVALUATORS now has six entries
+        # (tool_usage/coherence/completeness/hallucination were added), so
+        # the default (evaluators=None) runs all of them -- this test is
+        # about these two specific evaluators running and persisting
+        # correctly together, not about what the current full default set is.
+        rows = await run_and_persist(
+            db, _ctx(), "session_x", ["tool_execution_outcome", "task_completion_judge"]
+        )
 
     assert len(rows) == 2
     assert db.add.call_count == 2
@@ -233,7 +240,11 @@ async def test_judge_same_model_error_becomes_not_applicable_not_an_exception():
             new=AsyncMock(side_effect=SameJudgeError("same model")),
         ),
     ):
-        rows = await run_and_persist(db, _ctx(), "session_x", None)
+        # Explicit list: KNOWN_EVALUATORS now has six entries, this test
+        # is about tool_execution_outcome + task_completion_judge specifically.
+        rows = await run_and_persist(
+            db, _ctx(), "session_x", ["tool_execution_outcome", "task_completion_judge"]
+        )
 
     assert len(rows) == 2
     judge_row = [r for r in rows if r.evaluator_name == "task_completion_judge"][0]
@@ -261,7 +272,11 @@ async def test_judge_not_configured_becomes_not_applicable():
             new=AsyncMock(side_effect=RuntimeError("EVALUATION_JUDGE_MODEL is not configured")),
         ),
     ):
-        rows = await run_and_persist(db, _ctx(), "session_x", None)
+        # Explicit list: KNOWN_EVALUATORS now has six entries, this test
+        # is about tool_execution_outcome + task_completion_judge specifically.
+        rows = await run_and_persist(
+            db, _ctx(), "session_x", ["tool_execution_outcome", "task_completion_judge"]
+        )
 
     judge_row = [r for r in rows if r.evaluator_name == "task_completion_judge"][0]
     assert judge_row.score is None
@@ -292,7 +307,11 @@ async def test_unexpected_judge_failure_never_propagates():
             new=AsyncMock(side_effect=TimeoutError("litellm timed out")),
         ),
     ):
-        rows = await run_and_persist(db, _ctx(), "session_x", None)
+        # Explicit list: KNOWN_EVALUATORS now has six entries, this test
+        # is about tool_execution_outcome + task_completion_judge specifically.
+        rows = await run_and_persist(
+            db, _ctx(), "session_x", ["tool_execution_outcome", "task_completion_judge"]
+        )
 
     assert len(rows) == 2
     judge_row = [r for r in rows if r.evaluator_name == "task_completion_judge"][0]
@@ -322,3 +341,96 @@ async def test_requesting_only_the_deterministic_evaluator_skips_the_judge():
 
     assert len(rows) == 1
     judge_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# run_and_persist -- the four new evaluators (tool_usage, coherence,
+# completeness, hallucination)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_four_new_evaluators_are_known_and_dispatched():
+    db = _db()
+    outcomes = {
+        "tool_usage": EvaluationOutcome(
+            evaluator="tool_usage", kind="deterministic", score=1.0, passed=True
+        ),
+        "coherence": EvaluationOutcome(
+            evaluator="coherence", kind="llm_judge", score=0.9, passed=True
+        ),
+        "completeness": EvaluationOutcome(
+            evaluator="completeness", kind="llm_judge", score=0.8, passed=True
+        ),
+        "hallucination": EvaluationOutcome(
+            evaluator="hallucination",
+            kind="llm_judge",
+            score=0.95,
+            passed=True,
+            details={"grounding": "unavailable"},
+        ),
+    }
+
+    with (
+        patch(
+            "apowerb.evaluation.run_service.evaluate_tool_usage",
+            new=AsyncMock(return_value=outcomes["tool_usage"]),
+        ),
+        patch(
+            "apowerb.evaluation.run_service.evaluate_coherence",
+            new=AsyncMock(return_value=outcomes["coherence"]),
+        ),
+        patch(
+            "apowerb.evaluation.run_service.evaluate_completeness",
+            new=AsyncMock(return_value=outcomes["completeness"]),
+        ),
+        patch(
+            "apowerb.evaluation.run_service.evaluate_hallucination",
+            new=AsyncMock(return_value=outcomes["hallucination"]),
+        ),
+    ):
+        rows = await run_and_persist(
+            db,
+            _ctx(),
+            "session_x",
+            ["tool_usage", "coherence", "completeness", "hallucination"],
+        )
+
+    assert len(rows) == 4
+    names = {row.evaluator_name for row in rows}
+    assert names == {"tool_usage", "coherence", "completeness", "hallucination"}
+    hallucination_row = [r for r in rows if r.evaluator_name == "hallucination"][0]
+    assert hallucination_row.details["grounding"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_a_new_llm_judge_failure_becomes_not_applicable_not_an_exception():
+    """Same guarantee as task_completion_judge: SameJudgeError, not
+    configured, or any other litellm failure must never propagate."""
+    db = _db()
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_coherence",
+        new=AsyncMock(side_effect=SameJudgeError("same model")),
+    ):
+        rows = await run_and_persist(db, _ctx(), "session_x", ["coherence"])
+
+    assert len(rows) == 1
+    assert rows[0].score is None
+    assert rows[0].passed is None
+    assert "same model" in rows[0].details["not_applicable"]
+
+
+@pytest.mark.asyncio
+async def test_a_new_llm_judge_unexpected_failure_never_propagates():
+    db = _db()
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_hallucination",
+        new=AsyncMock(side_effect=TimeoutError("litellm timed out")),
+    ):
+        rows = await run_and_persist(db, _ctx(), "session_x", ["hallucination"])
+
+    assert len(rows) == 1
+    assert rows[0].score is None
+    assert "litellm timed out" in rows[0].details["not_applicable"]

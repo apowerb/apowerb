@@ -16,6 +16,12 @@ no renaming, no reshaping. The front is built against that exact shape
 (`per_tool` for the deterministic evaluator, `rationale` /
 `task_completion` / `intent_resolution` / `turns` /
 `judge_shares_provider_with_judged` for the judge).
+
+`KNOWN_EVALUATORS` also lists `tool_usage` (deterministic, `pulse_spans`),
+`coherence` / `completeness` (LLM judges, `_run_llm_judge` generalizes the
+never-raises guarantee `_run_judge` already had for
+`task_completion_judge`), and `hallucination` (LLM judge, degraded --
+`details["grounding"] = "unavailable"`, see its module docstring).
 """
 
 from __future__ import annotations
@@ -32,6 +38,9 @@ from sqlalchemy.sql.elements import quoted_name
 
 from apowerb.configs.settings import get_settings
 from apowerb.evaluation.evaluators.base import EvaluationOutcome
+from apowerb.evaluation.evaluators.coherence import evaluate_coherence
+from apowerb.evaluation.evaluators.completeness import evaluate_completeness
+from apowerb.evaluation.evaluators.hallucination import evaluate_hallucination
 from apowerb.evaluation.evaluators.task_completion_judge import (
     SameJudgeError,
     evaluate_task_completion,
@@ -39,12 +48,20 @@ from apowerb.evaluation.evaluators.task_completion_judge import (
 from apowerb.evaluation.evaluators.tool_execution_outcome import (
     evaluate_tool_execution_outcome,
 )
+from apowerb.evaluation.evaluators.tool_usage import evaluate_tool_usage
 from apowerb.evaluation.models import EvaluationResult
 from apowerb.users import schemas as user_schemas
 
 logger = logging.getLogger(__name__)
 
-KNOWN_EVALUATORS = ("tool_execution_outcome", "task_completion_judge")
+KNOWN_EVALUATORS = (
+    "tool_execution_outcome",
+    "task_completion_judge",
+    "tool_usage",
+    "coherence",
+    "completeness",
+    "hallucination",
+)
 
 # Same convention as helpers/ownership.py's validate_agent_ownership: an
 # agent's app_name is "agent<numeric id>". Superagents and other app_name
@@ -173,6 +190,49 @@ async def _run_judge(
         )
 
 
+async def _run_llm_judge(
+    evaluator_name: str,
+    judge_fn,
+    db: AsyncSession,
+    ctx: SessionContext,
+    session_id: str,
+) -> EvaluationOutcome:
+    """Same never-raises guarantee as `_run_judge`, generalized to the
+    coherence/completeness/hallucination judges: not configured,
+    same-judge-as-judged, or any other failure all become a non-applicable
+    outcome instead of an exception, so one judge problem can never take
+    another evaluator's already-computed result down with it.
+    """
+    try:
+        return await judge_fn(
+            db,
+            app_name=ctx.app_name,
+            user_id=ctx.session_user_id,
+            session_id=session_id,
+            judged_model=ctx.judged_model or "",
+        )
+    except (SameJudgeError, RuntimeError) as exc:
+        return EvaluationOutcome.not_applicable(
+            evaluator=evaluator_name,
+            kind="llm_judge",
+            reason=str(exc),
+            session_id=session_id,
+        )
+    except Exception as exc:  # noqa: BLE001 -- judge must never fail the run
+        logger.warning(
+            "[EVAL] Judge evaluator %s failed for session %s: %s",
+            evaluator_name,
+            session_id,
+            exc,
+        )
+        return EvaluationOutcome.not_applicable(
+            evaluator=evaluator_name,
+            kind="llm_judge",
+            reason=f"judge evaluation failed: {exc}",
+            session_id=session_id,
+        )
+
+
 async def run_and_persist(
     db: AsyncSession,
     ctx: SessionContext,
@@ -190,6 +250,24 @@ async def run_and_persist(
         outcomes.append(await evaluate_tool_execution_outcome(db, session_id))
     if "task_completion_judge" in names:
         outcomes.append(await _run_judge(db, ctx, session_id))
+    if "tool_usage" in names:
+        outcomes.append(await evaluate_tool_usage(db, session_id))
+    if "coherence" in names:
+        outcomes.append(
+            await _run_llm_judge("coherence", evaluate_coherence, db, ctx, session_id)
+        )
+    if "completeness" in names:
+        outcomes.append(
+            await _run_llm_judge(
+                "completeness", evaluate_completeness, db, ctx, session_id
+            )
+        )
+    if "hallucination" in names:
+        outcomes.append(
+            await _run_llm_judge(
+                "hallucination", evaluate_hallucination, db, ctx, session_id
+            )
+        )
 
     rows: list[EvaluationResult] = []
     for outcome in outcomes:
