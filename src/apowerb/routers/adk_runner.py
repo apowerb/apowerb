@@ -43,9 +43,24 @@ from apowerb.helpers.security import create_access_token
 from apowerb.helpers.ownership import enforce_user_id_match as _enforce_user_id_match
 from apowerb.helpers import notify_etl
 from apowerb.helpers.error_responses import safe_error_message
+from apowerb.helpers.database import get_db
+from apowerb.configs.settings import get_settings
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+import json
 
 logger = getLogger(__name__)
 router = APIRouter()
+
+# Namespaced on purpose: an agent declaring `output_key="title"` would
+# otherwise overwrite the conversation's name with its own output.
+SESSION_TITLE_KEY = "apowerb_title"
+_MAX_SESSION_TITLE = 200
+
+
+def _sessions_schema() -> str:
+    return get_settings().db_schema or "public"
+
 
 
 def _internal_token(current_user) -> str:
@@ -573,6 +588,62 @@ async def update_session(
                 client_message="Failed to update the agent session.",
             ),
         )
+
+
+class SetSessionTitleRequest(BaseModel):
+    title: str
+
+
+@router.put("/sessions/{agent_name}/{user_id}/{session_id}/title", tags=["adk"])
+async def set_session_title(
+    agent_name: str,
+    user_id: str,
+    session_id: str,
+    request: SetSessionTitleRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Store a conversation's title on the session, so every screen shows it.
+
+    Until now the chat generated a title and kept it in the browser's local
+    storage. Another browser, or a cleared cache, and the conversation was
+    back to being named by its id -- which is exactly what the evaluation
+    screen ran into.
+
+    Written into ADK's own `state` column with the jsonb merge operator,
+    which is the very semantics ADK uses itself
+    (`storage_session.state | state_delta`). The key therefore survives every
+    later turn, and no ADK write is lost either.
+
+    `list_sessions` already returns the state, so nothing has to change on
+    the read side.
+    """
+    _enforce_user_id_match(user_id, current_user)
+
+    title = (request.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title must not be empty")
+    title = title[:_MAX_SESSION_TITLE]
+
+    folder_name = get_agent_folder_name(agent_name)
+    result = await db.execute(
+        text(
+            f"UPDATE {_sessions_schema()}.sessions "
+            "SET state = COALESCE(state, '{}'::jsonb) || CAST(:patch AS jsonb) "
+            "WHERE app_name = :app_name AND user_id = :user_id AND id = :session_id"
+        ),
+        {
+            "patch": json.dumps({SESSION_TITLE_KEY: title}),
+            "app_name": folder_name,
+            "user_id": user_id,
+            "session_id": session_id,
+        },
+    )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db.commit()
+
+    return {"session_id": session_id, "title": title}
 
 
 @router.delete("/sessions/{agent_name}/{user_id}/{session_id}", tags=["adk"])
