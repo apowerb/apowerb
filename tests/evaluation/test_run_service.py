@@ -322,3 +322,299 @@ async def test_requesting_only_the_deterministic_evaluator_skips_the_judge():
 
     assert len(rows) == 1
     judge_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# EVALUATOR_REGISTRY / list_evaluator_specs
+# ---------------------------------------------------------------------------
+
+
+def test_evaluator_registry_lists_both_known_evaluators_with_metadata():
+    from apowerb.evaluation.run_service import list_evaluator_specs
+
+    specs = {spec.name: spec for spec in list_evaluator_specs()}
+
+    assert specs["tool_execution_outcome"].kind == "deterministic"
+    assert specs["tool_execution_outcome"].requires_judge is False
+    assert specs["task_completion_judge"].kind == "llm_judge"
+    assert specs["task_completion_judge"].requires_judge is True
+
+
+def test_known_evaluators_is_derived_from_the_registry():
+    from apowerb.evaluation.run_service import EVALUATOR_REGISTRY, KNOWN_EVALUATORS
+
+    assert set(KNOWN_EVALUATORS) == {spec.name for spec in EVALUATOR_REGISTRY}
+
+
+# ---------------------------------------------------------------------------
+# resolve_session_context: agent_name
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_context_carries_agent_name():
+    db = AsyncMock()
+    db.execute.return_value = _session_row("agent1234", "me@example.com")
+
+    with patch("apowerb.core.agent_main.agent_store") as store:
+        row = MagicMock()
+        row._asdict.return_value = {
+            "agent_id": 1234,
+            "owner_id": "me@example.com",
+            "agent_model": "gemini/gemini-2.5-flash",
+            "agent_name": "Analyste AR",
+        }
+        store.get_list_agents.return_value = [row]
+        ctx = await resolve_session_context(db, "session_x", _user(email="me@example.com"))
+
+    assert ctx.agent_name == "Analyste AR"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_context_falls_back_to_app_name_without_agent_name():
+    db = AsyncMock()
+    db.execute.return_value = _session_row("agent1234", "me@example.com")
+
+    with patch("apowerb.core.agent_main.agent_store") as store:
+        store.get_list_agents.return_value = _agent_row(1234, "me@example.com")
+        ctx = await resolve_session_context(db, "session_x", _user(email="me@example.com"))
+
+    assert ctx.agent_name == "agent1234"
+
+
+# ---------------------------------------------------------------------------
+# run_and_persist: BYOM threading
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_and_persist_threads_byom_judge_model_and_key_to_the_judge():
+    db = _db()
+    judged = EvaluationOutcome(
+        evaluator="task_completion_judge",
+        kind="llm_judge",
+        score=0.8,
+        passed=True,
+        details={"judge_model": "anthropic/claude-3-5-sonnet", "judge_is_byom": True},
+    )
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=judged),
+    ) as judge_mock:
+        await run_and_persist(
+            db, _ctx(), "session_x", ["task_completion_judge"],
+            judge_model="anthropic/claude-3-5-sonnet",
+            judge_api_key="byom-secret",
+        )
+
+    call_kwargs = judge_mock.call_args.kwargs
+    assert call_kwargs["judge_model"] == "anthropic/claude-3-5-sonnet"
+    assert call_kwargs["judge_api_key"] == "byom-secret"
+
+
+@pytest.mark.asyncio
+async def test_run_and_persist_stores_the_effective_judge_model_not_settings():
+    """`EvaluationResult.judge_model` must reflect what the evaluator
+    actually used (which may be a caller's BYOM model), not the server's
+    configured default -- they can differ."""
+    db = _db()
+    judged = EvaluationOutcome(
+        evaluator="task_completion_judge",
+        kind="llm_judge",
+        score=0.8,
+        passed=True,
+        details={"judge_model": "anthropic/claude-3-5-sonnet", "judge_is_byom": True},
+    )
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=judged),
+    ):
+        rows = await run_and_persist(
+            db, _ctx(), "session_x", ["task_completion_judge"],
+            judge_model="anthropic/claude-3-5-sonnet",
+            judge_api_key="byom-secret",
+        )
+
+    assert rows[0].judge_model == "anthropic/claude-3-5-sonnet"
+
+
+# ---------------------------------------------------------------------------
+# run_and_persist: llm_usage accounting
+# ---------------------------------------------------------------------------
+
+
+def _judged_outcome(*, judge_is_byom, judge_model="gemini/gemini-2.5-flash", usage=None):
+    return EvaluationOutcome(
+        evaluator="task_completion_judge",
+        kind="llm_judge",
+        score=0.8,
+        passed=True,
+        details={
+            "judge_model": judge_model,
+            "judge_is_byom": judge_is_byom,
+            "judge_usage": usage
+            or {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "thoughts_tokens": 5,
+                "cached_tokens": 0,
+                "total_tokens": 125,
+            },
+        },
+    )
+
+
+def _usage_rows_added(db):
+    return [
+        call.args[0] for call in db.add.call_args_list
+        if type(call.args[0]).__name__ == "LlmUsage"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_judge_run_writes_llm_usage_billed_to_thaink2():
+    db = _db()
+    outcome = _judged_outcome(judge_is_byom=False)
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=outcome),
+    ):
+        await run_and_persist(
+            db, _ctx(agent_id=1234, app_name="agent1234"), "session_x",
+            ["task_completion_judge"],
+        )
+
+    usage_rows = _usage_rows_added(db)
+    assert len(usage_rows) == 1
+    row = usage_rows[0]
+    assert row.invocation_source == "evaluation"
+    assert row.billed_to_thaink2 is True
+    assert row.model == "gemini/gemini-2.5-flash"
+    assert row.input_tokens == 100
+    assert row.output_tokens == 20
+    assert row.thoughts_tokens == 5
+    assert row.total_tokens == 125
+    assert row.agent_id == 1234
+
+
+@pytest.mark.asyncio
+async def test_byom_judge_run_writes_llm_usage_not_billed_to_thaink2():
+    db = _db()
+    outcome = _judged_outcome(judge_is_byom=True, judge_model="anthropic/claude-3-5-sonnet")
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=outcome),
+    ):
+        await run_and_persist(
+            db, _ctx(), "session_x", ["task_completion_judge"],
+            judge_model="anthropic/claude-3-5-sonnet", judge_api_key="byom-secret",
+        )
+
+    usage_rows = _usage_rows_added(db)
+    assert len(usage_rows) == 1
+    assert usage_rows[0].billed_to_thaink2 is False
+    assert usage_rows[0].model == "anthropic/claude-3-5-sonnet"
+
+
+@pytest.mark.asyncio
+async def test_not_applicable_judge_outcome_writes_no_llm_usage_row():
+    db = _db()
+    outcome = EvaluationOutcome.not_applicable(
+        evaluator="task_completion_judge",
+        kind="llm_judge",
+        reason="the session has no transcript to judge",
+        session_id="session_x",
+    )
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=outcome),
+    ):
+        await run_and_persist(db, _ctx(), "session_x", ["task_completion_judge"])
+
+    assert _usage_rows_added(db) == []
+
+
+@pytest.mark.asyncio
+async def test_deterministic_evaluator_alone_writes_no_llm_usage_row():
+    db = _db()
+    deterministic = EvaluationOutcome(
+        evaluator="tool_execution_outcome", kind="deterministic", score=1.0, passed=True
+    )
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_tool_execution_outcome",
+        new=AsyncMock(return_value=deterministic),
+    ):
+        await run_and_persist(db, _ctx(), "session_x", ["tool_execution_outcome"])
+
+    assert _usage_rows_added(db) == []
+
+
+@pytest.mark.asyncio
+async def test_llm_usage_write_failure_is_best_effort_and_does_not_raise(caplog):
+    """A broken accounting write must never take the evaluation result
+    down with it -- but it must be logged loudly."""
+    db = _db()
+    outcome = _judged_outcome(judge_is_byom=False)
+
+    call_count = {"n": 0}
+
+    async def _commit_side_effect():
+        call_count["n"] += 1
+        if call_count["n"] == 2:  # 1st commit persists eval rows, 2nd is usage
+            raise RuntimeError("db is down")
+
+    db.commit = AsyncMock(side_effect=_commit_side_effect)
+    db.rollback = AsyncMock()
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=outcome),
+    ):
+        with caplog.at_level("ERROR", logger="apowerb.evaluation.run_service"):
+            rows = await run_and_persist(db, _ctx(), "session_x", ["task_completion_judge"])
+
+    assert len(rows) == 1
+    assert rows[0].score == 0.8
+    db.rollback.assert_awaited_once()
+    assert any("llm_usage" in r.message.lower() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_eval_rows_are_refreshed_after_the_usage_write_commit():
+    """A second `db.commit()` for the usage row (best-effort accounting)
+    expires every object already loaded in the session by default -- if
+    `db.refresh()` on the eval rows runs BEFORE that second commit, the
+    rows come back from `run_and_persist` in an expired state, and the
+    caller (the router, building the HTTP response) crashes reading
+    `row.id` outside an awaited context. Real bug, found only against a
+    real AsyncSession/DB -- unittest mocks don't model SQLAlchemy
+    expiration, so this pins the call ORDER instead as a regression guard.
+    """
+    db = _db()
+    outcome = _judged_outcome(judge_is_byom=False)
+    calls: list[str] = []
+
+    async def _commit_side_effect():
+        calls.append("commit")
+
+    async def _refresh_side_effect(row):
+        calls.append("refresh")
+
+    db.commit = AsyncMock(side_effect=_commit_side_effect)
+    db.refresh = AsyncMock(side_effect=_refresh_side_effect)
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=outcome),
+    ):
+        await run_and_persist(db, _ctx(), "session_x", ["task_completion_judge"])
+
+    # commit(eval rows), commit(usage row), THEN refresh -- never before
+    # the last commit.
+    assert calls == ["commit", "commit", "refresh"]

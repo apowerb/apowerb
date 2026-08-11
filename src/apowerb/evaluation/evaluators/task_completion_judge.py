@@ -9,6 +9,15 @@ Hard constraint: the judge model must never be the model being judged
 independent judge would). This module takes the judged model as an
 explicit argument and refuses to run if it resolves to the same model as
 the configured judge.
+
+Judge model selection: server default, or bring-your-own-model (BYOM).
+Callers may pass `judge_model` / `judge_api_key` to run this evaluation
+against their own judge instead of the server's shared one -- `run_service`
+enforces at the HTTP boundary that a `judge_model` never arrives without
+its key, but this function repeats the check (never fall back to the
+server's key just because a caller-supplied key was empty). The BYOM key
+is used for exactly one `litellm.acompletion` call and is never written to
+`details`, never logged, never persisted.
 """
 
 from __future__ import annotations
@@ -130,6 +139,41 @@ def _same_provider(judge_model: str, judged_model: str) -> bool:
     return bool(judge_provider) and judge_provider == _provider(judged_model)
 
 
+def _extract_usage(response) -> dict[str, int]:
+    """Pull token counts off a litellm response for `llm_usage` accounting.
+
+    Field names mirror `LlmUsage` columns directly (`thoughts_tokens` for
+    reasoning, not litellm's `reasoning_tokens`) so `run_service` can pass
+    this dict straight into the ORM row. A reasoning judge (gemini-2.5-pro
+    et al.) spends part of `max_tokens` thinking before it answers -- that
+    spend is real cost and must be counted, not dropped because it never
+    became visible text.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "thoughts_tokens": 0,
+            "cached_tokens": 0,
+            "total_tokens": 0,
+        }
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    total_tokens = int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
+    completion_details = getattr(usage, "completion_tokens_details", None)
+    thoughts_tokens = int(getattr(completion_details, "reasoning_tokens", 0) or 0)
+    prompt_details = getattr(usage, "prompt_tokens_details", None)
+    cached_tokens = int(getattr(prompt_details, "cached_tokens", 0) or 0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "thoughts_tokens": thoughts_tokens,
+        "cached_tokens": cached_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
 async def evaluate_task_completion(
     db: AsyncSession,
     *,
@@ -137,17 +181,33 @@ async def evaluate_task_completion(
     user_id: str,
     session_id: str,
     judged_model: str,
+    judge_model: str | None = None,
+    judge_api_key: str | None = None,
 ) -> EvaluationOutcome:
     settings = get_settings()
-    judge_model = (settings.evaluation_judge_model or "").strip()
-    judge_key = (settings.evaluation_judge_api_key or "").strip()
-    if not judge_model or not judge_key:
+    is_byom = bool(judge_model)
+    if is_byom:
+        resolved_judge_model = judge_model.strip()
+        resolved_judge_key = (judge_api_key or "").strip()
+        if not resolved_judge_key:
+            # The router is the primary 400 gate for this; repeated here so
+            # a caller of this function directly can never make the shared
+            # server key run someone else's model by leaving the key empty.
+            raise RuntimeError(
+                "judge_api_key is required when judge_model is provided "
+                "(bring-your-own-model)."
+            )
+    else:
+        resolved_judge_model = (settings.evaluation_judge_model or "").strip()
+        resolved_judge_key = (settings.evaluation_judge_api_key or "").strip()
+
+    if not resolved_judge_model or not resolved_judge_key:
         raise RuntimeError(
             "EVALUATION_JUDGE_MODEL / EVALUATION_JUDGE_API_KEY are not configured."
         )
-    if _same_model(judge_model, judged_model):
+    if _same_model(resolved_judge_model, judged_model):
         raise SameJudgeError(
-            f"refusing to judge {judged_model!r} with {judge_model!r}: "
+            f"refusing to judge {judged_model!r} with {resolved_judge_model!r}: "
             "configure a judge from a different model/provider."
         )
 
@@ -173,8 +233,8 @@ async def evaluate_task_completion(
     import litellm
 
     response = await litellm.acompletion(
-        model=judge_model,
-        api_key=judge_key,
+        model=resolved_judge_model,
+        api_key=resolved_judge_key,
         messages=[
             {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
             {"role": "user", "content": transcript_text[:20_000]},
@@ -217,7 +277,11 @@ async def evaluate_task_completion(
         details={
             "session_id": session_id,
             "judged_model": judged_model,
-            "judge_model": judge_model,
+            "judge_model": resolved_judge_model,
+            # Distinguishes a client-paid evaluation from a platform-paid
+            # one -- `run_service._record_judge_usage` reads this to set
+            # `llm_usage.billed_to_thaink2`.
+            "judge_is_byom": is_byom,
             "task_completion": task_completion,
             "intent_resolution": intent_resolution,
             "rationale": parsed.get("rationale"),
@@ -225,7 +289,8 @@ async def evaluate_task_completion(
             # Recorded next to the score it may have tilted, not raised: an
             # install with a single provider must still be able to evaluate.
             "judge_shares_provider_with_judged": _same_provider(
-                judge_model, judged_model
+                resolved_judge_model, judged_model
             ),
+            "judge_usage": _extract_usage(response),
         },
     )
