@@ -22,6 +22,11 @@ exist: `GET /api/evaluations/evaluators` (routers/evaluations.py) reads it
 to let the front build its checkboxes without a hardcoded list, and
 `run_and_persist` reads it to validate incoming evaluator names. Adding an
 evaluator is an entry here, not a front change.
+
+Beyond `tool_execution_outcome` and `task_completion_judge` it carries
+`tool_usage` (deterministic, `pulse_spans`), `coherence` / `completeness`
+(LLM judges) and `hallucination` (LLM judge, degraded --
+`details["grounding"] = "unavailable"`, see its module docstring).
 """
 
 from __future__ import annotations
@@ -38,6 +43,9 @@ from sqlalchemy.sql.elements import quoted_name
 
 from apowerb.configs.settings import get_settings
 from apowerb.evaluation.evaluators.base import EvaluationOutcome
+from apowerb.evaluation.evaluators.coherence import evaluate_coherence
+from apowerb.evaluation.evaluators.completeness import evaluate_completeness
+from apowerb.evaluation.evaluators.hallucination import evaluate_hallucination
 from apowerb.evaluation.evaluators.task_completion_judge import (
     SameJudgeError,
     evaluate_task_completion,
@@ -45,6 +53,7 @@ from apowerb.evaluation.evaluators.task_completion_judge import (
 from apowerb.evaluation.evaluators.tool_execution_outcome import (
     evaluate_tool_execution_outcome,
 )
+from apowerb.evaluation.evaluators.tool_usage import evaluate_tool_usage
 from apowerb.evaluation.models import EvaluationResult
 from apowerb.models import LlmUsage
 from apowerb.users import schemas as user_schemas
@@ -64,6 +73,10 @@ class EvaluatorSpec:
 EVALUATOR_REGISTRY: tuple[EvaluatorSpec, ...] = (
     EvaluatorSpec(name="tool_execution_outcome", kind="deterministic", requires_judge=False),
     EvaluatorSpec(name="task_completion_judge", kind="llm_judge", requires_judge=True),
+    EvaluatorSpec(name="tool_usage", kind="deterministic", requires_judge=False),
+    EvaluatorSpec(name="coherence", kind="llm_judge", requires_judge=True),
+    EvaluatorSpec(name="completeness", kind="llm_judge", requires_judge=True),
+    EvaluatorSpec(name="hallucination", kind="llm_judge", requires_judge=True),
 )
 
 KNOWN_EVALUATORS = tuple(spec.name for spec in EVALUATOR_REGISTRY)
@@ -259,6 +272,56 @@ async def _record_judge_usage(
         await db.rollback()
 
 
+async def _run_llm_judge(
+    evaluator_name: str,
+    judge_fn,
+    db: AsyncSession,
+    ctx: SessionContext,
+    session_id: str,
+    *,
+    judge_model: str | None = None,
+    judge_api_key: str | None = None,
+) -> EvaluationOutcome:
+    """Same never-raises guarantee as `_run_judge`, generalized to the
+    coherence/completeness/hallucination judges: not configured,
+    same-judge-as-judged, or any other failure all become a non-applicable
+    outcome instead of an exception, so one judge problem can never take
+    another evaluator's already-computed result down with it.
+    """
+    try:
+        return await judge_fn(
+            db,
+            app_name=ctx.app_name,
+            user_id=ctx.session_user_id,
+            session_id=session_id,
+            judged_model=ctx.judged_model or "",
+            # Without this, a caller's own model would be honoured by
+            # task_completion_judge and silently ignored by these three.
+            judge_model=judge_model,
+            judge_api_key=judge_api_key,
+        )
+    except (SameJudgeError, RuntimeError) as exc:
+        return EvaluationOutcome.not_applicable(
+            evaluator=evaluator_name,
+            kind="llm_judge",
+            reason=str(exc),
+            session_id=session_id,
+        )
+    except Exception as exc:  # noqa: BLE001 -- judge must never fail the run
+        logger.warning(
+            "[EVAL] Judge evaluator %s failed for session %s: %s",
+            evaluator_name,
+            session_id,
+            exc,
+        )
+        return EvaluationOutcome.not_applicable(
+            evaluator=evaluator_name,
+            kind="llm_judge",
+            reason=f"judge evaluation failed: {exc}",
+            session_id=session_id,
+        )
+
+
 async def run_and_persist(
     db: AsyncSession,
     ctx: SessionContext,
@@ -280,6 +343,29 @@ async def run_and_persist(
         outcomes.append(
             await _run_judge(
                 db, ctx, session_id,
+                judge_model=judge_model, judge_api_key=judge_api_key,
+            )
+        )
+    if "tool_usage" in names:
+        outcomes.append(await evaluate_tool_usage(db, session_id))
+    if "coherence" in names:
+        outcomes.append(
+            await _run_llm_judge(
+                "coherence", evaluate_coherence, db, ctx, session_id,
+                judge_model=judge_model, judge_api_key=judge_api_key,
+            )
+        )
+    if "completeness" in names:
+        outcomes.append(
+            await _run_llm_judge(
+                "completeness", evaluate_completeness, db, ctx, session_id,
+                judge_model=judge_model, judge_api_key=judge_api_key,
+            )
+        )
+    if "hallucination" in names:
+        outcomes.append(
+            await _run_llm_judge(
+                "hallucination", evaluate_hallucination, db, ctx, session_id,
                 judge_model=judge_model, judge_api_key=judge_api_key,
             )
         )
