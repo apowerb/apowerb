@@ -60,3 +60,28 @@ class EvaluationOutcome:
             passed=None,
             details={"not_applicable": reason, **details},
         )
+
+
+_RATIONALE_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English",
+    "fr": "French",
+    "es": "Spanish",
+    "de": "German",
+    "it": "Italian",
+    "pt": "Portuguese",
+}
+
+
+def rationale_language(locale: str | None) -> str:
+    """Human-readable language name for a `rationale` prompt, from a locale.
+
+    `rationale` addresses the person reading the screen, not the
+    conversation being judged -- it follows the interface's locale, never
+    the judged session's own language. Unknown codes fall back to the raw
+    string: still a reasonable instruction for the model, and a system this
+    permissive should not have to be extended for every new UI locale.
+    Empty/missing locale defaults to English, matching `POST /run`'s own
+    default.
+    """
+    code = (locale or "en").strip().lower()
+    return _RATIONALE_LANGUAGE_NAMES.get(code, code)

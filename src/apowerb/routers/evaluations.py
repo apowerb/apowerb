@@ -34,6 +34,7 @@ model/key. Never the model name, never the key -- a plain boolean.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -75,12 +76,18 @@ class EvaluationRunRequest(BaseModel):
     # to the server's key.
     judge_model: str | None = None
     judge_api_key: str | None = None
+    # Language of `rationale` in every LLM-judge result -- it addresses the
+    # person reading the screen, not the judged conversation, so it follows
+    # the interface's own locale (the front sends next-intl's current one).
+    # Never affects evaluator/criteria names: those are identifiers.
+    locale: str = "en"
 
 
 class EvaluationResultOut(BaseModel):
     id: int
     created_at: datetime
     agent_id: int
+    run_id: uuid.UUID
     session_id: str
     evaluator_name: str
     evaluator_kind: str
@@ -96,6 +103,7 @@ class EvaluationResultOut(BaseModel):
             id=row.id,
             created_at=row.created_at,
             agent_id=row.agent_id,
+            run_id=row.run_id,
             session_id=row.session_id,
             evaluator_name=row.evaluator_name,
             evaluator_kind=row.evaluator_kind,
@@ -109,6 +117,7 @@ class EvaluationResultOut(BaseModel):
 
 class EvaluationRunResponse(BaseModel):
     session_id: str
+    run_id: uuid.UUID
     results: list[EvaluationResultOut]
 
 
@@ -159,13 +168,20 @@ async def run_evaluation(
             detail="judge_api_key is required when judge_model is provided",
         )
     ctx = await resolve_session_context(db, request.session_id, current_user)
+    # Generated here, not inside run_and_persist: it belongs at the root of
+    # this response even when the evaluator list is empty, so this call is
+    # the one place that must own it.
+    run_id = uuid.uuid4()
     rows = await run_and_persist(
         db, ctx, request.session_id, request.evaluators,
         judge_model=request.judge_model,
         judge_api_key=request.judge_api_key,
+        run_id=run_id,
+        locale=request.locale,
     )
     return EvaluationRunResponse(
         session_id=request.session_id,
+        run_id=run_id,
         results=[EvaluationResultOut.from_row(row) for row in rows],
     )
 
@@ -192,11 +208,21 @@ async def list_evaluations(
     agent_id: int | None = Query(default=None),
     session_id: str | None = Query(default=None),
     evaluator: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
 ) -> EvaluationListResponse:
+    # Parsed before ownership is even resolved -- a malformed filter is a
+    # request-shape problem, not something worth a query round-trip to reject.
+    parsed_run_id: uuid.UUID | None = None
+    if run_id is not None:
+        try:
+            parsed_run_id = uuid.UUID(run_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="run_id is not a valid UUID")
+
     owned = await owned_agent_ids(db, current_user)
     if owned is not None and agent_id is not None and agent_id not in owned:
         raise HTTPException(status_code=403, detail="Not your agent")
@@ -212,6 +238,8 @@ async def list_evaluations(
         filters.append(EvaluationResult.session_id == session_id)
     if evaluator is not None:
         filters.append(EvaluationResult.evaluator_name == evaluator)
+    if parsed_run_id is not None:
+        filters.append(EvaluationResult.run_id == parsed_run_id)
 
     total = (
         await db.execute(

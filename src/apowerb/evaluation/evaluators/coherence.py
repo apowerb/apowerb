@@ -27,23 +27,24 @@ from apowerb.evaluation.evaluators._shared_judge import (
     same_provider,
     transcript_text,
 )
-from apowerb.evaluation.evaluators.base import EvaluationOutcome
+from apowerb.evaluation.evaluators.base import EvaluationOutcome, rationale_language
 from apowerb.evaluation.evaluators.task_completion_judge import SameJudgeError
 
 logger = logging.getLogger(__name__)
 
-_JUDGE_SYSTEM_PROMPT = (
-    "You are an impartial evaluator of AI agent conversations. You took no "
-    "part in the conversation below and have no stake in its outcome. Read "
-    "the transcript and judge only whether the agent's successive "
-    "responses are consistent with each other -- not whether the task was "
-    "completed.\n\n"
-    "Score `coherence` from 0.0 (the agent contradicts itself or its "
-    "earlier statements/actions) to 1.0 (every response is consistent with "
-    "what came before).\n\n"
-    "Reply with ONLY a JSON object, no markdown fence: "
-    '{"coherence": <float>, "rationale": "<one sentence, in English>"}'
-)
+def _judge_system_prompt(locale: str | None) -> str:
+    return (
+        "You are an impartial evaluator of AI agent conversations. You took no "
+        "part in the conversation below and have no stake in its outcome. Read "
+        "the transcript and judge only whether the agent's successive "
+        "responses are consistent with each other -- not whether the task was "
+        "completed.\n\n"
+        "Score `coherence` from 0.0 (the agent contradicts itself or its "
+        "earlier statements/actions) to 1.0 (every response is consistent with "
+        "what came before).\n\n"
+        "Reply with ONLY a JSON object, no markdown fence: "
+        f'{{"coherence": <float>, "rationale": "<one sentence, in {rationale_language(locale)}>"}}'
+    )
 
 
 async def evaluate_coherence(
@@ -55,6 +56,7 @@ async def evaluate_coherence(
     judged_model: str,
     judge_model: str | None = None,
     judge_api_key: str | None = None,
+    locale: str | None = None,
 ) -> EvaluationOutcome:
     judge_model, judge_key, is_byom = resolve_judge(judge_model, judge_api_key)
     if not judge_model or not judge_key:
@@ -84,7 +86,7 @@ async def evaluate_coherence(
         model=judge_model,
         api_key=judge_key,
         messages=[
-            {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+            {"role": "system", "content": _judge_system_prompt(locale)},
             {"role": "user", "content": transcript_text(transcript)[:20_000]},
         ],
         temperature=0.0,
@@ -128,5 +130,9 @@ async def evaluate_coherence(
             "judge_shares_provider_with_judged": same_provider(
                 judge_model, judged_model
             ),
+            "criteria": [
+                {"name": "coherence", "value": coherence, "kind": "score"},
+                {"name": "turns", "value": len(transcript), "kind": "count"},
+            ],
         },
     )

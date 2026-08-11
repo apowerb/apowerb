@@ -12,7 +12,10 @@ evidence.
 
 from unittest.mock import MagicMock, patch
 
-from apowerb.helpers.agent_evaluation_migration import ensure_agent_evaluation_table
+from apowerb.helpers.agent_evaluation_migration import (
+    ensure_agent_evaluation_run_id_column,
+    ensure_agent_evaluation_table,
+)
 
 
 @patch("apowerb.helpers.agent_evaluation_migration.inspect")
@@ -55,5 +58,60 @@ def test_never_touches_the_engine_it_did_not_create(mock_inspect):
     engine = MagicMock()
 
     ensure_agent_evaluation_table(engine=engine)
+
+    engine.dispose.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# run_id column (additive, backfilled from (session_id, created_at))
+# ---------------------------------------------------------------------------
+
+
+def _connect_mock(engine):
+    """The mocked `conn` object yielded by `with engine.connect() as conn:`."""
+    return engine.connect.return_value.__enter__.return_value
+
+
+@patch("apowerb.helpers.agent_evaluation_migration.inspect")
+def test_adds_and_backfills_run_id_column_when_missing(mock_inspect):
+    mock_inspect.return_value.get_columns.return_value = [{"name": "id"}, {"name": "session_id"}]
+    engine = MagicMock()
+
+    ensure_agent_evaluation_run_id_column(engine=engine)
+
+    conn = _connect_mock(engine)
+    executed = " ".join(str(call.args[0]) for call in conn.execute.call_args_list)
+    assert "ADD COLUMN run_id" in executed
+    assert "gen_random_uuid()" in executed
+    assert "SET NOT NULL" in executed
+    assert "CREATE INDEX" in executed
+    assert "run_id" in executed
+    conn.commit.assert_called_once()
+
+
+@patch("apowerb.helpers.agent_evaluation_migration.inspect")
+def test_skips_run_id_migration_when_column_already_present(mock_inspect):
+    mock_inspect.return_value.get_columns.return_value = [{"name": "run_id"}]
+    engine = MagicMock()
+
+    ensure_agent_evaluation_run_id_column(engine=engine)
+
+    engine.connect.assert_not_called()
+
+
+@patch("apowerb.helpers.agent_evaluation_migration.inspect")
+def test_never_raises_when_the_run_id_migration_fails(mock_inspect):
+    mock_inspect.side_effect = RuntimeError("db unreachable")
+    engine = MagicMock()
+
+    ensure_agent_evaluation_run_id_column(engine=engine)  # must not raise
+
+
+@patch("apowerb.helpers.agent_evaluation_migration.inspect")
+def test_run_id_migration_never_disposes_an_engine_it_did_not_create(mock_inspect):
+    mock_inspect.return_value.get_columns.return_value = [{"name": "run_id"}]
+    engine = MagicMock()
+
+    ensure_agent_evaluation_run_id_column(engine=engine)
 
     engine.dispose.assert_not_called()

@@ -57,7 +57,10 @@ from apowerb.helpers.webhook_migration import ensure_webhook_subscriptions_table
 from apowerb.helpers.webhook_log_migration import ensure_webhook_logs_table
 from apowerb.helpers.notification_migration import ensure_notifications_table
 from apowerb.helpers.business_intelligence_migration import ensure_business_intelligence_table
-from apowerb.helpers.agent_evaluation_migration import ensure_agent_evaluation_table
+from apowerb.helpers.agent_evaluation_migration import (
+    ensure_agent_evaluation_run_id_column,
+    ensure_agent_evaluation_table,
+)
 from apowerb.helpers.share_migration import ensure_shared_conversations_columns
 from apowerb.helpers.oauth_states_migration import ensure_oauth_states_table
 from apowerb.helpers.security import get_algorithm, get_secret_key
@@ -151,6 +154,7 @@ def bootstrap(force: bool = False) -> None:
     ensure_notifications_table()
     ensure_business_intelligence_table()
     ensure_agent_evaluation_table()
+    ensure_agent_evaluation_run_id_column()
     ensure_shared_conversations_columns()
     ensure_oauth_states_table()
 

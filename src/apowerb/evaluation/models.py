@@ -1,8 +1,10 @@
 """Data model for stored evaluation results.
 
 Migrated on boot by `helpers/agent_evaluation_migration.py`
-(`ensure_agent_evaluation_table`), the same idempotent, purely-additive
-pattern as every other `ensure_*` table in this project. `poc_runner.py`
+(`ensure_agent_evaluation_table` for the table itself,
+`ensure_agent_evaluation_run_id_column` for the `run_id` column added
+after the fact), the same idempotent, purely-additive pattern as every
+other `ensure_*` table in this project. `poc_runner.py`
 still prints its own report to stdout and never writes here -- it is a
 standalone script, unrelated to the HTTP path that now persists through
 this model. Kept in the OSS core (not `apowerb-commercial`) because
@@ -13,7 +15,7 @@ commercial extensions need too (see the OSS/commercial split documented in
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Index, Integer, String, func
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Index, Integer, String, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from apowerb.helpers.database import Base
@@ -44,6 +46,15 @@ class EvaluationResult(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     agent_id = Column(Integer, nullable=False)
+    # Shared by every result of one POST /run call -- see run_service.py.
+    # Existing rows predating this column are backfilled by
+    # helpers/agent_evaluation_migration.py's ensure_agent_evaluation_run_id_column,
+    # grouped by (session_id, created_at): the six results of one run come
+    # from a single transaction and so already share that pair to the
+    # microsecond. SQLAlchemy's generic Uuid compiles to a native UUID on
+    # Postgres and a CHAR(32) hex string on SQLite -- no with_variant needed,
+    # unlike details below (JSONB has no such generic counterpart).
+    run_id = Column(Uuid(as_uuid=True), nullable=False)
     session_id = Column(String(255), nullable=False)
     invocation_id = Column(String(255), nullable=True)
     evaluator_name = Column(String(100), nullable=False)
@@ -62,4 +73,5 @@ class EvaluationResult(Base):
         Index("ix_agent_eval_agent_created", "agent_id", "created_at"),
         Index("ix_agent_eval_session", "session_id"),
         Index("ix_agent_eval_evaluator", "evaluator_name", "created_at"),
+        Index("ix_agent_eval_run_id", "run_id"),
     )

@@ -131,3 +131,36 @@ async def test_identical_repeated_calls_are_penalized():
     ]
     assert outcome.score == pytest.approx(1.0 - 1 / 3, abs=1e-4)
     assert outcome.passed is False
+
+
+# ---------------------------------------------------------------------------
+# criteria: ordered list of what the evaluator measured
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_details_carries_ordered_criteria():
+    db = AsyncMock()
+
+    execute_tool_rows = [
+        _span("s1", "execute_tool tool_run_sql", {"gcp.vertex.agent.tool_call_args": '{"sql": "SELECT 1"}'}),
+        _span("s2", "execute_tool tool_run_sql", {"gcp.vertex.agent.tool_call_args": '{"sql": "SELECT 1"}'}),
+        _span("s3", "execute_tool tool_run_sql", {"gcp.vertex.agent.tool_call_args": '{"sql": "SELECT 2"}'}),
+        _span("s4", "call_llm", {"gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 2}),
+    ]
+
+    async def execute_side_effect(query, params=None):
+        if "pulse_conversation_map" in str(query):
+            return _result([("trace-x",)])
+        return _result(execute_tool_rows)
+
+    db.execute.side_effect = execute_side_effect
+
+    outcome = await evaluate_tool_usage(db, "session_loop")
+
+    assert outcome.details["criteria"] == [
+        {"name": "tool_calls", "value": 3, "kind": "count"},
+        {"name": "distinct_tool_calls", "value": 2, "kind": "count"},
+        {"name": "duplicate_calls", "value": 1, "kind": "count"},
+        {"name": "turns", "value": 1, "kind": "count"},
+    ]

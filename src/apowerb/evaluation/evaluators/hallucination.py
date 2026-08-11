@@ -35,26 +35,27 @@ from apowerb.evaluation.evaluators._shared_judge import (
     same_provider,
     transcript_text,
 )
-from apowerb.evaluation.evaluators.base import EvaluationOutcome
+from apowerb.evaluation.evaluators.base import EvaluationOutcome, rationale_language
 from apowerb.evaluation.evaluators.task_completion_judge import SameJudgeError
 
 logger = logging.getLogger(__name__)
 
-_JUDGE_SYSTEM_PROMPT = (
-    "You are an impartial evaluator of AI agent conversations. You took no "
-    "part in the conversation below and have no stake in its outcome.\n\n"
-    "IMPORTANT: you do not have access to the sources (documents, database "
-    "rows, tool results) the agent may have used -- only the transcript "
-    "below. You cannot verify any claim against ground truth. Judge only "
-    "the transcript's INTERNAL plausibility: does the agent assert "
-    "specific facts, numbers, dates or names that are unsupported by, or "
-    "contradict, anything earlier in this same conversation.\n\n"
-    "Score `internal_plausibility` from 0.0 (the agent invents specific, "
-    "unsupported, or self-contradicting claims) to 1.0 (nothing asserted "
-    "goes beyond what the conversation itself supports).\n\n"
-    "Reply with ONLY a JSON object, no markdown fence: "
-    '{"internal_plausibility": <float>, "rationale": "<one sentence, in English>"}'
-)
+def _judge_system_prompt(locale: str | None) -> str:
+    return (
+        "You are an impartial evaluator of AI agent conversations. You took no "
+        "part in the conversation below and have no stake in its outcome.\n\n"
+        "IMPORTANT: you do not have access to the sources (documents, database "
+        "rows, tool results) the agent may have used -- only the transcript "
+        "below. You cannot verify any claim against ground truth. Judge only "
+        "the transcript's INTERNAL plausibility: does the agent assert "
+        "specific facts, numbers, dates or names that are unsupported by, or "
+        "contradict, anything earlier in this same conversation.\n\n"
+        "Score `internal_plausibility` from 0.0 (the agent invents specific, "
+        "unsupported, or self-contradicting claims) to 1.0 (nothing asserted "
+        "goes beyond what the conversation itself supports).\n\n"
+        "Reply with ONLY a JSON object, no markdown fence: "
+        f'{{"internal_plausibility": <float>, "rationale": "<one sentence, in {rationale_language(locale)}>"}}'
+    )
 
 
 async def evaluate_hallucination(
@@ -66,6 +67,7 @@ async def evaluate_hallucination(
     judged_model: str,
     judge_model: str | None = None,
     judge_api_key: str | None = None,
+    locale: str | None = None,
 ) -> EvaluationOutcome:
     judge_model, judge_key, is_byom = resolve_judge(judge_model, judge_api_key)
     if not judge_model or not judge_key:
@@ -96,7 +98,7 @@ async def evaluate_hallucination(
         model=judge_model,
         api_key=judge_key,
         messages=[
-            {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+            {"role": "system", "content": _judge_system_prompt(locale)},
             {"role": "user", "content": transcript_text(transcript)[:20_000]},
         ],
         temperature=0.0,
@@ -143,5 +145,12 @@ async def evaluate_hallucination(
             # Never a groundedness score: no source chunks are logged for
             # this evaluator to check claims against. See module docstring.
             "grounding": "unavailable",
+            "criteria": [
+                {"name": "internal_plausibility", "value": internal_plausibility, "kind": "score"},
+                {"name": "turns", "value": len(transcript), "kind": "count"},
+                # False: this install cannot check claims against source
+                # chunks -- see the module docstring and details["grounding"].
+                {"name": "grounding", "value": False, "kind": "flag"},
+            ],
         },
     )

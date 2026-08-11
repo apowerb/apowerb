@@ -14,6 +14,7 @@ responsible for:
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -36,6 +37,7 @@ def _eval_row(**overrides):
         id=1,
         created_at=datetime(2026, 8, 10, 11, 4, 12, tzinfo=timezone.utc),
         agent_id=1234,
+        run_id=uuid.UUID("11111111-1111-4111-8111-111111111111"),
         session_id="session_1786030573591",
         evaluator_name="tool_execution_outcome",
         evaluator_kind="deterministic",
@@ -588,3 +590,174 @@ class TestListEvaluators:
         assert "gemini-2.5-pro-super-secret-deployment" not in resp.text
         assert "sk-server-secret-should-not-leak" not in resp.text
         assert set(resp.json().keys()) == {"judge_configured", "items"}
+
+
+# ---------------------------------------------------------------------------
+# run_id: shared identifier of one evaluation run
+# ---------------------------------------------------------------------------
+
+
+class TestRunId:
+    def test_run_response_carries_a_run_id_at_the_root(self):
+        row = _eval_row()
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+
+        ctx = SessionContext(
+            agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
+            judged_model="gemini/gemini-2.5-flash", owner_id="me@example.com",
+        )
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(return_value=ctx),
+            ),
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(return_value=[row]),
+            ) as run_mock,
+        ):
+            resp = client.post(
+                "/api/evaluations/run", json={"session_id": "session_1786030573591"}
+            )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert uuid.UUID(body["run_id"])
+        # The router-generated run_id must be the one handed to run_and_persist,
+        # not a second, independent one -- otherwise the response's run_id
+        # would not match what was actually persisted on the rows.
+        assert run_mock.call_args.kwargs["run_id"] == uuid.UUID(body["run_id"])
+
+    def test_each_result_carries_the_run_id(self):
+        run_id = uuid.uuid4()
+        row = _eval_row(run_id=run_id)
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+
+        ctx = SessionContext(
+            agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
+            judged_model="gemini/gemini-2.5-flash", owner_id="me@example.com",
+        )
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(return_value=ctx),
+            ),
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(return_value=[row]),
+            ),
+        ):
+            resp = client.post(
+                "/api/evaluations/run", json={"session_id": "session_1786030573591"}
+            )
+
+        result = resp.json()["results"][0]
+        assert result["run_id"] == str(run_id)
+
+    def test_list_evaluations_items_carry_run_id(self):
+        run_id = uuid.uuid4()
+        row = _eval_row(run_id=run_id)
+        session = _FakeSession([_scalar_one(1), _scalars_all([row])])
+        app = _build_app(session=session, user=_fake_user())
+        client = TestClient(app)
+
+        with patch(
+            "apowerb.routers.evaluations.owned_agent_ids",
+            new=AsyncMock(return_value={1234}),
+        ):
+            resp = client.get("/api/evaluations")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"][0]["run_id"] == str(run_id)
+
+    def test_list_evaluations_filters_by_run_id(self):
+        run_id = uuid.uuid4()
+        row = _eval_row(run_id=run_id)
+        session = _FakeSession([_scalar_one(1), _scalars_all([row])])
+        app = _build_app(session=session, user=_fake_user())
+        client = TestClient(app)
+
+        with patch(
+            "apowerb.routers.evaluations.owned_agent_ids",
+            new=AsyncMock(return_value=None),
+        ):
+            resp = client.get(f"/api/evaluations?run_id={run_id}")
+
+        assert resp.status_code == 200, resp.text
+        # The filter must reach the query, not just be accepted and ignored.
+        assert "run_id" in str(session.executed_stmts[0]).lower()
+
+    def test_list_evaluations_invalid_run_id_is_400(self):
+        session = _FakeSession([])
+        app = _build_app(session=session, user=_fake_user())
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with patch(
+            "apowerb.routers.evaluations.owned_agent_ids",
+            new=AsyncMock(return_value=None),
+        ):
+            resp = client.get("/api/evaluations?run_id=not-a-uuid")
+
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# locale: rationale language, forwarded to run_and_persist
+# ---------------------------------------------------------------------------
+
+
+class TestLocale:
+    def test_locale_is_forwarded_to_run_and_persist(self):
+        row = _eval_row(evaluator_name="task_completion_judge", evaluator_kind="llm_judge")
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+
+        ctx = SessionContext(
+            agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
+            judged_model="gemini/gemini-2.5-flash", owner_id="me@example.com",
+        )
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(return_value=ctx),
+            ),
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(return_value=[row]),
+            ) as run_mock,
+        ):
+            resp = client.post(
+                "/api/evaluations/run",
+                json={"session_id": "session_1786030573591", "locale": "fr"},
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert run_mock.call_args.kwargs["locale"] == "fr"
+
+    def test_omitted_locale_defaults_to_en(self):
+        row = _eval_row(evaluator_name="task_completion_judge", evaluator_kind="llm_judge")
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+
+        ctx = SessionContext(
+            agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
+            judged_model="gemini/gemini-2.5-flash", owner_id="me@example.com",
+        )
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(return_value=ctx),
+            ),
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(return_value=[row]),
+            ) as run_mock,
+        ):
+            resp = client.post(
+                "/api/evaluations/run", json={"session_id": "session_1786030573591"}
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert run_mock.call_args.kwargs["locale"] == "en"

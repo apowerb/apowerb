@@ -174,5 +174,14 @@ async def evaluate_tool_execution_outcome(
             "naive_success_rate": round(naive_success_rate, 4),
             "status_code_is_reliable": naive_failures == real_failures,
             "per_tool": per_tool,
+            "criteria": [
+                {"name": "tool_calls", "value": total, "kind": "count"},
+                {"name": "real_failures", "value": real_failures, "kind": "count"},
+                {
+                    "name": "status_code_is_reliable",
+                    "value": naive_failures == real_failures,
+                    "kind": "flag",
+                },
+            ],
         },
     )
