@@ -15,12 +15,17 @@ don't make:
 no renaming, no reshaping. The front is built against that exact shape
 (`per_tool` for the deterministic evaluator, `rationale` /
 `task_completion` / `intent_resolution` / `turns` /
-`judge_shares_provider_with_judged` for the judge).
+`judge_shares_provider_with_judged` / `judge_is_byom` for the judge).
 
-`KNOWN_EVALUATORS` also lists `tool_usage` (deterministic, `pulse_spans`),
-`coherence` / `completeness` (LLM judges, `_run_llm_judge` generalizes the
-never-raises guarantee `_run_judge` already had for
-`task_completion_judge`), and `hallucination` (LLM judge, degraded --
+`EVALUATOR_REGISTRY` is the single source of truth for what evaluators
+exist: `GET /api/evaluations/evaluators` (routers/evaluations.py) reads it
+to let the front build its checkboxes without a hardcoded list, and
+`run_and_persist` reads it to validate incoming evaluator names. Adding an
+evaluator is an entry here, not a front change.
+
+Beyond `tool_execution_outcome` and `task_completion_judge` it carries
+`tool_usage` (deterministic, `pulse_spans`), `coherence` / `completeness`
+(LLM judges) and `hallucination` (LLM judge, degraded --
 `details["grounding"] = "unavailable"`, see its module docstring).
 """
 
@@ -50,18 +55,36 @@ from apowerb.evaluation.evaluators.tool_execution_outcome import (
 )
 from apowerb.evaluation.evaluators.tool_usage import evaluate_tool_usage
 from apowerb.evaluation.models import EvaluationResult
+from apowerb.models import LlmUsage
 from apowerb.users import schemas as user_schemas
 
 logger = logging.getLogger(__name__)
 
-KNOWN_EVALUATORS = (
-    "tool_execution_outcome",
-    "task_completion_judge",
-    "tool_usage",
-    "coherence",
-    "completeness",
-    "hallucination",
+
+@dataclass(frozen=True)
+class EvaluatorSpec:
+    """Metadata for one evaluator, as exposed by `GET /evaluations/evaluators`."""
+
+    name: str
+    kind: str  # "deterministic" | "llm_judge"
+    requires_judge: bool
+
+
+EVALUATOR_REGISTRY: tuple[EvaluatorSpec, ...] = (
+    EvaluatorSpec(name="tool_execution_outcome", kind="deterministic", requires_judge=False),
+    EvaluatorSpec(name="task_completion_judge", kind="llm_judge", requires_judge=True),
+    EvaluatorSpec(name="tool_usage", kind="deterministic", requires_judge=False),
+    EvaluatorSpec(name="coherence", kind="llm_judge", requires_judge=True),
+    EvaluatorSpec(name="completeness", kind="llm_judge", requires_judge=True),
+    EvaluatorSpec(name="hallucination", kind="llm_judge", requires_judge=True),
 )
+
+KNOWN_EVALUATORS = tuple(spec.name for spec in EVALUATOR_REGISTRY)
+
+
+def list_evaluator_specs() -> tuple[EvaluatorSpec, ...]:
+    return EVALUATOR_REGISTRY
+
 
 # Same convention as helpers/ownership.py's validate_agent_ownership: an
 # agent's app_name is "agent<numeric id>". Superagents and other app_name
@@ -80,6 +103,11 @@ class SessionContext:
     session_user_id: str
     judged_model: str | None
     owner_id: str
+    # Business name of the agent ("Analyste AR"), not the ADK appName
+    # ("agent1234") -- used to label `llm_usage` rows the same way an
+    # agent turn does. Falls back to `app_name` when the store row carries
+    # no name.
+    agent_name: str = ""
 
 
 async def resolve_session_context(
@@ -133,6 +161,7 @@ async def resolve_session_context(
         session_user_id=session_user_id,
         judged_model=agent.get("agent_model"),
         owner_id=owner_id,
+        agent_name=agent.get("agent_name") or app_name,
     )
 
 
@@ -156,7 +185,12 @@ async def owned_agent_ids(db: AsyncSession, current_user: user_schemas.User) -> 
 
 
 async def _run_judge(
-    db: AsyncSession, ctx: SessionContext, session_id: str
+    db: AsyncSession,
+    ctx: SessionContext,
+    session_id: str,
+    *,
+    judge_model: str | None = None,
+    judge_api_key: str | None = None,
 ) -> EvaluationOutcome:
     """Never raises: not configured, same-judge-as-judged, or any other
     failure (litellm timeout, malformed response, ...) all become a
@@ -170,6 +204,8 @@ async def _run_judge(
             user_id=ctx.session_user_id,
             session_id=session_id,
             judged_model=ctx.judged_model or "",
+            judge_model=judge_model,
+            judge_api_key=judge_api_key,
         )
     except (SameJudgeError, RuntimeError) as exc:
         return EvaluationOutcome.not_applicable(
@@ -190,12 +226,61 @@ async def _run_judge(
         )
 
 
+async def _record_judge_usage(
+    db: AsyncSession, ctx: SessionContext, session_id: str, outcome: EvaluationOutcome
+) -> None:
+    """Write one `llm_usage` row for a judge call, the same way an agent
+    turn is recorded -- `invocation_source="evaluation"` is what separates
+    it from a chat turn. `billed_to_thaink2` is `True` when the server's
+    shared judge served the call, `False` in BYOM (the caller's own key
+    paid for it). This split is a default proposed in the dev report, not
+    yet confirmed by David/Farid.
+
+    Best-effort: an accounting failure must never fail the evaluation, but
+    it is logged loudly (not swallowed) so it cannot vanish silently.
+    """
+    usage = outcome.details.get("judge_usage")
+    judge_model = outcome.details.get("judge_model")
+    if not usage or not judge_model:
+        return
+
+    try:
+        db.add(
+            LlmUsage(
+                agent_id=ctx.agent_id,
+                agent_name=ctx.agent_name or ctx.app_name,
+                owner_id=ctx.owner_id,
+                session_id=session_id,
+                invocation_id=None,
+                invocation_source="evaluation",
+                model=judge_model,
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+                thoughts_tokens=usage.get("thoughts_tokens", 0),
+                cached_tokens=usage.get("cached_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+                tool_names=None,
+                billed_to_thaink2=not bool(outcome.details.get("judge_is_byom")),
+            )
+        )
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 -- accounting must never fail the evaluation
+        logger.error(
+            "[EVAL] Failed to record judge llm_usage for session %s (model=%s): %s",
+            session_id, judge_model, exc,
+        )
+        await db.rollback()
+
+
 async def _run_llm_judge(
     evaluator_name: str,
     judge_fn,
     db: AsyncSession,
     ctx: SessionContext,
     session_id: str,
+    *,
+    judge_model: str | None = None,
+    judge_api_key: str | None = None,
 ) -> EvaluationOutcome:
     """Same never-raises guarantee as `_run_judge`, generalized to the
     coherence/completeness/hallucination judges: not configured,
@@ -210,6 +295,10 @@ async def _run_llm_judge(
             user_id=ctx.session_user_id,
             session_id=session_id,
             judged_model=ctx.judged_model or "",
+            # Without this, a caller's own model would be honoured by
+            # task_completion_judge and silently ignored by these three.
+            judge_model=judge_model,
+            judge_api_key=judge_api_key,
         )
     except (SameJudgeError, RuntimeError) as exc:
         return EvaluationOutcome.not_applicable(
@@ -238,34 +327,46 @@ async def run_and_persist(
     ctx: SessionContext,
     session_id: str,
     evaluators: list[str] | None,
+    *,
+    judge_model: str | None = None,
+    judge_api_key: str | None = None,
 ) -> list[EvaluationResult]:
     names = list(evaluators) if evaluators is not None else list(KNOWN_EVALUATORS)
     unknown = [name for name in names if name not in KNOWN_EVALUATORS]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown evaluator(s): {unknown}")
 
-    settings = get_settings()
     outcomes: list[EvaluationOutcome] = []
     if "tool_execution_outcome" in names:
         outcomes.append(await evaluate_tool_execution_outcome(db, session_id))
     if "task_completion_judge" in names:
-        outcomes.append(await _run_judge(db, ctx, session_id))
+        outcomes.append(
+            await _run_judge(
+                db, ctx, session_id,
+                judge_model=judge_model, judge_api_key=judge_api_key,
+            )
+        )
     if "tool_usage" in names:
         outcomes.append(await evaluate_tool_usage(db, session_id))
     if "coherence" in names:
         outcomes.append(
-            await _run_llm_judge("coherence", evaluate_coherence, db, ctx, session_id)
+            await _run_llm_judge(
+                "coherence", evaluate_coherence, db, ctx, session_id,
+                judge_model=judge_model, judge_api_key=judge_api_key,
+            )
         )
     if "completeness" in names:
         outcomes.append(
             await _run_llm_judge(
-                "completeness", evaluate_completeness, db, ctx, session_id
+                "completeness", evaluate_completeness, db, ctx, session_id,
+                judge_model=judge_model, judge_api_key=judge_api_key,
             )
         )
     if "hallucination" in names:
         outcomes.append(
             await _run_llm_judge(
-                "hallucination", evaluate_hallucination, db, ctx, session_id
+                "hallucination", evaluate_hallucination, db, ctx, session_id,
+                judge_model=judge_model, judge_api_key=judge_api_key,
             )
         )
 
@@ -277,7 +378,10 @@ async def run_and_persist(
             invocation_id=None,
             evaluator_name=outcome.evaluator,
             evaluator_kind=outcome.kind,
-            judge_model=(settings.evaluation_judge_model or None) if outcome.kind == "llm_judge" else None,
+            # The model EFFECTIVELY used by the judge (may be BYOM), read
+            # from the outcome's own details -- not the server's settings,
+            # which the caller may have overridden for this run.
+            judge_model=outcome.details.get("judge_model") if outcome.kind == "llm_judge" else None,
             score=outcome.score,
             passed=outcome.passed,
             details=outcome.details,
@@ -286,6 +390,20 @@ async def run_and_persist(
         rows.append(row)
 
     await db.commit()
+
+    # Usage accounting's own commit runs BEFORE the refresh below, not
+    # after: SQLAlchemy expires every object in the session on commit
+    # (the default `expire_on_commit=True`), including these rows that
+    # were just persisted. Refreshing first and writing usage second
+    # would hand the router back expired rows -- `EvaluationResultOut`
+    # reading `row.id` outside an awaited context then crashes with
+    # `MissingGreenlet`. Only reproduces against a real AsyncSession;
+    # mocks don't model expiration.
+    for outcome in outcomes:
+        if outcome.kind == "llm_judge":
+            await _record_judge_usage(db, ctx, session_id, outcome)
+
     for row in rows:
         await db.refresh(row)
+
     return rows

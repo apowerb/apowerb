@@ -8,6 +8,9 @@ from apowerb.evaluation.evaluators.coherence import evaluate_coherence
 from apowerb.evaluation.evaluators.task_completion_judge import SameJudgeError
 
 _MODULE = "apowerb.evaluation.evaluators.coherence"
+# The judge model is resolved in _shared_judge now, not here: patching
+# get_settings on this module would no longer intercept the read.
+_SHARED = "apowerb.evaluation.evaluators._shared_judge"
 
 
 def _events_result(rows):
@@ -19,7 +22,7 @@ def _events_result(rows):
 @pytest.mark.asyncio
 async def test_refuses_to_judge_a_model_with_itself():
     db = AsyncMock()
-    with patch(f"{_MODULE}.get_settings") as mock_settings:
+    with patch(f"{_SHARED}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-pro",
             evaluation_judge_api_key="k",
@@ -38,7 +41,7 @@ async def test_refuses_to_judge_a_model_with_itself():
 @pytest.mark.asyncio
 async def test_missing_judge_config_raises_before_any_query():
     db = AsyncMock()
-    with patch(f"{_MODULE}.get_settings") as mock_settings:
+    with patch(f"{_SHARED}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="", evaluation_judge_api_key=""
         )
@@ -58,7 +61,7 @@ async def test_empty_transcript_is_not_applicable_not_a_zero():
     db = AsyncMock()
     db.execute.return_value = _events_result([])
 
-    with patch(f"{_MODULE}.get_settings") as mock_settings, patch(
+    with patch(f"{_SHARED}.get_settings") as mock_settings, patch(
         "litellm.acompletion", new_callable=AsyncMock
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
@@ -116,7 +119,7 @@ async def test_scores_a_real_shaped_transcript():
         )
     ]
 
-    with patch(f"{_MODULE}.get_settings") as mock_settings, patch(
+    with patch(f"{_SHARED}.get_settings") as mock_settings, patch(
         "litellm.acompletion", new_callable=AsyncMock
     ) as mock_completion:
         mock_settings.return_value = MagicMock(

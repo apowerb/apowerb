@@ -19,6 +19,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import quoted_name
 
 from apowerb.configs.settings import get_settings
+from apowerb.evaluation.evaluators.task_completion_judge import (
+    _extract_usage as extract_usage,
+)
+
+# Re-exported for coherence/completeness/hallucination: one definition of how
+# a judge's token spend is read off a litellm response, written and proven by
+# the accounting work, not a second one living here.
+__all__ = ["extract_usage", "resolve_judge"]
+
+
+def resolve_judge(judge_model: str | None, judge_api_key: str | None):
+    """(model, key, is_byom) for this run — the caller's, or the server's.
+
+    Same rules as `task_completion_judge`, deliberately: a caller model
+    without its key must never fall back on the shared server key, or the
+    platform ends up paying to run someone else's model.
+    """
+    if judge_model:
+        key = (judge_api_key or "").strip()
+        if not key:
+            raise RuntimeError(
+                "judge_api_key is required when judge_model is provided "
+                "(bring-your-own-model)."
+            )
+        return judge_model.strip(), key, True
+
+    settings = get_settings()
+    return (
+        (settings.evaluation_judge_model or "").strip(),
+        (settings.evaluation_judge_api_key or "").strip(),
+        False,
+    )
 
 
 def events_sql():

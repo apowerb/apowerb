@@ -81,7 +81,14 @@ def _all(rows):
     return res
 
 
-def _build_app(session=None, *, user=None, evaluation_enabled=True):
+def _build_app(
+    session=None,
+    *,
+    user=None,
+    evaluation_enabled=True,
+    judge_model="gemini/gemini-2.5-flash",
+    judge_api_key="server-key",
+):
     from apowerb.auth.dependencies import get_current_user
     from apowerb.helpers.database import get_db
     from apowerb.routers.evaluations import router
@@ -102,6 +109,8 @@ def _build_app(session=None, *, user=None, evaluation_enabled=True):
 
     fake_settings = MagicMock()
     fake_settings.evaluation_enabled = evaluation_enabled
+    fake_settings.evaluation_judge_model = judge_model
+    fake_settings.evaluation_judge_api_key = judge_api_key
     patcher = patch("apowerb.routers.evaluations.get_settings", return_value=fake_settings)
     patcher.start()
     app.state._settings_patcher = patcher  # keep alive for the test's lifetime
@@ -343,3 +352,239 @@ class TestEvaluationsSummary:
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["by_evaluator"] == []
+
+
+# ---------------------------------------------------------------------------
+# POST /evaluations/run — judge model selection (default vs. BYOM)
+# ---------------------------------------------------------------------------
+
+
+class TestJudgeModelSelection:
+    def test_judge_model_without_api_key_is_400(self):
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.post(
+            "/api/evaluations/run",
+            json={
+                "session_id": "session_1786030573591",
+                "judge_model": "anthropic/claude-3-5-sonnet",
+            },
+        )
+
+        assert resp.status_code == 400
+
+    def test_judge_model_without_api_key_never_reaches_the_database(self):
+        """The 400 must be a pure request-shape check, before ownership is
+        even resolved -- a server key must never be one exception path
+        away from running someone else's model."""
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(),
+            ) as ctx_mock,
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(),
+            ) as run_mock,
+        ):
+            client.post(
+                "/api/evaluations/run",
+                json={
+                    "session_id": "session_x",
+                    "judge_model": "anthropic/claude-3-5-sonnet",
+                },
+            )
+
+        ctx_mock.assert_not_called()
+        run_mock.assert_not_called()
+
+    def test_byom_judge_model_and_key_are_forwarded_to_run_and_persist(self):
+        row = _eval_row(evaluator_name="task_completion_judge", evaluator_kind="llm_judge")
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+
+        ctx = SessionContext(
+            agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
+            judged_model="gemini/gemini-2.5-flash", owner_id="me@example.com",
+        )
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(return_value=ctx),
+            ),
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(return_value=[row]),
+            ) as run_mock,
+        ):
+            resp = client.post(
+                "/api/evaluations/run",
+                json={
+                    "session_id": "session_1786030573591",
+                    "judge_model": "anthropic/claude-3-5-sonnet",
+                    "judge_api_key": "sk-byom-secret",
+                },
+            )
+
+        assert resp.status_code == 200, resp.text
+        call_kwargs = run_mock.call_args.kwargs
+        assert call_kwargs["judge_model"] == "anthropic/claude-3-5-sonnet"
+        assert call_kwargs["judge_api_key"] == "sk-byom-secret"
+
+    def test_omitting_judge_model_runs_the_server_default(self):
+        row = _eval_row(evaluator_name="task_completion_judge", evaluator_kind="llm_judge")
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+
+        ctx = SessionContext(
+            agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
+            judged_model="gemini/gemini-2.5-flash", owner_id="me@example.com",
+        )
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(return_value=ctx),
+            ),
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(return_value=[row]),
+            ) as run_mock,
+        ):
+            resp = client.post(
+                "/api/evaluations/run", json={"session_id": "session_1786030573591"}
+            )
+
+        assert resp.status_code == 200, resp.text
+        call_kwargs = run_mock.call_args.kwargs
+        assert call_kwargs["judge_model"] is None
+        assert call_kwargs["judge_api_key"] is None
+
+    def test_judge_api_key_never_appears_in_the_http_response(self):
+        row = _eval_row(
+            evaluator_name="task_completion_judge",
+            evaluator_kind="llm_judge",
+            judge_model="anthropic/claude-3-5-sonnet",
+            details={"judge_model": "anthropic/claude-3-5-sonnet", "judge_is_byom": True},
+        )
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+        secret = "sk-byom-should-never-be-echoed-back"
+
+        ctx = SessionContext(
+            agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
+            judged_model="gemini/gemini-2.5-flash", owner_id="me@example.com",
+        )
+        with (
+            patch(
+                "apowerb.routers.evaluations.resolve_session_context",
+                new=AsyncMock(return_value=ctx),
+            ),
+            patch(
+                "apowerb.routers.evaluations.run_and_persist",
+                new=AsyncMock(return_value=[row]),
+            ),
+        ):
+            resp = client.post(
+                "/api/evaluations/run",
+                json={
+                    "session_id": "session_1786030573591",
+                    "judge_model": "anthropic/claude-3-5-sonnet",
+                    "judge_api_key": secret,
+                },
+            )
+
+        assert secret not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# GET /evaluations/evaluators
+# ---------------------------------------------------------------------------
+
+
+class TestListEvaluators:
+    def test_disabled_feature_is_404(self):
+        app = _build_app(user=_fake_user(), evaluation_enabled=False)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.get("/api/evaluations/evaluators")
+
+        assert resp.status_code == 404
+
+    def test_requires_auth(self):
+        app = _build_app(user=None, evaluation_enabled=True)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.get("/api/evaluations/evaluators")
+
+        assert resp.status_code == 401
+
+    def test_lists_the_known_evaluators_with_contract_shape(self):
+        app = _build_app(session=_FakeSession([]), user=_fake_user())
+        client = TestClient(app)
+
+        resp = client.get("/api/evaluations/evaluators")
+
+        assert resp.status_code == 200, resp.text
+        items = {item["name"]: item for item in resp.json()["items"]}
+        assert items["tool_execution_outcome"] == {
+            "name": "tool_execution_outcome",
+            "kind": "deterministic",
+            "requires_judge": False,
+        }
+        assert items["task_completion_judge"] == {
+            "name": "task_completion_judge",
+            "kind": "llm_judge",
+            "requires_judge": True,
+        }
+
+    def test_judge_configured_true_when_server_has_both_model_and_key(self):
+        app = _build_app(
+            session=_FakeSession([]), user=_fake_user(),
+            judge_model="gemini/gemini-2.5-flash", judge_api_key="server-key",
+        )
+        client = TestClient(app)
+
+        resp = client.get("/api/evaluations/evaluators")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["judge_configured"] is True
+
+    def test_judge_configured_false_when_judge_model_missing(self):
+        app = _build_app(
+            session=_FakeSession([]), user=_fake_user(),
+            judge_model="", judge_api_key="server-key",
+        )
+        client = TestClient(app)
+
+        resp = client.get("/api/evaluations/evaluators")
+
+        assert resp.json()["judge_configured"] is False
+
+    def test_judge_configured_false_when_judge_api_key_missing(self):
+        app = _build_app(
+            session=_FakeSession([]), user=_fake_user(),
+            judge_model="gemini/gemini-2.5-flash", judge_api_key="",
+        )
+        client = TestClient(app)
+
+        resp = client.get("/api/evaluations/evaluators")
+
+        assert resp.json()["judge_configured"] is False
+
+    def test_judge_configured_response_never_leaks_the_model_name_or_key(self):
+        app = _build_app(
+            session=_FakeSession([]), user=_fake_user(),
+            judge_model="gemini/gemini-2.5-pro-super-secret-deployment",
+            judge_api_key="sk-server-secret-should-not-leak",
+        )
+        client = TestClient(app)
+
+        resp = client.get("/api/evaluations/evaluators")
+
+        assert "gemini-2.5-pro-super-secret-deployment" not in resp.text
+        assert "sk-server-secret-should-not-leak" not in resp.text
+        assert set(resp.json().keys()) == {"judge_configured", "items"}

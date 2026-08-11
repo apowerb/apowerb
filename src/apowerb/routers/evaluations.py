@@ -13,6 +13,23 @@ Every field on `EvaluationResultOut.details` is exactly what the evaluator
 produced -- no renaming, no reshaping. `applicable` is the one field this
 router adds on top of the stored row, computed the same way
 `EvaluationOutcome.applicable` computes it: `score is not None`.
+
+Judge model selection (`POST /run`): `judge_model` / `judge_api_key` let a
+caller bring their own judge for a single run instead of the server's
+shared one. `judge_model` without `judge_api_key` is rejected with 400
+before anything else runs (before ownership is even resolved) -- a
+server-side key must never be one missing field away from running
+someone else's model. The key itself never appears in a log line, a
+stored row, or a response: it is forwarded to `run_and_persist` and
+nothing on this module's surface echoes it back.
+
+`GET /evaluators` (contract-mandated) lists what's available so the front
+builds its checkboxes off the API, never off a hardcoded list --
+`run_service.EVALUATOR_REGISTRY` is the single source of truth this reads.
+It also carries `judge_configured` (server-level, not per-item): whether
+the server's shared judge is usable at all, so the front can grey out
+`requires_judge` evaluators unless the caller also brings their own
+model/key. Never the model name, never the key -- a plain boolean.
 """
 
 from __future__ import annotations
@@ -28,6 +45,7 @@ from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
 from apowerb.evaluation.models import EvaluationResult
 from apowerb.evaluation.run_service import (
+    list_evaluator_specs,
     owned_agent_ids,
     resolve_session_context,
     run_and_persist,
@@ -51,6 +69,12 @@ router = APIRouter(
 class EvaluationRunRequest(BaseModel):
     session_id: str
     evaluators: list[str] | None = None
+    # Bring-your-own-model judge for this run only. Both absent: the
+    # server's configured judge, as before. `judge_model` without
+    # `judge_api_key` is rejected in `run_evaluation` -- never defaulted
+    # to the server's key.
+    judge_model: str | None = None
+    judge_api_key: str | None = None
 
 
 class EvaluationResultOut(BaseModel):
@@ -108,17 +132,58 @@ class EvaluationSummaryResponse(BaseModel):
     by_evaluator: list[EvaluatorSummary]
 
 
+class EvaluatorInfo(BaseModel):
+    name: str
+    kind: str
+    requires_judge: bool
+
+
+class EvaluatorsListResponse(BaseModel):
+    # True when the server's shared judge (EVALUATION_JUDGE_MODEL and
+    # _API_KEY) is configured -- neither the model name nor the key
+    # itself, a plain boolean the front uses to grey out `requires_judge`
+    # evaluators unless the caller also supplies their own BYOM model/key.
+    judge_configured: bool
+    items: list[EvaluatorInfo]
+
+
 @router.post("/run")
 async def run_evaluation(
     request: EvaluationRunRequest,
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
 ) -> EvaluationRunResponse:
+    if request.judge_model and not request.judge_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="judge_api_key is required when judge_model is provided",
+        )
     ctx = await resolve_session_context(db, request.session_id, current_user)
-    rows = await run_and_persist(db, ctx, request.session_id, request.evaluators)
+    rows = await run_and_persist(
+        db, ctx, request.session_id, request.evaluators,
+        judge_model=request.judge_model,
+        judge_api_key=request.judge_api_key,
+    )
     return EvaluationRunResponse(
         session_id=request.session_id,
         results=[EvaluationResultOut.from_row(row) for row in rows],
+    )
+
+
+@router.get("/evaluators")
+async def list_evaluators(
+    current_user: user_schemas.User = Depends(get_current_user),
+) -> EvaluatorsListResponse:
+    settings = get_settings()
+    judge_configured = bool(settings.evaluation_judge_model) and bool(
+        settings.evaluation_judge_api_key
+    )
+    return EvaluatorsListResponse(
+        judge_configured=judge_configured,
+        items=[
+            EvaluatorInfo(name=spec.name, kind=spec.kind, requires_judge=spec.requires_judge)
+            for spec in list_evaluator_specs()
+        ],
     )
 
 

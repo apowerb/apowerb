@@ -26,8 +26,9 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apowerb.configs.settings import get_settings
 from apowerb.evaluation.evaluators._shared_judge import (
+    extract_usage,
+    resolve_judge,
     fetch_transcript,
     parse_judge_json,
     same_model,
@@ -63,10 +64,10 @@ async def evaluate_hallucination(
     user_id: str,
     session_id: str,
     judged_model: str,
+    judge_model: str | None = None,
+    judge_api_key: str | None = None,
 ) -> EvaluationOutcome:
-    settings = get_settings()
-    judge_model = (settings.evaluation_judge_model or "").strip()
-    judge_key = (settings.evaluation_judge_api_key or "").strip()
+    judge_model, judge_key, is_byom = resolve_judge(judge_model, judge_api_key)
     if not judge_model or not judge_key:
         raise RuntimeError(
             "EVALUATION_JUDGE_MODEL / EVALUATION_JUDGE_API_KEY are not configured."
@@ -130,6 +131,10 @@ async def evaluate_hallucination(
             "judged_model": judged_model,
             "judge_model": judge_model,
             "internal_plausibility": internal_plausibility,
+            # `run_service._record_judge_usage` reads these two: without
+            # them this judge burns tokens nobody is billed for.
+            "judge_is_byom": is_byom,
+            "judge_usage": extract_usage(response),
             "rationale": parsed.get("rationale"),
             "turns": len(transcript),
             "judge_shares_provider_with_judged": same_provider(
