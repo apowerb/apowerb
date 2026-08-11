@@ -180,11 +180,32 @@ async def evaluate_task_completion(
             {"role": "user", "content": transcript_text[:20_000]},
         ],
         temperature=0.0,
-        max_tokens=400,
-        timeout=30,
+        # A reasoning model spends this budget on its own thinking before it
+        # writes anything: measured on gemini-2.5-pro, a short prompt burns
+        # ~110 reasoning tokens for 15 of answer. On a 20k-character
+        # transcript the old 400 was consumed entirely by the reasoning and
+        # the call came back with content=None -- read as "the judge returned
+        # no JSON", which sounds like a broken prompt rather than a budget.
+        # The verdict itself is ~100 tokens; the rest is headroom.
+        max_tokens=2000,
+        timeout=60,
         num_retries=1,
     )
-    parsed = _parse_judge_json(response.choices[0].message.content)
+    message = response.choices[0].message
+    content = getattr(message, "content", None)
+    if not content:
+        # Say which of the two it was. "No JSON" sends the reader to the
+        # prompt; an exhausted budget is a different fix entirely.
+        usage = getattr(response, "usage", None)
+        details = getattr(usage, "completion_tokens_details", None)
+        reasoning = getattr(details, "reasoning_tokens", None)
+        raise RuntimeError(
+            "the judge returned no content "
+            f"(finish_reason={getattr(response.choices[0], 'finish_reason', None)}, "
+            f"reasoning_tokens={reasoning}). A reasoning model may have spent "
+            "the whole completion budget before answering."
+        )
+    parsed = _parse_judge_json(content)
     task_completion = float(parsed.get("task_completion", 0.0))
     intent_resolution = float(parsed.get("intent_resolution", 0.0))
 
