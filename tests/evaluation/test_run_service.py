@@ -8,6 +8,8 @@ Covers the two hard rules from the API contract:
   also take the deterministic evaluator's result down with it.
 """
 
+import uuid
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -735,3 +737,156 @@ async def test_a_new_llm_judge_unexpected_failure_never_propagates():
     assert len(rows) == 1
     assert rows[0].score is None
     assert "litellm timed out" in rows[0].details["not_applicable"]
+
+
+# ---------------------------------------------------------------------------
+# run_and_persist: run_id shared by every row of one call
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_and_persist_stamps_every_row_with_the_same_run_id():
+    db = _db()
+    outcomes = {
+        "tool_usage": EvaluationOutcome(
+            evaluator="tool_usage", kind="deterministic", score=1.0, passed=True
+        ),
+        "coherence": EvaluationOutcome(
+            evaluator="coherence", kind="llm_judge", score=0.9, passed=True
+        ),
+    }
+
+    with (
+        patch(
+            "apowerb.evaluation.run_service.evaluate_tool_usage",
+            new=AsyncMock(return_value=outcomes["tool_usage"]),
+        ),
+        patch(
+            "apowerb.evaluation.run_service.evaluate_coherence",
+            new=AsyncMock(return_value=outcomes["coherence"]),
+        ),
+    ):
+        rows = await run_and_persist(db, _ctx(), "session_x", ["tool_usage", "coherence"])
+
+    assert len(rows) == 2
+    run_ids = {row.run_id for row in rows}
+    assert len(run_ids) == 1
+    assert isinstance(rows[0].run_id, uuid.UUID)
+
+
+@pytest.mark.asyncio
+async def test_run_and_persist_generates_a_new_run_id_when_two_calls_are_made():
+    db = _db()
+    outcome = EvaluationOutcome(
+        evaluator="tool_usage", kind="deterministic", score=1.0, passed=True
+    )
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_tool_usage",
+        new=AsyncMock(return_value=outcome),
+    ):
+        first = await run_and_persist(db, _ctx(), "session_x", ["tool_usage"])
+        second = await run_and_persist(db, _ctx(), "session_x", ["tool_usage"])
+
+    assert first[0].run_id != second[0].run_id
+
+
+@pytest.mark.asyncio
+async def test_run_and_persist_accepts_an_explicit_run_id():
+    """The router generates the run_id once (it must appear at the root of
+    the HTTP response even if the evaluator list is empty), and passes it
+    in -- run_and_persist must use it rather than generating its own."""
+    db = _db()
+    outcome = EvaluationOutcome(
+        evaluator="tool_usage", kind="deterministic", score=1.0, passed=True
+    )
+    forced_run_id = uuid.uuid4()
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_tool_usage",
+        new=AsyncMock(return_value=outcome),
+    ):
+        rows = await run_and_persist(
+            db, _ctx(), "session_x", ["tool_usage"], run_id=forced_run_id
+        )
+
+    assert rows[0].run_id == forced_run_id
+
+
+# ---------------------------------------------------------------------------
+# run_and_persist: locale threading to the four LLM judges
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_and_persist_threads_locale_to_task_completion_judge():
+    db = _db()
+    judged = EvaluationOutcome(
+        evaluator="task_completion_judge", kind="llm_judge", score=0.8, passed=True
+    )
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=judged),
+    ) as judge_mock:
+        await run_and_persist(
+            db, _ctx(), "session_x", ["task_completion_judge"], locale="fr"
+        )
+
+    assert judge_mock.call_args.kwargs["locale"] == "fr"
+
+
+@pytest.mark.asyncio
+async def test_run_and_persist_threads_locale_to_the_three_new_judges():
+    db = _db()
+    outcomes = {
+        "coherence": EvaluationOutcome(
+            evaluator="coherence", kind="llm_judge", score=0.9, passed=True
+        ),
+        "completeness": EvaluationOutcome(
+            evaluator="completeness", kind="llm_judge", score=0.8, passed=True
+        ),
+        "hallucination": EvaluationOutcome(
+            evaluator="hallucination", kind="llm_judge", score=0.95, passed=True
+        ),
+    }
+
+    with (
+        patch(
+            "apowerb.evaluation.run_service.evaluate_coherence",
+            new=AsyncMock(return_value=outcomes["coherence"]),
+        ) as coherence_mock,
+        patch(
+            "apowerb.evaluation.run_service.evaluate_completeness",
+            new=AsyncMock(return_value=outcomes["completeness"]),
+        ) as completeness_mock,
+        patch(
+            "apowerb.evaluation.run_service.evaluate_hallucination",
+            new=AsyncMock(return_value=outcomes["hallucination"]),
+        ) as hallucination_mock,
+    ):
+        await run_and_persist(
+            db, _ctx(), "session_x",
+            ["coherence", "completeness", "hallucination"],
+            locale="fr",
+        )
+
+    assert coherence_mock.call_args.kwargs["locale"] == "fr"
+    assert completeness_mock.call_args.kwargs["locale"] == "fr"
+    assert hallucination_mock.call_args.kwargs["locale"] == "fr"
+
+
+@pytest.mark.asyncio
+async def test_omitted_locale_defaults_to_none_not_a_crash():
+    db = _db()
+    judged = EvaluationOutcome(
+        evaluator="task_completion_judge", kind="llm_judge", score=0.8, passed=True
+    )
+
+    with patch(
+        "apowerb.evaluation.run_service.evaluate_task_completion",
+        new=AsyncMock(return_value=judged),
+    ) as judge_mock:
+        await run_and_persist(db, _ctx(), "session_x", ["task_completion_judge"])
+
+    assert judge_mock.call_args.kwargs["locale"] is None

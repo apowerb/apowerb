@@ -159,5 +159,11 @@ async def evaluate_tool_usage(db: AsyncSession, session_id: str) -> EvaluationOu
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
             "cached_input_tokens": cached_input_tokens,
+            "criteria": [
+                {"name": "tool_calls", "value": total, "kind": "count"},
+                {"name": "distinct_tool_calls", "value": len(counts), "kind": "count"},
+                {"name": "duplicate_calls", "value": duplicate_calls, "kind": "count"},
+                {"name": "turns", "value": turns, "kind": "count"},
+            ],
         },
     )

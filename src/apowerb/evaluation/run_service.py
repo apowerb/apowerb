@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 
 from fastapi import HTTPException
@@ -191,6 +192,7 @@ async def _run_judge(
     *,
     judge_model: str | None = None,
     judge_api_key: str | None = None,
+    locale: str | None = None,
 ) -> EvaluationOutcome:
     """Never raises: not configured, same-judge-as-judged, or any other
     failure (litellm timeout, malformed response, ...) all become a
@@ -206,6 +208,7 @@ async def _run_judge(
             judged_model=ctx.judged_model or "",
             judge_model=judge_model,
             judge_api_key=judge_api_key,
+            locale=locale,
         )
     except (SameJudgeError, RuntimeError) as exc:
         return EvaluationOutcome.not_applicable(
@@ -281,6 +284,7 @@ async def _run_llm_judge(
     *,
     judge_model: str | None = None,
     judge_api_key: str | None = None,
+    locale: str | None = None,
 ) -> EvaluationOutcome:
     """Same never-raises guarantee as `_run_judge`, generalized to the
     coherence/completeness/hallucination judges: not configured,
@@ -299,6 +303,7 @@ async def _run_llm_judge(
             # task_completion_judge and silently ignored by these three.
             judge_model=judge_model,
             judge_api_key=judge_api_key,
+            locale=locale,
         )
     except (SameJudgeError, RuntimeError) as exc:
         return EvaluationOutcome.not_applicable(
@@ -330,7 +335,14 @@ async def run_and_persist(
     *,
     judge_model: str | None = None,
     judge_api_key: str | None = None,
+    run_id: uuid.UUID | None = None,
+    locale: str | None = None,
 ) -> list[EvaluationResult]:
+    # One id shared by every result of this call -- the router generates it
+    # up front (it belongs at the root of the HTTP response even when the
+    # evaluator list is empty) and passes it in; a direct caller that omits
+    # it still gets one, so no row is ever persisted without a run_id.
+    run_id = run_id or uuid.uuid4()
     names = list(evaluators) if evaluators is not None else list(KNOWN_EVALUATORS)
     unknown = [name for name in names if name not in KNOWN_EVALUATORS]
     if unknown:
@@ -344,6 +356,7 @@ async def run_and_persist(
             await _run_judge(
                 db, ctx, session_id,
                 judge_model=judge_model, judge_api_key=judge_api_key,
+                locale=locale,
             )
         )
     if "tool_usage" in names:
@@ -353,6 +366,7 @@ async def run_and_persist(
             await _run_llm_judge(
                 "coherence", evaluate_coherence, db, ctx, session_id,
                 judge_model=judge_model, judge_api_key=judge_api_key,
+                locale=locale,
             )
         )
     if "completeness" in names:
@@ -360,6 +374,7 @@ async def run_and_persist(
             await _run_llm_judge(
                 "completeness", evaluate_completeness, db, ctx, session_id,
                 judge_model=judge_model, judge_api_key=judge_api_key,
+                locale=locale,
             )
         )
     if "hallucination" in names:
@@ -367,6 +382,7 @@ async def run_and_persist(
             await _run_llm_judge(
                 "hallucination", evaluate_hallucination, db, ctx, session_id,
                 judge_model=judge_model, judge_api_key=judge_api_key,
+                locale=locale,
             )
         )
 
@@ -374,6 +390,7 @@ async def run_and_persist(
     for outcome in outcomes:
         row = EvaluationResult(
             agent_id=ctx.agent_id,
+            run_id=run_id,
             session_id=session_id,
             invocation_id=None,
             evaluator_name=outcome.evaluator,

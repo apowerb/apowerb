@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import quoted_name
 
 from apowerb.configs.settings import get_settings
-from apowerb.evaluation.evaluators.base import EvaluationOutcome
+from apowerb.evaluation.evaluators.base import EvaluationOutcome, rationale_language
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +50,23 @@ def _events_sql():
         "ORDER BY timestamp ASC"
     )
 
-_JUDGE_SYSTEM_PROMPT = (
-    "You are an impartial evaluator of AI agent conversations. You took no "
-    "part in the conversation below and have no stake in its outcome. Read "
-    "the transcript and decide whether the agent resolved the user's "
-    "request.\n\n"
-    "Score `task_completion` from 0.0 (not resolved at all) to 1.0 (fully "
-    "resolved). Score `intent_resolution` from 0.0 (misunderstood the "
-    "request) to 1.0 (correctly understood it), independently of whether "
-    "it was completed.\n\n"
-    "Reply with ONLY a JSON object, no markdown fence: "
-    '{"task_completion": <float>, "intent_resolution": <float>, '
-    '"rationale": "<one sentence, in English>"}'
-)
+def _judge_system_prompt(locale: str | None) -> str:
+    # `rationale` addresses the person reading the screen, not the judged
+    # conversation -- it follows the interface's locale. See
+    # evaluators/base.rationale_language.
+    return (
+        "You are an impartial evaluator of AI agent conversations. You took no "
+        "part in the conversation below and have no stake in its outcome. Read "
+        "the transcript and decide whether the agent resolved the user's "
+        "request.\n\n"
+        "Score `task_completion` from 0.0 (not resolved at all) to 1.0 (fully "
+        "resolved). Score `intent_resolution` from 0.0 (misunderstood the "
+        "request) to 1.0 (correctly understood it), independently of whether "
+        "it was completed.\n\n"
+        "Reply with ONLY a JSON object, no markdown fence: "
+        '{"task_completion": <float>, "intent_resolution": <float>, '
+        f'"rationale": "<one sentence, in {rationale_language(locale)}>"}}'
+    )
 
 
 class SameJudgeError(ValueError):
@@ -183,6 +187,7 @@ async def evaluate_task_completion(
     judged_model: str,
     judge_model: str | None = None,
     judge_api_key: str | None = None,
+    locale: str | None = None,
 ) -> EvaluationOutcome:
     settings = get_settings()
     is_byom = bool(judge_model)
@@ -236,7 +241,7 @@ async def evaluate_task_completion(
         model=resolved_judge_model,
         api_key=resolved_judge_key,
         messages=[
-            {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+            {"role": "system", "content": _judge_system_prompt(locale)},
             {"role": "user", "content": transcript_text[:20_000]},
         ],
         temperature=0.0,
@@ -292,5 +297,10 @@ async def evaluate_task_completion(
                 resolved_judge_model, judged_model
             ),
             "judge_usage": _extract_usage(response),
+            "criteria": [
+                {"name": "task_completion", "value": task_completion, "kind": "score"},
+                {"name": "intent_resolution", "value": intent_resolution, "kind": "score"},
+                {"name": "turns", "value": len(transcript), "kind": "count"},
+            ],
         },
     )

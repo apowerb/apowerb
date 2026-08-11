@@ -141,3 +141,45 @@ async def test_falls_back_to_business_error_column_when_response_unparseable():
 
     assert outcome.details["real_failures"] == 1
     assert outcome.details["status_code_is_reliable"] is True
+
+
+# ---------------------------------------------------------------------------
+# criteria: ordered list of what the evaluator measured
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_details_carries_ordered_criteria():
+    db = AsyncMock()
+
+    async def execute_side_effect(query, params=None):
+        if "pulse_conversation_map" in str(query):
+            return _result([("trace123",)])
+        return _result(
+            [
+                (
+                    "span1",
+                    "execute_tool tool_pdf_to_images",
+                    "",
+                    True,
+                    {"gcp.vertex.agent.tool_response": '{"status": "error"}'},
+                ),
+                (
+                    "span2",
+                    "execute_tool create_downloadable_file",
+                    "",
+                    False,
+                    {"gcp.vertex.agent.tool_response": '{"status": "ok"}'},
+                ),
+            ]
+        )
+
+    db.execute.side_effect = execute_side_effect
+
+    outcome = await evaluate_tool_execution_outcome(db, "session_1786030573591")
+
+    assert outcome.details["criteria"] == [
+        {"name": "tool_calls", "value": 2, "kind": "count"},
+        {"name": "real_failures", "value": 1, "kind": "count"},
+        {"name": "status_code_is_reliable", "value": False, "kind": "flag"},
+    ]
