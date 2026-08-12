@@ -183,6 +183,19 @@ async def test_regular_user_gets_exactly_their_agent_ids():
 # ---------------------------------------------------------------------------
 
 
+def _transcript_rows():
+    """`run_and_persist` now reads the transcript ONCE and hands it to every
+    judge, so the shared session is queried here rather than inside each
+    judge. Shape is ADK's real `events.event_data`, the one
+    `extract_transcript` parses."""
+    result = MagicMock()
+    result.fetchall.return_value = [
+        ({"content": {"role": "user", "parts": [{"text": "hello"}]}},),
+        ({"content": {"role": "model", "parts": [{"text": "hi"}]}},),
+    ]
+    return result
+
+
 def _db():
     """`AsyncSession.add()` is a plain sync method; unlike `execute`/`commit`/
     `refresh`, wrapping it in `AsyncMock` would make it return an unawaited
@@ -190,6 +203,7 @@ def _db():
     db = MagicMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    db.execute = AsyncMock(return_value=_transcript_rows())
     return db
 
 
@@ -921,3 +935,138 @@ async def test_omitted_locale_defaults_to_none_not_a_crash():
         await run_and_persist(db, _ctx(), "session_x", ["task_completion_judge"])
 
     assert judge_mock.call_args.kwargs["locale"] is None
+
+
+# ---------------------------------------------------------------------------
+# The judges are the wall time of a run: one LLM call each. Awaited one after
+# another, six evaluators took ~30s -- right on the frontend proxy's own
+# limit, which failed runs the backend had in fact completed. These three
+# tests hold the fix down.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_judges_run_concurrently_not_one_after_another():
+    """A barrier of four can only be crossed if all four judges are in
+    flight at the same time. Run them sequentially and the first one waits
+    for three that will never arrive.
+
+    Assert on the SCORES, not on the row count: `_run_llm_judge` swallows
+    every exception by design, so a serial run still returns four rows --
+    four non-applicable ones carrying the timeout as their reason. Counting
+    rows here passes on the very implementation this test exists to reject.
+    """
+    import asyncio
+
+    barrier = asyncio.Barrier(4)
+
+    def _judge(name):
+        async def _fn(db, **kwargs):
+            # Every judge must reach this point before any may leave it.
+            await asyncio.wait_for(barrier.wait(), timeout=2)
+            return EvaluationOutcome(
+                evaluator=name, kind="llm_judge", score=1.0, passed=True
+            )
+
+        return AsyncMock(side_effect=_fn)
+
+    db = _db()
+    with (
+        patch("apowerb.evaluation.run_service.evaluate_task_completion",
+              new=_judge("task_completion_judge")),
+        patch("apowerb.evaluation.run_service.evaluate_coherence",
+              new=_judge("coherence")),
+        patch("apowerb.evaluation.run_service.evaluate_completeness",
+              new=_judge("completeness")),
+        patch("apowerb.evaluation.run_service.evaluate_hallucination",
+              new=_judge("hallucination")),
+    ):
+        rows = await run_and_persist(
+            db, _ctx(), "session_x",
+            ["task_completion_judge", "coherence", "completeness", "hallucination"],
+        )
+
+    # Every judge got past the barrier, so every judge was running while the
+    # others were. A serial run leaves these None.
+    assert [row.score for row in rows] == [1.0, 1.0, 1.0, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_the_transcript_is_read_once_for_every_judge():
+    """Four judges used to issue four identical queries for the same
+    transcript. One read is both three fewer queries and the reason the
+    judges can be gathered at all: they are left with no database work on a
+    session that permits no concurrent operation."""
+    db = _db()
+    outcome = EvaluationOutcome(evaluator="x", kind="llm_judge", score=1.0, passed=True)
+
+    with (
+        patch("apowerb.evaluation.run_service.evaluate_task_completion",
+              new=AsyncMock(return_value=outcome)),
+        patch("apowerb.evaluation.run_service.evaluate_coherence",
+              new=AsyncMock(return_value=outcome)),
+        patch("apowerb.evaluation.run_service.evaluate_completeness",
+              new=AsyncMock(return_value=outcome)),
+        patch("apowerb.evaluation.run_service.evaluate_hallucination",
+              new=AsyncMock(return_value=outcome)) as hallucination_mock,
+    ):
+        await run_and_persist(
+            db, _ctx(), "session_x",
+            ["task_completion_judge", "coherence", "completeness", "hallucination"],
+        )
+
+    assert db.execute.await_count == 1
+    # And the one transcript actually reaches the judges, rather than each
+    # of them quietly falling back to a read of its own.
+    assert hallucination_mock.call_args.kwargs["transcript"] == [
+        {"role": "user", "text": "hello"},
+        {"role": "model", "text": "hi"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_results_come_back_in_registry_order_not_completion_order():
+    """Judges now finish in whatever order the network returns them. The
+    rows must not: callers and screens read them in registry order."""
+    db = _db()
+
+    def _outcome_for(name):
+        return AsyncMock(
+            return_value=EvaluationOutcome(
+                evaluator=name, kind="llm_judge", score=1.0, passed=True
+            )
+        )
+
+    with (
+        patch("apowerb.evaluation.run_service.evaluate_tool_execution_outcome",
+              new=AsyncMock(return_value=EvaluationOutcome(
+                  evaluator="tool_execution_outcome", kind="deterministic",
+                  score=1.0, passed=True))),
+        patch("apowerb.evaluation.run_service.evaluate_tool_usage",
+              new=AsyncMock(return_value=EvaluationOutcome(
+                  evaluator="tool_usage", kind="deterministic",
+                  score=1.0, passed=True))),
+        patch("apowerb.evaluation.run_service.evaluate_task_completion",
+              new=_outcome_for("task_completion_judge")),
+        patch("apowerb.evaluation.run_service.evaluate_coherence",
+              new=_outcome_for("coherence")),
+        patch("apowerb.evaluation.run_service.evaluate_completeness",
+              new=_outcome_for("completeness")),
+        patch("apowerb.evaluation.run_service.evaluate_hallucination",
+              new=_outcome_for("hallucination")),
+    ):
+        # Asked for in a deliberately scrambled order.
+        rows = await run_and_persist(
+            db, _ctx(), "session_x",
+            ["hallucination", "tool_usage", "task_completion_judge",
+             "coherence", "tool_execution_outcome", "completeness"],
+        )
+
+    assert [row.evaluator_name for row in rows] == [
+        "tool_execution_outcome",
+        "task_completion_judge",
+        "tool_usage",
+        "coherence",
+        "completeness",
+        "hallucination",
+    ]

@@ -44,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import quoted_name
 
 from apowerb.configs.settings import get_settings
+from apowerb.evaluation.evaluators._shared_judge import fetch_transcript
 from apowerb.evaluation.evaluators.base import EvaluationOutcome
 from apowerb.evaluation.evaluators.coherence import evaluate_coherence
 from apowerb.evaluation.evaluators.completeness import evaluate_completeness
@@ -304,56 +305,6 @@ def _billing_extras(exc: Exception) -> dict:
     }
 
 
-async def _run_judge(
-    db: AsyncSession,
-    ctx: SessionContext,
-    session_id: str,
-    *,
-    judge_model: str | None = None,
-    judge_api_key: str | None = None,
-    locale: str | None = None,
-) -> EvaluationOutcome:
-    """Never raises: not configured, same-judge-as-judged, or any other
-    failure (litellm timeout, malformed response, ...) all become a
-    non-applicable outcome carrying the reason, so a judge problem can
-    never take the deterministic evaluator's result down with it.
-    """
-    try:
-        outcome = await evaluate_task_completion(
-            db,
-            app_name=ctx.app_name,
-            user_id=ctx.session_user_id,
-            session_id=session_id,
-            judged_model=ctx.judged_model or "",
-            judge_model=judge_model,
-            judge_api_key=judge_api_key,
-            locale=locale,
-        )
-    except (SameJudgeError, RuntimeError) as exc:
-        return EvaluationOutcome.not_applicable(
-            evaluator="task_completion_judge",
-            kind="llm_judge",
-            reason=str(exc),
-            session_id=session_id,
-            **_billing_extras(exc),
-        )
-    except Exception as exc:  # noqa: BLE001 -- judge must never fail the run
-        logger.warning(
-            "[EVAL] Judge evaluator failed for session %s: %s", session_id, exc
-        )
-        return EvaluationOutcome.not_applicable(
-            evaluator="task_completion_judge",
-            kind="llm_judge",
-            reason=f"judge evaluation failed: {exc}",
-            session_id=session_id,
-            **_billing_extras(exc),
-        )
-    else:
-        if "judged_model" in outcome.details:
-            outcome.details["judged_model_source"] = ctx.judged_model_source
-        return outcome
-
-
 async def _record_judge_usage(
     db: AsyncSession, ctx: SessionContext, session_id: str, outcome: EvaluationOutcome
 ) -> None:
@@ -410,12 +361,15 @@ async def _run_llm_judge(
     judge_model: str | None = None,
     judge_api_key: str | None = None,
     locale: str | None = None,
+    transcript: list[dict] | None = None,
 ) -> EvaluationOutcome:
-    """Same never-raises guarantee as `_run_judge`, generalized to the
-    coherence/completeness/hallucination judges: not configured,
-    same-judge-as-judged, or any other failure all become a non-applicable
-    outcome instead of an exception, so one judge problem can never take
-    another evaluator's already-computed result down with it.
+    """Never raises: not configured, same-judge-as-judged, or any other
+    failure (litellm timeout, malformed response, ...) all become a
+    non-applicable outcome carrying the reason, so one judge's problem can
+    never take another evaluator's already-computed result down with it.
+
+    That guarantee is also what makes `asyncio.gather` safe over these:
+    a coroutine that never raises cannot cancel its siblings.
     """
     try:
         outcome = await judge_fn(
@@ -429,6 +383,7 @@ async def _run_llm_judge(
             judge_model=judge_model,
             judge_api_key=judge_api_key,
             locale=locale,
+            transcript=transcript,
         )
     except (SameJudgeError, RuntimeError) as exc:
         return EvaluationOutcome.not_applicable(
@@ -479,43 +434,71 @@ async def run_and_persist(
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown evaluator(s): {unknown}")
 
-    outcomes: list[EvaluationOutcome] = []
+    outcomes_by_name: dict[str, EvaluationOutcome] = {}
+
+    # The deterministic evaluators run one after another, and before the
+    # judges. They query the shared AsyncSession -- and roll it back when
+    # the OTel tables are absent. A rollback is not a private act: a
+    # concurrent coroutine would have its own work discarded by it. An
+    # AsyncSession forbids concurrent operations anyway.
     if "tool_execution_outcome" in names:
-        outcomes.append(await evaluate_tool_execution_outcome(db, session_id))
-    if "task_completion_judge" in names:
-        outcomes.append(
-            await _run_judge(
-                db, ctx, session_id,
-                judge_model=judge_model, judge_api_key=judge_api_key,
-                locale=locale,
-            )
+        outcomes_by_name["tool_execution_outcome"] = await evaluate_tool_execution_outcome(
+            db, session_id
         )
     if "tool_usage" in names:
-        outcomes.append(await evaluate_tool_usage(db, session_id))
-    if "coherence" in names:
-        outcomes.append(
-            await _run_llm_judge(
-                "coherence", evaluate_coherence, db, ctx, session_id,
-                judge_model=judge_model, judge_api_key=judge_api_key,
-                locale=locale,
+        outcomes_by_name["tool_usage"] = await evaluate_tool_usage(db, session_id)
+
+    # Resolved here, not at module level: the tests patch
+    # `run_service.evaluate_*`, and a table built at import time would
+    # capture the real functions and quietly ignore every patch.
+    judge_fns = {
+        "task_completion_judge": evaluate_task_completion,
+        "coherence": evaluate_coherence,
+        "completeness": evaluate_completeness,
+        "hallucination": evaluate_hallucination,
+    }
+    judge_specs = [
+        spec
+        for spec in EVALUATOR_REGISTRY
+        if spec.kind == "llm_judge" and spec.name in names
+    ]
+
+    if judge_specs:
+        # The judges ARE the wall time: one LLM call each, awaited one
+        # after another until now -- six evaluators took ~30s, which sat
+        # right on the proxy's own limit and failed runs that had in fact
+        # succeeded. They all read the same transcript, so it is fetched
+        # once here: that removes three redundant queries AND leaves the
+        # judges with no database work, which is what makes running them
+        # concurrently safe on a session that permits none.
+        transcript = await fetch_transcript(
+            db,
+            app_name=ctx.app_name,
+            user_id=ctx.session_user_id,
+            session_id=session_id,
+        )
+        gathered = await asyncio.gather(
+            *(
+                _run_llm_judge(
+                    spec.name, judge_fns[spec.name], db, ctx, session_id,
+                    judge_model=judge_model, judge_api_key=judge_api_key,
+                    locale=locale, transcript=transcript,
+                )
+                for spec in judge_specs
             )
         )
-    if "completeness" in names:
-        outcomes.append(
-            await _run_llm_judge(
-                "completeness", evaluate_completeness, db, ctx, session_id,
-                judge_model=judge_model, judge_api_key=judge_api_key,
-                locale=locale,
-            )
+        outcomes_by_name.update(
+            zip((spec.name for spec in judge_specs), gathered, strict=True)
         )
-    if "hallucination" in names:
-        outcomes.append(
-            await _run_llm_judge(
-                "hallucination", evaluate_hallucination, db, ctx, session_id,
-                judge_model=judge_model, judge_api_key=judge_api_key,
-                locale=locale,
-            )
-        )
+
+    # Registry order, which is the order the callers were written to expect
+    # and the one the screens sort by -- not the order the judges happened
+    # to finish in.
+    outcomes: list[EvaluationOutcome] = [
+        outcomes_by_name[spec.name]
+        for spec in EVALUATOR_REGISTRY
+        if spec.name in outcomes_by_name
+    ]
 
     rows: list[EvaluationResult] = []
     for outcome in outcomes:
