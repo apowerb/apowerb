@@ -139,8 +139,25 @@ async def evaluate_tool_usage(db: AsyncSession, session_id: str) -> EvaluationOu
     ]
     duplicate_calls = sum(group["count"] - 1 for group in duplicate_groups)
     total = len(tool_calls)
+    total_tokens = input_tokens + output_tokens
 
-    score = round(1.0 - (duplicate_calls / total), 4)
+    duplicate_component = 1.0 - (duplicate_calls / total)
+
+    # Turns and tokens were computed and stored but never entered the
+    # score: 40 turns and 200k tokens for 3 tool calls scored 100%
+    # efficient. A soft cap on tokens-per-call discounts that, but only
+    # when an operator sets one -- 0 (the default) preserves the exact
+    # prior score, since there is no ground truth here for what "normal"
+    # resource use looks like across every possible agent. Same pattern as
+    # the per-judge pass thresholds (point 9): configurable, not invented.
+    soft_cap = get_settings().evaluation_tool_usage_tokens_per_call_soft_cap
+    tokens_per_call = total_tokens / total if total else 0.0
+    if soft_cap > 0 and tokens_per_call > soft_cap:
+        resource_component = soft_cap / tokens_per_call
+    else:
+        resource_component = 1.0
+
+    score = round(duplicate_component * resource_component, 4)
 
     return EvaluationOutcome(
         evaluator="tool_usage",
@@ -157,8 +174,10 @@ async def evaluate_tool_usage(db: AsyncSession, session_id: str) -> EvaluationOu
             "turns": turns,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
+            "total_tokens": total_tokens,
             "cached_input_tokens": cached_input_tokens,
+            "tokens_per_call": round(tokens_per_call, 4),
+            "tokens_per_call_soft_cap": soft_cap,
             "criteria": [
                 {"name": "tool_calls", "value": total, "kind": "count"},
                 {"name": "distinct_tool_calls", "value": len(counts), "kind": "count"},

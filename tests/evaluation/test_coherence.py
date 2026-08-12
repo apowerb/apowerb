@@ -25,7 +25,7 @@ async def test_refuses_to_judge_a_model_with_itself():
     with patch(f"{_SHARED}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-pro",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_coherence=0.7,
         )
         with pytest.raises(SameJudgeError):
             await evaluate_coherence(
@@ -43,7 +43,7 @@ async def test_missing_judge_config_raises_before_any_query():
     db = AsyncMock()
     with patch(f"{_SHARED}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
-            evaluation_judge_model="", evaluation_judge_api_key=""
+            evaluation_judge_model="", evaluation_judge_api_key="", evaluation_pass_threshold_coherence=0.7
         )
         with pytest.raises(RuntimeError):
             await evaluate_coherence(
@@ -66,7 +66,7 @@ async def test_empty_transcript_is_not_applicable_not_a_zero():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-pro",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_coherence=0.7,
         )
         outcome = await evaluate_coherence(
             db,
@@ -124,7 +124,7 @@ async def test_scores_a_real_shaped_transcript():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-pro",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_coherence=0.7,
         )
         mock_completion.return_value = fake_response
 
@@ -168,7 +168,7 @@ async def test_details_carries_ordered_criteria():
     ):
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-pro",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_coherence=0.7,
         )
         outcome = await evaluate_coherence(
             db, app_name="agent1201", user_id="u", session_id="s",
@@ -202,7 +202,7 @@ async def test_locale_fr_asks_the_judge_for_a_french_rationale():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-pro",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_coherence=0.7,
         )
         await evaluate_coherence(
             db, app_name="agent1201", user_id="u", session_id="s",

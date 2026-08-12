@@ -20,7 +20,9 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apowerb.configs.settings import get_settings
 from apowerb.evaluation.evaluators._shared_judge import (
+    attach_billing,
     extract_usage,
     resolve_judge,
     fetch_transcript,
@@ -28,6 +30,7 @@ from apowerb.evaluation.evaluators._shared_judge import (
     same_model,
     same_provider,
     transcript_text,
+    truncate_transcript,
 )
 from apowerb.evaluation.evaluators.base import EvaluationOutcome, rationale_language
 from apowerb.evaluation.evaluators.task_completion_judge import SameJudgeError
@@ -83,40 +86,68 @@ async def evaluate_completeness(
 
     import litellm
 
+    transcript_body, truncated = truncate_transcript(transcript_text(transcript))
+
     response = await litellm.acompletion(
         model=judge_model,
         api_key=judge_key,
         messages=[
             {"role": "system", "content": _judge_system_prompt(locale)},
-            {"role": "user", "content": transcript_text(transcript)[:20_000]},
+            {"role": "user", "content": transcript_body},
         ],
         temperature=0.0,
         # See task_completion_judge.py: a reasoning model spends this
         # budget thinking before it writes anything. Do not go below 2000.
         max_tokens=2000,
+        # Bounds the model's own thinking budget independently of
+        # transcript length -- see task_completion_judge.py.
+        reasoning_effort="low",
         timeout=60,
         num_retries=1,
     )
     message = response.choices[0].message
     content = getattr(message, "content", None)
+    finish_reason = getattr(response.choices[0], "finish_reason", None)
     if not content:
         usage = getattr(response, "usage", None)
-        details = getattr(usage, "completion_tokens_details", None)
-        reasoning = getattr(details, "reasoning_tokens", None)
-        raise RuntimeError(
-            "the judge returned no content "
-            f"(finish_reason={getattr(response.choices[0], 'finish_reason', None)}, "
-            f"reasoning_tokens={reasoning}). A reasoning model may have spent "
-            "the whole completion budget before answering."
+        usage_details = getattr(usage, "completion_tokens_details", None)
+        reasoning = getattr(usage_details, "reasoning_tokens", None)
+        raise attach_billing(
+            RuntimeError(
+                "the judge returned no content "
+                f"(finish_reason={finish_reason}, reasoning_tokens={reasoning}). "
+                "A reasoning model may have spent the whole completion budget "
+                "before answering."
+            ),
+            response=response, judge_model=judge_model, judge_is_byom=is_byom,
         )
-    parsed = parse_judge_json(content)
-    completeness = float(parsed.get("completeness", 0.0))
+    try:
+        parsed = parse_judge_json(content)
+    except ValueError as exc:
+        reason = str(exc)
+        if finish_reason == "length":
+            reason = (
+                "the judge's response was truncated before completing its "
+                f"JSON verdict (finish_reason=length): {content!r}"
+            )
+        raise attach_billing(
+            ValueError(reason),
+            response=response, judge_model=judge_model, judge_is_byom=is_byom,
+        ) from exc
+
+    if "completeness" not in parsed:
+        raise attach_billing(
+            ValueError("judge response missing required key(s): ['completeness']"),
+            response=response, judge_model=judge_model, judge_is_byom=is_byom,
+        )
+    completeness = float(parsed["completeness"])
+    score = round(completeness, 4)
 
     return EvaluationOutcome(
         evaluator="completeness",
         kind="llm_judge",
-        score=round(completeness, 4),
-        passed=completeness >= 0.7,
+        score=score,
+        passed=score >= get_settings().evaluation_pass_threshold_completeness,
         details={
             "session_id": session_id,
             "judged_model": judged_model,
@@ -131,6 +162,7 @@ async def evaluate_completeness(
             "judge_shares_provider_with_judged": same_provider(
                 judge_model, judged_model
             ),
+            "truncated": truncated,
             "criteria": [
                 {"name": "completeness", "value": completeness, "kind": "score"},
                 {"name": "turns", "value": len(transcript), "kind": "count"},

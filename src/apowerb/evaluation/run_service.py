@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -109,6 +110,30 @@ class SessionContext:
     # agent turn does. Falls back to `app_name` when the store row carries
     # no name.
     agent_name: str = ""
+    # "llm_usage" when `judged_model` came from the model that actually
+    # produced this session; "agent_config_fallback" when no usable
+    # `llm_usage` row existed and it fell back to the agent's CURRENT
+    # config instead -- which may not be what produced this conversation
+    # (agents change model over time). Threaded into every judge outcome's
+    # `details["judged_model_source"]` so a score built on the fallback
+    # never passes for one built on fact.
+    judged_model_source: str = "llm_usage"
+
+
+def _judged_model_sql():
+    # Excludes this evaluator's OWN rows: `_record_judge_usage` writes
+    # `llm_usage` rows for the SAME session_id (invocation_source=
+    # "evaluation") once a judge has run on it once. Without this filter,
+    # a second evaluation run would pick up the judge's own model as if it
+    # were the judged model -- verified against real DEV data
+    # (session_1786432883708: the judge's gemini-2.5-pro rows sort after
+    # the chat's gemini-3-flash-preview rows by created_at).
+    return text(
+        f"SELECT model FROM {_schema()}.llm_usage "
+        "WHERE session_id = :session_id "
+        "AND (invocation_source IS NULL OR invocation_source <> 'evaluation') "
+        "ORDER BY created_at DESC LIMIT 1"
+    )
 
 
 async def resolve_session_context(
@@ -156,11 +181,32 @@ async def resolve_session_context(
         )
         raise HTTPException(status_code=403, detail="Not your agent")
 
+    # The model that actually produced THIS session, not the agent's
+    # current configuration -- agents change model over time (see module
+    # docstring / audit point 1), so comparing the judge against
+    # `agent_model` could let a judge silently score its own production.
+    usage_row = (
+        await db.execute(_judged_model_sql(), {"session_id": session_id})
+    ).first()
+    if usage_row is not None and usage_row[0]:
+        judged_model = usage_row[0]
+        judged_model_source = "llm_usage"
+    else:
+        judged_model = agent.get("agent_model")
+        judged_model_source = "agent_config_fallback"
+        logger.info(
+            "[EVAL] No llm_usage row for session %s; judged_model falls "
+            "back to the agent's current config (%s), which may not be "
+            "what produced this conversation",
+            session_id, judged_model,
+        )
+
     return SessionContext(
         agent_id=agent_id,
         app_name=app_name,
         session_user_id=session_user_id,
-        judged_model=agent.get("agent_model"),
+        judged_model=judged_model,
+        judged_model_source=judged_model_source,
         owner_id=owner_id,
         agent_name=agent.get("agent_name") or app_name,
     )
@@ -185,6 +231,57 @@ async def owned_agent_ids(db: AsyncSession, current_user: user_schemas.User) -> 
     return {row[0] for row in rows}
 
 
+# In-process, best-effort rate limit on POST /evaluations/run: the first
+# reflex in front of a screen that looks broken is to click again, and
+# unlike commercial quota (registered guards, see run_gate.py) this must
+# hold even with no extension installed at all -- the OSS core's own
+# defense against a re-click storm. Single-process state is enough for
+# this: it survives exactly as long as the request rate it protects
+# against (seconds), and a restart resetting it costs nothing.
+_last_run_at: dict[tuple[str, str], float] = {}
+
+
+def check_rerun_rate_limit(*, owner_id: str, session_id: str) -> None:
+    """Raise 429 if this (owner, session) pair ran an evaluation less than
+    `evaluation_min_rerun_interval_seconds` ago. Records the attempt
+    whether it passes or is rejected, so a rapid burst of re-clicks stays
+    rejected instead of each one resetting the window.
+    """
+    key = (owner_id, session_id)
+    now = time.monotonic()
+    last = _last_run_at.get(key)
+    window = get_settings().evaluation_min_rerun_interval_seconds
+    if last is not None and (now - last) < window:
+        retry_after = round(window - (now - last), 1)
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "An evaluation for this session was started less than "
+                f"{window}s ago; retry in {retry_after}s."
+            ),
+        )
+    _last_run_at[key] = now
+
+
+def _billing_extras(exc: Exception) -> dict:
+    """A judge failure raised AFTER a real litellm call carries what that
+    call cost (see `_shared_judge.attach_billing` /
+    `task_completion_judge._attach_billing`). Lift it into the kwargs
+    `EvaluationOutcome.not_applicable` merges into `details`, so
+    `_record_judge_usage` bills it exactly like a success. Failures BEFORE
+    any call (bad config, self-judge refusal, a connection error before a
+    response exists) carry no such attribute -- nothing was spent.
+    """
+    usage = getattr(exc, "judge_usage", None)
+    if usage is None:
+        return {}
+    return {
+        "judge_usage": usage,
+        "judge_model": getattr(exc, "judge_model", None),
+        "judge_is_byom": getattr(exc, "judge_is_byom", False),
+    }
+
+
 async def _run_judge(
     db: AsyncSession,
     ctx: SessionContext,
@@ -200,7 +297,7 @@ async def _run_judge(
     never take the deterministic evaluator's result down with it.
     """
     try:
-        return await evaluate_task_completion(
+        outcome = await evaluate_task_completion(
             db,
             app_name=ctx.app_name,
             user_id=ctx.session_user_id,
@@ -216,6 +313,7 @@ async def _run_judge(
             kind="llm_judge",
             reason=str(exc),
             session_id=session_id,
+            **_billing_extras(exc),
         )
     except Exception as exc:  # noqa: BLE001 -- judge must never fail the run
         logger.warning(
@@ -226,7 +324,12 @@ async def _run_judge(
             kind="llm_judge",
             reason=f"judge evaluation failed: {exc}",
             session_id=session_id,
+            **_billing_extras(exc),
         )
+    else:
+        if "judged_model" in outcome.details:
+            outcome.details["judged_model_source"] = ctx.judged_model_source
+        return outcome
 
 
 async def _record_judge_usage(
@@ -293,7 +396,7 @@ async def _run_llm_judge(
     another evaluator's already-computed result down with it.
     """
     try:
-        return await judge_fn(
+        outcome = await judge_fn(
             db,
             app_name=ctx.app_name,
             user_id=ctx.session_user_id,
@@ -311,6 +414,7 @@ async def _run_llm_judge(
             kind="llm_judge",
             reason=str(exc),
             session_id=session_id,
+            **_billing_extras(exc),
         )
     except Exception as exc:  # noqa: BLE001 -- judge must never fail the run
         logger.warning(
@@ -324,7 +428,12 @@ async def _run_llm_judge(
             kind="llm_judge",
             reason=f"judge evaluation failed: {exc}",
             session_id=session_id,
+            **_billing_extras(exc),
         )
+    else:
+        if "judged_model" in outcome.details:
+            outcome.details["judged_model_source"] = ctx.judged_model_source
+        return outcome
 
 
 async def run_and_persist(

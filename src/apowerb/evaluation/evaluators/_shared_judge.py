@@ -26,7 +26,7 @@ from apowerb.evaluation.evaluators.task_completion_judge import (
 # Re-exported for coherence/completeness/hallucination: one definition of how
 # a judge's token spend is read off a litellm response, written and proven by
 # the accounting work, not a second one living here.
-__all__ = ["extract_usage", "resolve_judge"]
+__all__ = ["attach_billing", "extract_usage", "resolve_judge", "truncate_transcript"]
 
 
 def resolve_judge(judge_model: str | None, judge_api_key: str | None):
@@ -101,6 +101,39 @@ def extract_transcript(rows) -> list[dict]:
 
 def transcript_text(transcript: list[dict]) -> str:
     return "\n".join(f"{turn['role']}: {turn['text']}" for turn in transcript)
+
+
+def truncate_transcript(text: str, *, limit: int = 20_000) -> tuple[str, bool]:
+    """Keep the END of a transcript when it overflows the judge's input
+    budget, not the start. `events_sql` reads with `ORDER BY timestamp
+    ASC`, so the tail is where the resolution lives -- a judge asked
+    whether the task got done must not be handed only the opening of the
+    conversation. Returns `(text, was_truncated)`: the flag belongs next
+    to `score` in the caller's `details`, never silently absorbed.
+    """
+    if len(text) <= limit:
+        return text, False
+    return text[-limit:], True
+
+
+def attach_billing(
+    exc: Exception, *, response, judge_model: str, judge_is_byom: bool
+) -> Exception:
+    """Tag a judge failure with what the litellm call already cost.
+
+    Only for failures AFTER a successful `litellm.acompletion` call
+    (malformed/truncated JSON, a missing required key): the model was
+    genuinely invoked and spent real tokens on the shared key, even though
+    the verdict could not be scored. `run_service._record_judge_usage`
+    reads `judge_usage`/`judge_model` off the resulting not-applicable
+    outcome, the same way it reads a success. Failures BEFORE the call
+    (bad config, self-judge refusal, a connection error) must never carry
+    a usage stamp -- nothing was spent.
+    """
+    exc.judge_usage = extract_usage(response)  # type: ignore[attr-defined]
+    exc.judge_model = judge_model  # type: ignore[attr-defined]
+    exc.judge_is_byom = judge_is_byom  # type: ignore[attr-defined]
+    return exc
 
 
 def parse_judge_json(raw: str) -> dict:

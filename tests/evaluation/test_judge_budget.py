@@ -36,7 +36,7 @@ def _transcript_db():
 def _settings():
     return MagicMock(
         evaluation_judge_model="gemini/gemini-2.5-pro",
-        evaluation_judge_api_key="k",
+        evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
     )
 
 

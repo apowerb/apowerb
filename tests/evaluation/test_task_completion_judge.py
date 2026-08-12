@@ -24,7 +24,7 @@ async def test_refuses_to_judge_a_model_with_itself():
     with patch(f"{_MODULE}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
         )
         with pytest.raises(SameJudgeError):
             await evaluate_task_completion(
@@ -42,7 +42,7 @@ async def test_missing_judge_config_raises_before_any_query():
     db = AsyncMock()
     with patch(f"{_MODULE}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
-            evaluation_judge_model="", evaluation_judge_api_key=""
+            evaluation_judge_model="", evaluation_judge_api_key="", evaluation_pass_threshold_task_completion=0.7
         )
         with pytest.raises(RuntimeError):
             await evaluate_task_completion(
@@ -118,7 +118,7 @@ async def test_scores_a_real_shaped_transcript():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
         )
         mock_completion.return_value = fake_response
 
@@ -149,7 +149,7 @@ async def test_empty_transcript_is_not_applicable_not_a_zero():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
         )
 
         outcome = await evaluate_task_completion(
@@ -188,7 +188,7 @@ async def test_a_judge_of_the_same_provider_is_recorded_in_the_details():
     ):
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
         )
 
         outcome = await evaluate_task_completion(
@@ -240,7 +240,7 @@ async def test_byom_judge_model_and_key_are_used_over_server_settings():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="server-key",
+            evaluation_judge_api_key="server-key", evaluation_pass_threshold_task_completion=0.7,
         )
         mock_completion.return_value = _judge_reply()
 
@@ -271,7 +271,7 @@ async def test_server_default_judge_marks_details_not_byom():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="server-key",
+            evaluation_judge_api_key="server-key", evaluation_pass_threshold_task_completion=0.7,
         )
         mock_completion.return_value = _judge_reply()
 
@@ -300,7 +300,7 @@ async def test_byom_judge_equal_to_judged_model_still_refused():
     with patch(f"{_MODULE}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="server-key",
+            evaluation_judge_api_key="server-key", evaluation_pass_threshold_task_completion=0.7,
         )
         with pytest.raises(SameJudgeError):
             await evaluate_task_completion(
@@ -325,7 +325,7 @@ async def test_byom_judge_model_without_key_raises_before_any_query():
     with patch(f"{_MODULE}.get_settings") as mock_settings:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="server-key",
+            evaluation_judge_api_key="server-key", evaluation_pass_threshold_task_completion=0.7,
         )
         with pytest.raises(RuntimeError):
             await evaluate_task_completion(
@@ -351,7 +351,7 @@ async def test_byom_api_key_never_leaks_into_details_or_logs(caplog):
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="server-key",
+            evaluation_judge_api_key="server-key", evaluation_pass_threshold_task_completion=0.7,
         )
         mock_completion.return_value = _judge_reply()
 
@@ -392,7 +392,7 @@ async def test_judge_usage_tokens_are_extracted_from_the_litellm_response():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="server-key",
+            evaluation_judge_api_key="server-key", evaluation_pass_threshold_task_completion=0.7,
         )
         mock_completion.return_value = _judge_reply(usage=usage)
 
@@ -423,7 +423,7 @@ async def test_judge_usage_defaults_to_zeros_when_response_has_no_usage():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="server-key",
+            evaluation_judge_api_key="server-key", evaluation_pass_threshold_task_completion=0.7,
         )
         reply = _judge_reply(usage=None)
         mock_completion.return_value = reply
@@ -470,7 +470,7 @@ async def test_details_carries_ordered_criteria():
     ):
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
         )
         outcome = await evaluate_task_completion(
             db,
@@ -514,7 +514,7 @@ async def test_locale_fr_asks_the_judge_for_a_french_rationale():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
         )
         await evaluate_task_completion(
             db, app_name="agent1201", user_id="u", session_id="s",
@@ -546,7 +546,7 @@ async def test_missing_locale_defaults_to_english():
     ) as mock_completion:
         mock_settings.return_value = MagicMock(
             evaluation_judge_model="gemini/gemini-2.5-flash",
-            evaluation_judge_api_key="k",
+            evaluation_judge_api_key="k", evaluation_pass_threshold_task_completion=0.7,
         )
         await evaluate_task_completion(
             db, app_name="agent1201", user_id="u", session_id="s",
