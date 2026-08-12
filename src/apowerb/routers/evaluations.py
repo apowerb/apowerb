@@ -44,8 +44,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
+from apowerb.core.run_gate import apply_run_guards, resolve_owner_plan
 from apowerb.evaluation.models import EvaluationResult
 from apowerb.evaluation.run_service import (
+    check_rerun_rate_limit,
     list_evaluator_specs,
     owned_agent_ids,
     resolve_session_context,
@@ -168,6 +170,17 @@ async def run_evaluation(
             detail="judge_api_key is required when judge_model is provided",
         )
     ctx = await resolve_session_context(db, request.session_id, current_user)
+    # Cheap, local re-click guard first (see run_service.check_rerun_rate_limit),
+    # then the same choke point every other entry door goes through
+    # (core.run_gate.apply_run_guards) -- both at the entry of the request,
+    # before any evaluator runs, never after. Without this, POST /run was
+    # the only LLM-spending route with no quota and no rate limit at all.
+    check_rerun_rate_limit(owner_id=ctx.owner_id, session_id=request.session_id)
+    await apply_run_guards(
+        agent_name=ctx.app_name,
+        owner_id=ctx.owner_id,
+        plan=await resolve_owner_plan(ctx.owner_id),
+    )
     # Generated here, not inside run_and_persist: it belongs at the root of
     # this response even when the evaluator list is empty, so this call is
     # the one place that must own it.

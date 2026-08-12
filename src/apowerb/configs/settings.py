@@ -292,6 +292,26 @@ class Settings(BaseSettings):
     # score everything with whatever happens to be `default_llm_model`.
     evaluation_judge_model: str = ""
     evaluation_judge_api_key: str = ""
+    # Pass/fail thresholds, one per LLM-judge evaluator -- deliberately not
+    # a single shared constant: task completion, coherence, completeness
+    # and hallucination are four different dimensions with no reason to
+    # agree on what "good enough" means. Each defaults to the pre-existing
+    # hardcoded 0.7 so behaviour is unchanged until an operator tunes one.
+    evaluation_pass_threshold_task_completion: float = 0.7
+    evaluation_pass_threshold_coherence: float = 0.7
+    evaluation_pass_threshold_completeness: float = 0.7
+    evaluation_pass_threshold_hallucination: float = 0.7
+    # Minimum delay between two evaluation runs of the SAME session, to
+    # absorb the "the screen looks broken, I'll click again" reflex --
+    # POST /evaluations/run has no other rate limit (see routers/evaluations.py).
+    evaluation_min_rerun_interval_seconds: int = 15
+    # 0 disables the tool_usage resource-efficiency penalty entirely
+    # (default: unchanged behaviour, the score reflects only duplicate
+    # calls). Set to a positive token count to start discounting the
+    # score once total_tokens / tool_calls exceeds it -- there is no
+    # universal "normal" resource use across every possible agent, so
+    # this is an opt-in, not a built-in guess.
+    evaluation_tool_usage_tokens_per_call_soft_cap: int = 0
 
     # ── Notifications / system mailer ───────────────────────────────
     # All three are deployment identities and have no sensible default: a

@@ -47,6 +47,22 @@ def _agent_row(agent_id, owner_id, agent_model="gemini/gemini-2.5-flash"):
     return [row]
 
 
+def _no_llm_usage_row():
+    """`resolve_session_context` queries `llm_usage` for the judged_model
+    after the session/agent lookup -- an empty result exercises the
+    agent-config fallback, the same outcome these ownership-focused tests
+    asserted before that second query existed."""
+    result = MagicMock()
+    result.first.return_value = None
+    return result
+
+
+def _llm_usage_row(model):
+    result = MagicMock()
+    result.first.return_value = (model,)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # resolve_session_context
 # ---------------------------------------------------------------------------
@@ -103,7 +119,10 @@ async def test_session_owned_by_someone_else_is_403_for_a_regular_user():
 @pytest.mark.asyncio
 async def test_admin_bypasses_ownership():
     db = AsyncMock()
-    db.execute.return_value = _session_row("agent1234", "someone-else@example.com")
+    db.execute.side_effect = [
+        _session_row("agent1234", "someone-else@example.com"),
+        _no_llm_usage_row(),
+    ]
 
     with patch("apowerb.core.agent_main.agent_store") as store:
         store.get_list_agents.return_value = _agent_row(1234, "someone-else@example.com")
@@ -116,8 +135,13 @@ async def test_admin_bypasses_ownership():
 
 @pytest.mark.asyncio
 async def test_owner_resolves_context_with_judged_model():
+    """No llm_usage row for this session: falls back to the agent's
+    current config, as before point 1's fix."""
     db = AsyncMock()
-    db.execute.return_value = _session_row("agent1234", "me@example.com")
+    db.execute.side_effect = [
+        _session_row("agent1234", "me@example.com"),
+        _no_llm_usage_row(),
+    ]
 
     with patch("apowerb.core.agent_main.agent_store") as store:
         store.get_list_agents.return_value = _agent_row(
@@ -128,6 +152,7 @@ async def test_owner_resolves_context_with_judged_model():
     assert ctx.agent_id == 1234
     assert ctx.app_name == "agent1234"
     assert ctx.judged_model == "openai/Mistral-Small-3.2-24B"
+    assert ctx.judged_model_source == "agent_config_fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +414,10 @@ def test_known_evaluators_is_derived_from_the_registry():
 @pytest.mark.asyncio
 async def test_resolve_session_context_carries_agent_name():
     db = AsyncMock()
-    db.execute.return_value = _session_row("agent1234", "me@example.com")
+    db.execute.side_effect = [
+        _session_row("agent1234", "me@example.com"),
+        _no_llm_usage_row(),
+    ]
 
     with patch("apowerb.core.agent_main.agent_store") as store:
         row = MagicMock()
@@ -408,7 +436,10 @@ async def test_resolve_session_context_carries_agent_name():
 @pytest.mark.asyncio
 async def test_resolve_session_context_falls_back_to_app_name_without_agent_name():
     db = AsyncMock()
-    db.execute.return_value = _session_row("agent1234", "me@example.com")
+    db.execute.side_effect = [
+        _session_row("agent1234", "me@example.com"),
+        _no_llm_usage_row(),
+    ]
 
     with patch("apowerb.core.agent_main.agent_store") as store:
         store.get_list_agents.return_value = _agent_row(1234, "me@example.com")

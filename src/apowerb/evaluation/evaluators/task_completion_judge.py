@@ -114,6 +114,31 @@ def _parse_judge_json(raw: str) -> dict:
     return json.loads(match.group(0))
 
 
+def _truncate_transcript(text: str, *, limit: int = 20_000) -> tuple[str, bool]:
+    """Keep the END of a transcript when it overflows, not the start --
+    `_events_sql` reads `ORDER BY timestamp ASC`, so the tail is where the
+    resolution lives. Duplicated in `_shared_judge.truncate_transcript` for
+    coherence/completeness/hallucination rather than imported, to avoid a
+    circular import (`_shared_judge` already imports `_extract_usage` from
+    this module)."""
+    if len(text) <= limit:
+        return text, False
+    return text[-limit:], True
+
+
+def _attach_billing(
+    exc: Exception, *, response, judge_model: str, judge_is_byom: bool
+) -> Exception:
+    """Tag a post-call failure with what the litellm call already cost, so
+    `run_service._record_judge_usage` can still bill it. See
+    `_shared_judge.attach_billing` (duplicated here for the same
+    circular-import reason as `_truncate_transcript`)."""
+    exc.judge_usage = _extract_usage(response)  # type: ignore[attr-defined]
+    exc.judge_model = judge_model  # type: ignore[attr-defined]
+    exc.judge_is_byom = judge_is_byom  # type: ignore[attr-defined]
+    return exc
+
+
 def _same_model(judge_model: str, judged_model: str) -> bool:
     """Exact match once the litellm provider prefix is stripped. No fuzzy
     "close enough" heuristic -- that judgment call belongs to whoever
@@ -233,7 +258,8 @@ async def evaluate_task_completion(
             session_id=session_id,
         )
 
-    transcript_text = "\n".join(f"{turn['role']}: {turn['text']}" for turn in transcript)
+    raw_transcript_text = "\n".join(f"{turn['role']}: {turn['text']}" for turn in transcript)
+    transcript_body, truncated = _truncate_transcript(raw_transcript_text)
 
     import litellm
 
@@ -242,7 +268,7 @@ async def evaluate_task_completion(
         api_key=resolved_judge_key,
         messages=[
             {"role": "system", "content": _judge_system_prompt(locale)},
-            {"role": "user", "content": transcript_text[:20_000]},
+            {"role": "user", "content": transcript_body},
         ],
         temperature=0.0,
         # A reasoning model spends this budget on its own thinking before it
@@ -253,32 +279,81 @@ async def evaluate_task_completion(
         # no JSON", which sounds like a broken prompt rather than a budget.
         # The verdict itself is ~100 tokens; the rest is headroom.
         max_tokens=2000,
+        # Bounds the model's OWN thinking budget (litellm maps this to
+        # ~1024 reasoning tokens for Gemini) independently of transcript
+        # length, instead of letting it compete with the verdict for the
+        # same max_tokens -- that competition is what let reasoning models
+        # consume the whole budget and return content=None (see
+        # test_judge_budget.py).
+        reasoning_effort="low",
         timeout=60,
         num_retries=1,
     )
     message = response.choices[0].message
     content = getattr(message, "content", None)
+    finish_reason = getattr(response.choices[0], "finish_reason", None)
     if not content:
         # Say which of the two it was. "No JSON" sends the reader to the
         # prompt; an exhausted budget is a different fix entirely.
         usage = getattr(response, "usage", None)
-        details = getattr(usage, "completion_tokens_details", None)
-        reasoning = getattr(details, "reasoning_tokens", None)
-        raise RuntimeError(
-            "the judge returned no content "
-            f"(finish_reason={getattr(response.choices[0], 'finish_reason', None)}, "
-            f"reasoning_tokens={reasoning}). A reasoning model may have spent "
-            "the whole completion budget before answering."
+        usage_details = getattr(usage, "completion_tokens_details", None)
+        reasoning = getattr(usage_details, "reasoning_tokens", None)
+        raise _attach_billing(
+            RuntimeError(
+                "the judge returned no content "
+                f"(finish_reason={finish_reason}, reasoning_tokens={reasoning}). "
+                "A reasoning model may have spent the whole completion budget "
+                "before answering."
+            ),
+            response=response,
+            judge_model=resolved_judge_model,
+            judge_is_byom=is_byom,
         )
-    parsed = _parse_judge_json(content)
-    task_completion = float(parsed.get("task_completion", 0.0))
-    intent_resolution = float(parsed.get("intent_resolution", 0.0))
+    try:
+        parsed = _parse_judge_json(content)
+    except ValueError as exc:
+        reason = str(exc)
+        if finish_reason == "length":
+            # A truncated reply is a distinct failure mode from garbage
+            # output: the regex `\{.*\}` needs a closing brace, so a
+            # verdict cut short by the token budget looks identical to a
+            # judge that never produced JSON at all unless this is said
+            # explicitly.
+            reason = (
+                "the judge's response was truncated before completing its "
+                f"JSON verdict (finish_reason=length): {content!r}"
+            )
+        raise _attach_billing(
+            ValueError(reason),
+            response=response,
+            judge_model=resolved_judge_model,
+            judge_is_byom=is_byom,
+        ) from exc
+
+    missing = [k for k in ("task_completion", "intent_resolution") if k not in parsed]
+    if missing:
+        # A key the judge did not return is an absence of data, not a
+        # failing score -- defaulting it to 0.0 would rank an unparseable
+        # reply next to an agent that failed outright.
+        raise _attach_billing(
+            ValueError(f"judge response missing required key(s): {missing}"),
+            response=response,
+            judge_model=resolved_judge_model,
+            judge_is_byom=is_byom,
+        )
+
+    task_completion = float(parsed["task_completion"])
+    intent_resolution = float(parsed["intent_resolution"])
+    score = round((task_completion + intent_resolution) / 2, 4)
 
     return EvaluationOutcome(
         evaluator="task_completion_judge",
         kind="llm_judge",
-        score=round((task_completion + intent_resolution) / 2, 4),
-        passed=task_completion >= 0.7,
+        score=score,
+        # Follows the composite score the screen shows, not task_completion
+        # alone -- task_completion=1.0/intent_resolution=0.0 used to render
+        # a 50% score next to a green badge.
+        passed=score >= settings.evaluation_pass_threshold_task_completion,
         details={
             "session_id": session_id,
             "judged_model": judged_model,
@@ -297,6 +372,10 @@ async def evaluate_task_completion(
                 resolved_judge_model, judged_model
             ),
             "judge_usage": _extract_usage(response),
+            # True when the transcript sent to the judge was cut down to
+            # the last 20k characters -- a score computed on a partial
+            # conversation must say so, never silently.
+            "truncated": truncated,
             "criteria": [
                 {"name": "task_completion", "value": task_completion, "kind": "score"},
                 {"name": "intent_resolution", "value": intent_resolution, "kind": "score"},

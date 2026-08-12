@@ -18,11 +18,22 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
 from apowerb.evaluation.models import EvaluationResult
 from apowerb.evaluation.run_service import SessionContext
+
+
+@pytest.fixture(autouse=True)
+def _rerun_rate_limit_vierge(monkeypatch):
+    """Isolates the audit-point-5 re-click guard's in-process state --
+    without this, tests in this module that reuse the same session_id
+    would trip each other's rate limit (see run_service.check_rerun_rate_limit)."""
+    from apowerb.evaluation import run_service
+
+    monkeypatch.setattr(run_service, "_last_run_at", {}, raising=False)
 
 
 def _fake_user(email="me@example.com", role="user"):
