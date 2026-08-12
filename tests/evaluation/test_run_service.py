@@ -1070,3 +1070,33 @@ async def test_results_come_back_in_registry_order_not_completion_order():
         "completeness",
         "hallucination",
     ]
+
+
+# ---------------------------------------------------------------------------
+# The admin bypass compared `role` against "admin" while `auth.dependencies`
+# fills it from `UserRole.value` -- "ADMIN". It never matched, so an admin was
+# silently treated as an ordinary user. The old tests missed it by passing
+# "admin", a value the auth layer never produces: they agreed with the code
+# rather than with what reaches it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_bypass_fires_on_the_value_auth_actually_sends():
+    """`role` arrives as UserRole.ADMIN.value. Anything asserting on the
+    lower-case spelling proves nothing about production."""
+    from apowerb.models import UserRole
+
+    assert UserRole.ADMIN.value == "ADMIN"
+
+    db = AsyncMock()
+    assert await owned_agent_ids(db, _user(role=UserRole.ADMIN.value)) is None
+
+
+@pytest.mark.asyncio
+async def test_a_plain_user_is_still_restricted_whatever_the_casing():
+    db = AsyncMock()
+    with patch("apowerb.core.agent_main.agent_store") as store:
+        store.get_list_agents.return_value = [(7,)]
+        for spelling in ("USER", "user", "User"):
+            assert await owned_agent_ids(db, _user(role=spelling)) == {7}
