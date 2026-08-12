@@ -231,6 +231,28 @@ async def owned_agent_ids(db: AsyncSession, current_user: user_schemas.User) -> 
     return {row[0] for row in rows}
 
 
+async def list_owned_agents(current_user: user_schemas.User) -> list[tuple[int, str]]:
+    """Every agent this user owns as `(agent_id, agent_name)`, admin sees
+    every agent regardless of owner -- same ownership rule as
+    `owned_agent_ids`, carrying the display name along so `GET
+    /evaluations/agents` never has to look an agent's name up one at a
+    time (the exact N+1 shape already paid for once on the Artefacts
+    screen). One query on `agent_store`'s own synchronous connection,
+    independent of the number of agents returned.
+    """
+    from apowerb.core.agent_main import agent_store
+
+    select_query = agent_store.agent_table.select().with_only_columns(
+        agent_store.agent_table.c.agent_id, agent_store.agent_table.c.agent_name
+    )
+    if current_user.role != "admin":
+        select_query = select_query.where(
+            agent_store.agent_table.c.owner_id == current_user.email
+        )
+    rows = await asyncio.to_thread(agent_store.get_list_agents, select_query)
+    return [(row[0], row[1]) for row in rows]
+
+
 # In-process, best-effort rate limit on POST /evaluations/run: the first
 # reflex in front of a screen that looks broken is to click again, and
 # unlike commercial quota (registered guards, see run_gate.py) this must

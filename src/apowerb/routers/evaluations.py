@@ -47,8 +47,10 @@ from apowerb.configs.settings import get_settings
 from apowerb.core.run_gate import apply_run_guards, resolve_owner_plan
 from apowerb.evaluation.models import EvaluationResult
 from apowerb.evaluation.run_service import (
+    KNOWN_EVALUATORS,
     check_rerun_rate_limit,
     list_evaluator_specs,
+    list_owned_agents,
     owned_agent_ids,
     resolve_session_context,
     run_and_persist,
@@ -333,3 +335,223 @@ async def evaluations_summary(
         )
 
     return EvaluationSummaryResponse(since=since, by_evaluator=by_evaluator)
+
+
+# ---------------------------------------------------------------------------
+# GET /agents, GET /runs -- state first, history second (contract v4)
+#
+# `GET /evaluations` above answers "what did I run"; these two answer "where
+# do my agents stand" and "how did one agent's score move over time". Both
+# read `EvaluationResult.details["not_applicable"]` back out onto the wire
+# as `not_applicable` -- the same value `EvaluationOutcome.not_applicable`
+# put there, never collapsed into a score of 0 (see evaluators/base.py).
+#
+# `_EVALUATOR_ORDER` fixes results within a run to `EVALUATOR_REGISTRY`'s
+# declaration order, not `created_at` (all six rows of a run share a
+# created_at to the microsecond, an unstable sort key) -- the screen aligns
+# on six fixed columns, so the order must be deterministic and the same
+# for every run.
+# ---------------------------------------------------------------------------
+
+_EVALUATOR_ORDER = {name: index for index, name in enumerate(KNOWN_EVALUATORS)}
+
+
+def _sort_by_evaluator_order(rows: list[EvaluationResult]) -> list[EvaluationResult]:
+    return sorted(rows, key=lambda row: _EVALUATOR_ORDER.get(row.evaluator_name, len(_EVALUATOR_ORDER)))
+
+
+class EvaluationResultBrief(BaseModel):
+    evaluator_name: str
+    evaluator_kind: str
+    score: float | None
+    passed: bool | None
+    # The reason, when score/passed are null -- never a zero standing in
+    # for "nothing to judge". Null when the result IS applicable.
+    not_applicable: str | None
+
+    @classmethod
+    def from_row(cls, row: EvaluationResult) -> "EvaluationResultBrief":
+        return cls(
+            evaluator_name=row.evaluator_name,
+            evaluator_kind=row.evaluator_kind,
+            score=row.score,
+            passed=row.passed,
+            not_applicable=(row.details or {}).get("not_applicable") if row.score is None else None,
+        )
+
+
+class AgentLastRunOut(BaseModel):
+    run_id: uuid.UUID
+    created_at: datetime
+    session_id: str
+    results: list[EvaluationResultBrief]
+
+
+class AgentEvaluationStateOut(BaseModel):
+    agent_id: int
+    agent_name: str
+    runs_count: int
+    # None when this agent has never been evaluated -- a row, not an
+    # absence: the front must be able to tell "no signal" from "loading".
+    last_run: AgentLastRunOut | None
+
+
+class AgentsEvaluationStateResponse(BaseModel):
+    items: list[AgentEvaluationStateOut]
+
+
+def _agent_state_sort_key(item: AgentEvaluationStateOut) -> tuple:
+    # Never-evaluated agents first (they call for action) -- among those,
+    # alphabetical; among evaluated agents, most recently evaluated first.
+    if item.last_run is None:
+        return (0, item.agent_name)
+    return (1, -item.last_run.created_at.timestamp())
+
+
+@router.get("/agents")
+async def list_agents_evaluation_state(
+    db: AsyncSession = Depends(get_db),
+    current_user: user_schemas.User = Depends(get_current_user),
+) -> AgentsEvaluationStateResponse:
+    # Ownership resolved at the entry, through the same synchronous
+    # `agent_store` connection every other route in this file uses --
+    # this is also where the "never evaluated" agents come from: they
+    # exist here and nowhere in `agent_evaluation_results`.
+    agents = await list_owned_agents(current_user)
+    if not agents:
+        return AgentsEvaluationStateResponse(items=[])
+
+    agent_ids = [agent_id for agent_id, _ in agents]
+
+    # Query 1/3: how many distinct runs each agent has -- one grouped
+    # query for every owned agent, not one per agent.
+    counts_stmt = (
+        select(
+            EvaluationResult.agent_id,
+            func.count(func.distinct(EvaluationResult.run_id)).label("runs_count"),
+        )
+        .where(EvaluationResult.agent_id.in_(agent_ids))
+        .group_by(EvaluationResult.agent_id)
+    )
+    counts_rows = (await db.execute(counts_stmt)).all()
+    runs_count_by_agent = {row.agent_id: row.runs_count for row in counts_rows}
+
+    # Query 2/3: this agent's most recent run_id, via a window function
+    # (portable across Postgres and SQLite, unlike DISTINCT ON) instead of
+    # one "last run" query per agent -- the N+1 shape already paid for
+    # once on the Artefacts screen (module docstring).
+    row_number = func.row_number().over(
+        partition_by=EvaluationResult.agent_id,
+        order_by=EvaluationResult.created_at.desc(),
+    ).label("rn")
+    ranked = (
+        select(EvaluationResult.agent_id, EvaluationResult.run_id, row_number)
+        .where(EvaluationResult.agent_id.in_(agent_ids))
+        .subquery()
+    )
+    last_run_stmt = select(ranked.c.agent_id, ranked.c.run_id).where(ranked.c.rn == 1)
+    last_run_rows = (await db.execute(last_run_stmt)).all()
+    last_run_id_by_agent = {row.agent_id: row.run_id for row in last_run_rows}
+
+    # Query 3/3: every result row of every agent's last run, in one shot --
+    # a run has all six evaluators or fewer, never partially fetched.
+    results_by_run: dict[uuid.UUID, list[EvaluationResult]] = {}
+    if last_run_id_by_agent:
+        results_stmt = select(EvaluationResult).where(
+            EvaluationResult.run_id.in_(last_run_id_by_agent.values())
+        )
+        for row in (await db.execute(results_stmt)).scalars().all():
+            results_by_run.setdefault(row.run_id, []).append(row)
+
+    items = []
+    for agent_id, agent_name in agents:
+        run_id = last_run_id_by_agent.get(agent_id)
+        last_run = None
+        if run_id is not None:
+            run_rows = _sort_by_evaluator_order(results_by_run.get(run_id, []))
+            first = run_rows[0]
+            last_run = AgentLastRunOut(
+                run_id=run_id,
+                created_at=first.created_at,
+                session_id=first.session_id,
+                results=[EvaluationResultBrief.from_row(row) for row in run_rows],
+            )
+        items.append(
+            AgentEvaluationStateOut(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                runs_count=runs_count_by_agent.get(agent_id, 0),
+                last_run=last_run,
+            )
+        )
+
+    items.sort(key=_agent_state_sort_key)
+    return AgentsEvaluationStateResponse(items=items)
+
+
+class EvaluationRunOut(BaseModel):
+    run_id: uuid.UUID
+    created_at: datetime
+    session_id: str
+    results: list[EvaluationResultBrief]
+
+
+class EvaluationRunsResponse(BaseModel):
+    items: list[EvaluationRunOut]
+    total: int
+
+
+@router.get("/runs")
+async def list_evaluation_runs(
+    agent_id: int = Query(...),
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: user_schemas.User = Depends(get_current_user),
+) -> EvaluationRunsResponse:
+    owned = await owned_agent_ids(db, current_user)
+    if owned is not None and agent_id not in owned:
+        raise HTTPException(status_code=403, detail="Not your agent")
+
+    total = (
+        await db.execute(
+            select(func.count(func.distinct(EvaluationResult.run_id))).where(
+                EvaluationResult.agent_id == agent_id
+            )
+        )
+    ).scalar_one()
+
+    run_page_stmt = (
+        select(
+            EvaluationResult.run_id,
+            func.max(EvaluationResult.created_at).label("created_at"),
+        )
+        .where(EvaluationResult.agent_id == agent_id)
+        .group_by(EvaluationResult.run_id)
+        .order_by(func.max(EvaluationResult.created_at).desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    run_page_rows = (await db.execute(run_page_stmt)).all()
+
+    results_by_run: dict[uuid.UUID, list[EvaluationResult]] = {}
+    if run_page_rows:
+        run_ids = [row.run_id for row in run_page_rows]
+        results_stmt = select(EvaluationResult).where(EvaluationResult.run_id.in_(run_ids))
+        for row in (await db.execute(results_stmt)).scalars().all():
+            results_by_run.setdefault(row.run_id, []).append(row)
+
+    items = []
+    for run_row in run_page_rows:
+        run_rows = _sort_by_evaluator_order(results_by_run.get(run_row.run_id, []))
+        first = run_rows[0]
+        items.append(
+            EvaluationRunOut(
+                run_id=run_row.run_id,
+                created_at=run_row.created_at,
+                session_id=first.session_id,
+                results=[EvaluationResultBrief.from_row(row) for row in run_rows],
+            )
+        )
+
+    return EvaluationRunsResponse(items=items, total=total)
