@@ -90,13 +90,38 @@ def test_adds_and_backfills_run_id_column_when_missing(mock_inspect):
 
 
 @patch("apowerb.helpers.agent_evaluation_migration.inspect")
-def test_skips_run_id_migration_when_column_already_present(mock_inspect):
+def test_backfills_orphans_when_the_column_is_already_there(mock_inspect):
+    """Rows written while run_id was nullable carry none, and a result
+    without one is invisible to every screen that groups by it. Stopping at
+    "the column exists" left that hole open with nothing able to close it."""
     mock_inspect.return_value.get_columns.return_value = [{"name": "run_id"}]
     engine = MagicMock()
+    conn = engine.connect.return_value.__enter__.return_value
+    conn.execute.return_value.scalar.return_value = 29
 
     ensure_agent_evaluation_run_id_column(engine=engine)
 
-    engine.connect.assert_not_called()
+    statements = " ".join(str(call.args[0]) for call in conn.execute.call_args_list)
+    assert "run_id IS NULL" in statements
+    assert "gen_random_uuid()" in statements
+    # The constraint stays off: it was dropped because it had been applied
+    # ahead of the code that fills the column, and every insert failed.
+    assert "SET NOT NULL" not in statements
+    conn.commit.assert_called_once()
+
+
+@patch("apowerb.helpers.agent_evaluation_migration.inspect")
+def test_writes_nothing_when_the_column_is_there_and_full(mock_inspect):
+    mock_inspect.return_value.get_columns.return_value = [{"name": "run_id"}]
+    engine = MagicMock()
+    conn = engine.connect.return_value.__enter__.return_value
+    conn.execute.return_value.scalar.return_value = 0
+
+    ensure_agent_evaluation_run_id_column(engine=engine)
+
+    # One COUNT, and nothing else: a boot must not rewrite rows for nothing.
+    assert conn.execute.call_count == 1
+    conn.commit.assert_not_called()
 
 
 @patch("apowerb.helpers.agent_evaluation_migration.inspect")

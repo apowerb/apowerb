@@ -544,6 +544,12 @@ async def list_evaluation_runs(
     items = []
     for run_row in run_page_rows:
         run_rows = _sort_by_evaluator_order(results_by_run.get(run_row.run_id, []))
+        if not run_rows:
+            # Reachable when run_id is NULL: GROUP BY makes a bucket for it,
+            # and `IN (:run_ids)` can never match it back, since NULL = NULL
+            # is never true in SQL. Skipping one unshowable run beats a 500
+            # on the agent's whole history.
+            continue
         first = run_rows[0]
         items.append(
             EvaluationRunOut(
