@@ -58,7 +58,7 @@ from apowerb.evaluation.evaluators.tool_execution_outcome import (
 )
 from apowerb.evaluation.evaluators.tool_usage import evaluate_tool_usage
 from apowerb.evaluation.models import EvaluationResult
-from apowerb.models import LlmUsage
+from apowerb.models import LlmUsage, UserRole
 from apowerb.users import schemas as user_schemas
 
 logger = logging.getLogger(__name__)
@@ -137,6 +137,14 @@ def _judged_model_sql():
     )
 
 
+def is_admin(user) -> bool:
+    """`auth.dependencies` fills `role` from `UserRole.value` -- "ADMIN",
+    upper case. Comparing against "admin" silently never matched, so the
+    bypass below never fired. Normalise rather than trust one spelling.
+    """
+    return str(getattr(user, "role", "") or "").upper() == UserRole.ADMIN.value
+
+
 async def resolve_session_context(
     db: AsyncSession, session_id: str, current_user: user_schemas.User
 ) -> SessionContext:
@@ -175,7 +183,7 @@ async def resolve_session_context(
 
     agent = rows[0]._asdict()
     owner_id = str(agent.get("owner_id"))
-    if current_user.role != "admin" and owner_id != str(current_user.email):
+    if not is_admin(current_user) and owner_id != str(current_user.email):
         logger.warning(
             "[EVAL] Denied: user %s tried to evaluate session %s of agent %s (owner=%s)",
             current_user.email, session_id, agent_id, owner_id,
@@ -218,7 +226,7 @@ async def owned_agent_ids(db: AsyncSession, current_user: user_schemas.User) -> 
     agent_ids this user owns -- callers must apply it when building the
     query, never after fetching rows.
     """
-    if current_user.role == "admin":
+    if is_admin(current_user):
         return None
 
     from apowerb.core.agent_main import agent_store
@@ -246,7 +254,7 @@ async def list_owned_agents(current_user: user_schemas.User) -> list[tuple[int, 
     select_query = agent_store.agent_table.select().with_only_columns(
         agent_store.agent_table.c.agent_id, agent_store.agent_table.c.agent_name
     )
-    if current_user.role != "admin":
+    if not is_admin(current_user):
         select_query = select_query.where(
             agent_store.agent_table.c.owner_id == current_user.email
         )
