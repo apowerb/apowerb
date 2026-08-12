@@ -213,6 +213,7 @@ async def evaluate_task_completion(
     judge_model: str | None = None,
     judge_api_key: str | None = None,
     locale: str | None = None,
+    transcript: list[dict] | None = None,
 ) -> EvaluationOutcome:
     settings = get_settings()
     is_byom = bool(judge_model)
@@ -241,13 +242,21 @@ async def evaluate_task_completion(
             "configure a judge from a different model/provider."
         )
 
-    rows = (
-        await db.execute(
-            _events_sql(),
-            {"app_name": app_name, "user_id": user_id, "session_id": session_id},
-        )
-    ).fetchall()
-    transcript = _extract_transcript(rows)
+    # Every judge of a run reads the same transcript. When the caller has
+    # already fetched it, reuse it: that saves a redundant query, and it
+    # leaves this coroutine with no database work at all — which is what
+    # lets the judges of one run be awaited concurrently on a session that
+    # forbids concurrent operations. `_events_sql`/`_extract_transcript`
+    # below are byte-for-byte the shared judge's, so a transcript fetched
+    # there and one fetched here are the same transcript.
+    if transcript is None:
+        rows = (
+            await db.execute(
+                _events_sql(),
+                {"app_name": app_name, "user_id": user_id, "session_id": session_id},
+            )
+        ).fetchall()
+        transcript = _extract_transcript(rows)
     if not transcript:
         # Nothing was said, so nothing can be judged. Scoring this 0.0 would
         # rank an empty session next to an agent that answered wrongly.

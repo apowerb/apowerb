@@ -29,9 +29,23 @@ def _ctx():
     return ctx
 
 
+def _transcript_rows():
+    """`run_and_persist` now reads the transcript ONCE and hands it to every
+    judge, so the shared session is queried here rather than inside each
+    judge. Shape is ADK's real `events.event_data`, the one
+    `extract_transcript` parses."""
+    result = MagicMock()
+    result.fetchall.return_value = [
+        ({"content": {"role": "user", "parts": [{"text": "hello"}]}},),
+        ({"content": {"role": "model", "parts": [{"text": "hi"}]}},),
+    ]
+    return result
+
+
 def _db():
     db = AsyncMock()
     db.add = MagicMock()
+    db.execute = AsyncMock(return_value=_transcript_rows())
     return db
 
 

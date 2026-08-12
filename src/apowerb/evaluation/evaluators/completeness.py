@@ -61,6 +61,7 @@ async def evaluate_completeness(
     judge_model: str | None = None,
     judge_api_key: str | None = None,
     locale: str | None = None,
+    transcript: list[dict] | None = None,
 ) -> EvaluationOutcome:
     judge_model, judge_key, is_byom = resolve_judge(judge_model, judge_api_key)
     if not judge_model or not judge_key:
@@ -73,9 +74,15 @@ async def evaluate_completeness(
             "configure a judge from a different model/provider."
         )
 
-    transcript = await fetch_transcript(
-        db, app_name=app_name, user_id=user_id, session_id=session_id
-    )
+    # Every judge of a run reads the same transcript. When the caller has
+    # already fetched it, reuse it: that saves a redundant query, and it
+    # leaves this coroutine with no database work at all — which is what
+    # lets the judges of one run be awaited concurrently on a session that
+    # forbids concurrent operations.
+    if transcript is None:
+        transcript = await fetch_transcript(
+            db, app_name=app_name, user_id=user_id, session_id=session_id
+        )
     if not transcript:
         return EvaluationOutcome.not_applicable(
             evaluator="completeness",

@@ -25,6 +25,20 @@ from apowerb.evaluation.run_service import (
     run_and_persist,
 )
 
+def _transcript_rows():
+    """`run_and_persist` now reads the transcript ONCE and hands it to every
+    judge, so the shared session is queried here rather than inside each
+    judge. Shape is ADK's real `events.event_data`, the one
+    `extract_transcript` parses."""
+    result = MagicMock()
+    result.fetchall.return_value = [
+        ({"content": {"role": "user", "parts": [{"text": "hello"}]}},),
+        ({"content": {"role": "model", "parts": [{"text": "hi"}]}},),
+    ]
+    return result
+
+
+
 
 def _user(email="me@example.com", role="user"):
     u = MagicMock()
@@ -149,6 +163,7 @@ class TestJudgedModelSourcePropagatesToJudgeDetails:
         db = MagicMock()
         db.commit = AsyncMock()
         db.refresh = AsyncMock()
+        db.execute = AsyncMock(return_value=_transcript_rows())
         ctx = SessionContext(
             agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
             judged_model="gemini/gemini-2.5-flash-lite", judged_model_source="llm_usage",
@@ -172,6 +187,7 @@ class TestJudgedModelSourcePropagatesToJudgeDetails:
         db = MagicMock()
         db.commit = AsyncMock()
         db.refresh = AsyncMock()
+        db.execute = AsyncMock(return_value=_transcript_rows())
         ctx = SessionContext(
             agent_id=1234, app_name="agent1234", session_user_id="me@example.com",
             judged_model="gemini/gemini-2.5-flash", judged_model_source="agent_config_fallback",
@@ -200,6 +216,7 @@ def _db():
     db = MagicMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    db.execute = AsyncMock(return_value=_transcript_rows())
     return db
 
 
