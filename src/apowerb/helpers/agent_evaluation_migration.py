@@ -96,12 +96,51 @@ def ensure_agent_evaluation_run_id_column(engine=None) -> None:
                 col["name"] for col in inspector.get_columns(table_name, schema=schema)
             }
 
+            qualified = f'"{schema}".{table_name}'
+
             if "run_id" in existing_columns:
-                logger.debug("Column 'run_id' already exists on '%s' -- skipping.", table_name)
+                # The column exists, but rows written while it was nullable
+                # can still carry no run_id -- and a result without one is
+                # invisible to every screen that groups by it. Catch them up
+                # here instead of leaving a hole no later run can fill.
+                #
+                # NOT NULL is deliberately NOT re-applied: the constraint was
+                # dropped because it had been added ahead of the code that
+                # fills the column, and every insert from the running version
+                # failed. Re-applying it on boot would rebuild that trap for
+                # any deploy that rolls the core back.
+                with engine.connect() as conn:
+                    orphans = conn.execute(
+                        text(f"SELECT COUNT(*) FROM {qualified} WHERE run_id IS NULL")
+                    ).scalar()
+                    if not orphans:
+                        logger.debug(
+                            "Column 'run_id' already exists on '%s', no orphans.", table_name
+                        )
+                        return
+                    logger.info(
+                        "Backfilling %s result(s) with no run_id on '%s'...",
+                        orphans, table_name,
+                    )
+                    conn.execute(text(f"""
+                    WITH groups AS (
+                        SELECT DISTINCT session_id, created_at,
+                               gen_random_uuid() AS new_run_id
+                        FROM {qualified}
+                        WHERE run_id IS NULL
+                    )
+                    UPDATE {qualified} r
+                    SET run_id = g.new_run_id
+                    FROM groups g
+                    WHERE r.session_id = g.session_id
+                      AND r.created_at = g.created_at
+                      AND r.run_id IS NULL
+"""))
+                    conn.commit()
+                logger.info("Backfilled %s orphaned result(s).", orphans)
                 return
 
             logger.info("Adding column 'run_id' to '%s'...", table_name)
-            qualified = f'"{schema}".{table_name}'
             with engine.connect() as conn:
                 conn.execute(text(f"ALTER TABLE {qualified} ADD COLUMN run_id UUID NULL"))
                 conn.execute(
