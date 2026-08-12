@@ -390,6 +390,10 @@ class AgentLastRunOut(BaseModel):
 class AgentEvaluationStateOut(BaseModel):
     agent_id: int
     agent_name: str
+    # Who the agent belongs to. An admin is served every agent on the
+    # platform, so the screen needs this to tell them apart -- and to stop
+    # describing someone else's agent as one of yours.
+    owner_id: str | None
     runs_count: int
     # None when this agent has never been evaluated -- a row, not an
     # absence: the front must be able to tell "no signal" from "loading".
@@ -421,7 +425,7 @@ async def list_agents_evaluation_state(
     if not agents:
         return AgentsEvaluationStateResponse(items=[])
 
-    agent_ids = [agent_id for agent_id, _ in agents]
+    agent_ids = [agent_id for agent_id, _, _ in agents]
 
     # Query 1/3: how many distinct runs each agent has -- one grouped
     # query for every owned agent, not one per agent.
@@ -464,7 +468,7 @@ async def list_agents_evaluation_state(
             results_by_run.setdefault(row.run_id, []).append(row)
 
     items = []
-    for agent_id, agent_name in agents:
+    for agent_id, agent_name, owner_id in agents:
         run_id = last_run_id_by_agent.get(agent_id)
         last_run = None
         if run_id is not None:
@@ -480,6 +484,7 @@ async def list_agents_evaluation_state(
             AgentEvaluationStateOut(
                 agent_id=agent_id,
                 agent_name=agent_name,
+                owner_id=owner_id,
                 runs_count=runs_count_by_agent.get(agent_id, 0),
                 last_run=last_run,
             )

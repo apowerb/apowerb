@@ -23,16 +23,26 @@ def _user(email="owner@example.com", role="user"):
 @pytest.mark.asyncio
 async def test_regular_user_gets_only_their_agents():
     with patch("apowerb.core.agent_main.agent_store") as store:
-        store.get_list_agents.return_value = [(1, "Send_mail"), (2, "Triage")]
+        store.get_list_agents.return_value = [
+            (1, "Send_mail", "me@example.com"),
+            (2, "Triage", "me@example.com"),
+        ]
         result = await list_owned_agents(_user(email="me@example.com"))
 
-    assert result == [(1, "Send_mail"), (2, "Triage")]
+    assert result == [
+        (1, "Send_mail", "me@example.com"),
+        (2, "Triage", "me@example.com"),
+    ]
 
 
 @pytest.mark.asyncio
 async def test_admin_is_unrestricted():
     with patch("apowerb.core.agent_main.agent_store") as store:
-        store.get_list_agents.return_value = [(1, "A"), (2, "B"), (3, "C")]
+        store.get_list_agents.return_value = [
+            (1, "A", "someone@example.com"),
+            (2, "B", "other@example.com"),
+            (3, "C", None),
+        ]
         result = await list_owned_agents(_user(role="admin"))
 
     assert len(result) == 3
@@ -61,3 +71,24 @@ async def test_owner_with_no_agents_gets_empty_list():
         result = await list_owned_agents(_user(email="me@example.com"))
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_the_owner_comes_back_with_each_agent():
+    """An admin is served every agent on the platform — 186 on dev, of which
+    12 belong to the person looking. Without the owner the screen can only
+    claim they are all theirs, which is exactly what it did.
+    """
+    with patch("apowerb.core.agent_main.agent_store") as store:
+        store.get_list_agents.return_value = [
+            (1, "Mine", "me@example.com"),
+            (2, "Someone else's", "other@example.com"),
+            (3, "Orphan", None),
+        ]
+        result = await list_owned_agents(_user(role="ADMIN", email="me@example.com"))
+
+    assert [owner for _, _, owner in result] == [
+        "me@example.com",
+        "other@example.com",
+        None,
+    ]
