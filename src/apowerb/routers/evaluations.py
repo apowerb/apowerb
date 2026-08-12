@@ -425,7 +425,7 @@ async def list_agents_evaluation_state(
     if not agents:
         return AgentsEvaluationStateResponse(items=[])
 
-    agent_ids = [agent_id for agent_id, _ in agents]
+    agent_ids = [agent_id for agent_id, _, _ in agents]
 
     # Query 1/3: how many distinct runs each agent has -- one grouped
     # query for every owned agent, not one per agent.

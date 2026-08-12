@@ -170,7 +170,12 @@ class TestListAgentsEvaluationState:
 
         with patch(
             "apowerb.routers.evaluations.list_owned_agents",
-            new=AsyncMock(return_value=[(164, "Send_mail"), (200, "Never_run")]),
+            new=AsyncMock(
+                return_value=[
+                    (164, "Send_mail", "owner@example.com"),
+                    (200, "Never_run", "owner@example.com"),
+                ]
+            ),
         ):
             resp = client.get("/api/evaluations/agents")
 
@@ -206,7 +211,7 @@ class TestListAgentsEvaluationState:
 
         with patch(
             "apowerb.routers.evaluations.list_owned_agents",
-            new=AsyncMock(return_value=[(164, "Send_mail")]),
+            new=AsyncMock(return_value=[(164, "Send_mail", "owner@example.com")]),
         ):
             resp = client.get("/api/evaluations/agents")
 
@@ -238,7 +243,7 @@ class TestListAgentsEvaluationState:
 
         with patch(
             "apowerb.routers.evaluations.list_owned_agents",
-            new=AsyncMock(return_value=[(164, "Send_mail")]),
+            new=AsyncMock(return_value=[(164, "Send_mail", "owner@example.com")]),
         ):
             resp = client.get("/api/evaluations/agents")
 
@@ -249,7 +254,7 @@ class TestListAgentsEvaluationState:
 
     def test_query_count_does_not_grow_with_number_of_agents(self):
         """N+1 guard: 20 owned agents still cost exactly 3 evaluation queries."""
-        agents = [(i, f"agent_{i}") for i in range(20)]
+        agents = [(i, f"agent_{i}", "owner@example.com") for i in range(20)]
         run_id = uuid.uuid4()
         session = _FakeSession(
             [
