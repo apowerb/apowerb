@@ -11,7 +11,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from apowerb.core.extensions.registry import registry
-from apowerb.evaluation.run_service import may_supervise_across_accounts
+from apowerb.helpers.ownership import may_supervise_across_accounts
 
 
 @pytest.fixture(autouse=True)
