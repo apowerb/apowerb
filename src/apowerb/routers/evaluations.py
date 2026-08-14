@@ -52,6 +52,7 @@ from apowerb.evaluation.run_service import (
     check_rerun_rate_limit,
     list_evaluator_specs,
     list_owned_agents,
+    may_supervise_across_accounts,
     owned_agent_ids,
     resolve_session_context,
     run_and_persist,
@@ -610,8 +611,13 @@ async def list_supervision_sessions(
     call per agent. Two queries total, whatever the number of agents -- the
     N+1 shape this codebase has paid for more than once.
     """
-    # Supervision is the admin screen: crossing accounts is what it is for.
-    agents = await list_owned_agents(current_user, admin_sees_all=True)
+    # Crossing accounts is a superadmin's business, not every admin's: an
+    # administrator with the role for operational reasons was reading his
+    # colleagues' sessions. The core asks the brick that owns that notion.
+    agents = await list_owned_agents(
+        current_user,
+        admin_sees_all=await may_supervise_across_accounts(db, current_user),
+    )
     if not agents:
         return SupervisionSessionsResponse(items=[], total=0)
 
