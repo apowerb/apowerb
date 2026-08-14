@@ -14,7 +14,7 @@ os.environ.setdefault("ENCRYPT_KEY", "test-only-key-not-used-anywhere-else")
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -163,3 +163,46 @@ async def test_once_enrolled_the_demand_is_satisfied():
 async def test_an_account_with_neither_flag_is_untouched():
     out = await _call(_user(), path="/api/agents")
     assert out.email == "someone@example.com"
+
+
+# --- the guards must fire on their state and on nothing else --------------
+#
+# CI found both of these: a fake user row whose new attributes are mocks is
+# neither None nor False, so the cut-off refused a good token and the gate
+# locked the account out of the product. This sits on the path of every
+# authenticated request, so the failure mode matters as much as the feature.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("junk", [object(), "2026-01-01", 1, MagicMock()])
+async def test_a_cutoff_that_is_not_a_datetime_revokes_nobody(junk):
+    """Failing closed here would sign out an install nobody asked to sign
+    out, and the comparison itself could raise inside the dependency."""
+    out = await _call(_user(sessions_valid_from=junk))
+    assert out.email == "someone@example.com"
+
+
+@pytest.mark.asyncio
+async def test_a_naive_cutoff_is_read_as_utc_rather_than_raising():
+    """Comparing a naive value to an aware `iat` raises TypeError — inside
+    the auth dependency, on every request."""
+    naive = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=1)
+    with pytest.raises(HTTPException) as exc:
+        await _call(_user(sessions_valid_from=naive))
+    assert exc.value.detail == "session_revoked"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("junk", ["yes", 1, MagicMock()])
+async def test_only_a_real_true_demands_a_second_factor(junk):
+    out = await _call(_user(mfa_required=junk, mfa_enabled=False), path="/api/agents")
+    assert out.email == "someone@example.com"
+
+
+@pytest.mark.asyncio
+async def test_a_mocked_mfa_enabled_does_not_satisfy_a_real_demand():
+    """The other direction: something merely truthy must not pass for an
+    enrolled second factor."""
+    with pytest.raises(HTTPException) as exc:
+        await _call(_user(mfa_required=True, mfa_enabled=MagicMock()), path="/api/agents")
+    assert exc.value.detail == "mfa_enrolment_required"

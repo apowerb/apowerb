@@ -121,16 +121,12 @@ async def refresh(request: Request, db: AsyncSession):
     # The cut-off applies here as well. Revoking access tokens while leaving
     # a thirty-day cookie able to mint fresh ones would turn "sign in again"
     # into "wait a few minutes".
-    cutoff = getattr(user, "sessions_valid_from", None)
-    if cutoff is not None:
-        issued_at = payload.get("iat")
-        issued = (
-            datetime.fromtimestamp(issued_at, tz=timezone.utc)
-            if isinstance(issued_at, (int, float))
-            else None
-        )
-        if issued is None or issued < cutoff:
-            raise exceptions.InvalidCredentials("Session revoked")
+    # Same two helpers as the request path: one reading of "revoked", not two.
+    from apowerb.auth.dependencies import _revocation_cutoff, _token_predates
+
+    cutoff = _revocation_cutoff(user)
+    if cutoff is not None and _token_predates(payload, cutoff):
+        raise exceptions.InvalidCredentials("Session revoked")
 
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(

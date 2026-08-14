@@ -26,6 +26,39 @@ security = HTTPBearer(auto_error=False)
 DBSessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 
+def _revocation_cutoff(user) -> datetime | None:
+    """The instant before which this user's tokens are refused, or None.
+
+    Only a real datetime counts. A guard that fires on whatever happens to
+    be in the attribute would refuse everyone the day the column holds
+    something unexpected — and this sits on the path of every
+    authenticated request. Failing open is the right side to fail on here:
+    failing closed locks out an install nobody asked to lock out.
+    """
+    cutoff = getattr(user, "sessions_valid_from", None)
+    if not isinstance(cutoff, datetime):
+        return None
+    # A naive value means UTC. Comparing it to an aware `iat` would raise,
+    # inside the auth dependency, on every request.
+    return cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
+
+
+def _token_predates(payload, cutoff: datetime) -> bool:
+    """Was this token minted before the cut-off?
+
+    A token with no `iat` predates the claim itself — minted before this
+    shipped — and an administrator who revokes wants those gone.
+    """
+    issued_at = payload.get("iat")
+    if not isinstance(issued_at, (int, float)):
+        return True
+    return datetime.fromtimestamp(issued_at, tz=timezone.utc) < cutoff
+
+# Both flags below are compared with `is True` rather than tested for
+# truthiness: this sits on the path of every authenticated request, and a
+# guard that fires on whatever happens to be in the attribute would lock
+# accounts out of the product. Failing open is the right side to fail on.
+#
 # Routes a user with an unsatisfied MFA demand may still reach: the ones
 # that let them enrol, and the one the front reads to know who they are.
 # Anything else is refused until the second factor exists — a demand that
@@ -123,27 +156,20 @@ async def get_current_user(
     # expiry says. `iat` is absent from tokens minted before this shipped,
     # and those are treated as older than any cut-off — which is the safe
     # reading: an administrator who revokes wants them gone.
-    cutoff = getattr(user, "sessions_valid_from", None)
-    if cutoff is not None:
-        issued_at = payload.get("iat")
-        issued = (
-            datetime.fromtimestamp(issued_at, tz=timezone.utc)
-            if isinstance(issued_at, (int, float))
-            else None
+    cutoff = _revocation_cutoff(user)
+    if cutoff is not None and _token_predates(payload, cutoff):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="session_revoked",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-        if issued is None or issued < cutoff:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="session_revoked",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
 
     # A second factor was demanded and never set up: everything is refused
     # except enrolling. Refusing the login itself would deadlock — enrolling
     # requires being signed in.
     if (
-        getattr(user, "mfa_required", False)
-        and not getattr(user, "mfa_enabled", False)
+        getattr(user, "mfa_required", False) is True
+        and getattr(user, "mfa_enabled", False) is not True
         and not _mfa_enrolment_route(request.url.path)
     ):
         raise HTTPException(
