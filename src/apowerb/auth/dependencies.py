@@ -40,6 +40,13 @@ def _revocation_cutoff(user) -> datetime | None:
         return None
     # A naive value means UTC. Comparing it to an aware `iat` would raise,
     # inside the auth dependency, on every request.
+    # A JWT `iat` is a whole number of seconds while this is a database
+    # timestamp with microseconds, so a token minted in the same second as
+    # the revocation is refused: it may have been minted a fraction before
+    # the click, and nothing distinguishes the two. Signing back in works
+    # from the next second, which is well under the time it takes to retype
+    # a password. Rounding the cut-off either way changes nothing — every
+    # `iat` is already a whole second.
     return cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
 
 

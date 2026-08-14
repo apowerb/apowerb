@@ -206,3 +206,58 @@ async def test_a_mocked_mfa_enabled_does_not_satisfy_a_real_demand():
     with pytest.raises(HTTPException) as exc:
         await _call(_user(mfa_required=True, mfa_enabled=MagicMock()), path="/api/agents")
     assert exc.value.detail == "mfa_enrolment_required"
+
+
+# --- the token and the cut-off do not have the same resolution -----------
+#
+# A JWT `iat` is a whole number of seconds; the cut-off is a database
+# timestamp with microseconds. Compared as-is, the fresh token a user gets
+# when they immediately sign back in is refused — proven on the running
+# install before this was fixed: revoke, sign in again, still 401.
+
+
+@pytest.mark.asyncio
+async def test_signing_back_in_right_after_a_revocation_works():
+    """The whole point of "force re-login" is that they can sign in again."""
+    revoked_at = datetime.now(timezone.utc).replace(microsecond=500_000)
+    user = _user(sessions_valid_from=revoked_at)
+
+    # The token they get one second later, as `create_access_token` stamps it.
+    token = create_access_token(
+        {"sub": user.email, "type": "access", "iat": revoked_at + timedelta(seconds=1)}
+    )
+
+    out = await _call(user, token=token)
+    assert out.email == "someone@example.com"
+
+
+@pytest.mark.asyncio
+async def test_a_token_stamped_with_the_very_second_of_the_revocation_is_refused():
+    """It may have been minted a fraction before the click, and nothing
+    distinguishes the two. Rounding down would let it survive — which is
+    the one thing this exists to prevent."""
+    revoked_at = datetime.now(timezone.utc).replace(microsecond=500_000)
+    token = create_access_token(
+        {
+            "sub": "someone@example.com",
+            "type": "access",
+            "iat": revoked_at.replace(microsecond=0),
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await _call(_user(sessions_valid_from=revoked_at), token=token)
+    assert exc.value.detail == "session_revoked"
+
+
+@pytest.mark.asyncio
+async def test_a_whole_second_cutoff_is_left_alone():
+    """No rounding to do, and none applied: a token stamped with exactly
+    that second is not older than it."""
+    revoked_at = datetime.now(timezone.utc).replace(microsecond=0)
+    token = create_access_token(
+        {"sub": "someone@example.com", "type": "access", "iat": revoked_at}
+    )
+
+    out = await _call(_user(sessions_valid_from=revoked_at), token=token)
+    assert out.email == "someone@example.com"
