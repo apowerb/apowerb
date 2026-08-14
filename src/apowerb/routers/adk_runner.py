@@ -538,7 +538,7 @@ async def get_session_trace(
     # the IDOR guard has to step aside for whoever may supervise — and only
     # here. This route is read-only; `run` and `update` below keep the
     # blanket check, where a mismatched user_id has no legitimate use.
-    from apowerb.evaluation.run_service import may_supervise_across_accounts
+    from apowerb.helpers.ownership import may_supervise_across_accounts
 
     if not await may_supervise_across_accounts(db, current_user):
         _enforce_user_id_match(user_id, current_user)
