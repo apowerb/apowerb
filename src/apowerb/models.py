@@ -80,6 +80,13 @@ class User(Base):
 
     # MFA fields
     mfa_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
+    # An administrator can demand a second factor. Separate from
+    # `mfa_enabled`, which says whether the user has one: the whole point is
+    # the state where it is required and not yet set up.
+    mfa_required = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Tokens minted before this instant are refused. NULL means never
+    # revoked, which is every account until an administrator says otherwise.
+    sessions_valid_from = Column(DateTime(timezone=True), nullable=True)
     mfa_secret = Column(String(255), nullable=True)
     onboarding_completed = Column(Boolean, default=False, nullable=False, server_default="false")
     email_verified = Column(Boolean, default=True, nullable=False, server_default="true")

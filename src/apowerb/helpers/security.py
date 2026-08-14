@@ -115,6 +115,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     to_encode["exp"] = expire
+    # `iat` is what makes a token revocable: without it, "issued before the
+    # cut-off" is not a question anyone can answer. Not overwritten when a
+    # caller sets its own.
+    to_encode.setdefault("iat", datetime.now(timezone.utc))
     to_encode.setdefault("type", "access")
     encoded_jwt = jwt.encode(to_encode, get_secret_key(), algorithm=get_algorithm())
 

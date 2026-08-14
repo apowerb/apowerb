@@ -118,6 +118,20 @@ async def refresh(request: Request, db: AsyncSession):
     if settings.auth_email_verification_enabled and not user.email_verified:
         raise exceptions.InvalidCredentials("Email not verified")
 
+    # The cut-off applies here as well. Revoking access tokens while leaving
+    # a thirty-day cookie able to mint fresh ones would turn "sign in again"
+    # into "wait a few minutes".
+    cutoff = getattr(user, "sessions_valid_from", None)
+    if cutoff is not None:
+        issued_at = payload.get("iat")
+        issued = (
+            datetime.fromtimestamp(issued_at, tz=timezone.utc)
+            if isinstance(issued_at, (int, float))
+            else None
+        )
+        if issued is None or issued < cutoff:
+            raise exceptions.InvalidCredentials("Session revoked")
+
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(
         data={"sub": user.email, "role": "USER", "type": "access"},
