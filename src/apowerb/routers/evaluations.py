@@ -422,7 +422,10 @@ async def list_agents_evaluation_state(
     # `agent_store` connection every other route in this file uses --
     # this is also where the "never evaluated" agents come from: they
     # exist here and nowhere in `agent_evaluation_results`.
-    agents = await list_owned_agents(current_user)
+    # Your own agents, administrator or not: this screen used to offer a
+    # platform-wide view with every owner's email address on it, and that
+    # belongs to the admin panel, not to a product screen.
+    agents = await list_owned_agents(current_user, admin_sees_all=False)
     if not agents:
         return AgentsEvaluationStateResponse(items=[])
 
@@ -607,7 +610,8 @@ async def list_supervision_sessions(
     call per agent. Two queries total, whatever the number of agents -- the
     N+1 shape this codebase has paid for more than once.
     """
-    agents = await list_owned_agents(current_user)
+    # Supervision is the admin screen: crossing accounts is what it is for.
+    agents = await list_owned_agents(current_user, admin_sees_all=True)
     if not agents:
         return SupervisionSessionsResponse(items=[], total=0)
 

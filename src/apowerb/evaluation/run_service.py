@@ -242,15 +242,24 @@ async def owned_agent_ids(db: AsyncSession, current_user: user_schemas.User) -> 
 
 async def list_owned_agents(
     current_user: user_schemas.User,
+    *,
+    admin_sees_all: bool,
 ) -> list[tuple[int, str, str | None]]:
-    """Every agent this user owns as `(agent_id, agent_name, owner_id)`,
-    admin sees
-    every agent regardless of owner -- same ownership rule as
-    `owned_agent_ids`, carrying the display name along so `GET
-    /evaluations/agents` never has to look an agent's name up one at a
-    time (the exact N+1 shape already paid for once on the Artefacts
-    screen). One query on `agent_store`'s own synchronous connection,
-    independent of the number of agents returned.
+    """Every agent this user owns as `(agent_id, agent_name, owner_id)`.
+
+    `admin_sees_all` says whether an administrator gets the whole platform
+    or only their own agents, and it has no default on purpose. The two
+    callers want opposite things: Supervision is an admin screen and
+    crossing accounts is its job, while Evaluations is a product screen
+    where it meant listing every agent on the platform next to its owner's
+    email address. A default would let the next route inherit whichever
+    answer happened to be written here.
+
+    Carries the display name along so `GET /evaluations/agents` never has
+    to look an agent's name up one at a time (the exact N+1 shape already
+    paid for once on the Artefacts screen). One query on `agent_store`'s
+    own synchronous connection, independent of the number of agents
+    returned.
     """
     from apowerb.core.agent_main import agent_store
 
@@ -262,7 +271,7 @@ async def list_owned_agents(
         # are all yours, which is what it did.
         agent_store.agent_table.c.owner_id,
     )
-    if not is_admin(current_user):
+    if not (admin_sees_all and is_admin(current_user)):
         select_query = select_query.where(
             agent_store.agent_table.c.owner_id == current_user.email
         )

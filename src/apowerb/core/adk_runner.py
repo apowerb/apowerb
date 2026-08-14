@@ -678,11 +678,12 @@ async def get_adk_session(
             raise ValueError(f"Failed to parse response JSON: {e}")
 
 
-def _truncate(text: str, max_len: int = 200) -> str:
-    """Truncate text to max_len characters, appending '...' if truncated."""
-    if not text or len(text) <= max_len:
-        return text or ""
-    return text[:max_len] + "..."
+# A tool result is the evidence behind a decision, so the supervision screen
+# needs the body of it, not a label. The bound is here because a tool can
+# return megabytes and this payload rides in a JSON list of every step; it is
+# reported alongside the content so the screen can state the cut instead of
+# offering an expander with nothing behind it.
+TOOL_RESULT_MAX_CHARS = 20_000
 
 
 def _parse_timestamp(ts: Any) -> float | None:
@@ -786,10 +787,14 @@ def parse_session_to_trace(session_data: dict, agent_name: str) -> dict:
                     response_str = json.dumps(response_obj) if isinstance(response_obj, dict) else str(response_obj)
                     step = {
                         "type": "tool_result",
-                        "content": _truncate(response_str, 200),
+                        # No trailing "..." here: the ellipsis belongs to
+                        # whoever collapses the text, and a server-supplied
+                        # one made a complete result read as a cut one.
+                        "content": response_str[:TOOL_RESULT_MAX_CHARS],
                         "details": {
                             "name": func_name,
-                            "response_preview": _truncate(response_str, 500),
+                            "full_length": len(response_str),
+                            "truncated": len(response_str) > TOOL_RESULT_MAX_CHARS,
                         },
                     }
                 elif part.get("text"):
