@@ -280,10 +280,12 @@ class Settings(BaseSettings):
     auth_basic_enabled: bool = True
 
     # ── Agent evaluation (POC) ──────────────────────────────────────
-    # Set EVALUATION_ENABLED=true to allow `apowerb.evaluation.poc_runner`
+    # Set EVALUATION_ENABLED=true to allow the evaluation brick's routes
     # to run. Off by default: this is offline scaffolding (a library plus a
     # manually-run script), not a route, and never touches the agent
-    # request path. See `apowerb/evaluation/__init__.py`.
+    # request path. The feature itself lives in the `th2agent-evaluation`
+    # extension since 14/08/2026; these settings stay here because the
+    # core owns the configuration surface and the brick reads it.
     evaluation_enabled: bool = False
     # Judge model for the LLM-judge evaluator (litellm model string, e.g.
     # "gemini/gemini-2.5-flash"). Must differ from the model being judged —
