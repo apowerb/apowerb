@@ -57,6 +57,13 @@ def ensure_user_columns():
             "mfa_enabled": "BOOLEAN DEFAULT FALSE",
             "mfa_secret": "VARCHAR(255)",
             "mfa_backup_codes": "VARCHAR(1000)",
+            # An administrator may demand a second factor from an account
+            # that does not have one yet.
+            "mfa_required": "BOOLEAN NOT NULL DEFAULT FALSE",
+            # Revocation cut-off: tokens minted before it are refused. NULL
+            # on every existing account, so nobody is signed out by the
+            # migration itself.
+            "sessions_valid_from": "TIMESTAMPTZ",
             # Onboarding
             "onboarding_completed": "BOOLEAN DEFAULT FALSE",
             # Email verification (B-notif): DEFAULT TRUE => backfill atomique des comptes existants

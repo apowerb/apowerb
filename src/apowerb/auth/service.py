@@ -118,6 +118,16 @@ async def refresh(request: Request, db: AsyncSession):
     if settings.auth_email_verification_enabled and not user.email_verified:
         raise exceptions.InvalidCredentials("Email not verified")
 
+    # The cut-off applies here as well. Revoking access tokens while leaving
+    # a thirty-day cookie able to mint fresh ones would turn "sign in again"
+    # into "wait a few minutes".
+    # Same two helpers as the request path: one reading of "revoked", not two.
+    from apowerb.auth.dependencies import _revocation_cutoff, _token_predates
+
+    cutoff = _revocation_cutoff(user)
+    if cutoff is not None and _token_predates(payload, cutoff):
+        raise exceptions.InvalidCredentials("Session revoked")
+
     access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
     access_token = create_access_token(
         data={"sub": user.email, "role": "USER", "type": "access"},

@@ -24,6 +24,7 @@ plutôt que d'accepter un jeton forgé.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 import ast
 import pathlib
 
@@ -60,8 +61,14 @@ class TestAuthentificationPrincipale:
         from apowerb.auth import dependencies
 
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=clé_vide)
+        # The dependency reads the path to know whether the route is one an
+        # un-enrolled user may still reach; the parameter is required on
+        # purpose, so nobody skips that check by omission.
+        requête = SimpleNamespace(url=SimpleNamespace(path="/api/agents"))
         with pytest.raises(RuntimeError, match="ENCRYPT_KEY"):
-            await dependencies.get_current_user(credentials=creds, db=None)
+            await dependencies.get_current_user(
+                request=requête, credentials=creds, db=None
+            )
 
     @pytest.mark.asyncio
     async def test_get_optional_user_refuse_un_jeton_forgé(self, clé_vide):

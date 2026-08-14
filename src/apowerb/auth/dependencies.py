@@ -1,9 +1,9 @@
 from apowerb.configs.th2logger import setup_logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from jose import JWTError, jwt
@@ -26,7 +26,56 @@ security = HTTPBearer(auto_error=False)
 DBSessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 
+def _revocation_cutoff(user) -> datetime | None:
+    """The instant before which this user's tokens are refused, or None.
+
+    Only a real datetime counts. A guard that fires on whatever happens to
+    be in the attribute would refuse everyone the day the column holds
+    something unexpected — and this sits on the path of every
+    authenticated request. Failing open is the right side to fail on here:
+    failing closed locks out an install nobody asked to lock out.
+    """
+    cutoff = getattr(user, "sessions_valid_from", None)
+    if not isinstance(cutoff, datetime):
+        return None
+    # A naive value means UTC. Comparing it to an aware `iat` would raise,
+    # inside the auth dependency, on every request.
+    return cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=timezone.utc)
+
+
+def _token_predates(payload, cutoff: datetime) -> bool:
+    """Was this token minted before the cut-off?
+
+    A token with no `iat` predates the claim itself — minted before this
+    shipped — and an administrator who revokes wants those gone.
+    """
+    issued_at = payload.get("iat")
+    if not isinstance(issued_at, (int, float)):
+        return True
+    return datetime.fromtimestamp(issued_at, tz=timezone.utc) < cutoff
+
+# Both flags below are compared with `is True` rather than tested for
+# truthiness: this sits on the path of every authenticated request, and a
+# guard that fires on whatever happens to be in the attribute would lock
+# accounts out of the product. Failing open is the right side to fail on.
+#
+# Routes a user with an unsatisfied MFA demand may still reach: the ones
+# that let them enrol, and the one the front reads to know who they are.
+# Anything else is refused until the second factor exists — a demand that
+# only the screen enforces is a suggestion.
+_MFA_ENROLMENT_PATHS = (
+    "/api/auth/mfa/",
+    "/api/users/me",
+    "/api/auth/logout",
+)
+
+
+def _mfa_enrolment_route(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in _MFA_ENROLMENT_PATHS)
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> user_schemas.User:
@@ -101,6 +150,31 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Revoked? A token minted before the cut-off is refused whatever its
+    # expiry says. `iat` is absent from tokens minted before this shipped,
+    # and those are treated as older than any cut-off — which is the safe
+    # reading: an administrator who revokes wants them gone.
+    cutoff = _revocation_cutoff(user)
+    if cutoff is not None and _token_predates(payload, cutoff):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="session_revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # A second factor was demanded and never set up: everything is refused
+    # except enrolling. Refusing the login itself would deadlock — enrolling
+    # requires being signed in.
+    if (
+        getattr(user, "mfa_required", False) is True
+        and getattr(user, "mfa_enabled", False) is not True
+        and not _mfa_enrolment_route(request.url.path)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="mfa_enrolment_required",
         )
 
     return user_schemas.User(
