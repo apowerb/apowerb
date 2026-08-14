@@ -10,6 +10,11 @@ import os
 
 # Signing refuses an empty key, deliberately — the same guard that keeps a
 # production install from minting tokens with no secret.
+#
+# Setting the environment variable is not enough on its own: `get_settings()`
+# is cached, so whether this module's assignment is seen depends on which
+# test module imported first. Run alone the suite passed; run beside another
+# it failed on all 24. The fixture below settles it on the object itself.
 os.environ.setdefault("ENCRYPT_KEY", "test-only-key-not-used-anywhere-else")
 
 from datetime import datetime, timedelta, timezone
@@ -21,6 +26,19 @@ from fastapi import HTTPException
 
 from apowerb.auth.dependencies import get_current_user
 from apowerb.helpers.security import create_access_token, get_secret_key
+
+
+@pytest.fixture(autouse=True)
+def _signing_key():
+    """Guarantee a usable key whatever order the modules were imported in."""
+    from apowerb.configs.settings import get_settings
+
+    settings = get_settings()
+    previous = settings.encrypt_key
+    if not previous:
+        settings.encrypt_key = os.environ["ENCRYPT_KEY"]
+    yield
+    settings.encrypt_key = previous
 
 
 def _request(path="/api/agents"):
