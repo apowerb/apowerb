@@ -530,10 +530,18 @@ async def get_session_trace(
     agent_name: str,
     user_id: str,
     session_id: str,
+    db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Retrieve a structured trace of an ADK session for supervision."""
-    _enforce_user_id_match(user_id, current_user)
+    # Reading someone else's session is precisely what supervision is, so
+    # the IDOR guard has to step aside for whoever may supervise — and only
+    # here. This route is read-only; `run` and `update` below keep the
+    # blanket check, where a mismatched user_id has no legitimate use.
+    from apowerb.evaluation.run_service import may_supervise_across_accounts
+
+    if not await may_supervise_across_accounts(db, current_user):
+        _enforce_user_id_match(user_id, current_user)
     try:
         folder_name = get_agent_folder_name(agent_name)
         token = _internal_token(current_user)

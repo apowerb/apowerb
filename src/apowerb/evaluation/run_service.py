@@ -240,6 +240,22 @@ async def owned_agent_ids(db: AsyncSession, current_user: user_schemas.User) -> 
     return {row[0] for row in rows}
 
 
+async def may_supervise_across_accounts(db, user) -> bool:
+    """May this user read other people's sessions?
+
+    The core cannot answer on its own: "superadmin" is a row in a table
+    that belongs to a commercial brick, and the core never names one. It
+    asks the registry, and with no brick registered the answer is no —
+    every install then shows each person their own sessions, which is the
+    only default the core can honestly hold.
+    """
+    from apowerb.core.extensions.registry import registry
+
+    resolver = registry.supervision_scope()
+    if resolver is None:
+        return False
+    return bool(await resolver(db, user))
+
 async def list_owned_agents(
     current_user: user_schemas.User,
     *,

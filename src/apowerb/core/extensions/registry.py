@@ -88,6 +88,10 @@ class ExtensionRegistry:
         self._tool_packs: list[ToolPack] = [CORE_TOOL_PACK]
         self._routers: list[RouterSpec] = []
         self._second_factor: Callable[[Any], Any | None] | None = None
+        # Who may read another account's sessions. The core has no notion of
+        # a superadmin — that table belongs to a commercial brick — so it
+        # asks instead of deciding. No brick, no crossing.
+        self._supervision_scope: Callable[..., Any] | None = None
         self._run_guards: list[Callable[..., Any]] = []
         self._model_observers: list[Callable[..., Any]] = []
         self._bootstrap_hooks: list[Callable[[], Any]] = []
@@ -115,6 +119,13 @@ class ExtensionRegistry:
     # Ce point existe parce que le MFA, contrairement aux quatre connexions par
     # fournisseur, n'était pas un bloc à retirer : il avait une branche au
     # milieu du flux de connexion lui-même.
+    def register_supervision_scope(self, fn: Callable[..., Any]) -> None:
+        """`fn(db, user) -> bool`: may this user supervise across accounts?"""
+        self._supervision_scope = fn
+
+    def supervision_scope(self) -> Callable[..., Any] | None:
+        return self._supervision_scope
+
     def register_second_factor(self, fn: Callable[[Any], Any | None]) -> None:
         self._second_factor = fn
 
