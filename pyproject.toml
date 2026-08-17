@@ -1,7 +1,7 @@
 [project]
 name = "apowerb"
 version = "0.1.1"
-description = "Agentic framework for building and deploying AI agents with flexible orchestration, custom tool integration, RAG, Text-to-SQL, webhooks, and billing."
+description = "Agentic framework for building and deploying AI agents with flexible orchestration, custom tool integration, RAG, Text-to-SQL, webhooks, and scheduled runs."
 readme = "README.md"
 authors = [
     { name = "Farid  Azouaou", email = "farid.azouaou@thaink2.com" }
