@@ -192,12 +192,17 @@ def _warn_env_keys_dropped_by_the_parser(env_path: str = _ENV_FILE) -> None:
 # Ils ont une valeur par défaut vide pour que ``import apowerb.<module>``
 # fonctionne sans ``.env`` (th2agent doit être consommable comme library) ;
 # le refus explicite se fait au boot via ``assert_runtime_ready()``.
+# `test_token` is deliberately NOT here. It is read by a single middleware,
+# ``apowerb/middleware/auth.py``, which is mounted nowhere -- so requiring it
+# forced every deployment to invent a "test token" in order to run in
+# production. Its guard already refuses an empty value, so a build without one
+# rejects every request that middleware would see rather than letting them
+# through. See tests/test_runtime_required_fields.py.
 RUNTIME_REQUIRED_FIELDS: tuple[str, ...] = (
     "db_host",
     "db_name",
     "db_user",
     "db_password",
-    "test_token",
     "encrypt_key",
 )
 

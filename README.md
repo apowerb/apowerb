@@ -115,7 +115,6 @@ cp .env.example .env
 | `DB_PASSWORD` | Database password |
 | `DB_SCHEMA` | Schema (default: `public`) |
 | `ENCRYPT_KEY` | Encryption key for secrets and JWT signing |
-| `TEST_TOKEN` | Authentication token for development |
 
 ### Optional Variables
 
