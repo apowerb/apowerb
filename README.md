@@ -1,6 +1,15 @@
-# thaink² Agentic
+# apowerb
 
-Agentic framework for building and deploying AI agents with flexible orchestration, custom tool integration, RAG, Text-to-SQL, webhooks, and billing.
+Agentic framework for building and deploying AI agents: flexible orchestration, custom
+tool integration, RAG, Text-to-SQL, webhooks and scheduled runs.
+
+This repository is the **open-source core**. Some capabilities named in the product —
+billing, usage metering, prospection, identity-provider sign-in, multi-factor
+authentication, agent evaluation, the administration panel — ship as separate commercial
+bricks and are **absent here**. Where the core holds a hook for one, it is documented as
+such. A `404` on those routes means "not in this edition", not "object not found".
+
+Full documentation: [docs.apowerb.com](https://docs.apowerb.com).
 
 ## Table of Contents
 
@@ -18,8 +27,8 @@ Agentic framework for building and deploying AI agents with flexible orchestrati
 - [RAG (Retrieval-Augmented Generation)](#rag-retrieval-augmented-generation)
 - [Text-to-SQL](#text-to-sql)
 - [SSE Streaming](#sse-streaming)
-- [Billing (Stripe)](#billing-stripe)
-- [Scheduler](#scheduler)
+- [Credits and billing](#credits-and-billing)
+- [Scheduled runs](#scheduled-runs)
 - [Agent Hub](#agent-hub)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -33,17 +42,17 @@ Agentic framework for building and deploying AI agents with flexible orchestrati
 - **LiteLLM** for multi-model compatibility (Anthropic, OpenAI, Mistral, Google, OVHcloud, etc.)
 - **Multi-pattern orchestration**: base, parallel, sequential, loop
 - **Sub-agents**: hierarchical agent composition
-- **Modular tool system** with 24+ tool modules (Google Workspace, Microsoft 365, databases, RAG, etc.)
+- **Modular tool system** with 31 tool modules (Google Workspace, Microsoft 365, databases, RAG, etc.)
 - **RAG as a Service**: index files, URLs, databases, and S3 into knowledge bases
 - **Text-to-SQL**: natural language to SQL query conversion
 - **Webhooks**: Gmail (Pub/Sub) and Outlook (Graph API) push notifications to trigger agents
 - **OAuth integrations**: GitHub, Google, Microsoft, LinkedIn
 - **SSE streaming**: real-time agent responses, RAG progress, and notifications
-- **Billing**: Stripe-based credit system with packages and transaction tracking
 - **Artifact generation**: agents can create and execute code files
 - **Agent Hub**: publish and clone agents across organizations
-- **Scheduler**: cron-based agent execution via Mage AI
-- **MFA**: TOTP-based multi-factor authentication
+- **Scheduled runs**: cron-based agent execution, driven by an external orchestrator
+- **Supervision**: an auditable session list, scoped to what the caller may read
+- **Revocable sessions**: a per-account cut-off that refuses tokens minted before it
 - **Persistent sessions** with conversation context
 - **PostgreSQL database** with auto-migrations
 - **Encryption** for API keys, tokens, and sensitive data
@@ -162,11 +171,15 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PUBLIC_BASE_URL` | `http://localhost:8000` | Public URL of this th2agent instance |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | Public URL of this apowerb instance |
 | `RAG_WEBHOOK_SECRET` | `th2-webhook-default-secret` | HMAC-SHA256 secret for RAG webhooks (change in production!) |
 | `RAG_BASE_URL` | — | RAG API base URL (th2llm) |
 
-#### Stripe Billing
+#### Stripe (billing brick)
+
+`settings` still declares these, and `user` still carries `stripe_customer_id`, but the
+billing routes and the credit logic live in the **billing brick**. Setting them changes
+nothing in a core-only install.
 
 | Variable | Description |
 |----------|-------------|
@@ -184,7 +197,23 @@ cp .env.example .env
 | `S3_ENDPOINT` | S3 endpoint URL |
 | `S3_BUCKET_NAME` | Bucket name |
 
-#### Scheduler / Mage (optional)
+#### Orchestrator (scheduled runs, optional)
+
+Two backends drive scheduled runs. `ORCHESTRATOR` selects one; the code still defaults to
+`mage`, the historical backend, so an instance that wants th2etl must say so explicitly.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORCHESTRATOR` | `mage` | `mage` or `th2etl` |
+
+With `ORCHESTRATOR=th2etl`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TH2ETL_BASE_URL` | `http://localhost:8009` | th2etl instance |
+| `TH2ETL_API_KEY` | — | Must equal the `API_KEY` of that th2etl instance — its business routes require `Authorization: Bearer <key>` |
+
+With `ORCHESTRATOR=mage`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -193,6 +222,20 @@ cp .env.example .env
 | `OAUTH_TOKEN` | — | Mage OAuth token |
 | `PROJECT_NAME` | `default_repo` | Mage project name |
 
+#### Extensions
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TH2_EXTENSIONS` | — | Comma-separated modules to load as bricks |
+
+Installing a brick and loading it are two different steps: a package present in the
+environment but absent from `TH2_EXTENSIONS` behaves exactly like one that was never
+installed. Check the loaded set, not the installed set, when a capability seems missing.
+
+<!-- Naming: the variable predates the rename from th2agent to apowerb and is read
+     verbatim by the deploy workflow, so it keeps its name. -->
+
+
 ---
 
 ## Running
@@ -200,18 +243,23 @@ cp .env.example .env
 ### Via CLI
 
 ```bash
-th2agent serve
+apowerb serve
 ```
 
 ### Via Uvicorn
 
 ```bash
-uv run uvicorn th2agent.main:app --reload
+uv run uvicorn apowerb.main:app --reload
 ```
 
 Server starts at **http://127.0.0.1:8000/**
 
-API Documentation: **http://127.0.0.1:8000/docs**
+`/docs`, `/redoc` and `/openapi.json` are **removed from the served routes by default**:
+they hand the full route inventory to an unauthenticated caller, which is enough to
+fingerprint a deployment from the outside. Opt in with `PUBLISH_API_SCHEMA=true` for a
+browsable Swagger; `WORKING_MODE=production` overrides that flag as a second lock.
+
+The published reference is at [docs.apowerb.com](https://docs.apowerb.com/api-reference).
 
 ---
 
@@ -219,18 +267,18 @@ API Documentation: **http://127.0.0.1:8000/docs**
 
 ```bash
 # Start server
-th2agent serve --host 0.0.0.0 --port 8000
+apowerb serve --host 0.0.0.0 --port 8000
 
 # Manage agents
-th2agent agents list
-th2agent agents create
-th2agent agents delete <agent_id>
+apowerb agents list
+apowerb agents create
+apowerb agents delete <agent_id>
 
 # Manage tools
-th2agent tools list
+apowerb tools list
 
 # Manage runs
-th2agent runs list
+apowerb runs list
 ```
 
 ---
@@ -238,103 +286,49 @@ th2agent runs list
 ## Architecture
 
 ```
-th2agent/
-├── src/th2agent/
-│   ├── main.py                     # FastAPI entry point, middleware, startup
-│   ├── models.py                   # SQLAlchemy ORM models
+apowerb/
+├── src/apowerb/
+│   ├── main.py              FastAPI entry point, middleware, router mounting, startup
+│   ├── models.py            SQLAlchemy ORM models
 │   │
-│   ├── auth/                       # Authentication & MFA
-│   │   ├── router.py               # Login, MFA, token refresh
-│   │   ├── service.py              # Auth business logic
-│   │   ├── dependencies.py         # JWT verification, user extraction
-│   │   ├── mfa_service.py          # TOTP/MFA logic
-│   │   └── schemas.py              # Auth request/response models
-│   │
-│   ├── users/                      # User management
-│   │   ├── router.py               # User CRUD, OAuth callbacks
-│   │   ├── service.py              # User business logic
-│   │   └── oauth/                  # OAuth providers (GitHub, Google, Microsoft, LinkedIn)
-│   │
-│   ├── routers/                    # API endpoints
-│   │   ├── agents.py               # Agent CRUD
-│   │   ├── tools.py                # Tools & tool configs
-│   │   ├── adk_runner.py           # ADK execution, sessions, streaming
-│   │   ├── runs.py                 # Agent run status
-│   │   ├── rag.py                  # RAG indexing & status
-│   │   ├── webhooks.py             # Webhook subscription CRUD & dispatch
-│   │   ├── integrations.py         # OAuth integration setup
-│   │   ├── notifications.py        # User notifications & SSE stream
-│   │   ├── hub.py                  # Agent Hub (publish, clone)
-│   │   ├── artifacts.py            # Session artifact retrieval
-│   │   ├── files.py                # File upload/download
-│   │   ├── data_lake.py            # Data pin storage (S3)
-│   │   ├── api_keys.py             # Saved API key management
-│   │   ├── scheduler.py            # Mage trigger CRUD
-│   │   ├── superagents.py          # SuperAgent templates
-│   │   ├── emailing.py             # Outlook Mail OAuth flow
-│   │   ├── google_drive_browser.py # Google Drive file browser
-│   │   ├── onedrive_browser.py     # OneDrive file browser
-│   │   ├── config.py               # Public config endpoint
-│   │   └── webhook_handlers/       # Push notification handlers
-│   │       ├── gmail.py            # Gmail Pub/Sub handler
-│   │       ├── outlook.py          # Outlook Graph handler
-│   │       └── _common.py          # Shared webhook logic
-│   │
-│   ├── billing/                    # Stripe billing
-│   │   ├── router.py               # Checkout, balance, transactions
-│   │   ├── stripe_service.py       # Stripe API integration
-│   │   ├── packages.py             # Credit package definitions
-│   │   └── webhooks.py             # Stripe webhook handler
-│   │
-│   ├── integrations/               # Third-party integrations
-│   │   ├── google.py               # Google OAuth (Drive, Gmail, Calendar, Sheets, Docs)
-│   │   ├── microsoft.py            # Microsoft Graph OAuth (Outlook, Teams, OneDrive, SharePoint)
-│   │   ├── github.py               # GitHub OAuth
-│   │   ├── slack.py                # Slack integration
-│   │   ├── gmail_webhook.py        # Gmail Pub/Sub watch service
-│   │   └── outlook_webhook.py      # Outlook webhook service
-│   │
-│   ├── core/                       # Core business logic
-│   │   ├── agent_main.py           # Agent CRUD logic
-│   │   ├── adk_runner.py           # ADK agent execution
-│   │   ├── adk_agent_builder.py    # Agent Python file generation
-│   │   ├── hub_main.py             # Hub agent publishing
-│   │   ├── knowledge_map.py        # RAG knowledge source tracking
-│   │   ├── rag_streaming.py        # RAG SSE streaming
-│   │   ├── artifact_executor.py    # Artifact code execution
-│   │   └── superagents.py          # SuperAgent templates
-│   │
-│   ├── tools_store/                # Tool management
-│   │   ├── tool_manager.py         # Tool registry
-│   │   └── portfolio/              # 24 tool modules (see Available Tools)
-│   │
-│   ├── scheduler/                  # Background tasks
-│   │   ├── mage.py                 # Mage AI client
-│   │   ├── webhook_renewal.py      # Webhook auto-renewal (every 6h)
-│   │   └── run_agent_background.py # Background agent execution
-│   │
-│   ├── helpers/                    # Utilities
-│   │   ├── database.py             # SQLAlchemy Base, session factory
-│   │   ├── security.py             # JWT, password hashing
-│   │   ├── encryptor.py            # Field encryption
-│   │   ├── notification_bus.py     # SSE notification broadcasting
-│   │   ├── pagination.py           # Pagination helpers
-│   │   └── *_migration.py          # Auto-migration scripts
-│   │
-│   ├── schema/                     # Pydantic schemas
-│   ├── configs/                    # Settings & logging
-│   ├── storage/                    # S3 storage abstraction
-│   └── cli/                        # CLI commands (Typer)
+│   ├── auth/                Email/password login, JWT dependencies, session cut-off
+│   ├── users/               User CRUD
+│   ├── routers/             HTTP endpoints, one module per family
+│   ├── core/                Business logic behind the routers
+│   │   ├── adk_runner.py        ADK execution
+│   │   ├── adk_agent_builder.py agent Python file generation
+│   │   ├── extensions/         brick loader and registry hooks
+│   │   ├── guardrails.py       input/output guardrails
+│   │   ├── run_gate.py         admission control for runs
+│   │   └── history_compaction.py  conversation trimming
+│   ├── tools_store/         Tool registry + portfolio of tool modules
+│   ├── skills_store/        Reusable agent skills
+│   ├── agent_store/         Agent templates and seeds
+│   ├── bi/                  Charts, dashboards, datasets
+│   ├── sqlgen/              Text-to-SQL generation
+│   ├── integrations/        OAuth workspace integrations
+│   ├── artifacts/           Artifact storage and execution
+│   ├── scheduler/           Orchestrator clients (th2etl, mage), background workers
+│   ├── storage/             Local and S3 storage abstraction
+│   ├── middleware/          Request middleware
+│   ├── helpers/             Database, security, encryption, notification bus, migrations
+│   ├── schema/              Pydantic schemas
+│   ├── configs/             Settings and logging
+│   └── cli/                 Typer CLI (`apowerb`)
 │
-├── agents_pool/                    # Generated agent code (runtime)
-├── pyproject.toml
-├── .env
-└── readme/                         # Detailed API guide with screenshots
+├── agents_pool/             Generated agent code (runtime)
+├── artifacts_store/         Artifacts written by agents (runtime, local mode)
+├── uploads/                 Uploaded files (runtime, local mode)
+├── tests/
+└── pyproject.toml
 ```
+
+Routers not to look for here — they arrive with the bricks: billing, usage, prospection,
+identity-provider sign-in, MFA, evaluation, administration.
 
 ### Startup Sequence
 
-On application start, th2agent:
+On application start, apowerb:
 1. Creates required directories (`agents_pool/`, `artifacts_store/`, `uploads/`)
 2. Runs auto-migrations (`ensure_*` functions) for all database tables
 3. Generates agent Python modules from database
@@ -345,262 +339,41 @@ On application start, th2agent:
 
 ## API Reference
 
-### Health
+The full reference — every route, parameter and response shape — is generated from the
+code and published at [docs.apowerb.com/api-reference](https://docs.apowerb.com/api-reference).
+It is not duplicated here: a hand-maintained route table in this file went stale within
+two weeks last time, and a stale reference is worse than none.
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/health` | No | Health check |
+Route families in this edition, all under `/api` unless noted:
 
-### Authentication
+| Family | What it covers |
+|--------|----------------|
+| `auth` | Email/password login, refresh, logout, password reset, email verification |
+| `users` | User CRUD, `me` |
+| `agents` | Agent CRUD, reload, status, template resync, run |
+| `adk` | ADK execution: run, streaming (`run_sse`), sessions, titles, traces |
+| `tools`, `tools_config` | Tool registry and per-agent tool configuration |
+| `skills`, `workflows` | Reusable skills, multi-step flows |
+| `superagents` | Templates composing several agents |
+| `rag` | Indexing files, URLs, databases, S3; status and progress stream |
+| `artifacts` | Files produced by agents, listing, download, execution, library |
+| `files` | Upload (including chunked), download, delete |
+| `data-lake` | Pin storage read/write/list |
+| `hub` | Publish and clone agents |
+| `integrations` | OAuth workspace connections (Google, Microsoft, GitHub) |
+| `emailing` | Outlook mail OAuth flow, shared mailboxes |
+| `webhooks` | Subscription CRUD and inbound push dispatch |
+| `notifications` | User notifications and SSE stream |
+| `supervision` | Session list for audit, scoped to what the caller may read |
+| `scheduler` | Scheduled runs through the configured orchestrator |
+| `charts`, `dashboards`, `bi-*` | BI: charts, dashboards, datasets, refresh, stats |
+| `share` | Shareable conversation links |
+| `api-keys` | Saved provider keys |
+| `config`, `health` | Public configuration, liveness |
 
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/auth/token` | No | Login (email + password) |
-| POST | `/api/auth/refresh-token` | No | Refresh JWT token |
-| POST | `/api/auth/logout` | Yes | Clear refresh token cookie |
-| POST | `/api/auth/mfa/setup` | Yes | Generate TOTP secret + QR code |
-| POST | `/api/auth/mfa/enable` | Yes | Activate MFA |
-| POST | `/api/auth/mfa/verify` | No | Complete login with MFA code |
-| POST | `/api/auth/mfa/disable` | Yes | Turn off MFA |
-| GET | `/api/auth/mfa/status` | Yes | Check MFA status |
-| GET | `/api/auth/mfa/backup-codes` | Yes | Retrieve backup codes |
-
-### Users
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/users` | No | Create user account |
-| GET | `/api/users` | Admin | List all users |
-| GET | `/api/users/me` | Yes | Get current user profile |
-| GET | `/api/users/{user_id}` | Yes | Get user by ID |
-| PATCH | `/api/users/{user_id}` | Yes | Update user profile |
-| DELETE | `/api/users/{user_id}` | Yes | Delete user |
-| POST | `/api/users/oauth/{provider}/callback` | No | OAuth login (github, google, microsoft, linkedin) |
-
-### Agents
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/agents` | Yes | List user's agents |
-| POST | `/api/agents` | Yes | Create agent |
-| GET | `/api/agents/{agent_id}` | Yes | Get agent details |
-| PUT | `/api/agents/{agent_id}` | Yes | Update agent |
-| DELETE | `/api/agents/{agent_id}` | Yes | Delete agent |
-| POST | `/api/agents/{agent_id}/run` | Yes | Start agent run (background) |
-| GET | `/api/agents/{agent_id}/status` | Yes | Get run status |
-
-**Create an agent:**
-
-```json
-POST /api/agents
-{
-  "agent_name": "My Assistant",
-  "agent_model": "anthropic/claude-sonnet-4-5-20250929",
-  "agent_description": "Specialized agent for data analysis",
-  "agent_instruction": "You are an expert data analyst.",
-  "agent_type": "llm",
-  "agent_tools": ["tool_config_id_1", "tool_config_id_2"],
-  "sub_agents": [],
-  "memory_enabled": false,
-  "artifacts_enabled": false,
-  "tags": ["analytics"]
-}
-```
-
-**Agent types:**
-
-| Type | Description |
-|------|-------------|
-| `llm` / `base` | Simple agent, direct execution |
-| `parallel` | Sub-agents executed in parallel |
-| `sequential` | Sub-agents executed in sequence |
-| `loop` | Iterative execution |
-
-### Sessions & Runs (ADK)
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/adk/sessions` | Yes | Create conversation session |
-| GET | `/api/adk/sessions/list` | Yes | List all sessions |
-| GET | `/api/adk/sessions/{agent}/{user}/{session}` | Yes | Get conversation history |
-| GET | `/api/adk/sessions/{agent}/{user}/{session}/trace` | Yes | Get agent execution trace |
-| PATCH | `/api/adk/sessions/{agent}/{user}/{session}` | Yes | Update session state |
-| DELETE | `/api/adk/sessions/{agent}/{user}/{session}` | Yes | Delete session |
-| POST | `/api/adk/run` | Yes | Run agent (blocking) |
-| POST | `/api/adk/run_sse` | Yes | Run agent (SSE streaming) |
-| POST | `/api/adk/schedule_run` | Yes | Schedule recurring run |
-| POST | `/api/adk/run_now` | Yes | Trigger immediate run |
-
-**Run an agent:**
-
-```json
-POST /api/adk/run
-{
-  "agent_name": "My Assistant",
-  "user_id": "user@example.com",
-  "session_id": "session_001",
-  "new_message": {
-    "role": "user",
-    "parts": [{ "text": "What is the forecast for next month?" }]
-  },
-  "run_mode": "single",
-  "streaming": false
-}
-```
-
-### Tools
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/tools` | Yes | List all available tools |
-| GET | `/api/tools/{tool_name}/params` | Yes | Get tool config parameters |
-| GET | `/api/tools_config` | Yes | List user's tool configs |
-| GET | `/api/tools_config/{id}` | Yes | Get tool config details |
-| POST | `/api/tools_config` | Yes | Create tool config |
-| DELETE | `/api/tools_config/{id}` | Yes | Delete tool config |
-| GET | `/api/mcp_configs` | Yes | List MCP server configs |
-
-### RAG
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/rag/index-files` | Yes | Upload and index files |
-| POST | `/api/rag/index-url` | Yes | Index a web URL |
-| POST | `/api/rag/index-db` | Yes | Index database results (SQL query) |
-| POST | `/api/rag/index-db-nl` | Yes | Index database results (natural language) |
-| POST | `/api/rag/index-s3` | Yes | Index files from S3 |
-| GET | `/api/rag/status/{knowledge_id}` | Yes | Check indexing status |
-| GET | `/api/rag/knowledge/{agent_id}` | Yes | List indexed sources |
-| GET | `/api/rag/stream/{agent_id}` | Yes | Stream indexing progress (SSE) |
-| POST | `/api/rag/schema-cache/invalidate` | Yes | Clear schema cache (text-to-SQL) |
-| POST | `/api/rag/webhook` | No | RAG completion webhook (from th2llm) |
-
-### Webhooks
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/webhooks/subscriptions` | Yes | Create webhook subscription |
-| GET | `/api/webhooks/subscriptions` | Yes | List subscriptions |
-| PATCH | `/api/webhooks/subscriptions/{id}` | Yes | Update subscription |
-| DELETE | `/api/webhooks/subscriptions/{id}` | Yes | Delete subscription |
-| POST | `/api/webhooks/subscriptions/{id}/renew` | Yes | Manually renew subscription |
-| POST | `/api/webhooks/gmail/notifications` | No | Gmail Pub/Sub push endpoint |
-| POST | `/api/webhooks/outlook/notifications` | No | Outlook Graph push endpoint |
-| GET | `/api/webhooks/logs` | Yes | List webhook execution logs |
-| GET | `/api/webhooks/logs/{log_id}` | Yes | Get specific log |
-
-### Integrations
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/integrations` | Yes | List user's connected integrations |
-| GET | `/api/integrations/google/{service}/connect` | Yes | Get Google OAuth URL (drive, gmail, calendar, sheets, docs) |
-| POST | `/api/integrations/google/callback` | Yes | Google OAuth callback |
-| GET | `/api/integrations/microsoft/{service}/connect` | Yes | Get Microsoft OAuth URL (outlook, teams, onedrive, sharepoint) |
-| POST | `/api/integrations/microsoft/callback` | Yes | Microsoft OAuth callback |
-| GET | `/api/integrations/github/connect` | Yes | Get GitHub OAuth URL |
-| POST | `/api/integrations/github/callback` | Yes | GitHub OAuth callback |
-| DELETE | `/api/integrations/{provider}` | Yes | Disconnect integration |
-
-### Notifications
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/notifications` | Yes | List notifications (paginated) |
-| GET | `/api/notifications/unread-count` | Yes | Count unread notifications |
-| GET | `/api/notifications/stream` | Yes | Stream notifications (SSE) |
-| PATCH | `/api/notifications/{id}/read` | Yes | Mark as read |
-| POST | `/api/notifications/read-all` | Yes | Mark all as read |
-
-### Billing
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/billing/packages` | Yes | List credit packages |
-| POST | `/api/billing/checkout` | Yes | Create Stripe checkout session |
-| GET | `/api/billing/balance` | Yes | Get credit balance |
-| GET | `/api/billing/transactions` | Yes | Transaction history (paginated) |
-| GET | `/api/billing/portal` | Yes | Stripe customer portal URL |
-| POST | `/api/billing/webhook` | No | Stripe webhook handler |
-
-### Hub
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/hub` | Yes | List published agents |
-| GET | `/api/hub/{hub_id}` | Yes | Get Hub agent details |
-| POST | `/api/hub/publish` | Yes | Publish agent to Hub |
-| POST | `/api/hub/clone` | Yes | Clone Hub agent |
-| DELETE | `/api/hub/{hub_id}` | Yes | Remove from Hub |
-
-### Files
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/files/upload` | Yes | Upload file |
-| POST | `/api/files/upload-chunk` | Yes | Upload file chunk (resumable) |
-| POST | `/api/files/upload-complete` | Yes | Mark chunked upload as complete |
-| GET | `/api/files/{agent_id}/{filename}` | Yes | Download file |
-
-### Artifacts
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/artifacts/{agent}/{user}/{session}` | Yes | List session artifacts |
-| GET | `/api/artifacts/{agent}/{user}/{session}/{filename}` | Yes | Get artifact content |
-| POST | `/api/artifacts/{agent}/{user}/{session}/{filename}/execute` | Yes | Execute artifact |
-
-### API Keys
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/saved-api-keys` | Yes | List saved API keys |
-| POST | `/api/saved-api-keys` | Yes | Save new API key |
-| DELETE | `/api/saved-api-keys/{id}` | Yes | Delete API key |
-
-### Data Lake
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/data-lake/pins/list` | Yes | List pins |
-| POST | `/api/data-lake/pins/read` | Yes | Read pin data |
-| POST | `/api/data-lake/pins/write` | Yes | Write pin data |
-
-### Cloud File Browsers
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/googledrivebrowser/list` | Yes | List Google Drive files |
-| GET | `/api/googledrivebrowser/search` | Yes | Search Google Drive |
-| GET | `/api/googledrivebrowser/download` | Yes | Download file |
-| GET | `/api/onedrivebrowser/list` | Yes | List OneDrive files |
-| GET | `/api/onedrivebrowser/search` | Yes | Search OneDrive |
-| GET | `/api/onedrivebrowser/download` | Yes | Download file |
-
-### Scheduler (Mage)
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/pipelines` | Yes | List Mage pipelines |
-| POST | `/api/pipelines/agents/triggers` | Yes | Create trigger for agent |
-| GET | `/api/pipelines/{uuid}/schedules` | Yes | List schedules |
-| PUT | `/api/pipelines/schedules/{id}` | Yes | Update schedule |
-| DELETE | `/api/pipelines/schedules/{id}` | Yes | Delete schedule |
-
-### SuperAgents
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/superagents` | Yes | List SuperAgent templates |
-| GET | `/api/superagents/{template_id}` | Yes | Get template details |
-
-### Config
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/config` | No | Public app configuration |
-
----
+Absent from this edition, provided by bricks: `billing`, `usage`, `prospection`,
+`campaigns`, MFA (`/api/auth/mfa/*`), identity-provider sign-in (`/api/users/{github,google,microsoft,linkedin}`),
+evaluation, administration. They answer `404` here.
 
 ## Available Tools
 
@@ -656,7 +429,7 @@ POST /api/adk/run
 
 ### OAuth Providers
 
-th2agent supports two categories of OAuth:
+apowerb supports two categories of OAuth:
 
 1. **User Login** — Sign up / log in via OAuth (GitHub, Google, Microsoft, LinkedIn)
 2. **Workspace Integrations** — Connect external services as tools for agents
@@ -666,7 +439,7 @@ th2agent supports two categories of OAuth:
 1. User calls `GET /api/integrations/{provider}/{service}/connect` to get the OAuth URL
 2. User authorizes the app on the provider's consent screen
 3. Provider redirects to `POST /api/integrations/{provider}/callback`
-4. th2agent stores the access/refresh tokens encrypted in the `integrations` table
+4. apowerb stores the access/refresh tokens encrypted in the `integrations` table
 5. Agent tools can now use the integration tokens
 
 #### Supported Services
@@ -681,12 +454,12 @@ th2agent supports two categories of OAuth:
 
 ## Webhooks
 
-th2agent can automatically trigger agents when events occur in connected services (new email, etc.). Two providers are supported: **Gmail** (via Google Pub/Sub) and **Outlook** (via Microsoft Graph subscriptions).
+apowerb can automatically trigger agents when events occur in connected services (new email, etc.). Two providers are supported: **Gmail** (via Google Pub/Sub) and **Outlook** (via Microsoft Graph subscriptions).
 
 ### How It Works
 
 ```
-Email arrives → Provider pushes notification → th2agent receives it
+Email arrives → Provider pushes notification → apowerb receives it
      → Fetches new email content → Runs associated agent → Logs result
 ```
 
@@ -725,7 +498,7 @@ POST /api/webhooks/subscriptions
 #### Architecture
 
 ```
-Gmail  ──push──▶  Google Pub/Sub  ──HTTP POST──▶  th2agent
+Gmail  ──push──▶  Google Pub/Sub  ──HTTP POST──▶  apowerb
                   (topic)                         /api/webhooks/gmail/notifications
                                                         │
                                                         ▼
@@ -740,7 +513,7 @@ Gmail  ──push──▶  Google Pub/Sub  ──HTTP POST──▶  th2agent
 - A **Google Cloud project** with billing enabled
 - **Gmail API** and **Cloud Pub/Sub API** enabled
 - A **Google OAuth 2.0 application** for workspace integration
-- A **publicly accessible URL** for th2agent
+- A **publicly accessible URL** for apowerb
 
 #### Step 1 — Enable Google APIs
 
@@ -801,7 +574,7 @@ PUBLIC_BASE_URL=https://YOUR_DOMAIN
 
 #### Step 7 — Connect Gmail Account
 
-In the th2agent-app UI: **Integrations → Connect Google (Gmail)**
+In the apowerb-ui UI: **Integrations → Connect Google (Gmail)**
 
 #### Step 8 — Create Webhook Subscription
 
@@ -903,39 +676,22 @@ Three SSE streaming channels are available:
 
 ---
 
-## Billing (Stripe)
+## Credits and billing
 
-### Credit Packages
+Not in this edition. The `user` row carries a credit balance and `transactions` /
+`credit_purchases` exist in the schema, but the packages, the Stripe checkout and the
+crediting logic belong to the **billing brick**. `/api/billing/*` answers `404` here.
 
-| Package | Credits | Description |
-|---------|---------|-------------|
-| Starter | 100 | — |
-| Pro | 500 | — |
-| Business | 1,000 | — |
-| Enterprise | 5,000 | — |
-
-### Flow
-
-1. `GET /api/billing/packages` — List available packages
-2. `POST /api/billing/checkout` — Create Stripe checkout session
-3. User completes payment on Stripe
-4. Stripe webhook (`checkout.session.completed`) credits the user's balance
-5. `GET /api/billing/balance` — Check updated balance
-
-### Transaction Types
-
-| Type | Description |
-|------|-------------|
-| `purchase` | Credit purchase via Stripe |
-| `usage` | Credit deduction from agent runs |
-| `refund` | Stripe refund |
-| `bonus` | Admin-granted bonus credits |
+The `llm_usage` table is declared here, but **nothing in the core writes to it**: the
+metering is the usage brick's job. A core-only install has the table and leaves it empty.
 
 ---
 
-## Scheduler
+## Scheduled runs
 
-Agent runs can be automated on a schedule via Mage AI:
+Agent runs can be automated on a schedule. The core does not run the cron itself: it
+registers the schedule with an external orchestrator, selected by `ORCHESTRATOR`
+(`th2etl`, or the historical `mage` which is still the code default).
 
 ```json
 POST /api/adk/schedule_run
@@ -978,13 +734,25 @@ Agents can be published to a shared Hub and cloned by other users:
 
 | Table | Description | Key Fields |
 |-------|-------------|------------|
-| `user` | User accounts | email, password, credits, stripe_customer_id, OAuth IDs, MFA config, role |
+| `user` | User accounts | email, password, role, credits, stripe_customer_id, OAuth IDs, `mfa_enabled`, `mfa_required`, `sessions_valid_from` |
 | `integrations` | Connected OAuth services | user_id, provider, access_token, refresh_token, scopes, meta |
 | `webhook_subscriptions` | Active webhook watches | user_id, integration_id, provider, subscription_id, resource, agent_id, status, expiration |
 | `webhook_logs` | Webhook execution history | subscription_id, trigger_event, email_subject, agent_response, duration_ms, status |
 | `notifications` | User notifications | user_id, title, message, type (webhook/info/warning/error), is_read |
 | `transactions` | Credit movements | user_id, type (purchase/usage/refund/bonus), amount, balance_after, stripe IDs |
 | `credit_purchases` | Stripe purchase sessions | user_id, stripe_session_id, credits_amount, price_paid, status |
+| `llm_usage` | Per-call token accounting | agent_id, owner_id, invocation_id, model, token counts, created_at |
+| `business_intelligence` | BI charts, dashboards, datasets | owner, definition, refresh state |
+| `shared_conversations` | Shareable conversation links | share_id, session, owner |
+| `oauth_states` | Short-lived OAuth state tokens | state, provider, expiry |
+
+Sessions, events and ADK artifacts live in the tables Google ADK owns (`sessions`,
+`events`), which supervision reads directly rather than fanning out one HTTP call per
+agent.
+
+Some columns here serve bricks rather than the core: `credits`, `stripe_customer_id`,
+`mfa_*` and the `transactions` / `credit_purchases` / `llm_usage` tables are declared so a
+brick can use them, and stay untouched without one.
 
 ---
 
@@ -1034,7 +802,9 @@ ruff format .
 
 ### Detailed API Guide
 
-See [`readme/README.md`](./readme/README.md) for a step-by-step API guide with screenshots and detailed examples.
+Guides, quickstart and the generated API reference are at
+[docs.apowerb.com](https://docs.apowerb.com). Their source lives in
+[apowerb/apowerb-docs](https://github.com/apowerb/apowerb-docs).
 
 ---
 
