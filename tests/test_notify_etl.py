@@ -81,3 +81,46 @@ async def test_never_raises_on_send_error(monkeypatch):
     monkeypatch.setattr(notify_etl.system_mailer, "send_system_email", boom)
     # Must swallow — alerting cannot mask the original job failure.
     assert await notify_etl.notify_job_failure("job", "err", now=1000.0) is False
+
+
+# -- le lien profond vers Supervision --------------------------------------
+# Supervision est partie en brique le 18/08. L'alerte ETL proposait « Voir
+# dans la supervision » avec une URL construite dans le noyau : sans la
+# brique, ce bouton envoie par mail vers une page qui n'existe pas.
+
+
+@pytest.mark.asyncio
+async def test_no_brick_means_no_button_rather_than_a_dead_one(monkeypatch):
+    """An alert that still tells you what failed beats one with a 404 in it."""
+    from apowerb.core.extensions.registry import registry
+
+    monkeypatch.setattr(registry, "_supervision_link", None, raising=False)
+    sent = AsyncMock(return_value=True)
+    monkeypatch.setattr(notify_etl.system_mailer, "send_system_email", sent)
+
+    await notify_etl.notify_job_failure("agents-pipeline", "boom", now=2000.0)
+
+    html = sent.call_args.kwargs["html"]
+    assert "/supervision" not in html
+    assert "boom" in html  # l'alerte reste une alerte
+
+
+@pytest.mark.asyncio
+async def test_the_brick_decides_where_the_button_points(monkeypatch):
+    """The core holds the reference and the public URL; the path is the
+    brick's, because the screen is the brick's."""
+    from apowerb.core.extensions.registry import registry
+
+    monkeypatch.setattr(
+        registry,
+        "_supervision_link",
+        lambda base_url, search: f"{base_url}/elsewhere?q={search}",
+        raising=False,
+    )
+    sent = AsyncMock(return_value=True)
+    monkeypatch.setattr(notify_etl.system_mailer, "send_system_email", sent)
+
+    await notify_etl.notify_job_failure("job", "boom", context="run-42", now=3000.0)
+
+    html = sent.call_args.kwargs["html"]
+    assert "/elsewhere?q=run-42" in html

@@ -92,6 +92,9 @@ class ExtensionRegistry:
         # a superadmin — that table belongs to a commercial brick — so it
         # asks instead of deciding. No brick, no crossing.
         self._supervision_scope: Callable[..., Any] | None = None
+        # Ou pointe un lien profond vers Supervision. Meme raison :
+        # l'ecran peut ne pas etre installe, le noyau ne devine pas.
+        self._supervision_link: Callable[..., str] | None = None
         self._run_guards: list[Callable[..., Any]] = []
         self._model_observers: list[Callable[..., Any]] = []
         self._bootstrap_hooks: list[Callable[[], Any]] = []
@@ -125,6 +128,17 @@ class ExtensionRegistry:
 
     def supervision_scope(self) -> Callable[..., Any] | None:
         return self._supervision_scope
+
+    # Ou l'on regarde une reference digne de supervision. Le noyau tient la
+    # reference et l'URL publique ; le chemin appartient a l'ecran, donc a la
+    # brique. Aucun crochet => l'alerte part sans bouton, ce qui vaut mieux
+    # qu'un bouton vers une page que cette installation ne sert pas.
+    def register_supervision_link(self, fn: Callable[..., str]) -> None:
+        """`fn(base_url, search) -> str`: where to look at `search`."""
+        self._supervision_link = fn
+
+    def supervision_link(self) -> Callable[..., str] | None:
+        return self._supervision_link
 
     def register_second_factor(self, fn: Callable[[Any], Any | None]) -> None:
         self._second_factor = fn
