@@ -88,6 +88,7 @@ from apowerb.helpers import encryptor as _encryptor
 from apowerb.helpers.user_migration import ensure_user_columns
 from apowerb.helpers.core_tables import ensure_core_tables
 from apowerb.helpers.default_superadmin import ensure_default_superadmin
+from apowerb.admin.migration import ensure_admin_tables, ensure_superadmin_grant
 from apowerb.helpers.store_migrations import ensure_store_tables
 from apowerb.core.adk_agent_builder import ensure_agent_modules
 
@@ -160,6 +161,23 @@ def bootstrap(force: bool = False) -> None:
     # brick carries the same bootstrap plus its own table, and finds the account
     # already there.
     ensure_default_superadmin()
+
+    # Le panneau d'administration : ses six tables, puis la ligne qui accorde
+    # le rang de superadmin. Dans cet ordre -- la seconde ecrit dans les
+    # premieres. `ensure_default_superadmin` ci-dessus pose le ROLE sur la
+    # ligne utilisateur ; celle-ci pose le RANG dans `admin_superadmin`. Meme
+    # variable d'environnement, deux gestes distincts, d'ou les deux noms.
+    ensure_admin_tables()
+    ensure_superadmin_grant()
+
+    # Qui peut lire les sessions d'autrui. Le noyau porte desormais la notion
+    # de superadmin, donc il repond lui-meme au lieu d'attendre une brique.
+    # L'ecran de supervision, lui, reste commercial : il interroge cette
+    # reponse depuis sa brique.
+    from apowerb.core.extensions.registry import registry as _registre
+    from apowerb.admin.guard import is_superadmin
+
+    _registre.register_supervision_scope(is_superadmin)
 
     # Migrations apportees par les briques branchees. Ici et pas a l'import :
     # importer th2agent ne doit jamais toucher la base.
@@ -490,6 +508,13 @@ api_router.include_router(skills_router, prefix="/api")
 api_router.include_router(models_router, prefix="/api")
 api_router.include_router(audio_stream_router, prefix="/api")
 api_router.include_router(workflows_router, prefix="/api")
+
+# `/api/admin`: users, groups, organisations, permissions. Every route is
+# admin-only, through the core's own `is_admin`, which normalises the role's
+# casing -- see `apowerb/admin/guard.py`.
+from apowerb.admin.router import router as admin_router
+
+api_router.include_router(admin_router, prefix="/api")
 
 # Routeurs apportes par les briques branchees (TH2_EXTENSIONS). Montes apres
 # ceux du noyau, donc une brique ajoute des routes sans pouvoir masquer les
