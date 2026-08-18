@@ -19,10 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import time
-from urllib.parse import quote
-
 from apowerb.configs.settings import get_settings
 from apowerb.configs.th2logger import setup_logging
+from apowerb.core.extensions.registry import registry
 from apowerb.helpers import system_mailer
 
 logger = setup_logging(__name__)
@@ -74,17 +73,20 @@ async def notify_job_failure(
     intro = f"Le job <strong>{job}</strong> a échoué." + (
         f" Contexte : {context}." if context else ""
     )
-    # Deep-link to the Supervision dashboard, pre-filtered on the failing
-    # run/agent (context) or, failing that, the job name.
-    ref = context or job
+    # Deep-link to whoever shows supervision-worthy references, pre-filtered
+    # on the failing run/agent (context) or, failing that, the job name.
+    # Supervision left the core, so the path is no longer ours to build: we
+    # ask, and send a button-less alert when nothing answers. A button
+    # mailed out towards a 404 is worse than no button.
+    build_link = registry.supervision_link()
     link_url = (
-        f"{settings.app_public_url.rstrip('/')}/supervision?search={quote(ref)}"
+        build_link(settings.app_public_url, context or job) if build_link else None
     )
     html = system_mailer.render_branded_email(
         heading="⚠️ Échec d’un job ETL",
         intro=intro,
         details=error,
-        cta_label="Voir dans la supervision",
+        cta_label="Voir dans la supervision" if link_url else None,
         cta_url=link_url,
         note="Alerte automatique (dé-doublonnée 15 min). Vérifie les logs du service concerné.",
     )

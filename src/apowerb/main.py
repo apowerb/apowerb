@@ -50,7 +50,6 @@ from apowerb.routers.share import router as share_router
 from apowerb.routers.skills import router as skills_router
 from apowerb.routers.audio_stream import router as audio_stream_router
 from apowerb.routers.workflows import router as workflows_router
-from apowerb.routers.supervision import router as supervision_router
 from apowerb.routers.health import router as health_router
 from apowerb.helpers.integrations_migration import ensure_integrations_table
 from apowerb.helpers.webhook_migration import ensure_webhook_subscriptions_table, ensure_webhook_subscriptions_columns
@@ -491,10 +490,6 @@ api_router.include_router(skills_router, prefix="/api")
 api_router.include_router(models_router, prefix="/api")
 api_router.include_router(audio_stream_router, prefix="/api")
 api_router.include_router(workflows_router, prefix="/api")
-# `/api/supervision/sessions`: its own path, not the evaluations one.
-# Supervision stays in the core while evaluation moves to a brick, and a
-# core route under a brick's prefix is the confusion this split ends.
-api_router.include_router(supervision_router, prefix="/api")
 
 # Routeurs apportes par les briques branchees (TH2_EXTENSIONS). Montes apres
 # ceux du noyau, donc une brique ajoute des routes sans pouvoir masquer les
