@@ -33,13 +33,33 @@ from apowerb.models import User, UserRole
 logger = logging.getLogger(__name__)
 
 
+def designated_superadmin_email() -> str:
+    """The address the operator named, normalised. Empty when unset."""
+    return (os.environ.get("DEFAULT_SUPERADMIN_EMAIL") or "").strip().lower()
+
+
+def is_designated_superadmin(email: str | None) -> bool:
+    """Is this the address the operator named as the first administrator?
+
+    Setting the e-mail alone is the whole configuration: on a new install the
+    person it designates has not signed up yet, so whoever signs up with that
+    address becomes the administrator, with their own password. A blank value
+    designates nobody -- otherwise a stray `DEFAULT_SUPERADMIN_EMAIL=` would
+    hand ADMIN to the next person who registers.
+    """
+    designated = designated_superadmin_email()
+    if not designated:
+        return False
+    return (email or "").strip().lower() == designated
+
+
 def ensure_default_superadmin(engine=None) -> None:
     """Promote -- or create -- the account named by the environment.
 
     Runs at every startup and is idempotent. `engine` is injectable so the
     tests can drive it against SQLite; production leaves it out.
     """
-    email = (os.environ.get("DEFAULT_SUPERADMIN_EMAIL") or "").strip().lower()
+    email = designated_superadmin_email()
     if not email:
         return
 
@@ -60,10 +80,15 @@ def ensure_default_superadmin(engine=None) -> None:
 
             if row is None:
                 if not password:
-                    logger.warning(
-                        "DEFAULT_SUPERADMIN_EMAIL names an unknown account and no "
-                        "DEFAULT_SUPERADMIN_PASSWORD was given; creating an account "
-                        "nobody could sign into would help no one. Nothing done."
+                    # Expected, and not a problem: the designated person has
+                    # not signed up yet. They are made an administrator the
+                    # moment they do -- see `is_designated_superadmin`, used by
+                    # user creation. Setting DEFAULT_SUPERADMIN_PASSWORD as
+                    # well is only for creating the account up front.
+                    logger.info(
+                        "Bootstrap administrator '%s' has not signed up yet; "
+                        "the account will be created as ADMIN when they do.",
+                        email,
                     )
                     return
 
