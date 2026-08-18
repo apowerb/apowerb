@@ -88,6 +88,7 @@ from apowerb.artifacts.s3_artifact_service import register_s3_artifact_service
 from apowerb.helpers import encryptor as _encryptor
 from apowerb.helpers.user_migration import ensure_user_columns
 from apowerb.helpers.core_tables import ensure_core_tables
+from apowerb.helpers.default_superadmin import ensure_default_superadmin
 from apowerb.helpers.store_migrations import ensure_store_tables
 from apowerb.core.adk_agent_builder import ensure_agent_modules
 
@@ -151,6 +152,15 @@ def bootstrap(force: bool = False) -> None:
     ensure_business_intelligence_table()
     ensure_shared_conversations_columns()
     ensure_oauth_states_table()
+
+    # A brand-new database has no ADMIN at all: `role` defaults to USER and no
+    # route exposes it, so the first administrator used to require hand-written
+    # SQL -- impossible on a hosted deployment with no database console.
+    # Reads DEFAULT_SUPERADMIN_EMAIL / DEFAULT_SUPERADMIN_PASSWORD, does nothing
+    # when they are unset, and runs BEFORE the brick hooks: the commercial admin
+    # brick carries the same bootstrap plus its own table, and finds the account
+    # already there.
+    ensure_default_superadmin()
 
     # Migrations apportees par les briques branchees. Ici et pas a l'import :
     # importer th2agent ne doit jamais toucher la base.
