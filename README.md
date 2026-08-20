@@ -5,9 +5,15 @@ tool integration, RAG, Text-to-SQL, webhooks and scheduled runs.
 
 This repository is the **open-source core**. Some capabilities named in the product —
 billing, usage metering, prospection, identity-provider sign-in, multi-factor
-authentication, agent evaluation, the administration panel — ship as separate commercial
-bricks and are **absent here**. Where the core holds a hook for one, it is documented as
-such. A `404` on those routes means "not in this edition", not "object not found".
+authentication, agent evaluation, supervision, organisation management — ship as separate
+commercial bricks and are **absent here**. Where the core holds a hook for one, it is
+documented as such. A `404` on those routes means "not in this edition", not "object not
+found".
+
+The **administration panel is part of this edition**: users, groups, permissions, MFA
+enforcement. Only the management of *organisations* is sold separately — deciding which
+tenant a person belongs to governs other people's reach, rather than serving whoever runs
+the install.
 
 Full documentation: [docs.apowerb.com](https://docs.apowerb.com).
 
@@ -323,7 +329,8 @@ apowerb/
 ```
 
 Routers not to look for here — they arrive with the bricks: billing, usage, prospection,
-identity-provider sign-in, MFA, evaluation, administration.
+identity-provider sign-in, MFA, evaluation, supervision, organisation management
+(`/api/admin/organizations*`). The rest of `/api/admin` is here.
 
 ### Startup Sequence
 
@@ -372,7 +379,24 @@ Route families in this edition, all under `/api` unless noted:
 
 Absent from this edition, provided by bricks: `billing`, `usage`, `prospection`,
 `campaigns`, MFA (`/api/auth/mfa/*`), identity-provider sign-in (`/api/users/{github,google,microsoft,linkedin}`),
-evaluation, administration. They answer `404` here.
+evaluation, supervision, and organisation management (`/api/admin/organizations*`). They
+answer `404` here. The rest of `/api/admin` — users, groups, permissions — is served here.
+
+### Upgrading: organisation management left the core
+
+Since the release that carries this note, the five `/api/admin/organizations*` routes are
+served by a brick rather than by the core. **The mechanism stayed**, deliberately:
+
+- the `admin_organization` and `admin_org_member` tables are still created here, and
+  existing rows are left untouched;
+- an administrator is still bounded by the organisation he belongs to, so a boundary
+  drawn before the upgrade keeps being enforced after it;
+- a user's organisation is still reported by `/api/admin/users` and `/api/admin/me`.
+
+What an install without the brick loses is the ability to **create, rename, delete** an
+organisation or to move somebody between two. If you never created one, nothing changes:
+with no organisation to belong to, an administrator who is not a superadmin administers
+only himself — which is what this build already did.
 
 ## Available Tools
 
