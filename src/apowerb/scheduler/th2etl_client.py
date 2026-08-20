@@ -24,6 +24,11 @@ from typing import Any
 
 import requests
 
+# Bound by name rather than read off the ``requests`` module global, which the
+# test doubles in this package replace. See ``orchestrator_is_unreachable``.
+from requests.exceptions import ConnectionError as _TransportRefused
+from requests.exceptions import Timeout as _TransportTimedOut
+
 from apowerb.configs.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -104,6 +109,34 @@ class OrchestratorUnavailable(RuntimeError):
     Kept in this module on purpose: it has no apowerb imports, so both clients
     and the tests that load it by file path can use it.
     """
+
+
+def orchestrator_is_unreachable(exc: BaseException) -> bool:
+    """Did the call fail to reach the orchestrator at all?
+
+    An HTTP error response means the orchestrator answered, and an answer is
+    not an outage: a 404 for a run that does not exist is a fact about that
+    run. Reporting it as ``OrchestratorUnavailable`` would move the lie rather
+    than remove it -- the caller would show "the scheduler is down" over a
+    scheduler that just told it something true.
+
+    So only a transport failure counts: refused, timed out, DNS -- the two
+    ``requests`` families that mean the request never got an answer. Every
+    other ``RequestException``, ``HTTPError`` first among them, carries one.
+
+    The classes are imported by name rather than read off the module global:
+    the test doubles in this package replace ``th2etl_client.requests`` with a
+    fake that collapses the hierarchy to bare ``Exception``, under which an
+    answered 500 and a refused connection become indistinguishable. Asking
+    "did the response come back empty-handed" would then read one as the
+    other -- which is exactly how the first version of this helper turned an
+    upstream 500 into "the orchestrator is unreachable".
+
+    Lives beside ``OrchestratorUnavailable`` and not in a helpers module for
+    the same reason it does: both clients need it, and this module imports
+    nothing from apowerb.
+    """
+    return isinstance(exc, (_TransportRefused, _TransportTimedOut))
 
 
 class Th2etlAPIClient:
@@ -225,6 +258,10 @@ class Th2etlAPIClient:
             resp.raise_for_status()
             schedulers = resp.json()
         except requests.RequestException as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"th2etl is unreachable at {self.base_url}: {e}"
+                ) from e
             logger.error("th2etl get_pipeline_schedules failed: %s", e)
             return []
         out = []
@@ -336,12 +373,23 @@ class Th2etlAPIClient:
             resp.raise_for_status()
             return [_to_mage_run(r) for r in resp.json()]
         except requests.RequestException as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"th2etl is unreachable at {self.base_url}: {e}"
+                ) from e
             logger.error("th2etl get_pipeline_runs failed for %r: %s", schedule_id, e)
             return []
 
     def get_pipeline_run(self, run_id: int) -> dict[str, Any]:
-        resp = self._http.get(self._url(f"/runs/{run_id}"), timeout=self.timeout)
-        resp.raise_for_status()
+        try:
+            resp = self._http.get(self._url(f"/runs/{run_id}"), timeout=self.timeout)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"th2etl is unreachable at {self.base_url}: {e}"
+                ) from e
+            raise
         return _to_mage_run(resp.json())
 
     def get_pipeline_run_logs(self, run_id: int) -> list[dict[str, Any]]:
@@ -354,10 +402,21 @@ class Th2etlAPIClient:
             resp.raise_for_status()
             return resp.json()
         except requests.RequestException as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"th2etl is unreachable at {self.base_url}: {e}"
+                ) from e
             logger.error("th2etl get_pipeline_run_logs failed for %r: %s", run_id, e)
             return []
 
     def cancel_pipeline_run(self, run_id: int) -> dict[str, Any]:
-        resp = self._http.post(self._url(f"/runs/{run_id}/cancel"), timeout=self.timeout)
-        resp.raise_for_status()
+        try:
+            resp = self._http.post(self._url(f"/runs/{run_id}/cancel"), timeout=self.timeout)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"th2etl is unreachable at {self.base_url}: {e}"
+                ) from e
+            raise
         return _to_mage_run(resp.json())

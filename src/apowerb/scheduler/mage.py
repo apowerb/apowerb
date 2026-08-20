@@ -3,7 +3,10 @@ from apowerb.configs.th2logger import setup_logging
 from typing import Any
 import requests
 from apowerb.configs.settings import get_settings
-from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
+from apowerb.scheduler.th2etl_client import (
+    OrchestratorUnavailable,
+    orchestrator_is_unreachable,
+)
 
 logger = setup_logging(__name__)
 
@@ -162,6 +165,10 @@ class MageAPIClient:
             response.raise_for_status()
             return response.json().get("pipeline_schedules", [])
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"Error fetching schedules: {e}")
             return []
 
@@ -192,6 +199,10 @@ class MageAPIClient:
             response.raise_for_status()
             return response.json().get("pipeline_runs", [])
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"Error fetching pipeline runs: {e}")
             return []
 
@@ -329,6 +340,10 @@ class MageAPIClient:
             response.raise_for_status()
             return response.json().get("pipeline_run", {})
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"Error cancelling pipeline run: {e}")
             return None
 
@@ -340,6 +355,10 @@ class MageAPIClient:
             response.raise_for_status()
             return response.json().get("pipeline_run", {})
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"Error fetching pipeline run: {e}")
             return None
 
@@ -671,6 +690,14 @@ def load_agent_data(*args, **kwargs):
             pipelines = self.client.get_all_pipelines()
             print("   ✓ Successfully connected to Mage API")
             print(f"   Found {len(pipelines)} existing pipelines")
+        except OrchestratorUnavailable:
+            # Let this one out. Both callers turn ``return False`` into
+            # ``Exception("Failed to initialize pipeline infrastructure")``,
+            # which reaches the API as a 500 pointing whoever reads it at the
+            # pipeline -- when what happened is that the orchestrator never
+            # answered. ``get_all_pipelines`` was made to raise precisely so
+            # this could be told apart; catching it here threw that away.
+            raise
         except Exception as e:
             print(f"   ✗ Failed to connect to Mage API: {e}")
             print(f"   Base URL: {self.client.base_url}")

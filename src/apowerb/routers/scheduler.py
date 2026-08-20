@@ -74,6 +74,39 @@ def _orchestrator_is_configured(settings) -> bool:
     return bool(set(names) & settings.model_fields_set)
 
 
+def _orchestrator_outage(e: OrchestratorUnavailable, doing: str) -> HTTPException:
+    """The one answer every route in this file gives to an unreachable
+    orchestrator.
+
+    503 and never 500, never an empty result: the screen must be able to say
+    "the orchestrator is down" instead of "you have no pipelines" -- and a 500
+    reads as a broken server, when what happened is that an optional component
+    is not answering. Returning an empty list is worse still: a dead
+    orchestrator then renders as a perfectly healthy, empty dashboard, which is
+    how one outage went three weeks unnoticed (see ``OrchestratorUnavailable``).
+
+    Two situations wear the same exception and must not wear the same log
+    level. An orchestrator nobody installed is not one that is down: a
+    deployment carrying no Mage logged ERROR on every visit to the screen,
+    quoting a localhost address its operator never typed -- and an ERROR
+    meaning "you did not install an optional component" teaches whoever reads
+    the logs to scroll past ERROR lines. So DEBUG plus a sentence saying how to
+    turn the feature off, against ERROR plus the real cause.
+
+    Per route rather than one handler on the app: this router is mounted by
+    consumers on their own FastAPI app (see ``_OrchestratorClientProxy``), and
+    a handler registered in ``main.py`` would leave every one of them with the
+    500s this replaces. It would also capture callers outside this file that
+    map the same exception deliberately -- the BI refresh route answers 500 on
+    purpose -- turning their choice into this one behind their back.
+    """
+    if not _orchestrator_is_configured(get_settings()):
+        logger.debug("no orchestrator configured while %s; %s", doing, e)
+        return HTTPException(status_code=503, detail=_NOT_CONFIGURED)
+    logger.error("orchestrator unreachable while %s: %s", doing, e)
+    return HTTPException(status_code=503, detail=str(e))
+
+
 class _OrchestratorClientProxy:
     """Résout le client d'orchestration à l'appel, jamais à l'import.
 
@@ -126,19 +159,7 @@ async def list_pipelines(current_user: user_schemas.User = Depends(get_current_u
     try:
         return scheduler_client.get_all_pipelines()
     except OrchestratorUnavailable as e:
-        # 503, never 200 with an empty list: the dashboard must be able to say
-        # "the orchestrator is down" instead of "you have no pipelines".
-        #
-        # But an orchestrator nobody installed is not one that is down. A
-        # deployment carrying no Mage logged this at ERROR on every visit to
-        # the screen, quoting a localhost address its operator never typed --
-        # and an ERROR meaning "you did not install an optional component"
-        # teaches whoever reads the logs to scroll past ERROR lines.
-        if not _orchestrator_is_configured(get_settings()):
-            logger.debug("no orchestrator configured; %s", e)
-            raise HTTPException(status_code=503, detail=_NOT_CONFIGURED) from e
-        logger.error("orchestrator unreachable while listing pipelines: %s", e)
-        raise HTTPException(status_code=503, detail=str(e)) from e
+        raise _orchestrator_outage(e, "listing pipelines") from e
 
 
 @router.post("/pipelines/agents/triggers", tags=["scheduler"])
@@ -186,6 +207,11 @@ async def create_agent_trigger(
                 detail="Trigger creation returned None. Is Mage AI running?",
             )
 
+    except OrchestratorUnavailable as e:
+        # Ordered before the catch-all below, which would otherwise answer 500
+        # with the exception text -- telling operators to debug the agent they
+        # just registered, when what is down is their scheduler.
+        raise _orchestrator_outage(e, "registering an agent") from e
     except Exception as e:
         logger.error(f"[TRIGGER] Failed to create trigger: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -197,7 +223,10 @@ async def list_pipeline_schedules(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """List triggers/schedules for a pipeline, filtered to only the current user's agents."""
-    all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    try:
+        all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing schedules") from e
     user_agent_ids = _get_user_agent_ids(current_user.email)
     return [s for s in all_schedules if s.get("name") in user_agent_ids]
 
@@ -211,8 +240,16 @@ async def list_schedule_runs(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """List runs for a specific schedule, after verifying it belongs to the user."""
-    # Verify the schedule belongs to one of the user's agents
-    all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    # Verify the schedule belongs to one of the user's agents.
+    #
+    # This call has to answer before the ownership check can mean anything: an
+    # unreachable orchestrator returns no schedules, so every schedule looks
+    # like somebody else's and the caller is told 403 -- their own schedule
+    # denied to them, in the name of a check that never ran.
+    try:
+        all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing schedules") from e
     user_agent_ids = _get_user_agent_ids(current_user.email)
     # Compare as strings: Mage schedule ids are ints, th2etl uses the scheduler
     # name (e.g. "1201") as the id. Coercing the path param to int would make a
@@ -222,7 +259,10 @@ async def list_schedule_runs(
         raise HTTPException(
             status_code=403, detail="This schedule does not belong to your agents."
         )
-    return scheduler_client.get_pipeline_runs(schedule_id)
+    try:
+        return scheduler_client.get_pipeline_runs(schedule_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing runs") from e
 
 
 @router.put("/pipelines/runs/{run_id}/cancel", tags=["scheduler"])
@@ -231,7 +271,10 @@ async def cancel_pipeline_run(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Cancel a pipeline run."""
-    result = scheduler_client.cancel_pipeline_run(run_id)
+    try:
+        result = scheduler_client.cancel_pipeline_run(run_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "cancelling a run") from e
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to cancel pipeline run")
     return result
@@ -243,7 +286,13 @@ async def get_pipeline_run(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Get details for a specific pipeline run."""
-    result = scheduler_client.get_pipeline_run(run_id)
+    try:
+        result = scheduler_client.get_pipeline_run(run_id)
+    except OrchestratorUnavailable as e:
+        # Not a 404: "this run does not exist" is a claim about the run, and we
+        # never got to ask. The client keeps returning None for a run the
+        # orchestrator genuinely answered about, and that still means 404.
+        raise _orchestrator_outage(e, "reading a run") from e
     if result is None:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     return result
@@ -257,7 +306,10 @@ async def get_pipeline_run_logs(
     """Structured, step-by-step log for a run, so the Orchestrator UI can show a
     run's execution narrative instead of just its status. Backed by th2etl's
     ``/runs/{id}/logs``; an empty list under the default Mage orchestrator."""
-    logs = scheduler_client.get_pipeline_run_logs(run_id)
+    try:
+        logs = scheduler_client.get_pipeline_run_logs(run_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "reading a run log") from e
     if not logs:
         # Nothing to leak (Mage no-op, or a run with no captured log): skip the
         # extra upstream call and the ownership check.
@@ -266,7 +318,10 @@ async def get_pipeline_run_logs(
     # may include business content), so — unlike a bare run lookup — verify the
     # run belongs to one of the caller's agents before returning it. The owning
     # agent is the run's scheduler_name (th2etl) / schedule id.
-    run = scheduler_client.get_pipeline_run(run_id)
+    try:
+        run = scheduler_client.get_pipeline_run(run_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "reading a run") from e
     owner = run.get("scheduler_name") or run.get("pipeline_schedule_id") if isinstance(run, dict) else None
     user_agent_ids = _get_user_agent_ids(current_user.email)
     if owner is None or str(owner) not in user_agent_ids:
@@ -290,8 +345,14 @@ async def update_pipeline_schedule(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Update a pipeline schedule (status, interval, start_time)."""
-    # Verify the schedule belongs to one of the user's agents
-    all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    # Verify the schedule belongs to one of the user's agents.
+    #
+    # As in ``list_schedule_runs``, an orchestrator that cannot answer would
+    # make this check deny callers their own schedule with a 403.
+    try:
+        all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing schedules") from e
     user_agent_ids = _get_user_agent_ids(current_user.email)
     # Compare as strings: Mage schedule ids are ints, th2etl uses the scheduler
     # name (e.g. "1201") as the id. Coercing the path param to int would make a
@@ -302,6 +363,13 @@ async def update_pipeline_schedule(
             status_code=403, detail="This schedule does not belong to your agents."
         )
 
+    # Deliberately not wrapped: ``update_schedule`` is shared with five
+    # callers outside this router, so making it report an outage is a change
+    # with its own blast radius and its own measurements to take. The check
+    # above already answers 503 for an orchestrator that is down, and only an
+    # orchestrator that dies between these two calls still reaches the 500
+    # below -- a narrower hole than the one this commit closes, left open on
+    # purpose rather than by omission.
     result = scheduler_client.update_schedule(
         schedule_id=schedule_id,
         schedule_interval=request.schedule_interval,
