@@ -68,6 +68,10 @@ class MageAPIClient:
                 return True
             return False
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"Error checking pipeline existence: {e}")
             return False
 
@@ -96,6 +100,10 @@ class MageAPIClient:
                 print(f"Response: {response.text}")
                 return None
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"❌ Error creating pipeline: {e}")
             return None
 
@@ -112,6 +120,10 @@ class MageAPIClient:
                 return "block" in data and data["block"] is not None
             return False
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"Error checking block existence: {e}")
             return False
 
@@ -154,6 +166,10 @@ class MageAPIClient:
                 print(f"Response: {response.text}")
                 return None
         except Exception as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
             print(f"❌ Error creating block: {e}")
             return None
 
@@ -187,8 +203,17 @@ class MageAPIClient:
             return response.json().get("pipelines", [])
         except Exception as e:
             print(f"Error fetching pipelines: {e}")
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"Mage is unreachable at {self.base_url}: {e}"
+                ) from e
+            # It answered, and not with a pipeline list: a rejected key, a
+            # broken Mage. Still never `[]` -- an empty dashboard would be the
+            # same lie this method exists to stop. But do not call it
+            # unreachable either: that sends whoever reads it to check the
+            # network instead of the answer they actually got.
             raise OrchestratorUnavailable(
-                f"Mage is unreachable at {self.base_url}: {e}"
+                f"Mage answered but could not list pipelines at {self.base_url}: {e}"
             ) from e
 
     def get_pipeline_runs(self, schedule_id: int) -> list:
@@ -565,6 +590,14 @@ class AgentOrchestrator:
             print(f"   ✗ Failed to create pipeline '{self.PIPELINE_UUID}'")
             print(f"   Debug: create_pipeline returned: {result}")
             return False
+        except OrchestratorUnavailable:
+            # `return False` below becomes a bare "failed to initialize pipeline
+            # infrastructure" two frames up, and a 500 at the API. Steps 1 and 2
+            # were left out of the first pass: an orchestrator that answered the
+            # connectivity check and died a moment later came back as a 500 on
+            # `POST /pipelines/agents/triggers`, which is the very thing that
+            # commit set out to remove.
+            raise
         except Exception as e:
             print(f"   ✗ Exception in _ensure_pipeline_exists: {e}")
             import traceback
@@ -668,6 +701,14 @@ def load_agent_data(*args, **kwargs):
             print(f"   ✗ Failed to create block '{self.BLOCK_UUID}'")
             print(f"   Debug: create_block returned: {result}")
             return False
+        except OrchestratorUnavailable:
+            # `return False` below becomes a bare "failed to initialize pipeline
+            # infrastructure" two frames up, and a 500 at the API. Steps 1 and 2
+            # were left out of the first pass: an orchestrator that answered the
+            # connectivity check and died a moment later came back as a 500 on
+            # `POST /pipelines/agents/triggers`, which is the very thing that
+            # commit set out to remove.
+            raise
         except Exception as e:
             print(f"   ✗ Exception in _ensure_block_exists: {e}")
             import traceback

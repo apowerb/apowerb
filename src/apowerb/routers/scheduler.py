@@ -5,6 +5,12 @@ from apowerb.auth.dependencies import get_current_user
 from apowerb.users import schemas as user_schemas
 from apowerb.scheduler.mage import get_orchestrator, process_agent_registration
 from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
+from apowerb.scheduler.outage import (
+    NOT_CONFIGURED,
+    ORCHESTRATOR_SETTINGS,
+    orchestrator_is_configured,
+    outage_response,
+)
 from apowerb.core.agent_main import fetch_agents
 from apowerb.configs.settings import get_settings
 from apowerb.configs.th2logger import setup_logging
@@ -13,98 +19,24 @@ logger = setup_logging(__name__)
 
 router = APIRouter()
 
-# Everything that belongs to each orchestrator, not just its URL.
-#
-# Reading the URL alone had it backwards. An operator who installs Mage on the
-# documented default port has no reason to touch `BASE_URL` -- it already
-# matches his deployment -- but `scheduler/mage.py` refuses to build a client
-# without `API_KEY`, so that is the field he does set. He would have been
-# classified as having configured nothing, and a real outage of his Mage
-# logged at DEBUG under a message telling him no orchestrator was configured.
-#
-# So the question is not "did he name the address" but "did he engage with
-# this orchestrator at all". Any one of these says yes.
-_ORCHESTRATOR_SETTINGS = {
-    "mage": (
-        "base_url",
-        "api_key",
-        "oauth_token",
-        "project_name",
-        "mage_pipeline_uuid",
-    ),
-    "th2etl": ("th2etl_base_url", "th2etl_api_key"),
-}
-
-_NOT_CONFIGURED = (
-    "No orchestrator is configured in this installation. Scheduled runs need "
-    "one (Mage or th2etl); set its URL, or set SCHEDULER_ENABLED=false to drop "
-    "the feature and its screen entirely."
-)
-
-
-def _orchestrator_is_configured(settings) -> bool:
-    """Did this installation ever name an orchestrator?
-
-    `model_fields_set` holds what the environment actually provided -- the
-    only way to tell "left at the shipped default" from "typed in" once the
-    settings object is built. Any single setting of the selected orchestrator
-    counts: the question is whether somebody engaged with it, not whether he
-    happened to name its address.
-
-    ⚠️ On its own this does not mean "no orchestrator here": one genuinely
-    running beside the API on `localhost:6789` needs no configuration at all,
-    and an install like that is perfectly sound. What carries the meaning is
-    the **conjunction** at the only call site -- nothing configured *and* the
-    call just failed. Either half alone says nothing, which is also why this
-    must not become a startup warning: at boot the second half is unknown.
-
-    The asymmetry is deliberate. A deployment that sets `API_KEY` for some
-    unrelated reason is read as having a Mage, and a genuine absence then
-    logs at ERROR -- noise. The opposite mistake silences a real outage, which
-    is the failure this whole change exists to prevent. When in doubt, be
-    loud.
-
-    Reads the settings of the orchestrator actually **selected**: a deployment
-    switched to th2etl that only ever configured Mage engaged with nothing the
-    client will use.
-    """
-    names = _ORCHESTRATOR_SETTINGS.get(
-        str(settings.orchestrator).strip().lower(), _ORCHESTRATOR_SETTINGS["mage"]
-    )
-    return bool(set(names) & settings.model_fields_set)
+# The decision and its wording live in `apowerb.scheduler.outage`, shared with
+# the dashboard-refresh router: both call the same orchestrator client, both
+# meet the same outage, and two copies of "how loudly do we report this" drift.
+# Re-exported under the old private names so nothing reaching for them here has
+# to know they moved.
+_ORCHESTRATOR_SETTINGS = ORCHESTRATOR_SETTINGS
+_NOT_CONFIGURED = NOT_CONFIGURED
+_orchestrator_is_configured = orchestrator_is_configured
 
 
 def _orchestrator_outage(e: OrchestratorUnavailable, doing: str) -> HTTPException:
-    """The one answer every route in this file gives to an unreachable
-    orchestrator.
+    """This router's answer to an unreachable orchestrator.
 
-    503 and never 500, never an empty result: the screen must be able to say
-    "the orchestrator is down" instead of "you have no pipelines" -- and a 500
-    reads as a broken server, when what happened is that an optional component
-    is not answering. Returning an empty list is worse still: a dead
-    orchestrator then renders as a perfectly healthy, empty dashboard, which is
-    how one outage went three weeks unnoticed (see ``OrchestratorUnavailable``).
-
-    Two situations wear the same exception and must not wear the same log
-    level. An orchestrator nobody installed is not one that is down: a
-    deployment carrying no Mage logged ERROR on every visit to the screen,
-    quoting a localhost address its operator never typed -- and an ERROR
-    meaning "you did not install an optional component" teaches whoever reads
-    the logs to scroll past ERROR lines. So DEBUG plus a sentence saying how to
-    turn the feature off, against ERROR plus the real cause.
-
-    Per route rather than one handler on the app: this router is mounted by
-    consumers on their own FastAPI app (see ``_OrchestratorClientProxy``), and
-    a handler registered in ``main.py`` would leave every one of them with the
-    500s this replaces. It would also capture callers outside this file that
-    map the same exception deliberately -- the BI refresh route answers 500 on
-    purpose -- turning their choice into this one behind their back.
+    Reads `get_settings` through this module's own global, so a test that
+    patches it here still reaches the decision, and hands over this module's
+    logger so the line lands under the router that served the request.
     """
-    if not _orchestrator_is_configured(get_settings()):
-        logger.debug("no orchestrator configured while %s; %s", doing, e)
-        return HTTPException(status_code=503, detail=_NOT_CONFIGURED)
-    logger.error("orchestrator unreachable while %s: %s", doing, e)
-    return HTTPException(status_code=503, detail=str(e))
+    return outage_response(e, doing, get_settings(), logger)
 
 
 class _OrchestratorClientProxy:

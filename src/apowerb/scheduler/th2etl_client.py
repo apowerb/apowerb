@@ -111,6 +111,10 @@ class OrchestratorUnavailable(RuntimeError):
     """
 
 
+# A gateway answering for an orchestrator it could not reach.
+_GATEWAY_CANNOT_REACH_IT = frozenset({502, 503, 504})
+
+
 def orchestrator_is_unreachable(exc: BaseException) -> bool:
     """Did the call fail to reach the orchestrator at all?
 
@@ -120,9 +124,15 @@ def orchestrator_is_unreachable(exc: BaseException) -> bool:
     than remove it -- the caller would show "the scheduler is down" over a
     scheduler that just told it something true.
 
-    So only a transport failure counts: refused, timed out, DNS -- the two
-    ``requests`` families that mean the request never got an answer. Every
-    other ``RequestException``, ``HTTPError`` first among them, carries one.
+    So a transport failure counts: refused, timed out, DNS -- the two
+    ``requests`` families that mean the request never got an answer.
+
+    And so does a **gateway** saying it could not reach the orchestrator for
+    us. 502, 503 and 504 are exactly that answer: the proxy is up, the thing
+    behind it is not. Reading them as "it answered, degrade quietly" put the
+    original bug straight back on every route sitting behind an nginx, a
+    Traefik or an ALB -- which is the ordinary deployment, not an edge case.
+    Every other status carries a fact about the request, not about reachability.
 
     The classes are imported by name rather than read off the module global:
     the test doubles in this package replace ``th2etl_client.requests`` with a
@@ -136,7 +146,10 @@ def orchestrator_is_unreachable(exc: BaseException) -> bool:
     the same reason it does: both clients need it, and this module imports
     nothing from apowerb.
     """
-    return isinstance(exc, (_TransportRefused, _TransportTimedOut))
+    if isinstance(exc, (_TransportRefused, _TransportTimedOut)):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status in _GATEWAY_CANNOT_REACH_IT
 
 
 class Th2etlAPIClient:
@@ -195,8 +208,17 @@ class Th2etlAPIClient:
             return resp.json()
         except requests.RequestException as e:
             logger.error("th2etl get_all_pipelines failed: %s", e)
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"th2etl is unreachable at {self.base_url}: {e}"
+                ) from e
+            # It answered, and not with a pipeline list: a rejected key, a
+            # broken th2etl. Still never `[]` -- an empty dashboard would be the
+            # same lie this method exists to stop. But do not call it
+            # unreachable either: that sends whoever reads it to check the
+            # network instead of the answer they actually got.
             raise OrchestratorUnavailable(
-                f"th2etl is unreachable at {self.base_url}: {e}"
+                f"th2etl answered but could not list pipelines at {self.base_url}: {e}"
             ) from e
 
     # --- block lifecycle (orchestrator init) -------------------------------
@@ -380,7 +402,7 @@ class Th2etlAPIClient:
             logger.error("th2etl get_pipeline_runs failed for %r: %s", schedule_id, e)
             return []
 
-    def get_pipeline_run(self, run_id: int) -> dict[str, Any]:
+    def get_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
         try:
             resp = self._http.get(self._url(f"/runs/{run_id}"), timeout=self.timeout)
             resp.raise_for_status()
@@ -389,7 +411,12 @@ class Th2etlAPIClient:
                 raise OrchestratorUnavailable(
                     f"th2etl is unreachable at {self.base_url}: {e}"
                 ) from e
-            raise
+            # Answered, and not with a run. `None` is what the route turns into
+            # 404; re-raising sent the raw `HTTPError` out instead, so a run
+            # that simply does not exist came back as a 500 with a trace. The
+            # same lookup under Mage has always returned `None`.
+            logger.error("th2etl %s failed for %r: %s", "get_pipeline_run", run_id, e)
+            return None
         return _to_mage_run(resp.json())
 
     def get_pipeline_run_logs(self, run_id: int) -> list[dict[str, Any]]:
@@ -409,7 +436,7 @@ class Th2etlAPIClient:
             logger.error("th2etl get_pipeline_run_logs failed for %r: %s", run_id, e)
             return []
 
-    def cancel_pipeline_run(self, run_id: int) -> dict[str, Any]:
+    def cancel_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
         try:
             resp = self._http.post(self._url(f"/runs/{run_id}/cancel"), timeout=self.timeout)
             resp.raise_for_status()
@@ -418,5 +445,10 @@ class Th2etlAPIClient:
                 raise OrchestratorUnavailable(
                     f"th2etl is unreachable at {self.base_url}: {e}"
                 ) from e
-            raise
+            # Answered, and not with a run. `None` is what the route turns into
+            # 404; re-raising sent the raw `HTTPError` out instead, so a run
+            # that simply does not exist came back as a 500 with a trace. The
+            # same lookup under Mage has always returned `None`.
+            logger.error("th2etl %s failed for %r: %s", "cancel_pipeline_run", run_id, e)
+            return None
         return _to_mage_run(resp.json())

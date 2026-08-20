@@ -409,3 +409,179 @@ def test_th2etl_keeps_its_fallback_when_the_orchestrator_answered():
         assert c.get_pipeline_run_logs(1) == []
         assert c.get_pipeline_schedules("agents") == []
         assert c.get_pipeline_runs("75") == []
+
+
+# ---------------------------------------------------------------------------
+# Second pass: what an adversarial review found the first one had left open
+# ---------------------------------------------------------------------------
+
+
+def _answered(status: int) -> requests.HTTPError:
+    """An orchestrator that replied, with that status."""
+    resp = requests.Response()
+    resp.status_code = status
+    return requests.HTTPError(f"{status}", response=resp)
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_a_gateway_that_could_not_reach_it_is_an_outage(status):
+    """The hole the first pass left open, and the one that mattered most.
+
+    Behind a reverse proxy -- nginx, Traefik, an ALB, which is the ordinary
+    deployment and not an edge case -- an orchestrator that is down does not
+    refuse the connection. The proxy answers 502. Reading that as "it replied,
+    degrade quietly" put `200 []`, the spurious 403 and the spurious 404 back
+    on every route, in the exact deployment shape most likely to be running.
+    """
+    assert orchestrator_is_unreachable(_answered(status)) is True
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 500])
+def test_an_answered_error_that_is_not_a_gateway_is_not_an_outage(status):
+    """The other half of that line, and the reason it cannot simply be "any
+    error status". A 401 is a fact about the key, a 404 about the run, a 500
+    about the orchestrator's own code. None of them mean nobody was there, and
+    answering "unreachable" sends whoever reads it to check the network."""
+    assert orchestrator_is_unreachable(_answered(status)) is False
+
+
+@pytest.mark.parametrize("status", [502, 504])
+@pytest.mark.parametrize("name,call", MAGE_CALLS, ids=[n for n, _ in MAGE_CALLS])
+def test_mage_reports_a_gateway_outage(name, call, status):
+    boom = _answered(status)
+    with patch.object(mage_mod.requests, "get", side_effect=boom), patch.object(
+        mage_mod.requests, "put", side_effect=boom
+    ):
+        with pytest.raises(OrchestratorUnavailable):
+            call(_dead_mage())
+
+
+@pytest.mark.parametrize("status", [502, 504])
+@pytest.mark.parametrize("name,call", TH2ETL_CALLS, ids=[n for n, _ in TH2ETL_CALLS])
+def test_th2etl_reports_a_gateway_outage(name, call, status):
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    boom = _answered(status)
+    with patch.object(c._http, "get", side_effect=boom), patch.object(
+        c._http, "post", side_effect=boom
+    ):
+        with pytest.raises(OrchestratorUnavailable):
+            call(c)
+
+
+@pytest.mark.parametrize(
+    "name,call",
+    [
+        ("get_pipeline_run", lambda c: c.get_pipeline_run(1)),
+        ("cancel_pipeline_run", lambda c: c.cancel_pipeline_run(1)),
+    ],
+    ids=["get_pipeline_run", "cancel_pipeline_run"],
+)
+def test_th2etl_answers_none_for_a_run_the_orchestrator_answered_about(name, call):
+    """These two re-raised the raw `HTTPError`, so a run that simply does not
+    exist reached the API as a 500 with a trace -- where the same lookup under
+    Mage has always answered 404. The th2etl negative control never called
+    them, which is how the asymmetry survived the first pass."""
+    boom = _answered(404)
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(c._http, "get", side_effect=boom), patch.object(
+        c._http, "post", side_effect=boom
+    ):
+        assert call(c) is None
+
+
+class _Ok:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+def test_an_orchestrator_that_dies_after_the_connectivity_check_still_answers_503(client):
+    """`_initialize_pipeline` guarded its step 0 and only its step 0.
+
+    A Mage that answers the connectivity check and falls over a moment later
+    went through `pipeline_exists` -- which swallowed the failure into `False`
+    -- and came back out as `Exception("Failed to initialize pipeline
+    infrastructure")`, i.e. a bare 500 on `POST /pipelines/agents/triggers`.
+    The very failure this whole change removes, on one of the routes it claims
+    to have fixed, reachable by nothing more exotic than bad timing.
+    """
+    alive_then_dead = [
+        _Ok({"pipelines": []}),
+        requests.ConnectionError("refused"),
+        requests.ConnectionError("refused"),
+    ]
+    orchestrator = mage_mod.AgentOrchestrator(client=_dead_mage())
+    with patch.object(mage_mod.requests, "get", side_effect=alive_then_dead), patch.object(
+        mage_mod, "_orchestrator_instance", orchestrator
+    ), patch.object(mod, "get_settings", lambda: _settings()), patch.object(
+        mod, "_get_user_agent_ids", _no_db
+    ):
+        got = client.post(
+            "/api/pipelines/agents/triggers",
+            json={"agent_id": "75", "agent_name": "a"},
+        )
+    assert got.status_code == 503, got.text
+
+
+# ---------------------------------------------------------------------------
+# The sister router: same client, same outage, same answer
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dashboard_client():
+    from unittest.mock import AsyncMock
+
+    from apowerb.bi.dependencies import get_dashboard_service
+    from apowerb.bi.refresh_router import router as refresh_router
+
+    app = FastAPI()
+    app.include_router(refresh_router, prefix="/api/v1")
+    app.dependency_overrides[get_current_user] = lambda: type(
+        "U", (), {"email": "someone@example.test"}
+    )()
+    app.dependency_overrides[get_dashboard_service] = lambda: AsyncMock()
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _dead_orchestrator():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(PIPELINE_UUID="agents", client=_DeadClient())
+
+
+def test_the_dashboard_schedule_list_answers_503_not_500(dashboard_client):
+    """The dashboard-refresh router calls the same client, so it meets the same
+    outage. Before the clients learned to report one it answered `200 []` here
+    -- the healthy-looking empty dashboard, one more time. Letting it fall into
+    its own generic 500 instead would have traded one wrong answer for another,
+    and would answer 500 on every installation that simply never set an
+    orchestrator up."""
+    import apowerb.bi.refresh_router as bi
+
+    with patch.object(bi, "get_orchestrator", _dead_orchestrator), patch.object(
+        bi, "get_settings", lambda: _settings()
+    ), patch.object(bi, "fetch_agents", lambda _email: []):
+        got = dashboard_client.get("/api/v1/dashboards/d1/schedules")
+    assert got.status_code == 503, got.text
+    assert "SCHEDULER_ENABLED" in got.json()["detail"]
+
+
+def test_deleting_a_dashboard_schedule_answers_503_not_404(dashboard_client):
+    """Its `except Exception: all_schedules = []` absorbed the outage exactly
+    as it used to absorb the empty return, and the caller was told their
+    schedule did not exist. The same shape this change removes from the
+    scheduler router, eighty lines away in a sister file."""
+    import apowerb.bi.refresh_router as bi
+
+    with patch.object(bi, "get_orchestrator", _dead_orchestrator), patch.object(
+        bi, "get_settings", lambda: _settings()
+    ), patch.object(bi, "fetch_agents", lambda _email: []):
+        got = dashboard_client.delete("/api/v1/dashboards/d1/schedules/1")
+    assert got.status_code == 503, got.text
+    assert "not found" not in got.text.lower()

@@ -18,7 +18,10 @@ from apowerb.bi.dashboards.service import DashboardNotFoundError, DashboardServi
 from apowerb.bi.dependencies import get_dashboard_service
 from apowerb.configs.th2logger import setup_logging
 from apowerb.core.agent_main import fetch_agents, get_agent_by_id
+from apowerb.configs.settings import get_settings
 from apowerb.scheduler.mage import MageAPIClient, get_orchestrator
+from apowerb.scheduler.outage import outage_response
+from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
 from apowerb.scheduler.run_agent_background import schedule_agent_run
 from apowerb.users import schemas as user_schemas
 
@@ -188,6 +191,16 @@ async def list_dashboard_schedules(
         all_schedules = orchestrator.client.get_pipeline_schedules(
             orchestrator.PIPELINE_UUID
         )
+    except OrchestratorUnavailable as exc:
+        # 503, and the same sentence the Orchestrator screen gets. This branch
+        # could not see that case before: an unreachable orchestrator returned
+        # `[]`, and the dashboard rendered an empty schedule list -- healthy
+        # looking and wrong. Falling into the 500 below would trade one wrong
+        # answer for another, and would answer 500 on every installation that
+        # simply never set an orchestrator up.
+        raise outage_response(
+            exc, "listing dashboard schedules", get_settings(), logger
+        ) from exc
     except Exception as exc:
         logger.error(f"[REFRESH] Failed to fetch schedules from Mage: {exc}", exc_info=True)
         raise HTTPException(
@@ -273,6 +286,15 @@ async def delete_dashboard_schedule(
             orchestrator.client.get_pipeline_schedules,
             orchestrator.PIPELINE_UUID,
         )
+    except OrchestratorUnavailable as exc:
+        # Otherwise the empty list below denies callers their own schedule with
+        # a 404 "Schedule not found" -- an outage read as a fact about the
+        # resource, the same shape this change removes from the scheduler
+        # router. It sits in a sister router sharing the same client, so leaving
+        # it would have kept one copy of the bug alive next to its own fix.
+        raise outage_response(
+            exc, "deleting a dashboard schedule", get_settings(), logger
+        ) from exc
     except Exception:
         all_schedules = []
 
