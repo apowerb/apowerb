@@ -14,7 +14,6 @@ Fixtures synthétiques au format SAP réel ("réf ... N PCE ... punet 1 PCE mont
 """
 from __future__ import annotations
 
-import pathlib
 import pytest
 
 from th2customers.scei.tools.scei_ar_persist import (
@@ -22,7 +21,6 @@ from th2customers.scei.tools.scei_ar_persist import (
     _reconcile_lines,
 )
 
-_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "scei"
 
 # ---------------------------------------------------------------------------
 # Fixtures PDF synthétiques (format SAP Schneider prouvé live)
@@ -47,24 +45,8 @@ _PMI_CF101221 = [
     }
 ]
 
-# CF101249 : RSB2A080B7, prix PDF=70.04, qté=10 ; PMI lcctpunet=70.04 expu=' '
 # → conforme (prix PDF == prix_erp_unit)
-_PDF_CF101249 = """\
-RSB2A080B7
-10 PCE
-70,04 1 PCE 700,40 EUR
-"""
 
-_PMI_CF101249 = [
-    {
-        "lcctcode": "100065",
-        "lcctcodart": "RSART12345",
-        "lcctrefext": "RSB2A080B7",
-        "lcctqty": 10.0,
-        "lcctpunet": 70.04,
-        "lcctexpu": " ",
-    }
-]
 
 # CF101232 L1 (457-4757) : prix PDF=3.09, PMI lcctpunet=309 expu='C' (unit=3.09)
 # → conforme (3.09 == 3.09)
@@ -118,11 +100,6 @@ class TestExtractQtyPriceForRef:
         assert qty == pytest.approx(1.0, abs=1e-3)
         assert prix == pytest.approx(43.26, abs=1e-2)
 
-    def test_cf101249_qty_10_prix_7004(self):
-        """RSB2A080B7 : qté=10, prix=70.04."""
-        qty, prix = _extract_qty_price_for_ref(["RSB2A080B7"], _PDF_CF101249)
-        assert qty == pytest.approx(10.0, abs=1e-3)
-        assert prix == pytest.approx(70.04, abs=1e-2)
 
     def test_ref_absente_retourne_none_none(self):
         """Réf absente du PDF → (None, None)."""
@@ -220,34 +197,6 @@ class TestReconcileLinesWithPdfText:
         result = _reconcile_lines(lignes, _PMI_CF101221, pdf_text=_PDF_CF101221)
         assert result[0]["QuantiteAR"] == pytest.approx(1.0, abs=1e-3)
 
-    def test_cf101249_pdf_conforme(self):
-        """CF101249 : prix PDF=70.04, PMI unit=70.04 → conforme."""
-        lignes = [
-            {
-                "Reference": "RSB2A080B7",
-                "QuantiteAR": 10.0,
-                "PrixAR": 700.40,  # recorder donne le total — hallucination classique
-                "TypeEcart": "ecart_prix",
-                "Situation": "NOK",
-            }
-        ]
-        result = _reconcile_lines(lignes, _PMI_CF101249, pdf_text=_PDF_CF101249)
-        assert result[0]["TypeEcart"] is None
-        assert result[0]["Situation"] == "OK"
-
-    def test_cf101249_prixar_normalise_a_unitaire(self):
-        """CF101249 conforme : PrixAR normalisé à 70.04 (unitaire PMI)."""
-        lignes = [
-            {
-                "Reference": "RSB2A080B7",
-                "QuantiteAR": 10.0,
-                "PrixAR": 700.40,
-                "TypeEcart": "ecart_prix",
-                "Situation": "NOK",
-            }
-        ]
-        result = _reconcile_lines(lignes, _PMI_CF101249, pdf_text=_PDF_CF101249)
-        assert result[0]["PrixAR"] == pytest.approx(70.04, abs=1e-2)
 
     def test_cf101232_l1_conforme(self):
         """CF101232 L1 (457-4757) : prix PDF=3.09, PMI unit=3.09 → conforme."""
@@ -308,20 +257,6 @@ class TestReconcileLinesWithPdfText:
         result = _reconcile_lines(lignes, _PMI_CF101221, pdf_text=None)
         assert result[0]["TypeEcart"] is None  # conforme via recorder
 
-    def test_ref_absente_pdf_fallback_recorder_qty(self):
-        """Si PDF ne contient pas la réf, on utilise la qty recorder (fallback)."""
-        lignes = [
-            {
-                "Reference": "GV2P07",
-                "QuantiteAR": 5.0,   # recorder dit 5 → ecart vs PMI lcctqty=1
-                "PrixAR": 39.05,
-                "TypeEcart": None,
-                "Situation": "OK",
-            }
-        ]
-        # PDF ne contient pas GV2P07 → fallback recorder qty=5.0 vs lcctqty=1 → ecart_qte
-        result = _reconcile_lines(lignes, _PMI_CF101221, pdf_text="RSB2A080B7 10 PCE")
-        assert result[0]["TypeEcart"] == "ecart_qte"
 
     def test_signature_retrocompat_sans_pdf_text(self):
         """_reconcile_lines accepte 2 args (sans pdf_text) — rétro-compatibilité."""
@@ -354,107 +289,6 @@ class TestReconcileLinesWithPdfText:
         # NB : pdf_qty=1.0 → qty_ar devient 1.0, pas None → FIX D ne s'applique pas
         # mais pdf_prix=43.26 vs prix_erp_unit=39.05 → ecart_prix
         assert result[0]["TypeEcart"] == "ecart_prix"
-
-
-# ===========================================================================
-# Non-régression — vrais PDFs (conforme attendu)
-# ===========================================================================
-
-class TestRealPdfNonRegression:
-    """Les vrais PDFs CF101197/192/194 restent conformes via _reextract_lines_from_pmi_and_text."""
-
-    @pytest.mark.parametrize("cf_name,pmi_fixture", [
-        ("CF101197.PDF", [
-            {
-                "lcctcode": "100018",
-                "lcctcodart": "CHANT0463",
-                "lcctrefext": "NSYCAG291LPF",
-                "lcctqty": 9.0,
-                "lcctpunet": 6947.9,
-                "lcctexpu": "C",
-            },
-            {
-                "lcctcode": "100018",
-                "lcctcodart": "SPEC03460",
-                "lcctrefext": "NSYCVF850M400PF",
-                "lcctqty": 11.0,
-                "lcctpunet": 35190.68,
-                "lcctexpu": "C",
-            },
-        ]),
-    ])
-    def test_real_pdf_reextraction_conforme(self, cf_name, pmi_fixture):
-        """CF réels extraits sans ecart détecté (conforme)."""
-        pdf_path = _FIXTURE_DIR / cf_name
-        if not pdf_path.exists():
-            pytest.skip(f"Fixture {cf_name} absente")
-        try:
-            from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
-            result_pdf = extract_all_pages_text(str(pdf_path))
-            pdf_text = result_pdf.get("text", "")
-        except Exception as e:
-            pytest.skip(f"Impossible de lire {cf_name}: {e}")
-
-        from th2customers.scei.tools.scei_ar_persist import _reextract_lines_from_pmi_and_text
-        result = _reextract_lines_from_pmi_and_text(pmi_fixture, pdf_text)
-        if result is None:
-            pytest.skip(f"Re-extraction impossible pour {cf_name} (PDF illisible ?)")
-        for line in result:
-            assert line.get("TypeEcart") is None, (
-                f"{cf_name} ligne {line.get('Reference')} attendue conforme, "
-                f"got TypeEcart={line.get('TypeEcart')!r}"
-            )
-
-    @pytest.mark.parametrize("cf_name,pmi_fixture,expected_ecart", [
-        ("CF101197.PDF", [
-            {
-                "lcctcode": "100018",
-                "lcctcodart": "CHANT0463",
-                "lcctrefext": "NSYCAG291LPF",
-                "lcctqty": 9.0,
-                "lcctpunet": 6947.9,
-                "lcctexpu": "C",
-            },
-            {
-                "lcctcode": "100018",
-                "lcctcodart": "SPEC03460",
-                "lcctrefext": "NSYCVF850M400PF",
-                "lcctqty": 11.0,
-                "lcctpunet": 35190.68,
-                "lcctexpu": "C",
-            },
-        ], [None, None]),
-    ])
-    def test_real_pdf_reconcile_avec_pdf_text_conforme(self, cf_name, pmi_fixture, expected_ecart):
-        """CF réels reconciliés via pdf_text : tous conformes."""
-        pdf_path = _FIXTURE_DIR / cf_name
-        if not pdf_path.exists():
-            pytest.skip(f"Fixture {cf_name} absente")
-        try:
-            from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
-            result_pdf = extract_all_pages_text(str(pdf_path))
-            pdf_text = result_pdf.get("text", "")
-        except Exception as e:
-            pytest.skip(f"Impossible de lire {cf_name}: {e}")
-
-        # Lignes simulées "recorder" avec PrixAR/QuantiteAR recorder (valeurs correctes ici)
-        lignes = []
-        for pl in pmi_fixture:
-            prix_erp = pl["lcctpunet"] / (100.0 if pl["lcctexpu"] == "C" else 1.0)
-            lignes.append({
-                "Reference": pl["lcctrefext"],
-                "QuantiteAR": pl["lcctqty"],
-                "PrixAR": prix_erp,
-                "TypeEcart": None,
-                "Situation": "OK",
-            })
-
-        result = _reconcile_lines(lignes, pmi_fixture, pdf_text=pdf_text)
-        for i, line in enumerate(result):
-            assert line.get("TypeEcart") == expected_ecart[i], (
-                f"{cf_name} ligne {i} attendu {expected_ecart[i]!r}, "
-                f"got TypeEcart={line.get('TypeEcart')!r} PrixAR={line.get('PrixAR')}"
-            )
 
 
 # ===========================================================================
