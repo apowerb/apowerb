@@ -139,20 +139,38 @@ with a `localhost` default, which is right on a laptop and wrong everywhere
 else — a value handed to a browser or written into a mail points at the
 *reader's* machine, not at the server.
 
+**Set `APP_PUBLIC_URL` and four others follow.**
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APP_PUBLIC_URL` | `http://localhost:3000` | Public URL of the front app. **Password-reset and e-mail-verification links are built from it** |
-| `PUBLIC_BASE_URL` | `http://localhost:8000` | Public URL of this API, for the URLs it hands out about itself |
-| `ROOT_PATH` | `http://localhost:8000` | Path this API believes it is served under |
+| `APP_PUBLIC_URL` | `http://localhost:3000` | Public URL of the front app. **Password-reset and e-mail-verification links are built from it**, and the settings below are deduced from it |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | Public URL of this API, for the callback URLs it hands out to webhooks |
+| `ROOT_PATH` | `http://localhost:8000` | Base of the HTTP calls this API makes to **itself**. Usually an internal address, not the public one |
 
-⚠️ Leaving one of these behind fails **silently**: the mail is sent, the page
-answers, and only the recipient finds out. This is not hypothetical — a
-deployment running `WORKING_MODE=prod` was found with `APP_PUBLIC_URL` absent,
-mailing reset links that pointed at `http://localhost:3000`.
+Declaring `APP_PUBLIC_URL` fills these in, their paths being fixed by the
+pages that serve them — only the origin varies:
 
-Since the same release, a deployment that configures some of these and forgets
-another gets a startup warning naming what was left behind. An installation
-that configures **none** of them stays silent: that is a developer, not a hole.
+| Deduced | Becomes |
+|---|---|
+| `GITHUB_INTEGRATION_REDIRECT_URI` | `<APP_PUBLIC_URL>/integrations/github/callback` |
+| `GOOGLE_INTEGRATION_REDIRECT_URI` | `<APP_PUBLIC_URL>/integrations/google/callback` |
+| `FRONTEND_URLS` | `<APP_PUBLIC_URL>` |
+| `CORS_ALLOWED_ORIGINS` | `<APP_PUBLIC_URL>` |
+
+**Anything you set yourself always wins** — deducing only fills a blank, and
+only from a base that is a single absolute URL, scheme included. A base
+declared but empty, or holding a comma-separated list, deduces nothing and is
+reported by the startup warning below. An installation that configures none of
+these behaves exactly as before.
+
+⚠️ `CORS_ALLOWED_ORIGINS` deduced from your front URL **widens** what the
+browser is allowed to call from, compared with the `localhost` default. That
+is the intent — but it is a security setting, so set it yourself if your
+policy is narrower than "the front I just declared".
+
+⚠️ `GITHUB_REDIRECT_URI` and `GOOGLE_REDIRECT_URI` are **not** deduced, and not
+read either: the front computes its own sign-in callback from the browser's
+origin and sends it with the code exchange. Setting them changes nothing.
 
 #### CORS
 

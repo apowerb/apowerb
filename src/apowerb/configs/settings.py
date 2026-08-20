@@ -63,6 +63,81 @@ _PUBLIC_URL_CONSEQUENCE = {
 }
 
 
+# Public URLs that are not independent facts about a deployment. A callback
+# path is fixed by the code that serves it; only the origin varies. So these
+# are deduced from the two settings that ARE facts -- where this API answers,
+# and where the front is served -- rather than asking for each of them and
+# offering nine separate chances to forget one.
+#
+# Explicit always wins: deducing fills a blank, it never corrects anybody.
+#
+# ⚠️ `root_path` is deliberately absent. Measured across three deployments, it
+# differs from the public URLs on all three: it is the base of the HTTP calls
+# this API makes to *itself*, where going out through the public domain would
+# be a detour through DNS, TLS and a proxy. Deducing it from the public URL
+# would have been a plausible guess and a wrong one.
+#
+# `microsoft_integration_redirect_uri` is left alone too: it ships empty
+# rather than localhost, so it is already the honest kind of default.
+# Public URLs that are not independent facts about a deployment: a callback
+# path is fixed by the page that serves it, only the origin varies. Deduced
+# from `APP_PUBLIC_URL` rather than asked for one by one, which offered as
+# many chances to forget one.
+#
+# Only settings something actually reads. `github_redirect_uri` and
+# `google_redirect_uri` are absent although their names fit: nothing reads
+# them -- not this core, not the commercial authentication brick, not the
+# front, which computes its own callback from `window.location.origin` and
+# sends it with the code exchange. Deducing a value nobody consults would
+# have dressed up dead configuration as a feature.
+#
+# `public_base_url` is not a base here either: it names where this API
+# answers, which webhooks need, and no browser-facing callback lives there.
+_DERIVED_FROM_FRONT = {
+    "frontend_urls": "",
+    "cors_allowed_origins": "",
+    "github_integration_redirect_uri": "/integrations/github/callback",
+    "google_integration_redirect_uri": "/integrations/google/callback",
+}
+_URL_BASES = (("app_public_url", _DERIVED_FROM_FRONT),)
+
+
+def _usable_as_a_base(value: str) -> bool:
+    """A base worth deducing from: one absolute URL, and only one.
+
+    An environment variable that is declared but empty is the oldest trap in
+    this file -- it reads as configured and behaves as nothing. Deducing from
+    it produced a schemeless `/auth/callback`, and the guard stayed quiet
+    because the name *was* in `model_fields_set`.
+
+    A comma is refused: `frontend_urls` is documented as a list, and pasting
+    one into a base would build a URI with a comma in the middle.
+
+    A scheme is required and inner whitespace refused: `//host/x` and
+    `https://ho st/x` are both URL-shaped enough to pass a careless check, and
+    both yield a redirect_uri no OAuth provider accepts.
+    """
+    v = value.strip()
+    if not v or "," in v or any(c.isspace() for c in v):
+        return False
+    scheme, sep, rest = v.partition("://")
+    return bool(sep) and scheme.isalpha() and bool(rest)
+
+
+def _deduced_url_names(fields_set: set[str], bases: dict[str, str]) -> set[str]:
+    """Which URLs got filled in from a base rather than left at their default.
+
+    Stateless on purpose: the answer follows from what the environment
+    provided, so nothing has to be recorded and nothing can drift out of step
+    with what was actually deduced.
+    """
+    out: set[str] = set()
+    for base_name, table in _URL_BASES:
+        if base_name in fields_set and _usable_as_a_base(bases.get(base_name, "")):
+            out |= {name for name in table if name not in fields_set}
+    return out
+
+
 def _public_urls_left_behind(
     fields_set: set[str], defaults: dict[str, object]
 ) -> list[str]:
@@ -444,6 +519,11 @@ class Settings(BaseSettings):
     ## Github
     github_client_id: str = "tbd"
     github_client_secret: str = "tbd"
+    # ⚠️ Read by nothing: not this core, not the commercial authentication
+    # brick, not the front, which computes its own callback and sends it with
+    # the code exchange. The value below is inert, and its shape has never
+    # matched anything served -- kept only because removing a published
+    # setting is a decision of its own.
     github_redirect_uri: str = "http://localhost:8000/auth/github/callback"
     # GitHub Integration OAuth
     # connect a user's GitHub account as a workspace integration.
@@ -639,6 +719,31 @@ class Settings(BaseSettings):
     toolbox_dir: str = ""  # vide => runtime_root
 
     @model_validator(mode="after")
+    def _deduce_public_urls(self) -> "Settings":
+        """Fill the callback URLs from the two origins that were declared.
+
+        Runs before the warning below, and `object.__setattr__` rather than a
+        plain assignment on purpose: `model_fields_set` must keep meaning
+        "what the environment provided". Several guards read it to tell a
+        default from a choice, and a deduced value silently joining that set
+        would make it lie about the thing it exists to answer.
+        """
+        provided = self.model_fields_set
+        for base_name, table in _URL_BASES:
+            if base_name not in provided:
+                continue
+            base = str(getattr(self, base_name)).strip().rstrip("/")
+            if not _usable_as_a_base(base):
+                # Left alone on purpose: the guard below then names what was
+                # not filled in, which is the honest outcome for a base that
+                # is present but unusable.
+                continue
+            for name, path in table.items():
+                if name not in provided:
+                    object.__setattr__(self, name, f"{base}{path}")
+        return self
+
+    @model_validator(mode="after")
     def _warn_public_url_left_behind(self) -> "Settings":
         """One public URL still on its shipped localhost default, in a
         deployment that configured its neighbours.
@@ -668,8 +773,12 @@ class Settings(BaseSettings):
         deliberate.
         """
         fields = type(self).model_fields
+        # A deduced URL counts as provided: it now points where it should,
+        # and naming it would be exactly the noise this guard exists to avoid.
+        bases = {name: str(getattr(self, name, "")) for name, _ in _URL_BASES}
+        deduced = _deduced_url_names(self.model_fields_set, bases)
         forgotten = _public_urls_left_behind(
-            self.model_fields_set,
+            self.model_fields_set | deduced,
             {
                 name: getattr(fields.get(name), "default", None)
                 for name in _PUBLIC_URL_SETTINGS
@@ -681,9 +790,9 @@ class Settings(BaseSettings):
 
         _logger.warning(
             "PUBLIC URL left at its localhost default while this deployment "
-            "configured its neighbours: %s. Each one is handed to a browser "
-            "or written into a mail, so it points at the reader's own machine "
-            "rather than at this installation.",
+            "configured its neighbours: %s. Each one is handed to a browser, "
+            "written into a mail, or dialled by this server, so it resolves "
+            "somewhere other than this installation.",
             "; ".join(
                 f"{name} ({_PUBLIC_URL_CONSEQUENCE.get(name, 'a public URL')})"
                 for name in forgotten
