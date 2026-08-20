@@ -17,14 +17,13 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, insert, select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.admin.guard import (
     administered_user_ids,
     is_superadmin,
     require_admin,
-    require_superadmin,
 )
 from apowerb.admin.permissions import PERMISSIONS, unknown_permissions
 
@@ -984,131 +983,20 @@ async def disable_mfa(
 
 
 # --------------------------------------------------------------------------
-# Organisations — superadmin only
+# Organisations
 # --------------------------------------------------------------------------
-
-
-class OrganizationIn(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    description: str | None = Field(default=None, max_length=500)
-
-
-class OrganizationOut(BaseModel):
-    org_id: int
-    name: str
-    description: str | None = None
-    members: list[int] = []
-
-
-async def _load_org(db: AsyncSession, org_id: int) -> OrganizationOut:
-    row = (await db.execute(text(
-        f"SELECT org_id, name, description FROM {_schema()}.admin_organization "
-        "WHERE org_id = :oid"
-    ), {"oid": org_id})).first()
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such organisation.")
-    members = (await db.execute(text(
-        f"SELECT user_id FROM {_schema()}.admin_org_member WHERE org_id = :oid ORDER BY user_id"
-    ), {"oid": org_id})).scalars().all()
-    return OrganizationOut(org_id=row[0], name=row[1], description=row[2], members=list(members))
-
-
-@router.get("/organizations", response_model=list[OrganizationOut])
-async def list_organizations(
-    db: AsyncSession = Depends(get_db),
-    _: user_schemas.User = Depends(require_superadmin),
-):
-    ids = (await db.execute(text(
-        f"SELECT org_id FROM {_schema()}.admin_organization ORDER BY name"
-    ))).scalars().all()
-    return [await _load_org(db, oid) for oid in ids]
-
-
-@router.post("/organizations", response_model=OrganizationOut, status_code=status.HTTP_201_CREATED)
-async def create_organization(
-    payload: OrganizationIn,
-    db: AsyncSession = Depends(get_db),
-    _: user_schemas.User = Depends(require_superadmin),
-):
-    name = payload.name.strip()
-    if (await db.execute(text(
-        f"SELECT 1 FROM {_schema()}.admin_organization WHERE lower(name) = lower(:n)"
-    ), {"n": name})).first():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"An organisation named {name!r} already exists.",
-        )
-    oid = (await db.execute(text(
-        f"INSERT INTO {_schema()}.admin_organization (name, description) "
-        "VALUES (:n, :d) RETURNING org_id"
-    ), {"n": name, "d": payload.description})).scalar()
-    await db.commit()
-    return await _load_org(db, oid)
-
-
-@router.patch("/organizations/{org_id}", response_model=OrganizationOut)
-async def rename_organization(
-    org_id: int,
-    payload: OrganizationIn,
-    db: AsyncSession = Depends(get_db),
-    _: user_schemas.User = Depends(require_superadmin),
-):
-    await _load_org(db, org_id)
-    await db.execute(text(
-        f"UPDATE {_schema()}.admin_organization SET name = :n, description = :d "
-        "WHERE org_id = :oid"
-    ), {"n": payload.name.strip(), "d": payload.description, "oid": org_id})
-    await db.commit()
-    return await _load_org(db, org_id)
-
-
-@router.delete("/organizations/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_organization(
-    org_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: user_schemas.User = Depends(require_superadmin),
-):
-    """Refuses while anyone still belongs to it.
-
-    The membership rows would cascade away, silently turning every one of
-    its admins into someone who administers only themselves. Emptying an
-    organisation has to be a deliberate act, not a side effect.
-    """
-    org = await _load_org(db, org_id)
-    if org.members:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"{len(org.members)} user(s) still belong to this organisation. "
-                "Move them first — deleting it would silently unscope its admins."
-            ),
-        )
-    await db.execute(text(
-        f"DELETE FROM {_schema()}.admin_organization WHERE org_id = :oid"
-    ), {"oid": org_id})
-    await db.commit()
-
-
-@router.put("/organizations/{org_id}/members/{user_id}", response_model=OrganizationOut)
-async def set_organization_of(
-    org_id: int,
-    user_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: user_schemas.User = Depends(require_superadmin),
-):
-    """A user belongs to at most one organisation, so this moves rather than
-    adds — the primary key on `user_id` makes that a fact, not a convention.
-    """
-    await _load_org(db, org_id)
-    if not (await db.execute(select(User.user_id).where(User.user_id == user_id))).first():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such user.")
-    await db.execute(text(
-        f"INSERT INTO {_schema()}.admin_org_member (user_id, org_id) VALUES (:uid, :oid) "
-        "ON CONFLICT (user_id) DO UPDATE SET org_id = EXCLUDED.org_id"
-    ), {"uid": user_id, "oid": org_id})
-    await db.commit()
-    return await _load_org(db, org_id)
-
+#
+# Creating, renaming, deleting an organisation and assigning a user to one
+# live in the `th2agent-organizations` extension, not here. Partitioning a
+# platform between tenants governs other people's reach rather than serving
+# the person who runs it, which is the line this build draws.
+#
+# What stays is the machinery, and it stays on purpose: `administered_user_ids`
+# in guard.py still bounds what an administrator sees, the two tables are
+# still created, and `UserOut.organization` is still filled. An install with
+# no organisations lands on the safe end of that guard -- an admin who is not
+# a superadmin administers only himself -- so removing it would not simplify
+# the core, it would widen it.
 
 @router.get("/me")
 async def who_am_i(
