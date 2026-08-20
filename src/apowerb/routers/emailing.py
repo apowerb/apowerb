@@ -35,16 +35,17 @@ settings = get_settings()
 _OAUTH_SCOPES = "offline_access Mail.Read Mail.Send"
 _TOOL_CATEGORY = "outlook_mail"
 _TOOL_NAME = "outlook_mail.tool_list_emails"
-_OAUTH_CALLBACK_PATH = "/emailing/microsoft/callback"
 
-
-def _get_redirect_uri() -> str:
-    """Return the OAuth redirect URI, deriving from frontend_urls if not explicitly set."""
-    if settings.outlook_mail_redirect_uri:
-        return settings.outlook_mail_redirect_uri
-    # Derive from frontend_urls (first URL, strip trailing slash)
-    frontend = settings.frontend_urls.split(",")[0].strip().rstrip("/")
-    return f"{frontend}{_OAUTH_CALLBACK_PATH}"
+# The Microsoft app here is the shared `microsoft_integration_*` registration,
+# not one of its own: the tokens this flow mints are refreshed later by
+# `tools_store/portfolio/microsoft_auth.py` under that same client id, and a
+# refresh token issued by a second app would not renew.
+#
+# The callback itself is `outlook_mail_redirect_uri`, deduced from
+# `app_public_url` in `configs/settings.py` along with every other public URL.
+# This router used to build it here from `frontend_urls`; deriving one callback
+# in a router while the rest are deduced in one place is how two conventions
+# start.
 
 # ---------------------------------------------------------------------------
 # CSRF protection: module-level store for OAuth state tokens (C2)
@@ -121,21 +122,24 @@ async def get_auth_url(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Generate the Microsoft OAuth consent URL for Outlook Mail access."""
-    if not settings.outlook_mail_client_id:
+    if not settings.microsoft_integration_client_id:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Outlook Mail OAuth is not configured (missing OUTLOOK_MAIL_CLIENT_ID).",
+            detail=(
+                "Outlook Mail OAuth is not configured "
+                "(missing MICROSOFT_INTEGRATION_CLIENT_ID)."
+            ),
         )
 
-    tenant = settings.outlook_mail_tenant_id or "common"
-    redirect_uri = _get_redirect_uri()
+    tenant = settings.microsoft_integration_tenant_id or "common"
+    redirect_uri = settings.outlook_mail_redirect_uri
 
     # C2: Generate a CSRF-safe state token instead of raw email
     state_token = _create_oauth_state(current_user.email)
 
     params = urlencode(
         {
-            "client_id": settings.outlook_mail_client_id,
+            "client_id": settings.microsoft_integration_client_id,
             "response_type": "code",
             "redirect_uri": redirect_uri,
             "response_mode": "query",
@@ -158,7 +162,10 @@ async def oauth_callback(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Exchange the authorization code for tokens and persist as tool_config."""
-    if not settings.outlook_mail_client_id or not settings.outlook_mail_client_secret:
+    if (
+        not settings.microsoft_integration_client_id
+        or not settings.microsoft_integration_client_secret
+    ):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Outlook Mail OAuth is not configured on the server.",
@@ -167,17 +174,17 @@ async def oauth_callback(
     # C2: Validate the CSRF state token
     _validate_oauth_state(body.state, current_user.email)
 
-    tenant = settings.outlook_mail_tenant_id or "common"
+    tenant = settings.microsoft_integration_tenant_id or "common"
     token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
-    redirect_uri = _get_redirect_uri()
+    redirect_uri = settings.outlook_mail_redirect_uri
 
     # --- Exchange code for tokens -------------------------------------------
     async with httpx.AsyncClient() as client:
         response = await client.post(
             token_url,
             data={
-                "client_id": settings.outlook_mail_client_id,
-                "client_secret": settings.outlook_mail_client_secret,
+                "client_id": settings.microsoft_integration_client_id,
+                "client_secret": settings.microsoft_integration_client_secret,
                 "code": body.code,
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",

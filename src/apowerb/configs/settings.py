@@ -39,6 +39,7 @@ _PUBLIC_URL_SETTINGS = (
     "github_integration_redirect_uri",
     "google_redirect_uri",
     "google_integration_redirect_uri",
+    "outlook_mail_redirect_uri",
 )
 
 # What each one breaks when it is left behind, so the warning is actionable
@@ -54,12 +55,13 @@ _PUBLIC_URL_CONSEQUENCE = {
     "app_public_url": "password-reset and e-mail-verification links",
     "public_base_url": "the callback URLs this API hands out to webhooks",
     "root_path": "the base of the HTTP calls this API makes to itself",
-    "frontend_urls": "the origin the Outlook mail OAuth callback is derived from",
+    "frontend_urls": "the origins the browser is allowed to be served from",
     "cors_allowed_origins": "which origins the browser is allowed to call from",
     "github_redirect_uri": "where GitHub sends the user back after sign-in",
     "github_integration_redirect_uri": "where GitHub sends the user back after connecting the integration",
     "google_redirect_uri": "where Google sends the user back after sign-in",
     "google_integration_redirect_uri": "where Google sends the user back after connecting the integration",
+    "outlook_mail_redirect_uri": "where Microsoft sends the user back after connecting Outlook Mail",
 }
 
 
@@ -98,6 +100,7 @@ _DERIVED_FROM_FRONT = {
     "cors_allowed_origins": "",
     "github_integration_redirect_uri": "/integrations/github/callback",
     "google_integration_redirect_uri": "/integrations/google/callback",
+    "outlook_mail_redirect_uri": "/emailing/microsoft/callback",
 }
 _URL_BASES = (("app_public_url", _DERIVED_FROM_FRONT),)
 
@@ -558,6 +561,13 @@ class Settings(BaseSettings):
     microsoft_integration_client_secret: str = ""
     microsoft_integration_tenant_id: str = "common"
     microsoft_integration_redirect_uri: str = ""
+
+    # Where Microsoft sends the user back after connecting Outlook Mail, which
+    # is not the integration callback above: that one lands on
+    # /integrations/microsoft/<service>/callback, this one on the path below.
+    # Deduced from `app_public_url` like its neighbours, and shipped on
+    # localhost rather than empty so the guard can say it was forgotten.
+    outlook_mail_redirect_uri: str = "http://localhost:3000/emailing/microsoft/callback"
 
     # Google Integration OAuth (single app, scopes vary per service)
     google_integration_client_id: str = ""
