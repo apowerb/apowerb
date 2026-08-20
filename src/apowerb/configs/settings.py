@@ -21,6 +21,71 @@ _DEFAULT_RAG_WEBHOOK_SECRET = "th2-webhook-default-secret"
 # whatever a `grep` on the .env file suggests.
 _UNSET_PLACEHOLDER = "tbd"
 
+# The settings that say where THIS deployment is reached, or where it sends
+# people. Not the addresses of *other* services: Mage (`base_url`) and th2etl
+# may legitimately sit on localhost beside the API, and flagging them would
+# cry wolf on a perfectly sound install.
+#
+# Read from the class rather than duplicated here, so a default that moves off
+# localhost one day cannot leave this list quietly protecting nothing --
+# `test_public_urls.py` asserts exactly that.
+_PUBLIC_URL_SETTINGS = (
+    "root_path",
+    "public_base_url",
+    "app_public_url",
+    "frontend_urls",
+    "cors_allowed_origins",
+    "github_redirect_uri",
+    "github_integration_redirect_uri",
+    "google_redirect_uri",
+    "google_integration_redirect_uri",
+)
+
+# What each one breaks when it is left behind, so the warning is actionable
+# rather than a list of names. Checked against the code that reads them, not
+# against what their names suggest: `cors_allowed_origins` is the one CORS
+# uses (`main.py`), `frontend_urls` is not, and `root_path` is the base of the
+# HTTP calls this API makes to ITSELF, not an ASGI mount path.
+#
+# ⚠️ Blind spot, named rather than hidden: this guard only sees settings whose
+# shipped default mentions localhost. `microsoft_integration_redirect_uri`
+# defaults to the empty string, so forgetting it stays silent here.
+_PUBLIC_URL_CONSEQUENCE = {
+    "app_public_url": "password-reset and e-mail-verification links",
+    "public_base_url": "the callback URLs this API hands out to webhooks",
+    "root_path": "the base of the HTTP calls this API makes to itself",
+    "frontend_urls": "the origin the Outlook mail OAuth callback is derived from",
+    "cors_allowed_origins": "which origins the browser is allowed to call from",
+    "github_redirect_uri": "where GitHub sends the user back after sign-in",
+    "github_integration_redirect_uri": "where GitHub sends the user back after connecting the integration",
+    "google_redirect_uri": "where Google sends the user back after sign-in",
+    "google_integration_redirect_uri": "where Google sends the user back after connecting the integration",
+}
+
+
+def _public_urls_left_behind(
+    fields_set: set[str], defaults: dict[str, object]
+) -> list[str]:
+    """Which guarded settings were never provided, among those shipping a
+    localhost default.
+
+    Pure and fed with data rather than reading the class, for two reasons.
+    The decision can then be exercised on shapes the class does not currently
+    have -- in particular a guarded setting whose default is *not* localhost,
+    which must never be reported, and which no test could otherwise reach
+    while all nine happen to be localhost.
+
+    And `defaults.get` rather than `[...]`: the list is a hard-coded tuple, so
+    renaming one of those fields in an unrelated change would otherwise raise
+    `KeyError` inside a validator that runs before anything else in the
+    process -- turning a rename into a service that will not start.
+    """
+    return [
+        name
+        for name in _PUBLIC_URL_SETTINGS
+        if name not in fields_set and "localhost" in str(defaults.get(name, ""))
+    ]
+
 
 def _warn_duplicate_env_keys(env_path: str = _ENV_FILE) -> None:
     """Log a warning for any variable declared more than once in *env_path*.
@@ -572,6 +637,59 @@ class Settings(BaseSettings):
     artifacts_store_dir: str = "artifacts_store"
     uploads_dir: str = "uploads"
     toolbox_dir: str = ""  # vide => runtime_root
+
+    @model_validator(mode="after")
+    def _warn_public_url_left_behind(self) -> "Settings":
+        """One public URL still on its shipped localhost default, in a
+        deployment that configured its neighbours.
+
+        Found by inspecting deployed environments rather than reading this
+        file. One of them ran `WORKING_MODE=prod` with its public URLs on a
+        real domain and `APP_PUBLIC_URL` simply absent, so it fell back to
+        localhost. That setting is what `auth/service.py` builds password-reset
+        and verification links from: every such mail carried a link to the
+        recipient's own machine. Nothing failed, nothing logged -- once the
+        object is built, a default is indistinguishable from a choice.
+
+        The question asked here is deliberately narrow. Not "is this
+        localhost" -- localhost is the right answer on a laptop, and this
+        codebase already learned that a warning firing on every boot becomes
+        part of the noise (see the RAG webhook secret above). The question is
+        **was this one forgotten while its neighbours were configured**, which
+        `model_fields_set` answers exactly: it holds what the environment
+        actually provided. An install that set none of them is somebody's
+        machine; one that set six out of nine has a hole.
+
+        A warning, not a refusal -- and the reason is measured, not timid.
+        A running deployment is in this state, so refusing to boot would take
+        it down at its next restart to punish a link that has been wrong for a
+        while. Fail-closed is the right end state once deployments carry the
+        value, and `test_public_urls.py` pins that decision so changing it is
+        deliberate.
+        """
+        fields = type(self).model_fields
+        forgotten = _public_urls_left_behind(
+            self.model_fields_set,
+            {
+                name: getattr(fields.get(name), "default", None)
+                for name in _PUBLIC_URL_SETTINGS
+            },
+        )
+        # Nothing configured at all is a coherent local setup, not a hole.
+        if not forgotten or len(forgotten) == len(_PUBLIC_URL_SETTINGS):
+            return self
+
+        _logger.warning(
+            "PUBLIC URL left at its localhost default while this deployment "
+            "configured its neighbours: %s. Each one is handed to a browser "
+            "or written into a mail, so it points at the reader's own machine "
+            "rather than at this installation.",
+            "; ".join(
+                f"{name} ({_PUBLIC_URL_CONSEQUENCE.get(name, 'a public URL')})"
+                for name in forgotten
+            ),
+        )
+        return self
 
     # Accept extra values
     model_config = SettingsConfigDict(

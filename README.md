@@ -132,11 +132,34 @@ cp .env.example .env
 | `ALGORITHM` | `HS256` | JWT signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `120` | JWT token lifetime |
 
+#### Public URLs
+
+Where this installation is reached, and where it sends people. Each one ships
+with a `localhost` default, which is right on a laptop and wrong everywhere
+else — a value handed to a browser or written into a mail points at the
+*reader's* machine, not at the server.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_PUBLIC_URL` | `http://localhost:3000` | Public URL of the front app. **Password-reset and e-mail-verification links are built from it** |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | Public URL of this API, for the URLs it hands out about itself |
+| `ROOT_PATH` | `http://localhost:8000` | Path this API believes it is served under |
+
+⚠️ Leaving one of these behind fails **silently**: the mail is sent, the page
+answers, and only the recipient finds out. This is not hypothetical — a
+deployment running `WORKING_MODE=prod` was found with `APP_PUBLIC_URL` absent,
+mailing reset links that pointed at `http://localhost:3000`.
+
+Since the same release, a deployment that configures some of these and forgets
+another gets a startup warning naming what was left behind. An installation
+that configures **none** of them stays silent: that is a developer, not a hole.
+
 #### CORS
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FRONTEND_URLS` | `["http://localhost:3000"]` | Allowed frontend origins (JSON array) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | The origin whitelist CORS actually uses (comma-separated) |
+| `FRONTEND_URLS` | `http://localhost:3000` | Despite the name, **not** read by CORS — only used to derive the Outlook mail OAuth callback |
 
 #### OAuth — User Login
 
