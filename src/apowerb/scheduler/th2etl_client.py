@@ -26,8 +26,8 @@ import requests
 
 # Bound by name rather than read off the ``requests`` module global, which the
 # test doubles in this package replace. See ``orchestrator_is_unreachable``.
-from requests.exceptions import ConnectionError as _TransportRefused
-from requests.exceptions import Timeout as _TransportTimedOut
+from requests.exceptions import InvalidJSONError as _AnsweredUnreadably
+from requests.exceptions import RequestException as _RequestFailed
 
 from apowerb.configs.settings import get_settings
 
@@ -115,6 +115,21 @@ class OrchestratorUnavailable(RuntimeError):
 _GATEWAY_CANNOT_REACH_IT = frozenset({502, 503, 504})
 
 
+def refuse_a_gateway_that_cannot_reach_it(response, base_url: str, name: str) -> None:
+    """Raise if this response is a gateway reporting the orchestrator down.
+
+    For the calls that read ``status_code`` by hand instead of going through
+    ``raise_for_status()``. Those never raised anything at all on a 502, so
+    every check written around their exception was dead code for the one
+    deployment shape most likely to be running.
+    """
+    if getattr(response, "status_code", None) in _GATEWAY_CANNOT_REACH_IT:
+        raise OrchestratorUnavailable(
+            f"{name} is unreachable at {base_url}: the gateway answered "
+            f"{response.status_code}"
+        )
+
+
 def orchestrator_is_unreachable(exc: BaseException) -> bool:
     """Did the call fail to reach the orchestrator at all?
 
@@ -124,15 +139,23 @@ def orchestrator_is_unreachable(exc: BaseException) -> bool:
     than remove it -- the caller would show "the scheduler is down" over a
     scheduler that just told it something true.
 
-    So a transport failure counts: refused, timed out, DNS -- the two
-    ``requests`` families that mean the request never got an answer.
+    So the question is whether an answer came back at all, and ``requests``
+    already records it: a failure that carries no ``response`` never got one.
+    That covers more than a refused connection -- a DNS miss, a read timeout,
+    a body cut off mid-flight, a redirect loop, a broken content encoding. An
+    earlier version named ``ConnectionError`` and ``Timeout`` explicitly and
+    let the other three through, which is the same bug in a narrower disguise.
 
-    And so does a **gateway** saying it could not reach the orchestrator for
-    us. 502, 503 and 504 are exactly that answer: the proxy is up, the thing
-    behind it is not. Reading them as "it answered, degrade quietly" put the
-    original bug straight back on every route sitting behind an nginx, a
-    Traefik or an ALB -- which is the ordinary deployment, not an edge case.
-    Every other status carries a fact about the request, not about reachability.
+    One failure carries no response and is still an answer: a body that came
+    back whole and would not parse. The orchestrator replied; we could not
+    read it. That is a fact about the payload, not about reachability.
+
+    A **gateway** saying it could not reach the orchestrator counts too. 502,
+    503 and 504 are exactly that answer: the proxy is up, the thing behind it
+    is not. Reading them as "it answered, degrade quietly" put the original
+    bug straight back on every route sitting behind an nginx, a Traefik or an
+    ALB -- the ordinary deployment, not an edge case. Every other status
+    carries a fact about the request rather than about reachability.
 
     The classes are imported by name rather than read off the module global:
     the test doubles in this package replace ``th2etl_client.requests`` with a
@@ -146,7 +169,9 @@ def orchestrator_is_unreachable(exc: BaseException) -> bool:
     the same reason it does: both clients need it, and this module imports
     nothing from apowerb.
     """
-    if isinstance(exc, (_TransportRefused, _TransportTimedOut)):
+    if isinstance(exc, _AnsweredUnreadably):
+        return False
+    if isinstance(exc, _RequestFailed) and getattr(exc, "response", None) is None:
         return True
     status = getattr(getattr(exc, "response", None), "status_code", None)
     return status in _GATEWAY_CANNOT_REACH_IT
@@ -185,8 +210,13 @@ class Th2etlAPIClient:
     def pipeline_exists(self, pipeline_uuid: str) -> bool:
         try:
             resp = self._http.get(self._url(f"/pipelines/{pipeline_uuid}"), timeout=self.timeout)
+            refuse_a_gateway_that_cannot_reach_it(resp, self.base_url, "th2etl")
             return resp.status_code == 200
         except requests.RequestException as e:
+            if orchestrator_is_unreachable(e):
+                raise OrchestratorUnavailable(
+                    f"th2etl is unreachable at {self.base_url}: {e}"
+                ) from e
             logger.error("th2etl pipeline_exists failed: %s", e)
             return False
 
@@ -284,8 +314,14 @@ class Th2etlAPIClient:
                 raise OrchestratorUnavailable(
                     f"th2etl is unreachable at {self.base_url}: {e}"
                 ) from e
-            logger.error("th2etl get_pipeline_schedules failed: %s", e)
-            return []
+            # Never `[]`. An empty list is an answer -- "there are none" --
+            # and a rejected key or a broken orchestrator is not that answer.
+            # `get_all_pipelines` has refused to degrade since the outage that
+            # introduced it; these read the same screen and now hold the same
+            # line.
+            raise OrchestratorUnavailable(
+                f"th2etl answered but could not list schedules at {self.base_url}: {e}"
+            ) from e
         out = []
         for s in schedulers:
             if s.get("pipeline_name") != pipeline_uuid:
@@ -399,8 +435,14 @@ class Th2etlAPIClient:
                 raise OrchestratorUnavailable(
                     f"th2etl is unreachable at {self.base_url}: {e}"
                 ) from e
-            logger.error("th2etl get_pipeline_runs failed for %r: %s", schedule_id, e)
-            return []
+            # Never `[]`. An empty list is an answer -- "there are none" --
+            # and a rejected key or a broken orchestrator is not that answer.
+            # `get_all_pipelines` has refused to degrade since the outage that
+            # introduced it; these read the same screen and now hold the same
+            # line.
+            raise OrchestratorUnavailable(
+                f"th2etl answered but could not list runs at {self.base_url}: {e}"
+            ) from e
 
     def get_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
         try:
@@ -417,7 +459,14 @@ class Th2etlAPIClient:
             # same lookup under Mage has always returned `None`.
             logger.error("th2etl %s failed for %r: %s", "get_pipeline_run", run_id, e)
             return None
-        return _to_mage_run(resp.json())
+        try:
+            return _to_mage_run(resp.json())
+        except ValueError as e:
+            # The body came back whole and would not parse. Answered, so not an
+            # outage -- but it sat outside the block above, so it left as a raw
+            # decoding error and reached the API as a bare 500.
+            logger.error("th2etl %s returned an unreadable body for %r: %s", "get_pipeline_run", run_id, e)
+            return None
 
     def get_pipeline_run_logs(self, run_id: int) -> list[dict[str, Any]]:
         """Structured, step-by-step log for a run (th2etl-native
@@ -433,8 +482,14 @@ class Th2etlAPIClient:
                 raise OrchestratorUnavailable(
                     f"th2etl is unreachable at {self.base_url}: {e}"
                 ) from e
-            logger.error("th2etl get_pipeline_run_logs failed for %r: %s", run_id, e)
-            return []
+            # Never `[]`. An empty list is an answer -- "there are none" --
+            # and a rejected key or a broken orchestrator is not that answer.
+            # `get_all_pipelines` has refused to degrade since the outage that
+            # introduced it; these read the same screen and now hold the same
+            # line.
+            raise OrchestratorUnavailable(
+                f"th2etl answered but could not read a run log at {self.base_url}: {e}"
+            ) from e
 
     def cancel_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
         try:
@@ -451,4 +506,11 @@ class Th2etlAPIClient:
             # same lookup under Mage has always returned `None`.
             logger.error("th2etl %s failed for %r: %s", "cancel_pipeline_run", run_id, e)
             return None
-        return _to_mage_run(resp.json())
+        try:
+            return _to_mage_run(resp.json())
+        except ValueError as e:
+            # The body came back whole and would not parse. Answered, so not an
+            # outage -- but it sat outside the block above, so it left as a raw
+            # decoding error and reached the API as a bare 500.
+            logger.error("th2etl %s returned an unreadable body for %r: %s", "cancel_pipeline_run", run_id, e)
+            return None

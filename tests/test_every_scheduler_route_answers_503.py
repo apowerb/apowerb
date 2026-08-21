@@ -329,24 +329,46 @@ def test_mage_raises_rather_than_swallowing_when_unreachable(name, call):
             call(_dead_mage())
 
 
-@pytest.mark.parametrize("name,call", MAGE_CALLS, ids=[n for n, _ in MAGE_CALLS])
-def test_mage_keeps_its_fallback_when_the_orchestrator_answered(name, call):
-    """The negative control on the clients: an HTTP error response is an
-    answer, and the old degraded return is still the right one for it. Without
-    this, raising on everything would pass the test above."""
+# A list and a lookup are different questions, and only one of them has a
+# legitimate negative answer.
+MAGE_LISTS = MAGE_CALLS[:3]
+MAGE_LOOKUPS = MAGE_CALLS[3:]
+
+
+@pytest.mark.parametrize("name,call", MAGE_LISTS, ids=[n for n, _ in MAGE_LISTS])
+def test_a_mage_list_never_degrades_to_an_empty_one(name, call):
+    """An empty list is an answer -- "there are none" -- and a rejected key is
+    not that answer.
+
+    A screen showing no schedules because the API key expired is the same lie
+    as one showing none because the orchestrator is dead; the caller cannot
+    tell them apart, and neither is true. `get_all_pipelines` has refused to
+    degrade since the outage that introduced it, and the two lists feeding the
+    same screen now hold the same line.
+    """
     resp = requests.Response()
-    resp.status_code = 500
-    boom = requests.HTTPError("500", response=resp)
+    resp.status_code = 401
+    boom = requests.HTTPError("401", response=resp)
     with patch.object(mage_mod.requests, "get", side_effect=boom), patch.object(
         mage_mod.requests, "put", side_effect=boom
     ):
-        if name == "get_all_pipelines":
-            # Unchanged by this commit: it has raised on any failure since the
-            # outage that introduced it, and callers depend on that.
-            with pytest.raises(OrchestratorUnavailable):
-                call(_dead_mage())
-        else:
-            assert call(_dead_mage()) in ([], None)
+        with pytest.raises(OrchestratorUnavailable):
+            call(_dead_mage())
+
+
+@pytest.mark.parametrize("name,call", MAGE_LOOKUPS, ids=[n for n, _ in MAGE_LOOKUPS])
+def test_a_mage_lookup_the_orchestrator_answered_still_returns_none(name, call):
+    """The other side of that line, and why it cannot simply be "raise on
+    everything": asking after one run is a question with a legitimate negative
+    answer, and `None` is what the route turns into a 404. Without this test,
+    raising everywhere would satisfy the one above."""
+    resp = requests.Response()
+    resp.status_code = 404
+    boom = requests.HTTPError("404", response=resp)
+    with patch.object(mage_mod.requests, "get", side_effect=boom), patch.object(
+        mage_mod.requests, "put", side_effect=boom
+    ):
+        assert call(_dead_mage()) is None
 
 
 def test_mage_run_logs_stay_a_no_op():
@@ -406,9 +428,18 @@ def test_th2etl_keeps_its_fallback_when_the_orchestrator_answered():
     boom = requests.HTTPError("500", response=resp)
     c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
     with patch.object(c._http, "get", side_effect=boom):
-        assert c.get_pipeline_run_logs(1) == []
-        assert c.get_pipeline_schedules("agents") == []
-        assert c.get_pipeline_runs("75") == []
+        # An answered 500 is not an outage -- but it is not an empty list
+        # either. The message says which of the two happened; the status code
+        # the caller sees is 503 in both cases, because in both cases we cannot
+        # tell them what they asked for.
+        for call in (
+            lambda: c.get_pipeline_run_logs(1),
+            lambda: c.get_pipeline_schedules("agents"),
+            lambda: c.get_pipeline_runs("75"),
+        ):
+            with pytest.raises(OrchestratorUnavailable) as raised:
+                call()
+            assert "answered" in str(raised.value)
 
 
 # ---------------------------------------------------------------------------
@@ -490,8 +521,9 @@ def test_th2etl_answers_none_for_a_run_the_orchestrator_answered_about(name, cal
 
 
 class _Ok:
-    def __init__(self, payload):
+    def __init__(self, payload, status=200):
         self._payload = payload
+        self.status_code = status
 
     def raise_for_status(self):
         return None
@@ -585,3 +617,153 @@ def test_deleting_a_dashboard_schedule_answers_503_not_404(dashboard_client):
         got = dashboard_client.delete("/api/v1/dashboards/d1/schedules/1")
     assert got.status_code == 503, got.text
     assert "not found" not in got.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Third pass: a handler is only as good as what reaches it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        requests.exceptions.ChunkedEncodingError("the body stopped mid-flight"),
+        requests.exceptions.TooManyRedirects("a redirect loop"),
+        requests.exceptions.ContentDecodingError("a broken content encoding"),
+    ],
+    ids=["body cut", "redirect loop", "broken encoding"],
+)
+def test_any_failure_that_never_got_an_answer_is_an_outage(exc):
+    """Naming `ConnectionError` and `Timeout` explicitly was the same bug in a
+    narrower disguise. None of these three is either, all three mean no answer
+    came back, and each one put the quiet `[]` back on a route."""
+    assert orchestrator_is_unreachable(exc) is True
+
+
+def test_a_body_that_came_back_and_would_not_parse_is_not_an_outage():
+    """The one failure that carries no response and is still an answer: the
+    orchestrator replied, we could not read it. A fact about the payload, not
+    about reachability -- and the reason the rule cannot simply be "no
+    response means no answer"."""
+    assert orchestrator_is_unreachable(
+        requests.exceptions.InvalidJSONError("not json")
+    ) is False
+
+
+MAGE_SETUP_CALLS = [
+    ("pipeline_exists", lambda c: c.pipeline_exists("agents")),
+    ("create_pipeline", lambda c: c.create_pipeline("agents")),
+    ("block_exists", lambda c: c.block_exists("agents", "agent_exe")),
+    ("create_block", lambda c: c.create_block("agents", "agent_exe", "print()")),
+]
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+@pytest.mark.parametrize(
+    "name,call", MAGE_SETUP_CALLS, ids=[n for n, _ in MAGE_SETUP_CALLS]
+)
+def test_the_setup_calls_report_a_dead_gateway(name, call, status):
+    """These four read `status_code` by hand and never call
+    `raise_for_status()`, so a 502 raised nothing at all -- and the check the
+    previous commit added to their `except` was decoration. Behind a proxy,
+    `POST /pipelines/agents/triggers` went on answering a bare 500.
+    """
+    gateway = _Ok({}, status=status)
+    with patch.object(mage_mod.requests, "get", return_value=gateway), patch.object(
+        mage_mod.requests, "post", return_value=gateway
+    ):
+        with pytest.raises(OrchestratorUnavailable):
+            call(_dead_mage())
+
+
+@pytest.mark.parametrize(
+    "name,call", MAGE_SETUP_CALLS, ids=[n for n, _ in MAGE_SETUP_CALLS]
+)
+def test_the_setup_calls_report_a_refused_connection(name, call):
+    boom = requests.ConnectionError("refused")
+    with patch.object(mage_mod.requests, "get", side_effect=boom), patch.object(
+        mage_mod.requests, "post", side_effect=boom
+    ):
+        with pytest.raises(OrchestratorUnavailable):
+            call(_dead_mage())
+
+
+def test_th2etl_pipeline_exists_reports_an_outage():
+    """It answered `False` for every failure mode there is, so the th2etl half
+    of `POST /pipelines/agents/triggers` kept its bare 500 while the Mage half
+    was declared fixed."""
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(c._http, "get", side_effect=requests.ConnectionError("refused")):
+        with pytest.raises(OrchestratorUnavailable):
+            c.pipeline_exists("agents")
+
+
+def test_an_orchestrator_that_dies_at_the_block_check_still_answers_503(client):
+    """The twin of the pipeline-check test above, and the mutant that survived:
+    reverting the second of the two symmetric guards left all tests green. Two
+    guards written together need two tests written together."""
+    alive_then_dead = [
+        _Ok({"pipelines": []}),  # step 0: connectivity
+        _Ok({"pipeline": {"uuid": "agents"}}),  # step 1: the pipeline is there
+        requests.ConnectionError("refused"),  # step 2: the block check
+        requests.ConnectionError("refused"),
+    ]
+    orchestrator = mage_mod.AgentOrchestrator(client=_dead_mage())
+    with patch.object(mage_mod.requests, "get", side_effect=alive_then_dead), patch.object(
+        mage_mod.requests, "post", side_effect=requests.ConnectionError("refused")
+    ), patch.object(mage_mod, "_orchestrator_instance", orchestrator), patch.object(
+        mod, "get_settings", lambda: _settings()
+    ), patch.object(mod, "_get_user_agent_ids", _no_db):
+        got = client.post(
+            "/api/pipelines/agents/triggers",
+            json={"agent_id": "75", "agent_name": "a"},
+        )
+    assert got.status_code == 503, got.text
+
+
+def test_a_rejected_key_does_not_render_as_an_empty_schedule_list(client):
+    """The route-level proof of the decision, and the gap that let it survive
+    two passes: every check on this behaviour lived at the client layer, so
+    nothing ever asserted the status code the caller actually receives. A 401
+    used to arrive as `200 []` -- an orchestrator saying "no" rendered as a
+    tidy, empty, healthy screen."""
+    resp = requests.Response()
+    resp.status_code = 401
+    boom = requests.HTTPError("401", response=resp)
+    with patch.object(mage_mod.requests, "get", side_effect=boom), patch.object(
+        mod, "scheduler_client", _dead_mage()
+    ), patch.object(mod, "get_settings", lambda: _settings()), patch.object(
+        mod, "_get_user_agent_ids", _no_db
+    ):
+        got = client.get("/api/pipelines/agents/schedules")
+    assert got.status_code == 503, got.text
+    assert got.json() != []
+
+
+@pytest.mark.parametrize(
+    "name,call",
+    [
+        ("get_pipeline_run", lambda c: c.get_pipeline_run(1)),
+        ("cancel_pipeline_run", lambda c: c.cancel_pipeline_run(1)),
+    ],
+    ids=["get_pipeline_run", "cancel_pipeline_run"],
+)
+def test_th2etl_survives_a_body_it_cannot_read(name, call):
+    """`resp.json()` sat outside the guarded block in both, so a 200 carrying a
+    body that would not parse left as a raw decoding error and reached the API
+    as a bare 500 -- where the Mage twin has always degraded to `None`."""
+
+    class _Unreadable:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            raise ValueError("not json")
+
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(c._http, "get", return_value=_Unreadable()), patch.object(
+        c._http, "post", return_value=_Unreadable()
+    ):
+        assert call(c) is None

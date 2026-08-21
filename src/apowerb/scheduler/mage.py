@@ -6,6 +6,7 @@ from apowerb.configs.settings import get_settings
 from apowerb.scheduler.th2etl_client import (
     OrchestratorUnavailable,
     orchestrator_is_unreachable,
+    refuse_a_gateway_that_cannot_reach_it,
 )
 
 logger = setup_logging(__name__)
@@ -60,6 +61,7 @@ class MageAPIClient:
         try:
             url = f"{self.base_url}/api/pipelines/{pipeline_uuid}"
             response = requests.get(url, headers=self._get_headers(), timeout=10)
+            refuse_a_gateway_that_cannot_reach_it(response, self.base_url, "Mage")
 
             if response.status_code == 200:
                 data = response.json()
@@ -67,6 +69,13 @@ class MageAPIClient:
                     return False
                 return True
             return False
+        except OrchestratorUnavailable:
+            # The gateway guard raises inside the `try` above, and the catch-all
+            # below is broad enough to eat its own alarm. Without this line the
+            # guard is decoration: a 502 is caught here, fails the
+            # `orchestrator_is_unreachable` test (it is not a `requests`
+            # failure), and leaves as the same quiet `False` as before.
+            raise
         except Exception as e:
             if orchestrator_is_unreachable(e):
                 raise OrchestratorUnavailable(
@@ -86,6 +95,7 @@ class MageAPIClient:
             response = requests.post(
                 url, headers=self._get_headers(), json=payload, timeout=10
             )
+            refuse_a_gateway_that_cannot_reach_it(response, self.base_url, "Mage")
 
             if response.status_code == 200:
                 data = response.json()
@@ -99,6 +109,13 @@ class MageAPIClient:
                 print(f"❌ Failed to create pipeline. Status: {response.status_code}")
                 print(f"Response: {response.text}")
                 return None
+        except OrchestratorUnavailable:
+            # The gateway guard raises inside the `try` above, and the catch-all
+            # below is broad enough to eat its own alarm. Without this line the
+            # guard is decoration: a 502 is caught here, fails the
+            # `orchestrator_is_unreachable` test (it is not a `requests`
+            # failure), and leaves as the same quiet `False` as before.
+            raise
         except Exception as e:
             if orchestrator_is_unreachable(e):
                 raise OrchestratorUnavailable(
@@ -112,6 +129,7 @@ class MageAPIClient:
         try:
             url = f"{self.base_url}/api/pipelines/{pipeline_uuid}/blocks/{block_uuid}"
             response = requests.get(url, headers=self._get_headers(), timeout=10)
+            refuse_a_gateway_that_cannot_reach_it(response, self.base_url, "Mage")
 
             if response.status_code == 200:
                 data = response.json()
@@ -119,6 +137,13 @@ class MageAPIClient:
                     return False
                 return "block" in data and data["block"] is not None
             return False
+        except OrchestratorUnavailable:
+            # The gateway guard raises inside the `try` above, and the catch-all
+            # below is broad enough to eat its own alarm. Without this line the
+            # guard is decoration: a 502 is caught here, fails the
+            # `orchestrator_is_unreachable` test (it is not a `requests`
+            # failure), and leaves as the same quiet `False` as before.
+            raise
         except Exception as e:
             if orchestrator_is_unreachable(e):
                 raise OrchestratorUnavailable(
@@ -152,6 +177,7 @@ class MageAPIClient:
             response = requests.post(
                 url, headers=self._get_headers(), json=payload, timeout=15
             )
+            refuse_a_gateway_that_cannot_reach_it(response, self.base_url, "Mage")
 
             if response.status_code in [200, 201]:
                 data = response.json()
@@ -165,6 +191,13 @@ class MageAPIClient:
                 print(f"❌ Failed to create block. Status: {response.status_code}")
                 print(f"Response: {response.text}")
                 return None
+        except OrchestratorUnavailable:
+            # The gateway guard raises inside the `try` above, and the catch-all
+            # below is broad enough to eat its own alarm. Without this line the
+            # guard is decoration: a 502 is caught here, fails the
+            # `orchestrator_is_unreachable` test (it is not a `requests`
+            # failure), and leaves as the same quiet `False` as before.
+            raise
         except Exception as e:
             if orchestrator_is_unreachable(e):
                 raise OrchestratorUnavailable(
@@ -185,8 +218,14 @@ class MageAPIClient:
                 raise OrchestratorUnavailable(
                     f"Mage is unreachable at {self.base_url}: {e}"
                 ) from e
-            print(f"Error fetching schedules: {e}")
-            return []
+            # Never `[]`. An empty list is an answer -- "there are none" --
+            # and a rejected key or a broken orchestrator is not that answer.
+            # `get_all_pipelines` has refused to degrade since the outage that
+            # introduced it; these feed the same screen and now hold the same
+            # line.
+            raise OrchestratorUnavailable(
+                f"Mage answered but could not list schedules at {self.base_url}: {e}"
+            ) from e
 
     def get_all_pipelines(self) -> list:
         """Get all pipelines.
@@ -228,8 +267,14 @@ class MageAPIClient:
                 raise OrchestratorUnavailable(
                     f"Mage is unreachable at {self.base_url}: {e}"
                 ) from e
-            print(f"Error fetching pipeline runs: {e}")
-            return []
+            # Never `[]`. An empty list is an answer -- "there are none" --
+            # and a rejected key or a broken orchestrator is not that answer.
+            # `get_all_pipelines` has refused to degrade since the outage that
+            # introduced it; these feed the same screen and now hold the same
+            # line.
+            raise OrchestratorUnavailable(
+                f"Mage answered but could not list runs at {self.base_url}: {e}"
+            ) from e
 
     def update_schedule_variables(
         self,
