@@ -49,6 +49,7 @@ _SHIPPED_WHEN_NOTHING_IS_SET = {
     "google_integration_redirect_uri": "http://localhost:3000/integrations/google/callback",
     "frontend_urls": "http://localhost:3000",
     "cors_allowed_origins": "http://localhost:3000",
+    "outlook_mail_redirect_uri": "http://localhost:3000/emailing/microsoft/callback",
 }
 
 

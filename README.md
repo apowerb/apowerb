@@ -202,6 +202,7 @@ origin and sends it with the code exchange. Setting them changes nothing.
 | `MICROSOFT_INTEGRATION_CLIENT_SECRET` | Microsoft integration secret |
 | `MICROSOFT_INTEGRATION_TENANT_ID` | Microsoft integration tenant |
 | `MICROSOFT_INTEGRATION_REDIRECT_URI` | Microsoft integration callback |
+| `OUTLOOK_MAIL_REDIRECT_URI` | Callback for the Outlook Mail tool connection. Deduced from `APP_PUBLIC_URL` |
 | `GITHUB_INTEGRATION_CLIENT_ID` | OAuth app for GitHub workspace integration |
 | `GITHUB_INTEGRATION_CLIENT_SECRET` | GitHub integration secret |
 | `GITHUB_INTEGRATION_REDIRECT_URI` | GitHub integration callback |
