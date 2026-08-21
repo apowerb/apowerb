@@ -295,19 +295,18 @@ async def update_pipeline_schedule(
             status_code=403, detail="This schedule does not belong to your agents."
         )
 
-    # Deliberately not wrapped: ``update_schedule`` is shared with five
-    # callers outside this router, so making it report an outage is a change
-    # with its own blast radius and its own measurements to take. The check
-    # above already answers 503 for an orchestrator that is down, and only an
-    # orchestrator that dies between these two calls still reaches the 500
-    # below -- a narrower hole than the one this commit closes, left open on
-    # purpose rather than by omission.
-    result = scheduler_client.update_schedule(
-        schedule_id=schedule_id,
-        schedule_interval=request.schedule_interval,
-        start_time=request.start_time,
-        status=request.status,
-    )
+    # `update_schedule` reports an outage like every other call now, so the
+    # race this used to leave open -- an orchestrator dying between the
+    # ownership check and the update -- answers 503 instead of a bare 500.
+    try:
+        result = scheduler_client.update_schedule(
+            schedule_id=schedule_id,
+            schedule_interval=request.schedule_interval,
+            start_time=request.start_time,
+            status=request.status,
+        )
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "updating a schedule") from e
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to update schedule")
     return result

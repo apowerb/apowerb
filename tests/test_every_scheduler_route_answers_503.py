@@ -628,16 +628,34 @@ def test_deleting_a_dashboard_schedule_answers_503_not_404(dashboard_client):
     "exc",
     [
         requests.exceptions.ChunkedEncodingError("the body stopped mid-flight"),
-        requests.exceptions.TooManyRedirects("a redirect loop"),
         requests.exceptions.ContentDecodingError("a broken content encoding"),
     ],
-    ids=["body cut", "redirect loop", "broken encoding"],
+    ids=["body cut", "broken encoding"],
 )
 def test_any_failure_that_never_got_an_answer_is_an_outage(exc):
     """Naming `ConnectionError` and `Timeout` explicitly was the same bug in a
-    narrower disguise. None of these three is either, all three mean no answer
-    came back, and each one put the quiet `[]` back on a route."""
+    narrower disguise. Neither of these is either, both mean no answer came
+    back, and each one put the quiet `[]` back on a route."""
     assert orchestrator_is_unreachable(exc) is True
+
+
+def test_a_redirect_loop_is_an_outage():
+    """Built the way `requests` actually raises it.
+
+    `sessions.py` attaches the last redirect to `TooManyRedirects`, so asking
+    "did a response come back" answers yes and the generic rule misses it. An
+    earlier version of this test constructed the exception by hand *without*
+    that response and passed -- green about an input that cannot occur, while
+    the real one went on being read as "it answered, degrade quietly". A test
+    that cannot fail is worse than no test: it is a claim of coverage.
+    """
+    last_redirect = requests.Response()
+    last_redirect.status_code = 302
+    assert orchestrator_is_unreachable(
+        requests.exceptions.TooManyRedirects(
+            "Exceeded 30 redirects.", response=last_redirect
+        )
+    ) is True
 
 
 def test_a_body_that_came_back_and_would_not_parse_is_not_an_outage():
@@ -767,3 +785,389 @@ def test_th2etl_survives_a_body_it_cannot_read(name, call):
         c._http, "post", return_value=_Unreadable()
     ):
         assert call(c) is None
+
+
+# ---------------------------------------------------------------------------
+# The restructuring: one place where a failed call is classified
+# ---------------------------------------------------------------------------
+
+
+class _Answered:
+    """A 200 whose body is not what the caller was promised."""
+
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"error": "not found"}, {"status": "failed"}, {}],
+    ids=["error envelope", "some other envelope", "empty object"],
+)
+@pytest.mark.parametrize("name,call", MAGE_LISTS, ids=[n for n, _ in MAGE_LISTS])
+def test_a_body_without_the_list_it_promised_is_not_an_empty_list(name, call, payload):
+    """The failure no `except` could ever have caught, and the one that
+    survived three rounds of review.
+
+    The body arrived, whole and parseable. `.get("pipeline_schedules", [])`
+    handed back an empty list, and Mage answering `{"error": "not found"}`
+    rendered as a screen saying "you have none" -- with nothing raised for
+    anyone to catch, no log line, and no way for the caller to tell. It reached
+    `get_all_pipelines` too, the one method considered safe since the outage
+    that started all of this.
+    """
+    with patch.object(
+        mage_mod.requests, "get", return_value=_Answered(payload)
+    ), patch.object(mage_mod.requests, "put", return_value=_Answered(payload)):
+        with pytest.raises(OrchestratorUnavailable):
+            call(_dead_mage())
+
+
+def test_an_error_envelope_does_not_render_as_an_empty_screen(client):
+    """The same thing said at the route, where it is the caller's problem."""
+    with patch.object(
+        mage_mod.requests, "get", return_value=_Answered({"error": "not found"})
+    ), patch.object(mod, "scheduler_client", _dead_mage()), patch.object(
+        mod, "get_settings", lambda: _settings()
+    ), patch.object(mod, "_get_user_agent_ids", _no_db):
+        got = client.get("/api/pipelines/agents/schedules")
+    assert got.status_code == 503, got.text
+    assert got.json() != []
+
+
+def test_a_scheduler_carrying_no_name_is_not_an_empty_list():
+    """th2etl's mapping loop sat outside every guard: `s["name"]` on an item
+    without one raised a bare `KeyError`, and four routes answered a 500 with
+    no body at all."""
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(
+        c._http,
+        "get",
+        return_value=_Answered([{"pipeline_name": "agents", "active": True}]),
+    ):
+        with pytest.raises(OrchestratorUnavailable):
+            c.get_pipeline_schedules("agents")
+
+
+def test_a_scheduler_listing_that_is_not_a_listing_is_not_an_empty_one():
+    """Iterating a dict walked its keys, matched nothing and returned `[]`: an
+    answer we never received, in the shape of one we did."""
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(c._http, "get", return_value=_Answered({"detail": "nope"})):
+        with pytest.raises(OrchestratorUnavailable):
+            c.get_pipeline_schedules("agents")
+
+
+def test_an_unreachable_orchestrator_is_told_apart_from_one_that_answered():
+    """The distinction the whole restructuring turns on. Both leave as 503 --
+    in both cases the caller cannot be told what it asked -- but only one of
+    them means somebody should go and look at the network."""
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(c._http, "get", side_effect=requests.ConnectionError("refused")):
+        with pytest.raises(OrchestratorUnavailable) as gone:
+            c.get_all_pipelines()
+    assert gone.value.unreachable is True
+
+    with patch.object(c._http, "get", return_value=_Answered({"error": "nope"})):
+        with pytest.raises(OrchestratorUnavailable) as answered:
+            c.get_all_pipelines()
+    assert answered.value.unreachable is False
+
+
+def test_updating_a_schedule_no_longer_leaks_the_outage(client):
+    """The race the previous commit documented and left open: the ownership
+    check passes, the orchestrator dies, and the update itself answered a bare
+    500 because nothing in this route wrapped it."""
+
+    class _DiesOnTheUpdate(_LiveClient):
+        def update_schedule(self, **kwargs):
+            raise OrchestratorUnavailable("Mage is unreachable at http://x: boom")
+
+    with patch.object(mod, "scheduler_client", _DiesOnTheUpdate()), patch.object(
+        mod, "get_settings", lambda: _settings()
+    ), patch.object(mod, "_get_user_agent_ids", lambda _u: set(AGENT_IDS)):
+        got = client.put(
+            "/api/pipelines/agents/schedules/1", json={"status": "active"}
+        )
+    assert got.status_code == 503, got.text
+
+
+def test_scheduling_a_chart_refresh_answers_503(client):
+    """A route nobody had enumerated across three passes, reached through
+    `schedule_agent_run` and sharing the same client as the scheduler
+    screens."""
+    from unittest.mock import AsyncMock
+
+    import apowerb.bi.chart_refresh_router as chart_mod
+    from apowerb.bi.dependencies import get_chart_service
+
+    app = FastAPI()
+    app.include_router(chart_mod.router, prefix="/api/v1")
+    app.dependency_overrides[get_current_user] = lambda: type(
+        "U", (), {"email": "someone@example.test"}
+    )()
+    app.dependency_overrides[get_chart_service] = lambda: AsyncMock()
+    chart_client = TestClient(app, raise_server_exceptions=False)
+
+    async def _dead(**kwargs):
+        raise OrchestratorUnavailable("Mage is unreachable at http://x: boom")
+
+    with patch.object(chart_mod, "schedule_agent_run", _dead), patch.object(
+        chart_mod, "get_agent_by_id", lambda *a, **k: {"agent_id": "75"}
+    ), patch.object(chart_mod, "get_settings", lambda: _settings()):
+        got = chart_client.post(
+            "/api/v1/charts/c1/schedule-refresh",
+            json={"agent_id": 75, "interval": "@hourly"},
+        )
+    assert got.status_code == 503, got.text
+
+
+def test_no_orchestrator_call_bypasses_the_single_classification_point():
+    """The guard against a seventh generation of this bug.
+
+    Three rounds of review each found the same failure in a method that had
+    invented its own silence -- and a method written the old way tomorrow would
+    do it again, invisibly: it would return `[]`, and every behavioural test
+    here would stay green because none of them would call it. So this one reads
+    the source.
+
+    It reads it as a syntax tree, not as text. The first version matched a
+    regular expression within 340 characters of a `self._ask(`, and a reviewer
+    broke it twice in a minute: once by putting an unclassified call *near* a
+    classified one, once by using `.patch(`, a verb the pattern did not list.
+    Both re-introduced the exact bug, both left the test green. Proximity is not
+    containment, and an alternation is not a category.
+
+    The Mage *block content* -- Python this file hands to Mage, executed inside
+    Mage -- is a string literal, so it is not in the tree and needs no
+    exception carved out for it.
+    """
+    import ast
+    import pathlib
+
+    from apowerb.scheduler import mage as mage_src
+    from apowerb.scheduler import th2etl_client as etl_src
+
+    VERBS = {"get", "post", "put", "delete", "patch", "head", "options", "request"}
+
+    def _http_calls(node):
+        """Line numbers of every HTTP call made on `requests` or `self._http`."""
+        out = set()
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)):
+                continue
+            if n.func.attr not in VERBS:
+                continue
+            base = n.func.value
+            on_requests = isinstance(base, ast.Name) and base.id == "requests"
+            on_session = isinstance(base, ast.Attribute) and base.attr == "_http"
+            if on_requests or on_session:
+                out.add(n.lineno)
+        return out
+
+    def _bypasses(module) -> set[int]:
+        tree = ast.parse(pathlib.Path(module.__file__).read_text())
+        classified = set()
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            goes_through = (
+                isinstance(n.func, ast.Attribute) and n.func.attr == "_ask"
+            ) or (isinstance(n.func, ast.Name) and n.func.id == "ask_orchestrator")
+            if goes_through:
+                classified |= _http_calls(n)
+        return _http_calls(tree) - classified
+
+    assert _bypasses(etl_src) == set()
+    assert _bypasses(mage_src) == set()
+
+def test_a_null_error_field_alongside_a_good_payload_is_not_an_outage():
+    """The key is not the answer; the value is.
+
+    Reading `"error" in body` would have called `{"pipelines": [...], "error":
+    null}` a failure -- a working orchestrator turned into a 503 by a field it
+    politely set to nothing.
+    """
+    with patch.object(
+        mage_mod.requests,
+        "get",
+        return_value=_Answered({"pipelines": [{"uuid": "agents"}], "error": None}),
+    ):
+        assert _dead_mage().get_all_pipelines() == [{"uuid": "agents"}]
+
+
+def test_a_populated_error_field_is_an_outage():
+    """The negative control on the line above: without it, ignoring the
+    envelope entirely would pass."""
+    with patch.object(
+        mage_mod.requests,
+        "get",
+        return_value=_Answered({"pipelines": [], "error": "not found"}),
+    ):
+        with pytest.raises(OrchestratorUnavailable):
+            _dead_mage().get_all_pipelines()
+
+
+MAGE_WRITES_WITHOUT_A_KEY = [
+    ("create_pipeline", lambda c: c.create_pipeline("agents")),
+    ("create_block", lambda c: c.create_block("agents", "agent_exe", "print()")),
+    ("trigger_pipeline", lambda c: c.trigger_pipeline(1, "tok")),
+    (
+        "trigger_pipeline_run_for_schedule",
+        lambda c: c.trigger_pipeline_run_for_schedule(1),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "name,call",
+    MAGE_WRITES_WITHOUT_A_KEY,
+    ids=[n for n, _ in MAGE_WRITES_WITHOUT_A_KEY],
+)
+def test_mage_saying_no_is_not_a_success(name, call):
+    """Mage wraps its refusals, and these four calls unwrap no key.
+
+    Gating the envelope check on `expect` was the next version of the same
+    mistake: `{"error": "duplicate pipeline uuid"}` came back as a truthy dict,
+    `if result:` read it as created, and the log said "Pipeline created
+    successfully!" over a pipeline Mage had just refused to create. Which half
+    of the API you are talking to is a property of the API, not of whether this
+    particular call happens to name a key.
+    """
+    with patch.object(
+        mage_mod.requests, "post", return_value=_Answered({"error": "no"})
+    ), patch.object(mage_mod.requests, "put", return_value=_Answered({"error": "no"})):
+        assert call(_dead_mage()) is None
+
+
+def test_a_th2etl_run_that_failed_is_still_a_run():
+    """A th2etl run carries the exception that killed it, by design. Reading
+    that as the orchestrator refusing made `get_pipeline_run` answer `None`,
+    and the route turned it into "pipeline run not found" -- a fresh lie about
+    a run, introduced by the change that set out to stop lies about runs."""
+    failed = {
+        "id": 42,
+        "scheduler_name": "75",
+        "status": "failed",
+        "error": "ValueError: the agent blew up",
+    }
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(c._http, "get", return_value=_Answered(failed)):
+        run = c.get_pipeline_run(42)
+    assert run is not None
+    assert run["error"] == "ValueError: the agent blew up"
+
+
+@pytest.mark.parametrize(
+    "name,call",
+    [
+        ("get_pipeline_run", lambda c: c.get_pipeline_run(1)),
+        ("cancel_pipeline_run", lambda c: c.cancel_pipeline_run(1)),
+    ],
+    ids=["get_pipeline_run", "cancel_pipeline_run"],
+)
+def test_a_run_that_came_back_as_a_list_is_not_a_run(name, call):
+    """The mirror of the listing check. `_to_mage_run` passes non-dicts
+    straight through, so an array arrived at the route as a run, and the
+    `result is None` test that guards the 404 never fired."""
+    c = Th2etlAPIClient("http://etl.internal:8009", timeout=1, api_key="k")
+    with patch.object(c._http, "get", return_value=_Answered([1, 2, 3])), patch.object(
+        c._http, "post", return_value=_Answered([1, 2, 3])
+    ):
+        with pytest.raises(OrchestratorUnavailable):
+            call(c)
+
+
+def _runner_client():
+    import apowerb.routers.adk_runner as adk
+
+    app = FastAPI()
+    app.include_router(adk.router, prefix="/api/adk")
+    app.dependency_overrides[get_current_user] = lambda: type(
+        "U", (), {"email": "someone@example.test"}
+    )()
+    return adk, TestClient(app, raise_server_exceptions=False)
+
+
+def _boom(*args, **kwargs):
+    raise OrchestratorUnavailable("Mage is unreachable at http://x: boom")
+
+
+async def _boom_async(*args, **kwargs):
+    raise OrchestratorUnavailable("Mage is unreachable at http://x: boom")
+
+
+def test_schedule_run_answers_503():
+    """Wired to the translator in an earlier pass and left without a test --
+    which a reviewer noticed before anyone else did.
+
+    It shares the orchestrator client with the scheduler screens, and when it
+    could not reach one it answered "check the agent_id and schedule_interval":
+    whoever read that went looking at their own input for a fault that was
+    never theirs.
+    """
+    adk, client = _runner_client()
+    with patch.object(adk, "schedule_agent_run", _boom_async), patch.object(
+        adk, "get_settings", lambda: _settings()
+    ):
+        got = client.post(
+            "/api/adk/schedule_run",
+            json={
+                "agent_id": "75",
+                "user_id": "someone@example.test",
+                "schedule_interval": "@hourly",
+                "session_id": "s1",
+                "new_message": {"role": "user", "parts": [{"text": "go"}]},
+            },
+        )
+    assert got.status_code == 503, got.text
+
+
+def test_run_now_answers_503():
+    """Its sibling, forty lines below it in the same file."""
+    from apowerb.scheduler import run_agent_background as background
+
+    adk, client = _runner_client()
+    with patch.object(background, "get_agent_by_id", _boom), patch.object(
+        adk, "get_settings", lambda: _settings()
+    ):
+        got = client.post(
+            "/api/adk/run_now",
+            json={"agent_id": "75", "user_id": "someone@example.test"},
+        )
+    assert got.status_code == 503, got.text
+
+
+def test_scheduling_a_dashboard_refresh_answers_503(dashboard_client):
+    """The third route of `refresh_router`, and the one that actually creates
+    the schedule.
+
+    Its two siblings had tests from the start; this one had the handler and no
+    test, so removing the handler left the whole suite green -- a mutant a
+    reviewer fired and watched survive. The file is named after a promise
+    ("every scheduler route answers 503"), which makes an untested route worse
+    than an unfixed one: it reads as covered.
+    """
+    import apowerb.bi.refresh_router as bi
+
+    async def _dead(**kwargs):
+        raise OrchestratorUnavailable("Mage is unreachable at http://x: boom")
+
+    with patch.object(bi, "schedule_agent_run", _dead), patch.object(
+        bi, "get_agent_by_id", lambda *a, **k: {"agent_id": "75", "agent_name": "a"}
+    ), patch.object(bi, "get_settings", lambda: _settings()), patch.object(
+        bi, "fetch_agents", lambda _email: []
+    ):
+        got = dashboard_client.post(
+            "/api/v1/dashboards/d1/schedule-refresh",
+            json={"agent_id": 75, "interval": "@hourly"},
+        )
+    assert got.status_code == 503, got.text

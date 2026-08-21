@@ -139,6 +139,13 @@ async def schedule_dashboard_refresh(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         )
+    except OrchestratorUnavailable as exc:
+        # Its two sister routes in this file already answer 503; the one that
+        # actually creates the schedule never did, so a dead orchestrator came
+        # back as a 500 quoting the exception text.
+        raise outage_response(
+            exc, "scheduling a dashboard refresh", get_settings(), logger
+        ) from exc
     except Exception as exc:
         logger.error(
             f"[REFRESH] Failed to schedule refresh for dashboard {dashboard_id}: {exc}",
