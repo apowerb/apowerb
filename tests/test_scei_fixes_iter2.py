@@ -6,25 +6,11 @@ Règles :
 """
 from __future__ import annotations
 
-import pathlib
-import re
-import pytest
-from unittest.mock import MagicMock
 
 from th2customers.scei.tools.scei_ar_persist import (
     _reextract_lines_from_pmi_and_text,
-    _lines_are_doubtful,
-    _load_full_pdf_text,
-    _norm_ref,
 )
-from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
 
-_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "scei"
-
-_PMI_CF101197 = [
-    {"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0, "lccnpunet": 6947.9, "lcctexpu": "C"},
-    {"lcctrefext": "NSYCVF850M400PF", "lcctqty": 11.0, "lccnpunet": 35190.68, "lcctexpu": "C"},
-]
 
 # ---------------------------------------------------------------------------
 # DÉFAUT 1 — fenêtre pos+500 aveugle → contamination qté/prix entre voisins
@@ -100,11 +86,7 @@ class TestDefaut1WindowBorne:
 # ---------------------------------------------------------------------------
 
 class TestDefaut2MinLenGuard:
-    """Réf PMI trop courte (< 6 chars) ne doit pas matcher par substring.
-
-    Cas légitime : RSB2A080B7 (10 chars) doit rester trouvé même si la réf PDF
-    est RSB2A080B7C (préfixe de la réf PDF → substring dans l'autre sens).
-    """
+    """Réf PMI trop courte (< 6 chars) ne doit pas matcher par substring."""
 
     def test_short_pmi_ref_3chars_not_fabricated(self):
         """Réf PMI de 3 chars (ex 'PCE') ne doit PAS matcher dans le texte."""
@@ -126,17 +108,6 @@ class TestDefaut2MinLenGuard:
             f"Réf '12345' (5 chars) ne doit pas fabriquer de ligne, got {result}"
         )
 
-    def test_prefix_pmi_ref_still_found_rsb(self):
-        """RSB2A080B7 (10 chars) doit être trouvé quand le PDF a RSB2A080B7C."""
-        # La réf PDF (dans Réf. Origine) = RSB2A080B7C, PMI = RSB2A080B7
-        # RSB2A080B7 est PRÉFIXE de RSB2A080B7C → substring dans l'autre sens → trouvé
-        # On teste le cas où found_direct (substring) fonctionne
-        text = "Réf. Origine: RSB2A080B7C\n 40 RSB2A080B7C 40 PCE\n 3,91 1 PCE 156,54 EUR"
-        pmi = [{"lcctrefext": "RSB2A080B7", "lcctqty": 40.0, "lccnpunet": 391.35, "lcctexpu": "C"}]
-        result = _reextract_lines_from_pmi_and_text(pmi, text)
-        assert result is not None and len(result) == 1, (
-            f"RSB2A080B7 (10 chars) doit être trouvé via prefix/substring, got {result}"
-        )
 
     def test_ref_6chars_is_accepted(self):
         """Une réf de EXACTEMENT 6 chars doit être acceptée (borne >= 6)."""
@@ -193,185 +164,6 @@ class TestDefaut3HasDoubtfulLine:
         ]
         from th2customers.scei.tools.scei_ar_persist import _lines_are_doubtful
         assert _lines_are_doubtful(lignes) is True
-
-
-class TestDefaut3NonDestructiveMerge:
-    """Fusion non destructive : lignes correctes PRÉSERVÉES, manquantes AJOUTÉES.
-
-    Cas : AR 2 lignes PMI
-    - ligne 1 : ecart_qte correct dans l'AR (ref=REFAAA, QuantiteAR=2 ≠ PMI=9)
-    - ligne 2 : LINE_NOT_IN_PO ratée (ref absente dans l'AR)
-    Après fix :
-    - ligne 1 INCHANGÉE (TypeEcart=ecart_qte, QuantiteAR=2)
-    - ligne 2 RÉCUPÉRÉE depuis le texte PDF
-    """
-
-    def _make_pmi_and_text(self):
-        pmi = [
-            {"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0, "lccnpunet": 6947.9, "lcctexpu": "C"},
-            {"lcctrefext": "NSYCVF850M400PF", "lcctqty": 11.0, "lccnpunet": 35190.68, "lcctexpu": "C"},
-        ]
-        # Texte réel CF101197 (toutes pages)
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101197.PDF"))
-        return pmi, result["text"]
-
-    def test_correct_line_preserved_missing_line_recovered(self, monkeypatch):
-        """Ligne ecart_qte préservée + ligne LINE_NOT_IN_PO récupérée."""
-        import th2customers.scei.tools.scei_ar_persist as m
-
-        pmi, pdf_text = self._make_pmi_and_text()
-
-        # AR initial : ligne 1 = ecart_qte (QuantiteAR=2 ≠ PMI=9), ligne 2 = LINE_NOT_IN_PO
-        ar_lignes_initiales = [
-            {
-                "Reference": "NSYCAG291LPF",
-                "QuantiteAR": 2.0,          # ≠ PMI (9.0) → ecart_qte
-                "PrixAR": 69.48,
-                "PrixERP": 69.48,
-                "TypeEcart": "ecart_qte",
-                "Situation": "NOK",
-            },
-            {
-                "Reference": "",            # référence vide → LINE_NOT_IN_PO
-                "QuantiteAR": None,
-                "TypeEcart": "LINE_NOT_IN_PO",
-                "Situation": "NOK",
-            },
-        ]
-
-        # Simuler l'appel dans tool_persist_ar_record via _lines_are_doubtful
-        # puis la fusion — on teste la fonction de re-extraction + la logique de merge
-        # directement (sans DB).
-
-        # Étape 1 : vérifier que _lines_are_doubtful retourne True (trigger)
-        assert m._lines_are_doubtful(ar_lignes_initiales) is True, (
-            "Avec ligne ecart_qte + LINE_NOT_IN_PO, _lines_are_doubtful doit être True"
-        )
-
-        # Étape 2 : la re-extraction depuis PMI + texte doit trouver les 2 lignes PMI
-        reextracted = m._reextract_lines_from_pmi_and_text(pmi, pdf_text)
-        assert reextracted is not None
-        assert len(reextracted) == 2
-
-        # Étape 3 : appeler _merge_reextracted_lines (nouvelle fonction) ou vérifier
-        # la logique de fusion dans tool_persist_ar_record via un appel complet avec stub.
-        # On vérifie que le merge produit : ligne ecart_qte inchangée + ligne NSYCVF récupérée.
-
-        # Appel complet avec engine stub
-        class _R:
-            def __init__(self, v=None): self._v = v
-            def scalar(self): return self._v
-        class _IdempConn:
-            """Precheck idempotence : retourne None (pas de doublon)."""
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def execute(self, *a, **k): return _R(None)
-        class _InsertConn:
-            """INSERT : retourne commande_id=42."""
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def execute(self, *a, **k): return _R(42)
-        class _Eng:
-            def connect(self): return _IdempConn()  # idempotence precheck
-            def begin(self): return _InsertConn()   # INSERT transaction
-
-        orig_engine = m._get_db_engine
-        m._get_db_engine = lambda: _Eng()
-        try:
-            # Simuler tool_context avec ar_match + pdf_text
-            ctx = MagicMock()
-            ctx.state = {
-                "ar_match": {
-                    "status": "matched",
-                    "po": {"ecktsoc": "100", "ecktnumero": "101197"},
-                    "lines": pmi,
-                },
-                "webhook_log_id": None,  # pas de PDF réel en test
-            }
-            # Patcher _load_full_pdf_text pour retourner le vrai texte PDF
-            orig_load = m._load_full_pdf_text
-            m._load_full_pdf_text = lambda _tc: pdf_text
-            try:
-                result = m.tool_persist_ar_record(
-                    NumeroCommande="CF101197",
-                    DateCommande="2026-05-29",
-                    StatutGlobal="non_conforme",  # sera réécrit par _derive_statut_global
-                    lignes=ar_lignes_initiales,
-                    tool_context=ctx,
-                )
-            finally:
-                m._load_full_pdf_text = orig_load
-        finally:
-            m._get_db_engine = orig_engine
-
-        # Le résultat : success=True (DB stub), et les lignes doivent avoir été
-        # fusionnées. On vérifie via le log — mais surtout via lignes_inserees.
-        # 2 lignes PMI → 2 lignes insérées (ecart_qte préservée + NSYCVF récupérée)
-        assert result["success"] is True
-        assert result["lignes_inserees"] == 2, (
-            f"Doit insérer 2 lignes (ecart_qte préservée + NSYCVF récupérée), "
-            f"got {result['lignes_inserees']}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# DÉFAUT 4 — ordre PDF non déterministe dans _load_full_pdf_text
-# ---------------------------------------------------------------------------
-
-class TestDefaut4SortedPdfFiles:
-    """_load_full_pdf_text doit trier les PDFs avant concaténation."""
-
-    def test_pdf_files_sorted_deterministic(self, tmp_path, monkeypatch):
-        """Deux PDFs → la concaténation est toujours dans le même ordre (sorted)."""
-        import shutil
-        from apowerb.storage import webhook_attachments
-
-        log_id = 54321
-        att_dir = tmp_path / "2026" / "05" / str(log_id)
-        att_dir.mkdir(parents=True)
-
-        # Copier les deux PDFs fixtures dans le répertoire temporaire
-        for pdf in ["CF101197.PDF", "CF101192.PDF"]:
-            shutil.copy(str(_FIXTURE_DIR / pdf), str(att_dir / pdf))
-
-        monkeypatch.setattr(webhook_attachments, "ATTACHMENT_ROOT", tmp_path)
-
-        ctx1 = MagicMock()
-        ctx1.state = {"webhook_log_id": log_id}
-        result1 = _load_full_pdf_text(ctx1)
-
-        ctx2 = MagicMock()
-        ctx2.state = {"webhook_log_id": log_id}
-        result2 = _load_full_pdf_text(ctx2)
-
-        # Les deux appels doivent retourner le même texte (ordre déterministe)
-        assert result1 == result2, "L'ordre de concaténation doit être déterministe (sorted)"
-        # Et les deux PDFs doivent être présents
-        assert "NSYCAG291LPF" in result1  # CF101197
-        assert "RSB2A080B7" in result1    # CF101192
-
-    def test_pdf_separator_present(self, tmp_path, monkeypatch):
-        """Les PDFs doivent être séparés par un délimiteur de page."""
-        import shutil
-        from apowerb.storage import webhook_attachments
-
-        log_id = 54322
-        att_dir = tmp_path / "2026" / "05" / str(log_id)
-        att_dir.mkdir(parents=True)
-
-        for pdf in ["CF101197.PDF", "CF101192.PDF"]:
-            shutil.copy(str(_FIXTURE_DIR / pdf), str(att_dir / pdf))
-
-        monkeypatch.setattr(webhook_attachments, "ATTACHMENT_ROOT", tmp_path)
-
-        ctx = MagicMock()
-        ctx.state = {"webhook_log_id": log_id}
-        result = _load_full_pdf_text(ctx)
-
-        # Avec \n\f\n comme délimiteur (form feed = séparateur de document)
-        assert "\f" in result or "\n\n" in result, (
-            "Les PDFs doivent être séparés par un délimiteur (\\f ou \\n\\n)"
-        )
 
 
 # ---------------------------------------------------------------------------

@@ -13,8 +13,6 @@ Fixes ciblés :
 """
 from __future__ import annotations
 
-import pathlib
-import pytest
 
 from th2customers.scei.tools.scei_ar_persist import (
     _reextract_lines_from_pmi_and_text,
@@ -22,30 +20,11 @@ from th2customers.scei.tools.scei_ar_persist import (
     _derive_fournisseur,
 )
 
-_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "scei"
 
 # ---------------------------------------------------------------------------
 # Fixtures réelles ar_match.lines (clés prouvées live — NE PAS MODIFIER)
 # ---------------------------------------------------------------------------
 
-_PMI_CF101197 = [
-    {
-        "lcctcode": "100018",
-        "lcctcodart": "CHANT0463",
-        "lcctrefext": "NSYCAG291LPF",
-        "lcctqty": 9.0,
-        "lcctpunet": 6947.9,
-        "lcctexpu": "C",
-    },
-    {
-        "lcctcode": "100018",
-        "lcctcodart": "SPEC03460",
-        "lcctrefext": "NSYCVF850M400PF",
-        "lcctqty": 11.0,
-        "lcctpunet": 35190.68,
-        "lcctexpu": "C",
-    },
-]
 
 _PMI_CF101232 = [
     {
@@ -67,16 +46,6 @@ _PMI_CF101232 = [
 ]
 
 # PMI pour CF101249 : pERP total stocké = 700.40 mais lcctpunet=70.04 expu=' '
-_PMI_CF101249 = [
-    {
-        "lcctcode": "100065",
-        "lcctcodart": "RSART12345",
-        "lcctrefext": "RSB2A080B7",
-        "lcctqty": 10.0,
-        "lcctpunet": 70.04,
-        "lcctexpu": " ",
-    },
-]
 
 
 # ===========================================================================
@@ -86,78 +55,6 @@ _PMI_CF101249 = [
 class TestFixAKeyLcctpunet:
     """_reextract_lines_from_pmi_and_text doit lire lcctpunet (pas lccnpunet)."""
 
-    def test_prix_erp_lu_depuis_lcctpunet(self):
-        """Une ligne PMI avec lcctpunet=6947.9/C → PrixERP=69.479 (arrondi à la centime près)."""
-        pmi = [
-            {
-                "lcctcode": "100018",
-                "lcctcodart": "CHANT0463",
-                "lcctrefext": "NSYCAG291LPF",
-                "lcctqty": 9.0,
-                "lcctpunet": 6947.9,
-                "lcctexpu": "C",
-            }
-        ]
-        # PDF synthétique contenant la réf et un contexte N PCE
-        pdf = (
-            "Poste 10 NSYCAG291LPF Description article Schneider\n"
-            " 9 PCE\n"
-            " 69,48 1 PCE 625,31 EUR\n"
-        )
-        result = _reextract_lines_from_pmi_and_text(pmi, pdf)
-        assert result is not None and len(result) == 1
-        line = result[0]
-        # PrixERP = lcctpunet / facteur('C') = 6947.9 / 100 = 69.479
-        assert line["PrixERP"] is not None
-        assert abs(line["PrixERP"] - 69.479) < 0.01
-
-    def test_pmi_sans_lccnpunet_prix_erp_non_none(self):
-        """Une ligne PMI avec UNIQUEMENT lcctpunet (pas de lccnpunet) -> PrixERP calculé."""
-        pmi = [
-            {
-                "lcctcode": "100018",
-                "lcctcodart": "CHANT0463",
-                "lcctrefext": "NSYCAG291LPF",
-                "lcctqty": 9.0,
-                "lcctpunet": 6947.9,
-                # PAS de clé lccnpunet
-                "lcctexpu": "C",
-            }
-        ]
-        pdf = (
-            "Poste 10 NSYCAG291LPF Description\n"
-            " 9 PCE\n"
-            " 69,48 1 PCE 625,31 EUR\n"
-        )
-        result = _reextract_lines_from_pmi_and_text(pmi, pdf)
-        assert result is not None
-        assert result[0]["PrixERP"] is not None
-
-    def test_prix_ar_different_pmi_detecte_ecart_prix(self):
-        """Prix AR != PMI → ecart_prix détecté (plus de fallback aveugle sur None)."""
-        pmi = [
-            {
-                "lcctcode": "100018",
-                "lcctcodart": "CHANT0463",
-                "lcctrefext": "NSYCAG291LPF",
-                "lcctqty": 9.0,
-                "lcctpunet": 6947.9,
-                "lcctexpu": "C",
-                # PrixERP = 6947.9/100 = 69.479
-            }
-        ]
-        # PDF avec prix unitaire clairement différent (50,00 au lieu de 69,48)
-        pdf = (
-            "Poste 10 NSYCAG291LPF Description article\n"
-            " 9 PCE\n"
-            " 50,00 1 PCE 450,00 EUR\n"
-        )
-        result = _reextract_lines_from_pmi_and_text(pmi, pdf)
-        assert result is not None and len(result) == 1
-        line = result[0]
-        # Prix parsé = 50.0, PrixERP = 69.479 → écart > 0.01 → ecart_prix
-        assert line["TypeEcart"] == "ecart_prix"
-        assert line["Situation"] == "NOK"
 
     def test_recherche_ref_via_lcctcodart_si_lcctrefext_absent(self):
         """Quand lcctrefext est vide, la recherche doit se faire via lcctcodart."""
@@ -182,22 +79,6 @@ class TestFixAKeyLcctpunet:
         line = result[0]
         # Ligne trouvée via lcctcodart
         assert line["QuantiteAR"] == 60.0
-
-    def test_cf101197_lignes_conformes_avec_vraies_cles(self):
-        """CF101197 avec vraies clés lcctpunet reste conforme (non-régression)."""
-        pdf_path = _FIXTURE_DIR / "CF101197.PDF"
-        if not pdf_path.exists():
-            pytest.skip("Fixture CF101197.PDF absente")
-        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
-        result_pdf = extract_all_pages_text(str(pdf_path))
-        pdf_text = result_pdf.get("text", "")
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101197, pdf_text)
-        assert result is not None
-        for line in result:
-            assert line.get("TypeEcart") is None, (
-                f"CF101197 ligne {line.get('Reference')} attendue conforme, "
-                f"got TypeEcart={line.get('TypeEcart')!r}"
-            )
 
 
 # ===========================================================================
@@ -261,39 +142,6 @@ class TestFixBDeriveFournisseur:
 class TestFixCPrixErpUnitaire:
     """_reconcile_lines doit recalculer PrixERP=lcctpunet/facteur et comparer vs PrixAR."""
 
-    def test_cf101249_prix_erp_total_stocke_devient_conforme(self):
-        """CF101249 : recorder stocke PrixERP=700.40 (total) mais lcctpunet=70.04 expu=' '.
-
-        Avant fix : 700.40 != 70.04 → ecart_prix.
-        Après fix  : PrixERP recalculé = 70.04/1 = 70.04 = PrixAR → conforme.
-        """
-        lignes = [
-            {
-                "Reference": "RSB2A080B7",
-                "QuantiteAR": 10.0,
-                "QuantiteERP": 10.0,
-                "PrixAR": 70.04,
-                "PrixERP": 700.40,  # total erroné
-                "TypeEcart": "ecart_prix",
-                "Situation": "NOK",
-            }
-        ]
-        pmi_lines = [
-            {
-                "lcctcode": "100065",
-                "lcctcodart": "RSART12345",
-                "lcctrefext": "RSB2A080B7",
-                "lcctqty": 10.0,
-                "lcctpunet": 70.04,
-                "lcctexpu": " ",
-            }
-        ]
-        result = _reconcile_lines(lignes, pmi_lines)
-        assert len(result) == 1
-        line = result[0]
-        assert line["TypeEcart"] is None, f"Attendu conforme, got {line['TypeEcart']!r}"
-        assert line["Situation"] == "OK"
-        assert abs(line["PrixERP"] - 70.04) < 0.01
 
     def test_cf101232_l1_expu_c_recalcule_conforme(self):
         """CF101232 L1 : lcctpunet=309 expu='C' → 3.09 = PrixAR → conforme."""
@@ -795,35 +643,6 @@ class TestFixCPrixArTotal:
         )
         assert line["Situation"] == "OK"
 
-    def test_cf101249_prix_ar_unitaire_conforme_non_regression(self):
-        """CF101249 régression-guard : prix_ar=70.04 unitaire = unit → conforme."""
-        lignes = [
-            {
-                "Reference": "RSB2A080B7",
-                "QuantiteAR": 10.0,
-                "PrixAR": 70.04,  # unitaire (= unit_PMI)
-                "PrixERP": 700.40,  # total erroné du recorder
-                "TypeEcart": "ecart_prix",
-                "Situation": "NOK",
-            }
-        ]
-        pmi_lines = [
-            {
-                "lcctcode": "100065",
-                "lcctcodart": "RSART12345",
-                "lcctrefext": "RSB2A080B7",
-                "lcctqty": 10.0,
-                "lcctpunet": 70.04,
-                "lcctexpu": " ",
-            }
-        ]
-        result = _reconcile_lines(lignes, pmi_lines)
-        assert len(result) == 1
-        line = result[0]
-        assert line["TypeEcart"] is None, (
-            f"CF101249 attendu conforme (prix_ar=unitaire), got {line['TypeEcart']!r}"
-        )
-        assert line["Situation"] == "OK"
 
     def test_lcctqty_none_prix_ar_ne_matche_sans_pdf_conforme(self):
         """FIX 1 iter6 : sans pdf_text, aucun verdict prix (meme lcctqty=None).

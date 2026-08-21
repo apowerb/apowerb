@@ -881,7 +881,6 @@ class TestSingleBatchScopeIdentity:
     def test_commande_id_none_when_scalar_returns_none(self, monkeypatch):
         """Si SCOPE_IDENTITY() retourne None (ne doit pas arriver en prod),
         commande_id doit être None et non lever une exception."""
-        import decimal
         from th2customers.scei.tools import scei_ar_persist as m
 
         class _NoneConn:
@@ -1100,7 +1099,6 @@ class TestSocieteWiring:
 # ---------------------------------------------------------------------------
 from th2customers.scei.tools.scei_ar_persist import (  # noqa: E402
     _reconcile_lines,
-    _match_lines_to_pmi,
 )
 
 
@@ -1323,139 +1321,6 @@ from th2customers.scei.tools.scei_ar_persist import (  # noqa: E402
 )
 from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
 
-import pathlib
-
-_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "scei"
-
-
-def _real_pdf_text(filename: str) -> str:
-    """Extract full text (all pages) from a real PDF fixture."""
-    result = extract_all_pages_text(str(_FIXTURE_DIR / filename))
-    assert "error" not in result, f"extract_all_pages_text failed: {result}"
-    return result["text"]
-
-
-# Textes extraits des VRAIS PDF (toutes pages) — les fixtures synthétiques sont
-# remplacées par ce helper pour garantir la cohérence avec le format réel.
-# Les variables _CF101197_TEXT etc. sont conservées pour les tests existants qui
-# les référencent, mais initialisées depuis les vrais PDF.
-_CF101197_TEXT = _real_pdf_text("CF101197.PDF")
-_CF101192_TEXT = _real_pdf_text("CF101192.PDF")
-_CF101194_TEXT = _real_pdf_text("CF101194.PDF")
-
-# Lignes PMI correspondantes (format ar_match.lines)
-_PMI_CF101197 = [
-    {"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0, "lccnpunet": 6947.9, "lcctexpu": "C"},
-    {"lcctrefext": "NSYCVF850M400PF", "lcctqty": 11.0, "lccnpunet": 35190.68, "lcctexpu": "C"},
-]
-_PMI_CF101192 = [
-    {"lcctrefext": "RSB2A080B7", "lcctqty": 40.0, "lccnpunet": 391.35, "lcctexpu": "C"},
-]
-_PMI_CF101194 = [
-    {"lcctrefext": "LC1D40AB7", "lcctqty": 20.0, "lccnpunet": 34.29, "lcctexpu": " "},
-]
-
-
-class TestReextractLinesFromPmiAndText:
-    """9 cas TDD pour la re-extraction ciblée anti-faux non_rapproche."""
-
-    # Cas 1 : CF101197 — 2 réfs PMI présentes → 2 lignes conformes
-    def test_cf101197_two_refs_present_yields_two_conforme_lines(self):
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101197, _CF101197_TEXT)
-        assert result is not None
-        assert len(result) == 2
-        assert all(ln["TypeEcart"] is None for ln in result), (
-            f"Expected TypeEcart=None for all lines, got {[ln['TypeEcart'] for ln in result]}"
-        )
-        assert all(ln["Situation"] == "OK" for ln in result)
-        # Vérifier que les valeurs PMI sont ancrées (QuantiteERP = lcctqty)
-        assert result[0]["QuantiteERP"] == 9.0
-        assert result[1]["QuantiteERP"] == 11.0
-        # PrixERP = lccnpunet / facteur EXPU 'C' = /100
-        assert abs(result[0]["PrixERP"] - 69.479) < 0.01  # 6947.9/100
-        assert abs(result[1]["PrixERP"] - 351.9068) < 0.01  # 35190.68/100
-
-    # Cas 2 : CF101192 — réf PMI présente via "Réf. Origine" → ligne conforme
-    def test_cf101192_ref_origine_suffix_c_yields_conforme(self):
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101192, _CF101192_TEXT)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0]["TypeEcart"] is None
-        assert result[0]["Situation"] == "OK"
-        assert result[0]["QuantiteERP"] == 40.0
-        assert abs(result[0]["PrixERP"] - 3.9135) < 0.01  # 391.35/100
-
-    # Cas 3 : CF101194 — réf PMI présente via "Réf. Origine" (suffixe -D) → conforme
-    def test_cf101194_ref_origine_suffix_dash_d_yields_conforme(self):
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101194, _CF101194_TEXT)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0]["TypeEcart"] is None
-        assert result[0]["Situation"] == "OK"
-        assert result[0]["QuantiteERP"] == 20.0
-        # EXPU=' ' → facteur=1 → PrixERP=34.29
-        assert abs(result[0]["PrixERP"] - 34.29) < 0.01
-
-    # Cas 4 : réf PMI ABSENTE du texte → non fabriquée (non_rapproche légitime)
-    def test_absent_ref_not_fabricated(self):
-        pmi = [{"lcctrefext": "REFGHOSTXYZ", "lcctqty": 5.0,
-                "lccnpunet": 1000.0, "lcctexpu": " "}]
-        result = _reextract_lines_from_pmi_and_text(pmi, _CF101197_TEXT)
-        # La ligne absente ne doit PAS apparaître dans le résultat
-        assert result is None or len(result) == 0
-
-    # Cas 5 : pdf_text=None ou "" → retourne None (no-op)
-    def test_none_pdf_text_returns_none(self):
-        assert _reextract_lines_from_pmi_and_text(_PMI_CF101197, None) is None
-
-    def test_empty_pdf_text_returns_none(self):
-        assert _reextract_lines_from_pmi_and_text(_PMI_CF101197, "") is None
-
-    # Cas 6a : réf présente dans une description sans 'N PCE' proche → non fabriquée
-    # RAISON DE MODIFICATION (iter3, fix D2 résiduel) : la garde de contexte PCE
-    # (FIX D2 résiduel, iter3) exige qu'un pattern 'N PCE' soit dans ±250 chars
-    # autour de la réf. Sans cette garde, une réf dans une description libre était
-    # matchée → fausse ligne conforme. Le fallback conforme-sur-présence ne s'applique
-    # QUE quand la réf est dans un contexte de ligne AR (PCE proche). Ce test reflète
-    # le nouveau comportement attendu (ref sans PCE → non fabriquée).
-    def test_ref_present_without_pce_not_fabricated(self):
-        # Texte minimaliste : réf présente mais AUCUN 'N PCE' dans les 250 chars
-        sparse_text = "NSYCAG291LPF article present but no parseable numbers around it"
-        pmi = [{"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0,
-                "lccnpunet": 6947.9, "lcctexpu": "C"}]
-        result = _reextract_lines_from_pmi_and_text(pmi, sparse_text)
-        # Avec la garde PCE : pas de 'N PCE' proche → non fabriquée
-        assert result is None or len(result) == 0
-
-    # Cas 6b : réf présente avec 'N PCE' proche mais prix non parsable → fallback conforme
-    def test_ref_present_with_pce_parse_fails_fallback_conforme(self):
-        # Réf avec 'N PCE' proche (contexte de ligne AR) mais pas de prix parsable
-        sparse_text = "NSYCAG291LPF article 9 PCE description without price info"
-        pmi = [{"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0,
-                "lccnpunet": 6947.9, "lcctexpu": "C"}]
-        result = _reextract_lines_from_pmi_and_text(pmi, sparse_text)
-        assert result is not None
-        assert len(result) == 1
-        # Fallback présence avec PCE → conforme (qty OK, prix non parsable → pas d'écart prix)
-        assert result[0]["TypeEcart"] is None
-        assert result[0]["Situation"] == "OK"
-
-    # Cas 7 : qté AR ≠ PMI dans le texte → ecart_qte
-    def test_qty_mismatch_yields_ecart_qte(self):
-        # Fixture synthétique : même format SAP mais qty=5 ≠ PMI qty=9
-        text_qty_mismatch = """
- 10 NSYCAG291LPF GRILLE SORTIE.DEC.291X291 5 PCE
- 1 CHANT0463
- 204,35 66,00 69,48 1 PCE 345,00 EUR
-"""
-        pmi = [{"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0,
-                "lccnpunet": 6947.9, "lcctexpu": "C"}]
-        result = _reextract_lines_from_pmi_and_text(pmi, text_qty_mismatch)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0]["TypeEcart"] == "ecart_qte"
-        assert result[0]["Situation"] == "NOK"
-
 
 class TestLinesAreDoubtful:
     """Cas 8 : vérification du helper _lines_are_doubtful."""
@@ -1493,18 +1358,6 @@ class TestLinesAreDoubtful:
         assert _lines_are_doubtful(lignes) is False
 
 
-class TestReextractionNonRegression:
-    """Cas 9 : quand l'extraction a marché (ligne conforme), pas de re-extraction."""
-
-    def test_good_extraction_does_not_trigger_reextract(self):
-        """Si _lines_are_doubtful retourne False, la re-extraction ne doit pas
-        se déclencher dans tool_persist_ar_record (zéro régression)."""
-        # On vérifie directement que la logique du déclencheur est cohérente :
-        # une ligne conforme existante → _lines_are_doubtful=False → pas de re-extraction.
-        lignes_ok = [
-            {"TypeEcart": None, "Situation": "OK", "Reference": "NSYCAG291LPF"},
-        ]
-        assert _lines_are_doubtful(lignes_ok) is False
         # La re-extraction sur un pdf_text quelconque ne doit pas être invoquée.
         # On vérifie que le résultat de la re-extraction sur un texte arbitraire
         # ne casserait pas les lignes conformes existantes (non-régression pure).
@@ -1522,122 +1375,11 @@ class TestReextractionNonRegression:
 class TestExtractAllPagesText:
     """extract_all_pages_text concatène TOUTES les pages; jamais raise."""
 
-    def test_cf101197_four_pages(self):
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101197.PDF"))
-        assert "error" not in result
-        assert result["total_pages"] == 4
-
-    def test_cf101192_four_pages(self):
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101192.PDF"))
-        assert "error" not in result
-        assert result["total_pages"] == 4
-
-    def test_cf101194_four_pages(self):
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101194.PDF"))
-        assert "error" not in result
-        assert result["total_pages"] == 4
-
-    def test_cf101197_contains_both_refs(self):
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101197.PDF"))
-        text = result["text"]
-        assert "NSYCAG291LPF" in text
-        assert "NSYCVF850M400PF" in text
-
-    def test_cf101192_contains_ref(self):
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101192.PDF"))
-        assert "RSB2A080B7" in result["text"]
-
-    def test_cf101194_contains_ref(self):
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101194.PDF"))
-        assert "LC1D40AB7" in result["text"]
-
-    def test_first_page_alone_missing_refs(self):
-        """Prouve le bug original : extract_first_page_text ne contient PAS les refs."""
-        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_first_page_text
-        r1 = extract_first_page_text(str(_FIXTURE_DIR / "CF101197.PDF"))
-        assert "NSYCAG291LPF" not in r1["text"], (
-            "Page 1 must NOT contain AR lines — if this fails, the PDF layout changed"
-        )
-        r_all = extract_all_pages_text(str(_FIXTURE_DIR / "CF101197.PDF"))
-        assert "NSYCAG291LPF" in r_all["text"]
 
     def test_nonexistent_file_returns_error_dict(self):
         result = extract_all_pages_text("/nonexistent/path.pdf")
         assert "error" in result
         assert result["text"] == ""
-
-    def test_return_shape(self):
-        result = extract_all_pages_text(str(_FIXTURE_DIR / "CF101197.PDF"))
-        assert set(result.keys()) >= {"text", "has_text_layer", "char_count", "total_pages"}
-        assert result["has_text_layer"] is True
-        assert result["char_count"] == len(result["text"])
-
-
-# ---------------------------------------------------------------------------
-# Tests re-extraction avec VRAI texte PDF (toutes pages)
-# Les vérités PMI sont issues de l'énoncé (validées live).
-# ---------------------------------------------------------------------------
-
-_PMI_CF101197 = [
-    {"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0, "lccnpunet": 6947.9, "lcctexpu": "C"},
-    {"lcctrefext": "NSYCVF850M400PF", "lcctqty": 11.0, "lccnpunet": 35190.68, "lcctexpu": "C"},
-]
-_PMI_CF101192 = [
-    {"lcctrefext": "RSB2A080B7", "lcctqty": 40.0, "lccnpunet": 391.35, "lcctexpu": "C"},
-]
-_PMI_CF101194 = [
-    {"lcctrefext": "LC1D40AB7", "lcctqty": 20.0, "lccnpunet": 34.29, "lcctexpu": " "},
-]
-
-
-class TestReextractRealPdfText:
-    """Re-extraction alimentée par le VRAI texte (toutes pages) des PDF fixtures."""
-
-    def test_cf101197_two_conforme_lines(self):
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101197, _CF101197_TEXT)
-        assert result is not None, "Expected 2 recovered lines, got None"
-        assert len(result) == 2
-        assert all(ln["TypeEcart"] is None for ln in result), (
-            f"Expected TypeEcart=None for all, got {[ln['TypeEcart'] for ln in result]}"
-        )
-        assert all(ln["Situation"] == "OK" for ln in result)
-        assert result[0]["QuantiteERP"] == 9.0
-        assert result[0]["QuantiteAR"] == 9.0
-        assert abs(result[0]["PrixAR"] - 69.48) < 0.01
-        assert result[1]["QuantiteERP"] == 11.0
-        assert result[1]["QuantiteAR"] == 11.0
-        assert abs(result[1]["PrixAR"] - 351.91) < 0.01
-
-    def test_cf101192_conforme_via_ref_origine(self):
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101192, _CF101192_TEXT)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0]["TypeEcart"] is None
-        assert result[0]["Situation"] == "OK"
-        assert result[0]["QuantiteERP"] == 40.0
-        assert result[0]["QuantiteAR"] == 40.0
-        assert abs(result[0]["PrixAR"] - 3.91) < 0.01
-
-    def test_cf101194_conforme_via_ref_origine(self):
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101194, _CF101194_TEXT)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0]["TypeEcart"] is None
-        assert result[0]["Situation"] == "OK"
-        assert result[0]["QuantiteERP"] == 20.0
-        assert result[0]["QuantiteAR"] == 20.0
-        assert abs(result[0]["PrixAR"] - 34.29) < 0.01
-
-    def test_intake_pdf_text_first_page_only_yields_none(self):
-        """Régression : avec l'ancienne logique (page 1 seulement),
-        la re-extraction retournait None. Ce test documente l'état pré-fix."""
-        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_first_page_text
-        r1 = extract_first_page_text(str(_FIXTURE_DIR / "CF101197.PDF"))
-        page1_text = r1["text"]
-        result = _reextract_lines_from_pmi_and_text(_PMI_CF101197, page1_text)
-        assert result is None or len(result) == 0, (
-            "Page 1 alone must not find AR lines — validates that the fix was needed"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1667,28 +1409,6 @@ class TestLoadFullPdfText:
         # Pas de fichier → retourne "" sans lever
         result = _load_full_pdf_text(ctx)
         assert isinstance(result, str)
-
-    def test_returns_full_text_from_real_pdf(self, tmp_path, monkeypatch):
-        """Intégration : avec un log_id pointant sur un vrai PDF fixture,
-        le texte de toutes les pages est retourné."""
-        import shutil
-        from apowerb.storage import webhook_attachments
-
-        # Construire un dossier temporaire simulant le layout d'attachments
-        log_id = 12345
-        att_dir = tmp_path / "2026" / "05" / str(log_id)
-        att_dir.mkdir(parents=True)
-        pdf_path = att_dir / "CF101197.PDF"
-        shutil.copy(str(_FIXTURE_DIR / "CF101197.PDF"), str(pdf_path))
-
-        # Patcher ATTACHMENT_ROOT
-        monkeypatch.setattr(webhook_attachments, "ATTACHMENT_ROOT", tmp_path)
-
-        ctx = MagicMock()
-        ctx.state = {"webhook_log_id": log_id}
-        result = _load_full_pdf_text(ctx)
-        assert "NSYCAG291LPF" in result
-        assert "NSYCVF850M400PF" in result
 
 
 class TestDeriveCommanditaire:

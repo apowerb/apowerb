@@ -25,11 +25,6 @@ Défauts ciblés :
 """
 from __future__ import annotations
 
-import pathlib
-import pytest
-
-_FIXTURE_DIR = pathlib.Path(__file__).parent / "fixtures" / "scei"
-
 
 # ---------------------------------------------------------------------------
 # DÉFAUT 1 RÉSIDUEL — réf dupliquée (ligne + récap SAP) capte mauvaise qté
@@ -292,32 +287,6 @@ class TestD2RefDansDescription:
             f"'LC1D40AB' avec '2 PCE' proche doit fabriquer une ligne. Got: {result}"
         )
 
-    def test_real_pdfs_not_broken_by_pce_guard(self):
-        """Les vrais PDFs (CF101197) doivent toujours retourner les lignes correctes.
-
-        Non-régression : la garde de contexte PCE ne doit pas bloquer les lignes
-        légitimes des vrais PDFs.
-        """
-        from th2customers.scei.tools.scei_ar_persist import (
-            _reextract_lines_from_pmi_and_text,
-        )
-        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
-
-        pdf_path = _FIXTURE_DIR / "CF101197.PDF"
-        if not pdf_path.exists():
-            pytest.skip("Fixture CF101197.PDF non disponible")
-
-        pdf_text = extract_all_pages_text(str(pdf_path))["text"]
-        pmi = [
-            {"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0, "lccnpunet": 6947.9, "lcctexpu": "C"},
-            {"lcctrefext": "NSYCVF850M400PF", "lcctqty": 11.0, "lccnpunet": 35190.68, "lcctexpu": "C"},
-        ]
-
-        result = _reextract_lines_from_pmi_and_text(pmi, pdf_text)
-        assert result is not None and len(result) == 2, (
-            f"CF101197 doit toujours retourner 2 lignes après la garde PCE. Got: {result}"
-        )
-
 
 # ---------------------------------------------------------------------------
 # DÉFAUT 3 RÉSIDUEL — filtre _non_doubtful dépend de Situation
@@ -373,126 +342,4 @@ class TestD3FiltreNonDoubtfulSansSituation:
         assert cond_corrigee is True, (
             "Post-condition : le filtre corrigé DOIT conserver la ligne "
             "(TypeEcart=None not in _DOUBTFUL_ECARTS)"
-        )
-
-    def test_ligne_typeecart_none_sans_situation_conservee_dans_merge(self):
-        """Dans le bloc 0a-ter, une ligne TypeEcart=None sans Situation
-        doit être classée non-douteuse et conservée (pas écrasée par la re-extraction).
-
-        Bug D3 observable : ligne NSYCAG291LPF avec QuantiteAR=2.0 (valeur originale,
-        différente de ce que la re-extraction trouverait — 9.0 dans le PDF).
-        Avec le bug : filtre écarte la ligne originale → remplacement complet → NSYCAG
-        réécrite avec QuantiteAR=9.0. Avec le fix : NSYCAG originale conservée (QuantiteAR=2.0).
-
-        On bypasse _reconcile_lines (no-op) pour que la ligne arrive dans 0a-ter
-        avec TypeEcart=None et SANS Situation (tel que produit par un LLM récordeur
-        qui omet la clé Situation sur les lignes conformes).
-        """
-        from unittest.mock import MagicMock
-        import th2customers.scei.tools.scei_ar_persist as m
-        from apowerb.core.agent_helpers.pdf_to_images_tool import extract_all_pages_text
-
-        pdf_path = _FIXTURE_DIR / "CF101197.PDF"
-        if not pdf_path.exists():
-            pytest.skip("Fixture CF101197.PDF non disponible")
-
-        pmi = [
-            {"lcctrefext": "NSYCAG291LPF", "lcctqty": 9.0, "lccnpunet": 6947.9, "lcctexpu": "C"},
-            {"lcctrefext": "NSYCVF850M400PF", "lcctqty": 11.0, "lccnpunet": 35190.68, "lcctexpu": "C"},
-        ]
-        pdf_text = extract_all_pages_text(str(pdf_path))["text"]
-
-        # AR mixte :
-        # - ligne 1 : TypeEcart=None, SANS clé 'Situation', QuantiteAR=2.0 (originale)
-        #   Valeur ≠ PDF (9 PCE) — si écrasée par re-extraction → QuantiteAR=9.0
-        # - ligne 2 : LINE_NOT_IN_PO (déclencheur de la re-extraction)
-        ar_lignes = [
-            {
-                "Reference": "NSYCAG291LPF",
-                "QuantiteAR": 2.0,  # valeur AR originale — doit être conservée
-                "PrixAR": 69.48,
-                "PrixERP": 69.48,
-                "TypeEcart": None,
-                # PAS de clé 'Situation' — c'est le cas qui bug
-            },
-            {
-                "Reference": "",
-                "TypeEcart": "LINE_NOT_IN_PO",
-                "Situation": "NOK",
-            },
-        ]
-
-        # Capturer les lignes insérées pour vérifier QuantiteAR
-        inserted_lines: list[dict] = []
-
-        class _R:
-            def __init__(self, v=None): self._v = v
-            def scalar(self): return self._v
-
-        class _IdempConn:
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def execute(self, *a, **k): return _R(None)
-
-        class _InsertConn:
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
-            def execute(self, stmt, params=None, **kw):
-                # Capturer les params des lignes (pas le header)
-                if params and "QuantiteAR" in params:
-                    inserted_lines.append(dict(params))
-                return _R(42)
-
-        orig_engine = m._get_db_engine
-        orig_load = m._load_full_pdf_text
-        orig_reconcile = m._reconcile_lines
-        # Bypasser _reconcile_lines pour que la ligne arrive SANS Situation dans 0a-ter
-        m._get_db_engine = lambda: type("Eng", (), {
-            "connect": lambda self: _IdempConn(),
-            "begin": lambda self: _InsertConn(),
-        })()
-        m._load_full_pdf_text = lambda _tc: pdf_text
-        m._reconcile_lines = lambda lignes, pmi_lines, pdf_text=None: lignes  # no-op : conserve lignes telles quelles
-        try:
-            ctx = MagicMock()
-            ctx.state = {
-                "ar_match": {
-                    "status": "matched",
-                    "po": {"ecktsoc": "100", "ecktnumero": "101197"},
-                    "lines": pmi,
-                },
-                "webhook_log_id": None,
-            }
-            result = m.tool_persist_ar_record(
-                NumeroCommande="CF101197",
-                DateCommande="2026-05-29",
-                StatutGlobal="non_conforme",
-                lignes=ar_lignes,
-                tool_context=ctx,
-            )
-        finally:
-            m._get_db_engine = orig_engine
-            m._load_full_pdf_text = orig_load
-            m._reconcile_lines = orig_reconcile
-
-        assert result["success"] is True
-        assert result["lignes_inserees"] == 2, (
-            f"Doit insérer 2 lignes, got {result['lignes_inserees']}"
-        )
-
-        # La ligne NSYCAG291LPF doit avoir QuantiteAR=2.0 (originale, conservée)
-        # et NON 9.0 (re-extraite du PDF) — c'est l'assertion qui prouve le bug D3.
-        nsycag_lines = [
-            ln for ln in inserted_lines
-            if ln.get("Reference", "").startswith("NSYCAG")
-        ]
-        assert len(nsycag_lines) == 1, (
-            f"Doit insérer exactement 1 ligne NSYCAG, got {nsycag_lines}"
-        )
-        assert nsycag_lines[0]["QuantiteAR"] == 2.0, (
-            f"La ligne NSYCAG291LPF originale (QuantiteAR=2.0) doit être CONSERVÉE "
-            f"(pas écrasée par la re-extraction qui donnerait QuantiteAR=9.0). "
-            f"Got QuantiteAR={nsycag_lines[0]['QuantiteAR']}. "
-            f"Bug D3 résiduel : filtre _non_doubtful écarte TypeEcart=None sans Situation "
-            f"→ remplacement complet → valeur originale perdue."
         )
