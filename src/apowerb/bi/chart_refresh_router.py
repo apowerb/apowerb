@@ -16,7 +16,10 @@ from apowerb.bi.charts.service import ChartNotFoundError, ChartService
 from apowerb.bi.dependencies import get_chart_service
 from apowerb.configs.th2logger import setup_logging
 from apowerb.core.agent_main import get_agent_by_id
+from apowerb.configs.settings import get_settings
+from apowerb.scheduler.outage import outage_response
 from apowerb.scheduler.run_agent_background import schedule_agent_run
+from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
 from apowerb.users import schemas as user_schemas
 
 logger = setup_logging(__name__)
@@ -128,6 +131,14 @@ async def schedule_chart_refresh(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         )
+    except OrchestratorUnavailable as exc:
+        # A route nobody had enumerated, reached through `schedule_agent_run`
+        # and sharing the same orchestrator client as the scheduler screens. It
+        # answered a 500 quoting the exception text for an orchestrator that
+        # was simply not there.
+        raise outage_response(
+            exc, "scheduling a chart refresh", get_settings(), logger
+        ) from exc
     except Exception as exc:
         logger.error(
             f"[REFRESH] Failed to schedule refresh for chart {chart_id}: {exc}",

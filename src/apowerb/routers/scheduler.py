@@ -5,6 +5,12 @@ from apowerb.auth.dependencies import get_current_user
 from apowerb.users import schemas as user_schemas
 from apowerb.scheduler.mage import get_orchestrator, process_agent_registration
 from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
+from apowerb.scheduler.outage import (
+    NOT_CONFIGURED,
+    ORCHESTRATOR_SETTINGS,
+    orchestrator_is_configured,
+    outage_response,
+)
 from apowerb.core.agent_main import fetch_agents
 from apowerb.configs.settings import get_settings
 from apowerb.configs.th2logger import setup_logging
@@ -13,65 +19,24 @@ logger = setup_logging(__name__)
 
 router = APIRouter()
 
-# Everything that belongs to each orchestrator, not just its URL.
-#
-# Reading the URL alone had it backwards. An operator who installs Mage on the
-# documented default port has no reason to touch `BASE_URL` -- it already
-# matches his deployment -- but `scheduler/mage.py` refuses to build a client
-# without `API_KEY`, so that is the field he does set. He would have been
-# classified as having configured nothing, and a real outage of his Mage
-# logged at DEBUG under a message telling him no orchestrator was configured.
-#
-# So the question is not "did he name the address" but "did he engage with
-# this orchestrator at all". Any one of these says yes.
-_ORCHESTRATOR_SETTINGS = {
-    "mage": (
-        "base_url",
-        "api_key",
-        "oauth_token",
-        "project_name",
-        "mage_pipeline_uuid",
-    ),
-    "th2etl": ("th2etl_base_url", "th2etl_api_key"),
-}
-
-_NOT_CONFIGURED = (
-    "No orchestrator is configured in this installation. Scheduled runs need "
-    "one (Mage or th2etl); set its URL, or set SCHEDULER_ENABLED=false to drop "
-    "the feature and its screen entirely."
-)
+# The decision and its wording live in `apowerb.scheduler.outage`, shared with
+# the dashboard-refresh router: both call the same orchestrator client, both
+# meet the same outage, and two copies of "how loudly do we report this" drift.
+# Re-exported under the old private names so nothing reaching for them here has
+# to know they moved.
+_ORCHESTRATOR_SETTINGS = ORCHESTRATOR_SETTINGS
+_NOT_CONFIGURED = NOT_CONFIGURED
+_orchestrator_is_configured = orchestrator_is_configured
 
 
-def _orchestrator_is_configured(settings) -> bool:
-    """Did this installation ever name an orchestrator?
+def _orchestrator_outage(e: OrchestratorUnavailable, doing: str) -> HTTPException:
+    """This router's answer to an unreachable orchestrator.
 
-    `model_fields_set` holds what the environment actually provided -- the
-    only way to tell "left at the shipped default" from "typed in" once the
-    settings object is built. Any single setting of the selected orchestrator
-    counts: the question is whether somebody engaged with it, not whether he
-    happened to name its address.
-
-    ⚠️ On its own this does not mean "no orchestrator here": one genuinely
-    running beside the API on `localhost:6789` needs no configuration at all,
-    and an install like that is perfectly sound. What carries the meaning is
-    the **conjunction** at the only call site -- nothing configured *and* the
-    call just failed. Either half alone says nothing, which is also why this
-    must not become a startup warning: at boot the second half is unknown.
-
-    The asymmetry is deliberate. A deployment that sets `API_KEY` for some
-    unrelated reason is read as having a Mage, and a genuine absence then
-    logs at ERROR -- noise. The opposite mistake silences a real outage, which
-    is the failure this whole change exists to prevent. When in doubt, be
-    loud.
-
-    Reads the settings of the orchestrator actually **selected**: a deployment
-    switched to th2etl that only ever configured Mage engaged with nothing the
-    client will use.
+    Reads `get_settings` through this module's own global, so a test that
+    patches it here still reaches the decision, and hands over this module's
+    logger so the line lands under the router that served the request.
     """
-    names = _ORCHESTRATOR_SETTINGS.get(
-        str(settings.orchestrator).strip().lower(), _ORCHESTRATOR_SETTINGS["mage"]
-    )
-    return bool(set(names) & settings.model_fields_set)
+    return outage_response(e, doing, get_settings(), logger)
 
 
 class _OrchestratorClientProxy:
@@ -126,19 +91,7 @@ async def list_pipelines(current_user: user_schemas.User = Depends(get_current_u
     try:
         return scheduler_client.get_all_pipelines()
     except OrchestratorUnavailable as e:
-        # 503, never 200 with an empty list: the dashboard must be able to say
-        # "the orchestrator is down" instead of "you have no pipelines".
-        #
-        # But an orchestrator nobody installed is not one that is down. A
-        # deployment carrying no Mage logged this at ERROR on every visit to
-        # the screen, quoting a localhost address its operator never typed --
-        # and an ERROR meaning "you did not install an optional component"
-        # teaches whoever reads the logs to scroll past ERROR lines.
-        if not _orchestrator_is_configured(get_settings()):
-            logger.debug("no orchestrator configured; %s", e)
-            raise HTTPException(status_code=503, detail=_NOT_CONFIGURED) from e
-        logger.error("orchestrator unreachable while listing pipelines: %s", e)
-        raise HTTPException(status_code=503, detail=str(e)) from e
+        raise _orchestrator_outage(e, "listing pipelines") from e
 
 
 @router.post("/pipelines/agents/triggers", tags=["scheduler"])
@@ -186,6 +139,11 @@ async def create_agent_trigger(
                 detail="Trigger creation returned None. Is Mage AI running?",
             )
 
+    except OrchestratorUnavailable as e:
+        # Ordered before the catch-all below, which would otherwise answer 500
+        # with the exception text -- telling operators to debug the agent they
+        # just registered, when what is down is their scheduler.
+        raise _orchestrator_outage(e, "registering an agent") from e
     except Exception as e:
         logger.error(f"[TRIGGER] Failed to create trigger: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -197,7 +155,10 @@ async def list_pipeline_schedules(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """List triggers/schedules for a pipeline, filtered to only the current user's agents."""
-    all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    try:
+        all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing schedules") from e
     user_agent_ids = _get_user_agent_ids(current_user.email)
     return [s for s in all_schedules if s.get("name") in user_agent_ids]
 
@@ -211,8 +172,16 @@ async def list_schedule_runs(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """List runs for a specific schedule, after verifying it belongs to the user."""
-    # Verify the schedule belongs to one of the user's agents
-    all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    # Verify the schedule belongs to one of the user's agents.
+    #
+    # This call has to answer before the ownership check can mean anything: an
+    # unreachable orchestrator returns no schedules, so every schedule looks
+    # like somebody else's and the caller is told 403 -- their own schedule
+    # denied to them, in the name of a check that never ran.
+    try:
+        all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing schedules") from e
     user_agent_ids = _get_user_agent_ids(current_user.email)
     # Compare as strings: Mage schedule ids are ints, th2etl uses the scheduler
     # name (e.g. "1201") as the id. Coercing the path param to int would make a
@@ -222,7 +191,10 @@ async def list_schedule_runs(
         raise HTTPException(
             status_code=403, detail="This schedule does not belong to your agents."
         )
-    return scheduler_client.get_pipeline_runs(schedule_id)
+    try:
+        return scheduler_client.get_pipeline_runs(schedule_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing runs") from e
 
 
 @router.put("/pipelines/runs/{run_id}/cancel", tags=["scheduler"])
@@ -231,7 +203,10 @@ async def cancel_pipeline_run(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Cancel a pipeline run."""
-    result = scheduler_client.cancel_pipeline_run(run_id)
+    try:
+        result = scheduler_client.cancel_pipeline_run(run_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "cancelling a run") from e
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to cancel pipeline run")
     return result
@@ -243,7 +218,13 @@ async def get_pipeline_run(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Get details for a specific pipeline run."""
-    result = scheduler_client.get_pipeline_run(run_id)
+    try:
+        result = scheduler_client.get_pipeline_run(run_id)
+    except OrchestratorUnavailable as e:
+        # Not a 404: "this run does not exist" is a claim about the run, and we
+        # never got to ask. The client keeps returning None for a run the
+        # orchestrator genuinely answered about, and that still means 404.
+        raise _orchestrator_outage(e, "reading a run") from e
     if result is None:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     return result
@@ -257,7 +238,10 @@ async def get_pipeline_run_logs(
     """Structured, step-by-step log for a run, so the Orchestrator UI can show a
     run's execution narrative instead of just its status. Backed by th2etl's
     ``/runs/{id}/logs``; an empty list under the default Mage orchestrator."""
-    logs = scheduler_client.get_pipeline_run_logs(run_id)
+    try:
+        logs = scheduler_client.get_pipeline_run_logs(run_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "reading a run log") from e
     if not logs:
         # Nothing to leak (Mage no-op, or a run with no captured log): skip the
         # extra upstream call and the ownership check.
@@ -266,7 +250,10 @@ async def get_pipeline_run_logs(
     # may include business content), so — unlike a bare run lookup — verify the
     # run belongs to one of the caller's agents before returning it. The owning
     # agent is the run's scheduler_name (th2etl) / schedule id.
-    run = scheduler_client.get_pipeline_run(run_id)
+    try:
+        run = scheduler_client.get_pipeline_run(run_id)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "reading a run") from e
     owner = run.get("scheduler_name") or run.get("pipeline_schedule_id") if isinstance(run, dict) else None
     user_agent_ids = _get_user_agent_ids(current_user.email)
     if owner is None or str(owner) not in user_agent_ids:
@@ -290,8 +277,14 @@ async def update_pipeline_schedule(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Update a pipeline schedule (status, interval, start_time)."""
-    # Verify the schedule belongs to one of the user's agents
-    all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    # Verify the schedule belongs to one of the user's agents.
+    #
+    # As in ``list_schedule_runs``, an orchestrator that cannot answer would
+    # make this check deny callers their own schedule with a 403.
+    try:
+        all_schedules = scheduler_client.get_pipeline_schedules(pipeline_uuid)
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "listing schedules") from e
     user_agent_ids = _get_user_agent_ids(current_user.email)
     # Compare as strings: Mage schedule ids are ints, th2etl uses the scheduler
     # name (e.g. "1201") as the id. Coercing the path param to int would make a
@@ -302,12 +295,18 @@ async def update_pipeline_schedule(
             status_code=403, detail="This schedule does not belong to your agents."
         )
 
-    result = scheduler_client.update_schedule(
-        schedule_id=schedule_id,
-        schedule_interval=request.schedule_interval,
-        start_time=request.start_time,
-        status=request.status,
-    )
+    # `update_schedule` reports an outage like every other call now, so the
+    # race this used to leave open -- an orchestrator dying between the
+    # ownership check and the update -- answers 503 instead of a bare 500.
+    try:
+        result = scheduler_client.update_schedule(
+            schedule_id=schedule_id,
+            schedule_interval=request.schedule_interval,
+            start_time=request.start_time,
+            status=request.status,
+        )
+    except OrchestratorUnavailable as e:
+        raise _orchestrator_outage(e, "updating a schedule") from e
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to update schedule")
     return result

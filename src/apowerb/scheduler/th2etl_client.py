@@ -24,6 +24,12 @@ from typing import Any
 
 import requests
 
+# Bound by name rather than read off the ``requests`` module global, which the
+# test doubles in this package replace. See ``orchestrator_is_unreachable``.
+from requests.exceptions import InvalidJSONError as _AnsweredUnreadably
+from requests.exceptions import RequestException as _RequestFailed
+from requests.exceptions import TooManyRedirects as _RedirectLoop
+
 from apowerb.configs.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -103,7 +109,235 @@ class OrchestratorUnavailable(RuntimeError):
 
     Kept in this module on purpose: it has no apowerb imports, so both clients
     and the tests that load it by file path can use it.
+
+    ``unreachable`` says which of the two failures happened: nobody answered,
+    or the orchestrator answered and its answer was not the one asked for.
+    Both mean the caller cannot be told what it asked, which is why both leave
+    as 503; only the log level and the sentence differ.
     """
+
+    def __init__(self, message: str, *, unreachable: bool = True, status: int | None = None):
+        super().__init__(message)
+        self.unreachable = unreachable
+        self.status = status
+
+
+# A gateway answering for an orchestrator it could not reach.
+_GATEWAY_CANNOT_REACH_IT = frozenset({502, 503, 504})
+
+
+def _a_list_or_nothing(parsed, what: str, base_url: str):
+    """A listing that is not a list is not an empty listing.
+
+    th2etl answers these endpoints with a bare JSON array, so anything else --
+    an error object, a paginated envelope, `null` -- is an answer we cannot
+    read. Iterating it walked a dict's keys, matched nothing, and produced the
+    empty list this whole change set exists to stop.
+    """
+    if not isinstance(parsed, list):
+        raise OrchestratorUnavailable(
+            f"th2etl answered at {base_url} with something other than a list of "
+            f"{what}",
+            unreachable=False,
+        )
+    return parsed
+
+
+def _an_object_or_nothing(parsed, what: str, base_url: str):
+    """The mirror of ``_a_list_or_nothing``, for answers that are one resource
+    rather than a listing. Without it a body that came back as an array was
+    handed on untouched -- `_to_mage_run` passes non-dicts straight through --
+    and the route served nonsense as a run."""
+    if not isinstance(parsed, dict):
+        raise OrchestratorUnavailable(
+            f"th2etl answered at {base_url} with something other than {what}",
+            unreachable=False,
+        )
+    return parsed
+
+
+def ask_orchestrator(
+    send,
+    *,
+    name: str,
+    base_url: str,
+    doing: str,
+    expect: str | None = None,
+    body: bool = True,
+    enveloped: bool = True,
+):
+    """Make one call to an orchestrator and return the body it promised.
+
+    The single place where a failed call is classified. Before this existed,
+    every method decided for itself and they did not agree: `return []`,
+    `return None`, `return False`, a `.get(key, [])` default that produced an
+    empty answer with **no exception at all**, and parsing left outside the
+    guarded block. Three rounds of review found a new one each round, each time
+    after the previous had been declared fixed -- the last one reaching
+    `get_all_pipelines`, the method that had been considered safe since the
+    outage that started all this. A guard per method could not converge because
+    there was no one place to guard.
+
+    A caller that wants to degrade now says so in two visible lines. Silence is
+    no longer something a method can arrange by accident.
+
+    Raises ``OrchestratorUnavailable`` for every failure, and sets
+    ``unreachable`` to say which kind:
+
+      * no answer came back at all -- refused, DNS, timed out, body cut off,
+        redirect loop, broken encoding;
+      * a gateway answered 502/503/504 for an orchestrator it could not reach;
+      * the orchestrator answered an HTTP error (``unreachable=False``);
+      * it answered 200 with a body that would not parse, that carries an
+        ``error`` envelope, or that lacks the ``expect`` key it promised
+        (``unreachable=False``).
+
+    That last case is the one no ``except`` could ever have caught: the body
+    arrived, `.get(key, [])` handed back an empty list, and an orchestrator
+    saying "not found" rendered as a screen saying "you have none".
+    """
+    try:
+        response = send()
+    except Exception as exc:
+        if orchestrator_is_unreachable(exc):
+            raise OrchestratorUnavailable(
+                f"{name} is unreachable at {base_url}: {exc}"
+            ) from exc
+        raise OrchestratorUnavailable(
+            f"{name} answered but could not {doing} at {base_url}: {exc}",
+            unreachable=False,
+        ) from exc
+
+    status = getattr(response, "status_code", None)
+    if status in _GATEWAY_CANNOT_REACH_IT:
+        raise OrchestratorUnavailable(
+            f"{name} is unreachable at {base_url}: the gateway answered {status}",
+            status=status,
+        )
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        if orchestrator_is_unreachable(exc):
+            raise OrchestratorUnavailable(
+                f"{name} is unreachable at {base_url}: {exc}"
+            ) from exc
+        raise OrchestratorUnavailable(
+            f"{name} answered {status} and could not {doing} at {base_url}",
+            unreachable=False,
+            status=status,
+        ) from exc
+
+    if not body:
+        # A write whose reply carries nothing to read. Parsing it anyway would
+        # turn a perfectly good 204 into "answered with a body that would not
+        # parse".
+        return None
+    try:
+        parsed = response.json()
+    except Exception as exc:
+        raise OrchestratorUnavailable(
+            f"{name} answered {status} at {base_url} with a body that would not parse",
+            unreachable=False,
+            status=status,
+        ) from exc
+
+    # `error` at the top of an *enveloped* answer is the orchestrator refusing.
+    # Where the body IS the resource it is a field of that resource: a th2etl
+    # run that failed carries the exception that killed it, by design, and
+    # reading that as a refusal made `get_pipeline_run` answer `None` for a run
+    # that plainly existed -- "pipeline run not found", a fresh lie about a run.
+    #
+    # Which of the two it is belongs to the API, not to whether this particular
+    # call names a key. Keying it on `expect` was the next version of the same
+    # mistake: it let four Mage writes that unwrap nothing accept
+    # `{"error": "duplicate pipeline uuid"}` as a success.
+    #
+    # And the value, not the key: `{"error": null}` beside a good payload is
+    # not an error.
+    if enveloped and isinstance(parsed, dict) and parsed.get("error"):
+        raise OrchestratorUnavailable(
+            f"{name} answered {status} at {base_url} with an error: "
+            f"{parsed['error']}",
+            unreachable=False,
+            status=status,
+        )
+    if expect is not None:
+        if not isinstance(parsed, dict) or expect not in parsed:
+            raise OrchestratorUnavailable(
+                f"{name} answered {status} at {base_url} without the {expect!r} it "
+                f"promised",
+                unreachable=False,
+                status=status,
+            )
+        return parsed[expect]
+    return parsed
+
+
+def degrade_unless_unreachable(exc: OrchestratorUnavailable, fallback, logger, doing: str):
+    """A caller's deliberate, visible decision to answer something else.
+
+    An orchestrator that answered "no such run" has told us a fact, and the
+    route turns ``None`` into a 404. One that never answered has told us
+    nothing, and the caller must not invent an answer on its behalf.
+    """
+    if exc.unreachable:
+        raise exc
+    logger.error("could not %s: %s", doing, exc)
+    return fallback
+
+
+def orchestrator_is_unreachable(exc: BaseException) -> bool:
+    """Did the call fail to reach the orchestrator at all?
+
+    An HTTP error response means the orchestrator answered, and an answer is
+    not an outage: a 404 for a run that does not exist is a fact about that
+    run. Reporting it as ``OrchestratorUnavailable`` would move the lie rather
+    than remove it -- the caller would show "the scheduler is down" over a
+    scheduler that just told it something true.
+
+    So the question is whether an answer came back at all, and ``requests``
+    already records it: a failure that carries no ``response`` never got one.
+    That covers more than a refused connection -- a DNS miss, a read timeout,
+    a body cut off mid-flight, a redirect loop, a broken content encoding. An
+    earlier version named ``ConnectionError`` and ``Timeout`` explicitly and
+    let the other three through, which is the same bug in a narrower disguise.
+
+    One failure carries no response and is still an answer: a body that came
+    back whole and would not parse. The orchestrator replied; we could not
+    read it. That is a fact about the payload, not about reachability.
+
+    A **gateway** saying it could not reach the orchestrator counts too. 502,
+    503 and 504 are exactly that answer: the proxy is up, the thing behind it
+    is not. Reading them as "it answered, degrade quietly" put the original
+    bug straight back on every route sitting behind an nginx, a Traefik or an
+    ALB -- the ordinary deployment, not an edge case. Every other status
+    carries a fact about the request rather than about reachability.
+
+    The classes are imported by name rather than read off the module global:
+    the test doubles in this package replace ``th2etl_client.requests`` with a
+    fake that collapses the hierarchy to bare ``Exception``, under which an
+    answered 500 and a refused connection become indistinguishable. Asking
+    "did the response come back empty-handed" would then read one as the
+    other -- which is exactly how the first version of this helper turned an
+    upstream 500 into "the orchestrator is unreachable".
+
+    Lives beside ``OrchestratorUnavailable`` and not in a helpers module for
+    the same reason it does: both clients need it, and this module imports
+    nothing from apowerb.
+    """
+    if isinstance(exc, _AnsweredUnreadably):
+        return False
+    if isinstance(exc, _RedirectLoop):
+        # `requests` attaches the last redirect to this one, so asking whether a
+        # response came back does not catch it -- and a loop of redirects never
+        # reached the orchestrator either. A test that built this exception by
+        # hand, without the response `requests` always attaches, passed for an
+        # input that cannot occur and hid exactly this.
+        return True
+    if isinstance(exc, _RequestFailed) and getattr(exc, "response", None) is None:
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status in _GATEWAY_CANNOT_REACH_IT
 
 
 class Th2etlAPIClient:
@@ -132,17 +366,44 @@ class Th2etlAPIClient:
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
 
+    def _ask(self, send, *, doing: str, expect: str | None = None, body: bool = True):
+        """Every call this client makes goes through here. See
+        ``ask_orchestrator``.
+
+        ``enveloped=False``: th2etl answers with the resource itself, so a
+        top-level ``error`` belongs to that resource -- a failed run carries the
+        exception that killed it.
+        """
+        return ask_orchestrator(
+            send,
+            name="th2etl",
+            base_url=self.base_url,
+            doing=doing,
+            expect=expect,
+            body=body,
+            enveloped=False,
+        )
+
     def _trigger_name(self, agent_id: str) -> str:
         return f"{agent_id}_trigger"
 
     # --- pipeline lifecycle (orchestrator init) ----------------------------
     def pipeline_exists(self, pipeline_uuid: str) -> bool:
+        """Check if a pipeline exists."""
         try:
-            resp = self._http.get(self._url(f"/pipelines/{pipeline_uuid}"), timeout=self.timeout)
-            return resp.status_code == 200
-        except requests.RequestException as e:
-            logger.error("th2etl pipeline_exists failed: %s", e)
-            return False
+            self._ask(
+                lambda: self._http.get(
+                    self._url(f"/pipelines/{pipeline_uuid}"), timeout=self.timeout
+                ),
+                doing="check whether a pipeline exists",
+            )
+        except OrchestratorUnavailable as e:
+            # "There is no such pipeline" is the question being asked, and a 404
+            # is a real answer to it. "I could not reach anyone" is not, and
+            # answering `False` to that is how `POST /pipelines/agents/triggers`
+            # kept returning a bare 500 while it was believed fixed.
+            return degrade_unless_unreachable(e, False, logger, "check a pipeline")
+        return True
 
     def create_pipeline(self, pipeline_uuid: str) -> dict[str, Any] | None:
         # In th2etl the agent pipelines are provisioned by the seed
@@ -156,24 +417,17 @@ class Th2etlAPIClient:
         return None
 
     def get_all_pipelines(self) -> list:
-        try:
-            resp = self._http.get(self._url("/pipelines/"), timeout=self.timeout)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            logger.error("th2etl get_all_pipelines failed: %s", e)
-            raise OrchestratorUnavailable(
-                f"th2etl is unreachable at {self.base_url}: {e}"
-            ) from e
+        """Every pipeline th2etl knows about.
 
-    # --- block lifecycle (orchestrator init) -------------------------------
-    # In Mage the orchestrator injects an ``agent_exe`` code block that POSTs
-    # to /api/adk/run_from_jwt. th2etl owns that logic server-side: the agent
-    # execution blocs (``run_adk_from_jwt``) are provisioned by the th2etl
-    # seed alongside their pipeline. So the adapter reports the block as
-    # present and makes creation a no-op — injecting a Mage code block into
-    # th2etl would be wrong. Without these, _initialize_pipeline() would hit
-    # AttributeError the first time an agent is scheduled under ORCHESTRATOR=th2etl.
+        Raises rather than degrading: "unreachable" and "there are none" are
+        different answers, and only the caller can act on the difference.
+        """
+        pipelines = self._ask(
+            lambda: self._http.get(self._url("/pipelines/"), timeout=self.timeout),
+            doing="list pipelines",
+        )
+        return _a_list_or_nothing(pipelines, "pipelines", self.base_url)
+
     def block_exists(self, pipeline_uuid: str, block_uuid: str) -> bool:
         logger.debug(
             "th2etl block_exists(%r/%r) -> True (execution bloc is managed by the "
@@ -220,18 +474,33 @@ class Th2etlAPIClient:
 
         Each entry exposes ``id`` and ``name`` both set to the scheduler name
         (callers filter by ``name == agent_id`` and pass ``id`` back)."""
-        try:
-            resp = self._http.get(self._url("/schedulers/"), timeout=self.timeout)
-            resp.raise_for_status()
-            schedulers = resp.json()
-        except requests.RequestException as e:
-            logger.error("th2etl get_pipeline_schedules failed: %s", e)
-            return []
+        schedulers = self._ask(
+            lambda: self._http.get(self._url("/schedulers/"), timeout=self.timeout),
+            doing="list schedules",
+        )
+        # Iterating a dict here walked its keys, matched nothing, and returned
+        # an empty list: an answer we never received, in the shape of one we did.
+        _a_list_or_nothing(schedulers, "schedulers", self.base_url)
         out = []
         for s in schedulers:
-            if s.get("pipeline_name") != pipeline_uuid:
+            if not isinstance(s, dict) or s.get("pipeline_name") != pipeline_uuid:
                 continue
-            out.append({"id": s["name"], "name": s["name"], "status": "active" if s.get("active", True) else "inactive"})
+            name = s.get("name")
+            if name is None:
+                # Reading `s["name"]` raised a bare `KeyError` from outside every
+                # guard, and four routes answered 500 with no body at all.
+                raise OrchestratorUnavailable(
+                    f"th2etl answered at {self.base_url} with a scheduler carrying "
+                    f"no name",
+                    unreachable=False,
+                )
+            out.append(
+                {
+                    "id": name,
+                    "name": name,
+                    "status": "active" if s.get("active", True) else "inactive",
+                }
+            )
         return out
 
     def create_schedule_trigger(
@@ -249,26 +518,38 @@ class Th2etlAPIClient:
         cron = interval_to_cron(schedule_interval)
         active = start_time is None  # future start -> create disabled, activate later
         try:
-            self._http.post(
-                self._url("/triggers/"),
-                json={"name": self._trigger_name(agent_id), "pipeline_name": pipeline_uuid, "cron_expression": cron},
-                timeout=self.timeout,
-            ).raise_for_status()
-            resp = self._http.post(
-                self._url("/schedulers/"),
-                json={
-                    "name": agent_id,
-                    "pipeline_name": pipeline_uuid,
-                    "trigger_name": self._trigger_name(agent_id),
-                    "variables": runtime_variables or {},
-                    "active": active,
-                },
-                timeout=self.timeout,
+            self._ask(
+                lambda: self._http.post(
+                    self._url("/triggers/"),
+                    json={
+                        "name": self._trigger_name(agent_id),
+                        "pipeline_name": pipeline_uuid,
+                        "cron_expression": cron,
+                    },
+                    timeout=self.timeout,
+                ),
+                doing="create a trigger",
+                body=False,
             )
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            logger.error("th2etl create_schedule_trigger failed for %r: %s", agent_id, e)
-            return None
+            self._ask(
+                lambda: self._http.post(
+                    self._url("/schedulers/"),
+                    json={
+                        "name": agent_id,
+                        "pipeline_name": pipeline_uuid,
+                        "trigger_name": self._trigger_name(agent_id),
+                        "variables": runtime_variables or {},
+                        "active": active,
+                    },
+                    timeout=self.timeout,
+                ),
+                doing="create a scheduler",
+                body=False,
+            )
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(
+                e, None, logger, "create a schedule trigger"
+            )
         return {"id": agent_id, "name": agent_id}
 
     def update_schedule(
@@ -281,45 +562,60 @@ class Th2etlAPIClient:
         """Update a scheduler's active status and/or its trigger's cron."""
         agent_id = schedule_id
         if status is not None:
-            self._http.put(
-                self._url(f"/schedulers/{agent_id}"),
-                json={"active": status == "active"},
-                timeout=self.timeout,
-            ).raise_for_status()
+            self._ask(
+                lambda: self._http.put(
+                    self._url(f"/schedulers/{agent_id}"),
+                    json={"active": status == "active"},
+                    timeout=self.timeout,
+                ),
+                doing="update a schedule",
+                body=False,
+            )
         if schedule_interval is not None:
             cron = interval_to_cron(schedule_interval)
-            self._http.put(
-                self._url(f"/triggers/{self._trigger_name(agent_id)}"),
-                json={"cron_expression": cron},
-                timeout=self.timeout,
-            ).raise_for_status()
+            self._ask(
+                lambda: self._http.put(
+                    self._url(f"/triggers/{self._trigger_name(agent_id)}"),
+                    json={"cron_expression": cron},
+                    timeout=self.timeout,
+                ),
+                doing="update a trigger",
+                body=False,
+            )
         return {"id": agent_id}
 
     def update_schedule_variables(self, schedule_id: str, variables: dict[str, Any]) -> dict[str, Any]:
         """Replace a scheduler's runtime variables (token rotation)."""
-        resp = self._http.put(
-            self._url(f"/schedulers/{schedule_id}/variables"),
-            json={"variables": variables},
-            timeout=self.timeout,
+        self._ask(
+            lambda: self._http.put(
+                self._url(f"/schedulers/{schedule_id}/variables"),
+                json={"variables": variables},
+                timeout=self.timeout,
+            ),
+            doing="update a schedule's variables",
+            body=False,
         )
-        resp.raise_for_status()
         return {"id": schedule_id}
 
-    # --- ad-hoc runs -------------------------------------------------------
     def trigger_pipeline_run_for_schedule(
         self, schedule_id: str, run_variables: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """Trigger the scheduler's pipeline now, merging the scheduler's stored
         variables with ``run_variables``."""
-        resp = self._http.post(
-            self._url(f"/schedulers/{schedule_id}/run"),
-            json={"variables": run_variables or {}},
-            timeout=self.timeout,
+        data = self._ask(
+            lambda: self._http.post(
+                self._url(f"/schedulers/{schedule_id}/run"),
+                json={"variables": run_variables or {}},
+                timeout=self.timeout,
+            ),
+            doing="trigger a run",
         )
-        resp.raise_for_status()
-        data = resp.json()
         # expose both shapes so callers reading "id" or "run_id"/"status" work
-        return {"id": data.get("run_id"), "run_id": data.get("run_id"), "status": data.get("status")}
+        return {
+            "id": data.get("run_id"),
+            "run_id": data.get("run_id"),
+            "status": data.get("status"),
+        }
 
     def trigger_pipeline(
         self, schedule_id: str, trigger_token: str | None = None, run_variables: dict[str, Any] | None = None
@@ -331,33 +627,54 @@ class Th2etlAPIClient:
     # --- run inspection (dashboard) ----------------------------------------
     def get_pipeline_runs(self, schedule_id: str) -> list:
         """Runs for a scheduler (== agent_id), most recent first."""
-        try:
-            resp = self._http.get(self._url(f"/schedulers/{schedule_id}/runs"), timeout=self.timeout)
-            resp.raise_for_status()
-            return [_to_mage_run(r) for r in resp.json()]
-        except requests.RequestException as e:
-            logger.error("th2etl get_pipeline_runs failed for %r: %s", schedule_id, e)
-            return []
+        runs = self._ask(
+            lambda: self._http.get(
+                self._url(f"/schedulers/{schedule_id}/runs"), timeout=self.timeout
+            ),
+            doing="list runs",
+        )
+        _a_list_or_nothing(runs, "runs", self.base_url)
+        return [_to_mage_run(r) for r in runs]
 
-    def get_pipeline_run(self, run_id: int) -> dict[str, Any]:
-        resp = self._http.get(self._url(f"/runs/{run_id}"), timeout=self.timeout)
-        resp.raise_for_status()
-        return _to_mage_run(resp.json())
+    def get_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
+        try:
+            run = self._ask(
+                lambda: self._http.get(
+                    self._url(f"/runs/{run_id}"), timeout=self.timeout
+                ),
+                doing="read a run",
+            )
+        except OrchestratorUnavailable as e:
+            # Asking after one run has a legitimate negative answer, and `None`
+            # is what the route turns into 404. Not reaching anyone does not.
+            return degrade_unless_unreachable(e, None, logger, "read a run")
+        return _to_mage_run(_an_object_or_nothing(run, "a run", self.base_url))
 
     def get_pipeline_run_logs(self, run_id: int) -> list[dict[str, Any]]:
         """Structured, step-by-step log for a run (th2etl-native
         ``GET /runs/{id}/logs``). Each entry is ``{id, run_id, ts, level,
-        logger_name, message}`` in chronological order. Returns ``[]`` on error
-        so the dashboard degrades gracefully rather than 500-ing."""
-        try:
-            resp = self._http.get(self._url(f"/runs/{run_id}/logs"), timeout=self.timeout)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            logger.error("th2etl get_pipeline_run_logs failed for %r: %s", run_id, e)
-            return []
+        logger_name, message}`` in chronological order.
 
-    def cancel_pipeline_run(self, run_id: int) -> dict[str, Any]:
-        resp = self._http.post(self._url(f"/runs/{run_id}/cancel"), timeout=self.timeout)
-        resp.raise_for_status()
-        return _to_mage_run(resp.json())
+        Raises rather than degrading to ``[]``. This docstring used to promise
+        the opposite -- "returns [] on error so the dashboard degrades
+        gracefully" -- and the dashboard duly stayed up saying the run had
+        produced no log, which is a claim about the run and was not true."""
+        logs = self._ask(
+            lambda: self._http.get(
+                self._url(f"/runs/{run_id}/logs"), timeout=self.timeout
+            ),
+            doing="read a run log",
+        )
+        return _a_list_or_nothing(logs, "log entries", self.base_url)
+
+    def cancel_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
+        try:
+            run = self._ask(
+                lambda: self._http.post(
+                    self._url(f"/runs/{run_id}/cancel"), timeout=self.timeout
+                ),
+                doing="cancel a run",
+            )
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "cancel a run")
+        return _to_mage_run(_an_object_or_nothing(run, "a run", self.base_url))

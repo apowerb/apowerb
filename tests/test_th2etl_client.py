@@ -230,10 +230,15 @@ def test_get_pipeline_run_logs_hits_logs_endpoint(fake, client):
     assert logs[0]["message"] == "Run 7 started"
 
 
-def test_get_pipeline_run_logs_returns_empty_on_error(fake, client):
-    # a failing upstream must degrade to [] (dashboard stays up), not raise
+def test_get_pipeline_run_logs_refuses_to_degrade_to_an_empty_log(fake, client):
+    """This used to assert the opposite: a failing upstream degraded to `[]` so
+    the dashboard stayed up. It stayed up saying the run had produced no log,
+    which is a claim about the run and was not true -- the same shape as the
+    empty pipeline list that `OrchestratorUnavailable` was introduced to stop.
+    The dashboard still stays up; it now says it could not read the log."""
     fake.responses[("GET", "http://th2etl:8009/runs/9/logs")] = _Resp(500, {})
-    assert client.get_pipeline_run_logs(9) == []
+    with pytest.raises(th2etl_client.OrchestratorUnavailable):
+        client.get_pipeline_run_logs(9)
 
 
 def test_status_mapping_covers_all_th2etl_statuses():

@@ -3,7 +3,11 @@ from apowerb.configs.th2logger import setup_logging
 from typing import Any
 import requests
 from apowerb.configs.settings import get_settings
-from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
+from apowerb.scheduler.th2etl_client import (
+    OrchestratorUnavailable,
+    ask_orchestrator,
+    degrade_unless_unreachable,
+)
 
 logger = setup_logging(__name__)
 
@@ -52,65 +56,72 @@ class MageAPIClient:
             headers["Cookie"] = f"oauth_token={self.oauth_token}"
         return headers
 
+    def _ask(self, send, *, doing: str, expect: str | None = None, body: bool = True):
+        """Every call this client makes goes through here. See
+        ``ask_orchestrator``.
+
+        Mage wraps every answer, including its refusals, so a top-level
+        ``error`` is Mage saying no -- whether or not this particular call
+        unwraps a key afterwards.
+        """
+        return ask_orchestrator(
+            send,
+            name="Mage",
+            base_url=self.base_url,
+            doing=doing,
+            expect=expect,
+            body=body,
+        )
+
     def pipeline_exists(self, pipeline_uuid: str) -> bool:
         """Check if a pipeline exists."""
         try:
-            url = f"{self.base_url}/api/pipelines/{pipeline_uuid}"
-            response = requests.get(url, headers=self._get_headers(), timeout=10)
-
-            if response.status_code == 200:
-                data = response.json()
-                if "error" in data:
-                    return False
-                return True
-            return False
-        except Exception as e:
-            print(f"Error checking pipeline existence: {e}")
-            return False
+            self._ask(
+                lambda: requests.get(
+                    f"{self.base_url}/api/pipelines/{pipeline_uuid}",
+                    headers=self._get_headers(),
+                    timeout=10,
+                ),
+                doing="check whether a pipeline exists",
+            )
+        except OrchestratorUnavailable as e:
+            # "There is no such pipeline" is the question being asked, and Mage
+            # saying so is a real answer to it. "Nobody answered" is not.
+            return degrade_unless_unreachable(e, False, logger, "check a pipeline")
+        return True
 
     def create_pipeline(
         self, pipeline_uuid: str, pipeline_type: str = "python"
     ) -> dict[str, Any] | None:
         """Create a new pipeline."""
         payload = {"pipeline": {"name": pipeline_uuid, "type": pipeline_type}}
-
         try:
-            url = f"{self.base_url}/api/pipelines"
-            response = requests.post(
-                url, headers=self._get_headers(), json=payload, timeout=10
+            return self._ask(
+                lambda: requests.post(
+                    f"{self.base_url}/api/pipelines",
+                    headers=self._get_headers(),
+                    json=payload,
+                    timeout=10,
+                ),
+                doing="create a pipeline",
             )
-
-            if response.status_code == 200:
-                data = response.json()
-                if "error" in data:
-                    print("❌ Failed to create pipeline.")
-                    print(f"Response: {json.dumps(data, indent=2)}")
-                    return None
-                print(f"✅ Pipeline '{pipeline_uuid}' created successfully!")
-                return data
-            else:
-                print(f"❌ Failed to create pipeline. Status: {response.status_code}")
-                print(f"Response: {response.text}")
-                return None
-        except Exception as e:
-            print(f"❌ Error creating pipeline: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "create a pipeline")
 
     def block_exists(self, pipeline_uuid: str, block_uuid: str) -> bool:
         """Check if a block exists in a pipeline."""
         try:
-            url = f"{self.base_url}/api/pipelines/{pipeline_uuid}/blocks/{block_uuid}"
-            response = requests.get(url, headers=self._get_headers(), timeout=10)
-
-            if response.status_code == 200:
-                data = response.json()
-                if "error" in data:
-                    return False
-                return "block" in data and data["block"] is not None
-            return False
-        except Exception as e:
-            print(f"Error checking block existence: {e}")
-            return False
+            data = self._ask(
+                lambda: requests.get(
+                    f"{self.base_url}/api/pipelines/{pipeline_uuid}/blocks/{block_uuid}",
+                    headers=self._get_headers(),
+                    timeout=10,
+                ),
+                doing="check whether a block exists",
+            )
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, False, logger, "check a block")
+        return isinstance(data, dict) and data.get("block") is not None
 
     def create_block(
         self,
@@ -131,39 +142,36 @@ class MageAPIClient:
             },
             "api_key": self.api_key,
         }
-
         try:
-            url = f"{self.base_url}/api/pipelines/{pipeline_uuid}/blocks"
-            response = requests.post(
-                url, headers=self._get_headers(), json=payload, timeout=15
+            return self._ask(
+                lambda: requests.post(
+                    f"{self.base_url}/api/pipelines/{pipeline_uuid}/blocks",
+                    headers=self._get_headers(),
+                    json=payload,
+                    timeout=15,
+                ),
+                doing="create a block",
             )
-
-            if response.status_code in [200, 201]:
-                data = response.json()
-                if "error" in data:
-                    print("❌ Failed to create block.")
-                    print(f"Response: {json.dumps(data, indent=2)}")
-                    return None
-                print(f"✅ Block '{block_name}' created successfully!")
-                return data
-            else:
-                print(f"❌ Failed to create block. Status: {response.status_code}")
-                print(f"Response: {response.text}")
-                return None
-        except Exception as e:
-            print(f"❌ Error creating block: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "create a block")
 
     def get_pipeline_schedules(self, pipeline_uuid: str) -> list:
-        """Get all pipeline schedules/triggers."""
-        url = f"{self.base_url}/api/pipelines/{pipeline_uuid}/pipeline_schedules"
-        try:
-            response = requests.get(url, headers=self._get_headers(), timeout=15)
-            response.raise_for_status()
-            return response.json().get("pipeline_schedules", [])
-        except Exception as e:
-            print(f"Error fetching schedules: {e}")
-            return []
+        """Get all pipeline schedules/triggers.
+
+        Raises rather than degrading. `.get("pipeline_schedules", [])` used to
+        hand back an empty list for a body that said `{"error": ...}` -- an
+        answer nobody could question, because no exception was ever raised for
+        anyone to catch. Naming the key here is what turns that into a failure.
+        """
+        return self._ask(
+            lambda: requests.get(
+                f"{self.base_url}/api/pipelines/{pipeline_uuid}/pipeline_schedules",
+                headers=self._get_headers(),
+                timeout=15,
+            ),
+            doing="list schedules",
+            expect="pipeline_schedules",
+        )
 
     def get_all_pipelines(self) -> list:
         """Get all pipelines.
@@ -173,27 +181,27 @@ class MageAPIClient:
         exception it never got, and printed "Successfully connected" over a
         dead Mage.
         """
-        url = f"{self.base_url}/api/pipelines"
-        try:
-            response = requests.get(url, headers=self._get_headers(), timeout=15)
-            response.raise_for_status()
-            return response.json().get("pipelines", [])
-        except Exception as e:
-            print(f"Error fetching pipelines: {e}")
-            raise OrchestratorUnavailable(
-                f"Mage is unreachable at {self.base_url}: {e}"
-            ) from e
+        return self._ask(
+            lambda: requests.get(
+                f"{self.base_url}/api/pipelines",
+                headers=self._get_headers(),
+                timeout=15,
+            ),
+            doing="list pipelines",
+            expect="pipelines",
+        )
 
     def get_pipeline_runs(self, schedule_id: int) -> list:
         """Get pipeline runs for a specific schedule."""
-        url = f"{self.base_url}/api/pipeline_schedules/{schedule_id}/pipeline_runs"
-        try:
-            response = requests.get(url, headers=self._get_headers(), timeout=15)
-            response.raise_for_status()
-            return response.json().get("pipeline_runs", [])
-        except Exception as e:
-            print(f"Error fetching pipeline runs: {e}")
-            return []
+        return self._ask(
+            lambda: requests.get(
+                f"{self.base_url}/api/pipeline_schedules/{schedule_id}/pipeline_runs",
+                headers=self._get_headers(),
+                timeout=15,
+            ),
+            doing="list runs",
+            expect="pipeline_runs",
+        )
 
     def update_schedule_variables(
         self,
@@ -203,32 +211,26 @@ class MageAPIClient:
         """
         Update the runtime variables stored in a pipeline schedule.
         """
-        url = f"{self.base_url}/api/pipeline_schedules/{schedule_id}?project={self.project_name}"
-
+        url = (
+            f"{self.base_url}/api/pipeline_schedules/{schedule_id}"
+            f"?project={self.project_name}"
+        )
         payload = {
-            "pipeline_schedule": {
-                "variables": variables,
-            },
+            "pipeline_schedule": {"variables": variables},
             "api_key": self.api_key,
         }
-
         try:
-            response = requests.put(
-                url, headers=self._get_headers(), json=payload, timeout=30
+            return self._ask(
+                lambda: requests.put(
+                    url, headers=self._get_headers(), json=payload, timeout=30
+                ),
+                doing="update a schedule's variables",
+                expect="pipeline_schedule",
             )
-            response.raise_for_status()
-
-            data = response.json()
-            if "error" in data:
-                print(f"❌ Failed to update schedule variables: {data.get('error')}")
-                return None
-
-            print(f"✅ Schedule variables updated for schedule_id: {schedule_id}")
-            return data.get("pipeline_schedule", {})
-
-        except Exception as e:
-            print(f"❌ Error updating schedule variables: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(
+                e, None, logger, "update a schedule's variables"
+            )
 
     def update_schedule(
         self,
@@ -240,8 +242,6 @@ class MageAPIClient:
         """
         Update a pipeline schedule's interval, start time, and/or status.
         """
-        url = f"{self.base_url}/api/pipeline_schedules/{schedule_id}?project={self.project_name}"
-
         updates = {}
         if schedule_interval is not None:
             updates["schedule_interval"] = schedule_interval
@@ -253,28 +253,21 @@ class MageAPIClient:
         if not updates:
             return None
 
-        payload = {
-            "pipeline_schedule": updates,
-            "api_key": self.api_key,
-        }
-
+        payload = {"pipeline_schedule": updates, "api_key": self.api_key}
+        url = (
+            f"{self.base_url}/api/pipeline_schedules/{schedule_id}"
+            f"?project={self.project_name}"
+        )
         try:
-            response = requests.put(
-                url, headers=self._get_headers(), json=payload, timeout=30
+            return self._ask(
+                lambda: requests.put(
+                    url, headers=self._get_headers(), json=payload, timeout=30
+                ),
+                doing="update a schedule",
+                expect="pipeline_schedule",
             )
-            response.raise_for_status()
-
-            data = response.json()
-            if "error" in data:
-                print(f"Failed to update schedule: {data.get('error')}")
-                return None
-
-            print(f"Schedule updated for schedule_id: {schedule_id}")
-            return data.get("pipeline_schedule", {})
-
-        except Exception as e:
-            print(f"Error updating schedule: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "update a schedule")
 
     def trigger_pipeline_run_for_schedule(
         self,
@@ -284,8 +277,10 @@ class MageAPIClient:
         """
         Create a pipeline run for a schedule (works for both API and time-based schedules).
         """
-        url = f"{self.base_url}/api/pipeline_schedules/{schedule_id}/pipeline_runs?project={self.project_name}"
-
+        url = (
+            f"{self.base_url}/api/pipeline_schedules/{schedule_id}/pipeline_runs"
+            f"?project={self.project_name}"
+        )
         payload = {
             "pipeline_run": {
                 "pipeline_schedule_id": schedule_id,
@@ -293,55 +288,48 @@ class MageAPIClient:
             },
             "api_key": self.api_key,
         }
-
         try:
-            response = requests.post(
-                url, headers=self._get_headers(), json=payload, timeout=30
+            return self._ask(
+                lambda: requests.post(
+                    url, headers=self._get_headers(), json=payload, timeout=30
+                ),
+                doing="create a run",
             )
-            response.raise_for_status()
-
-            data = response.json()
-            if "error" in data:
-                print(f"❌ Failed to create pipeline run: {data.get('error')}")
-                return None
-
-            run_info = data.get("pipeline_run", {})
-            run_id = run_info.get("id")
-            status = run_info.get("status")
-
-            print("✅ Pipeline run created!")
-            print(f"   Run ID: {run_id}")
-            print(f"   Status: {status}")
-
-            return data
-        except Exception as e:
-            print(f"❌ Error creating pipeline run: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "create a run")
 
     def cancel_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
         """Cancel a pipeline run by setting its status to cancelled."""
-        url = f"{self.base_url}/api/pipeline_runs/{run_id}"
-        payload = {"pipeline_run": {"status": "cancelled"}}
         try:
-            response = requests.put(
-                url, headers=self._get_headers(), json=payload, timeout=15
+            return self._ask(
+                lambda: requests.put(
+                    f"{self.base_url}/api/pipeline_runs/{run_id}",
+                    headers=self._get_headers(),
+                    json={"pipeline_run": {"status": "cancelled"}},
+                    timeout=15,
+                ),
+                doing="cancel a run",
+                expect="pipeline_run",
             )
-            response.raise_for_status()
-            return response.json().get("pipeline_run", {})
-        except Exception as e:
-            print(f"Error cancelling pipeline run: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "cancel a run")
 
     def get_pipeline_run(self, run_id: int) -> dict[str, Any] | None:
         """Get detailed info for a specific pipeline run."""
-        url = f"{self.base_url}/api/pipeline_runs/{run_id}"
         try:
-            response = requests.get(url, headers=self._get_headers(), timeout=15)
-            response.raise_for_status()
-            return response.json().get("pipeline_run", {})
-        except Exception as e:
-            print(f"Error fetching pipeline run: {e}")
-            return None
+            return self._ask(
+                lambda: requests.get(
+                    f"{self.base_url}/api/pipeline_runs/{run_id}",
+                    headers=self._get_headers(),
+                    timeout=15,
+                ),
+                doing="read a run",
+                expect="pipeline_run",
+            )
+        except OrchestratorUnavailable as e:
+            # Asking after one run has a legitimate negative answer, and `None`
+            # is what the route turns into 404.
+            return degrade_unless_unreachable(e, None, logger, "read a run")
 
     def get_pipeline_run_logs(self, run_id: int) -> list[dict[str, Any]]:
         """No-op: Mage has no per-run structured log endpoint in this app. Return
@@ -388,8 +376,10 @@ class MageAPIClient:
         # fire at the first cron slot before the intended start_time.
         initial_status = "inactive" if starts_in_future else "active"
 
-        url = f"{self.base_url}/api/pipelines/{pipeline_uuid}/pipeline_schedules?project={self.project_name}"
-
+        url = (
+            f"{self.base_url}/api/pipelines/{pipeline_uuid}/pipeline_schedules"
+            f"?project={self.project_name}"
+        )
         payload = {
             "pipeline_schedule": {
                 "name": trigger_name,
@@ -403,40 +393,28 @@ class MageAPIClient:
             },
             "api_key": self.api_key,
         }
-
         try:
-            response = requests.post(
-                url, headers=self._get_headers(), json=payload, timeout=15
+            schedule_info = self._ask(
+                lambda: requests.post(
+                    url, headers=self._get_headers(), json=payload, timeout=15
+                ),
+                doing="create a schedule trigger",
+                expect="pipeline_schedule",
             )
-            response.raise_for_status()
-
-            data = response.json()
-            if "error" in data:
-                print(f"❌ Failed to create schedule trigger: {data.get('error')}")
-                return None
-
-            schedule_info = data.get("pipeline_schedule", {})
-            schedule_id = schedule_info.get("id")
-
-            print(f"✅ Schedule trigger '{trigger_name}' created!")
-            print(f"   Schedule ID: {schedule_id}")
-            print(f"   Interval: {schedule_interval}")
-            print(f"   Start Time: {start_time or 'Immediately'}")
-            print(f"   Status: {initial_status} {'(will activate at start_time)' if starts_in_future else ''}")
-
-            return {
-                "id": schedule_id,
-                "name": trigger_name,
-                "schedule_type": "time",
-                "schedule_interval": schedule_interval,
-                "start_time": start_time,
-                "status": initial_status,
-                "starts_in_future": starts_in_future,
-                "variables": runtime_variables,
-            }
-        except Exception as e:
-            print(f"❌ Error creating schedule trigger: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(
+                e, None, logger, "create a schedule trigger"
+            )
+        return {
+            "id": (schedule_info or {}).get("id"),
+            "name": trigger_name,
+            "schedule_type": "time",
+            "schedule_interval": schedule_interval,
+            "start_time": start_time,
+            "status": initial_status,
+            "starts_in_future": starts_in_future,
+            "variables": runtime_variables,
+        }
 
     def create_api_trigger(
         self,
@@ -445,8 +423,10 @@ class MageAPIClient:
         runtime_variables: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Create an API trigger for a pipeline with runtime variables at trigger level."""
-        url = f"{self.base_url}/api/pipelines/{pipeline_uuid}/pipeline_schedules?project={self.project_name}"
-
+        url = (
+            f"{self.base_url}/api/pipelines/{pipeline_uuid}/pipeline_schedules"
+            f"?project={self.project_name}"
+        )
         payload = {
             "pipeline_schedule": {
                 "name": trigger_name,
@@ -454,37 +434,23 @@ class MageAPIClient:
                 "status": "active",
             }
         }
-
-        # Add runtime variables at the trigger level
         if runtime_variables:
             payload["pipeline_schedule"]["variables"] = runtime_variables
 
         try:
-            response = requests.post(
-                url, headers=self._get_headers(), json=payload, timeout=15
+            schedule = self._ask(
+                lambda: requests.post(
+                    url, headers=self._get_headers(), json=payload, timeout=15
+                ),
+                doing="create an API trigger",
+                expect="pipeline_schedule",
             )
-            data = response.json()
-
-            if "error" in data:
-                print("❌ Mage returned an error during trigger creation")
-                print(json.dumps(data, indent=2))
-                return None
-
-            schedule = data.get("pipeline_schedule")
-            if schedule and schedule.get("id") and schedule.get("token"):
-                print(f"✅ API Trigger '{trigger_name}' created successfully!")
-                if runtime_variables:
-                    print(
-                        f"   Runtime variables: {json.dumps(runtime_variables, indent=2)}"
-                    )
-                return schedule
-            else:
-                print("❌ Trigger creation failed")
-                print(json.dumps(data, indent=2))
-                return None
-        except Exception as e:
-            print(f"❌ Error creating API trigger: {e}")
-            return None
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "create an API trigger")
+        if isinstance(schedule, dict) and schedule.get("id") and schedule.get("token"):
+            return schedule
+        logger.error("Mage created a trigger with no id or token: %r", schedule)
+        return None
 
     def trigger_pipeline(
         self,
@@ -493,28 +459,22 @@ class MageAPIClient:
         run_variables: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Trigger a pipeline execution (creates a new run)."""
-        url = f"{self.base_url}/api/pipeline_schedules/{schedule_id}/pipeline_runs/{trigger_token}"
-
+        url = (
+            f"{self.base_url}/api/pipeline_schedules/{schedule_id}"
+            f"/pipeline_runs/{trigger_token}"
+        )
         payload = {}
         if run_variables:
             payload["pipeline_run"] = {"variables": run_variables}
-
         try:
-            response = requests.post(
-                url, headers=self._get_headers(), json=payload, timeout=15
+            return self._ask(
+                lambda: requests.post(
+                    url, headers=self._get_headers(), json=payload, timeout=15
+                ),
+                doing="trigger a pipeline",
             )
-            data = response.json()
-
-            if "error" in data:
-                print("❌ Mage returned an error during pipeline trigger")
-                print(json.dumps(data, indent=2))
-                return None
-
-            return data
-        except Exception as e:
-            print(f"❌ Error triggering pipeline: {e}")
-            return None
-
+        except OrchestratorUnavailable as e:
+            return degrade_unless_unreachable(e, None, logger, "trigger a pipeline")
 
 class AgentOrchestrator:
     """Orchestrates Mage pipelines for agent execution."""
@@ -546,6 +506,14 @@ class AgentOrchestrator:
             print(f"   ✗ Failed to create pipeline '{self.PIPELINE_UUID}'")
             print(f"   Debug: create_pipeline returned: {result}")
             return False
+        except OrchestratorUnavailable:
+            # `return False` below becomes a bare "failed to initialize pipeline
+            # infrastructure" two frames up, and a 500 at the API. Steps 1 and 2
+            # were left out of the first pass: an orchestrator that answered the
+            # connectivity check and died a moment later came back as a 500 on
+            # `POST /pipelines/agents/triggers`, which is the very thing that
+            # commit set out to remove.
+            raise
         except Exception as e:
             print(f"   ✗ Exception in _ensure_pipeline_exists: {e}")
             import traceback
@@ -649,6 +617,14 @@ def load_agent_data(*args, **kwargs):
             print(f"   ✗ Failed to create block '{self.BLOCK_UUID}'")
             print(f"   Debug: create_block returned: {result}")
             return False
+        except OrchestratorUnavailable:
+            # `return False` below becomes a bare "failed to initialize pipeline
+            # infrastructure" two frames up, and a 500 at the API. Steps 1 and 2
+            # were left out of the first pass: an orchestrator that answered the
+            # connectivity check and died a moment later came back as a 500 on
+            # `POST /pipelines/agents/triggers`, which is the very thing that
+            # commit set out to remove.
+            raise
         except Exception as e:
             print(f"   ✗ Exception in _ensure_block_exists: {e}")
             import traceback
@@ -671,6 +647,14 @@ def load_agent_data(*args, **kwargs):
             pipelines = self.client.get_all_pipelines()
             print("   ✓ Successfully connected to Mage API")
             print(f"   Found {len(pipelines)} existing pipelines")
+        except OrchestratorUnavailable:
+            # Let this one out. Both callers turn ``return False`` into
+            # ``Exception("Failed to initialize pipeline infrastructure")``,
+            # which reaches the API as a 500 pointing whoever reads it at the
+            # pipeline -- when what happened is that the orchestrator never
+            # answered. ``get_all_pipelines`` was made to raise precisely so
+            # this could be told apart; catching it here threw that away.
+            raise
         except Exception as e:
             print(f"   ✗ Failed to connect to Mage API: {e}")
             print(f"   Base URL: {self.client.base_url}")

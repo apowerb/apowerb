@@ -789,6 +789,12 @@ async def schedule_agent_run_endpoint(
 
     logger.info(f"[SCHEDULE] Scheduling agent: {request.agent_id} with interval: {request.schedule_interval}")
 
+    # Imported here rather than at module level: this file's top-level imports
+    # already sit after module code, and two more would only add to that.
+    from apowerb.scheduler.th2etl_client import (
+        OrchestratorUnavailable as _OrchestratorUnavailable,
+    )
+
     try:
         result = await schedule_agent_run(
             agent_id=request.agent_id,
@@ -805,6 +811,14 @@ async def schedule_agent_run_endpoint(
         logger.info(f"[SCHEDULE] Successfully scheduled: run_id={result.get('run_id')}")
         return result
 
+    except _OrchestratorUnavailable as e:
+        from apowerb.scheduler.outage import outage_response
+
+        # `/run_now`, forty lines below, already answers 503 here. Left out of
+        # this one, an orchestrator that never replied came back as "check the
+        # agent_id and schedule_interval" -- sending whoever read it to inspect
+        # their own input for a fault that was never theirs.
+        raise outage_response(e, "scheduling a run", get_settings(), logger) from e
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -836,6 +850,12 @@ async def run_agent_now_endpoint(
     agent_id = request.agent_id
 
     logger.info(f"[RUN NOW] Triggering immediate run for agent: {agent_id}")
+
+    # Imported here: this module's top-level imports already sit after module
+    # code, and two more would only add to that.
+    from apowerb.scheduler.th2etl_client import (
+        OrchestratorUnavailable as _OrchestratorUnavailable,
+    )
 
     try:
         # 1. Validate agent exists
@@ -920,6 +940,13 @@ async def run_agent_now_endpoint(
 
     except HTTPException:
         raise
+    except _OrchestratorUnavailable as e:
+        # Shares the orchestrator client with the scheduler screens, so it meets
+        # the same outage; without this it answered a generic 500 pointing at
+        # the agent rather than at the scheduler that never replied.
+        from apowerb.scheduler.outage import outage_response
+
+        raise outage_response(e, "triggering a run", get_settings(), logger) from e
     except Exception as e:
         raise HTTPException(
             status_code=500,
