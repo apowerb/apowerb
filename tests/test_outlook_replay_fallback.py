@@ -178,6 +178,70 @@ class TestReplayPathIntegration:
         # staged on disk where tool_pdf_first_page reads
         assert os.path.exists(os.path.join("uploads", "agent999", "AR_CF101085.pdf"))
 
+    async def test_a_replay_that_cannot_stage_its_pdf_fails(self, stored_pdf, monkeypatch):
+        """Nothing staged must fail the job, not proceed on an unread document.
+
+        The note asks the agent to report that it could not read the document,
+        but a prompt is not a mechanism: told no PDF is available, a model can
+        still answer from the subject line, and that answer is persisted and
+        mailed exactly like a real one. Raising is what marks the row failed
+        and lets the backlog worker retry.
+        """
+        import contextlib
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        import pytest as _pytest
+        import apowerb.routers.webhook_handlers.outlook as ol
+
+        # Reader folders unknown -> the helper stages nothing, by design.
+        monkeypatch.setattr(ol, "_stage_stored_attachments", lambda a, i: [])
+
+        log_row = SimpleNamespace(
+            id=998,
+            subscription_id=1,
+            user_id=3,
+            agent_id=998,
+            resource_id="res",
+            agent_message="Subject: CC n CF101085\n\nbody",
+            email_subject="CC n 11077978 V/R:CF101085",
+            email_sender="x@dupont-est.fr",
+            attachments=[stored_pdf],
+        )
+
+        class _DB:
+            async def get(self, model, _id):
+                return log_row
+
+            async def commit(self):
+                return None
+
+        @contextlib.asynccontextmanager
+        async def _session():
+            yield _DB()
+
+        monkeypatch.setattr(ol.sessionmanager, "session", _session)
+        monkeypatch.setattr(
+            ol.OutlookWebhookService, "get_access_token_for_user",
+            AsyncMock(return_value="tok"),
+        )
+        monkeypatch.setattr(
+            ol.OutlookWebhookService, "fetch_email",
+            AsyncMock(side_effect=RuntimeError(
+                "Failed to fetch email from Graph API (HTTP 404): ErrorItemNotFound")),
+        )
+        ran = {"called": False}
+
+        async def _run(**kw):
+            ran["called"] = True
+            return "done"
+
+        monkeypatch.setattr(ol, "run_agent_for_webhook", _run)
+        monkeypatch.setattr(ol, "create_webhook_notification", AsyncMock(), raising=False)
+
+        with _pytest.raises(RuntimeError, match="none could be staged"):
+            await ol.process_webhook_log_row(998)
+        assert not ran["called"], "the pipeline ran on an unread document"
+
     async def test_401_does_not_replay_propagates(self, monkeypatch):
         import contextlib
         from types import SimpleNamespace
