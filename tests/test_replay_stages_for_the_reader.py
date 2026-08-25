@@ -104,7 +104,8 @@ def test_a_flat_agent_still_gets_its_own_folder(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
     monkeypatch.setattr(
-        outlook, "_reader_agent_folders", lambda aid, **k: [f"agent{aid}"], raising=False
+        outlook, "_reader_agent_folders", lambda aid, **k: ([f"agent{aid}"], True),
+        raising=False,
     )
     src = tmp_path / "s.pdf"
     src.write_bytes(b"%PDF-1.4")
@@ -113,7 +114,13 @@ def test_a_flat_agent_still_gets_its_own_folder(tmp_path, monkeypatch):
 
 
 def test_an_unreadable_agent_store_does_not_break_the_replay(tmp_path, monkeypatch):
-    """Staging is best effort: a store error must degrade, never raise."""
+    """A store error must degrade, never raise -- and must not announce.
+
+    Falling back to the triggered agent alone means we no longer know where the
+    reader lives, so claiming the PDF is staged would be a guess. The agent is
+    told instead that no attachment is available, which surfaces as a readable
+    failure rather than a confident wrong verdict.
+    """
     uploads = tmp_path / "uploads"
     monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
 
@@ -130,15 +137,15 @@ def test_an_unreadable_agent_store_does_not_break_the_replay(tmp_path, monkeypat
     names = outlook._stage_stored_attachments(
         [{"path": str(src), "filename": "y.pdf"}], 5
     )
-    assert names == ["y.pdf"]
-    assert {p.parent.name for p in uploads.rglob("y.pdf")} == {"agent5"}
+    assert names == []
 
 
 def test_non_pdf_attachments_are_ignored(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
     monkeypatch.setattr(
-        outlook, "_reader_agent_folders", lambda aid, **k: [f"agent{aid}"], raising=False
+        outlook, "_reader_agent_folders", lambda aid, **k: ([f"agent{aid}"], True),
+        raising=False,
     )
     src = tmp_path / "s.docx"
     src.write_bytes(b"not a pdf")
@@ -221,34 +228,42 @@ def folders_for(monkeypatch):
 
 def test_a_grandchild_is_reached(folders_for):
     """The reader can sit two levels down, not just one."""
-    got = folders_for({1: ["agent2"], 2: ["agent3"]})
-    assert got == ["agent1", "agent2", "agent3"]
+    assert folders_for({1: ["agent2"], 2: ["agent3"]}) == (
+        ["agent1", "agent2", "agent3"],
+        True,
+    )
 
 
 def test_a_cycle_does_not_loop_forever(folders_for):
-    assert sorted(folders_for({1: ["agent2"], 2: ["agent1", "agent3"], 3: ["agent2"]})) == [
-        "agent1",
-        "agent2",
-        "agent3",
-    ]
+    got, complete = folders_for({1: ["agent2"], 2: ["agent1", "agent3"], 3: ["agent2"]})
+    assert sorted(got) == ["agent1", "agent2", "agent3"]
+    assert complete is True
 
 
 def test_a_shared_child_is_listed_once(folders_for):
     """Two parents pointing at the same sub-agent must not duplicate it."""
-    got = folders_for({1: ["agent2", "agent3"], 2: ["agent4"], 3: ["agent4"]})
+    got, _ = folders_for({1: ["agent2", "agent3"], 2: ["agent4"], 3: ["agent4"]})
     assert got.count("agent4") == 1
 
 
-def test_the_depth_cap_stops_the_walk(folders_for):
+def test_the_depth_cap_reports_an_incomplete_list(folders_for):
+    """Truncation must be declared, not silently returned as a full list: the
+    caller refuses to announce a file when coverage is not complete."""
     deep = {1: ["agent2"], 2: ["agent3"], 3: ["agent4"], 4: ["agent5"]}
-    assert folders_for(deep, _max_depth=2) == ["agent1", "agent2", "agent3"]
+    assert folders_for(deep, _max_depth=2) == (
+        ["agent1", "agent2", "agent3"],
+        False,
+    )
 
 
 def test_a_failure_midway_falls_back_to_the_parent_alone(folders_for):
     """The regression an external reviewer caught: the accumulator was mutated
     during the walk, so a late failure returned a half-explored tree that read
     like a complete one."""
-    assert folders_for({1: ["agent2"], 2: ["agent3"]}, fail_at_depth=1) == ["agent1"]
+    assert folders_for({1: ["agent2"], 2: ["agent3"]}, fail_at_depth=1) == (
+        ["agent1"],
+        False,
+    )
 
 
 def test_a_partial_copy_is_not_announced_as_staged(tmp_path, monkeypatch):
@@ -256,7 +271,7 @@ def test_a_partial_copy_is_not_announced_as_staged(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
     monkeypatch.setattr(
-        outlook, "_reader_agent_folders", lambda aid, **k: ["agentA", "agentB"],
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA", "agentB"], True),
         raising=False,
     )
     real_copy = outlook.shutil.copyfile
@@ -280,7 +295,8 @@ def test_an_undeletable_uploads_dir_does_not_raise(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
     monkeypatch.setattr(
-        outlook, "_reader_agent_folders", lambda aid, **k: ["agentA"], raising=False
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA"], True),
+        raising=False,
     )
     monkeypatch.setattr(
         outlook.os, "makedirs", lambda *a, **k: (_ for _ in ()).throw(OSError("nope"))
@@ -300,3 +316,67 @@ def test_the_replay_note_never_promises_a_file_that_is_not_there():
     assert "ALREADY in your uploads directory" not in empty
     full = outlook._replay_instruction(["ar.pdf"])
     assert "ar.pdf" in full and "ALREADY in your uploads directory" in full
+
+
+# ---------------------------------------------------------------------------
+# Second review pass: an unreachable folder was dropped from the copy list but
+# the file was still announced, and a truncated walk still counted as complete.
+# ---------------------------------------------------------------------------
+
+
+def _one_pdf(tmp_path):
+    src = tmp_path / "s.pdf"
+    src.write_bytes(b"%PDF-1.4")
+    return [{"path": str(src), "filename": "z.pdf"}]
+
+
+def test_an_uncreatable_folder_blocks_the_announcement(tmp_path, monkeypatch):
+    """Dropping a folder we could not create used to leave the copy list
+    self-consistent, so the file was announced while that reader had nothing --
+    the original defect, reintroduced through the error path."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA", "agentB"], True),
+        raising=False,
+    )
+    real = outlook.os.makedirs
+
+    def _mk(path, **kw):
+        if "agentB" in str(path):
+            raise OSError("read-only")
+        return real(path, **kw)
+
+    monkeypatch.setattr(outlook.os, "makedirs", _mk)
+    assert outlook._stage_stored_attachments(_one_pdf(tmp_path), 1) == []
+
+
+def test_an_incomplete_reader_list_blocks_the_announcement(tmp_path, monkeypatch):
+    """Every copy succeeds, but the walk never saw the whole tree."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA"], False),
+        raising=False,
+    )
+    assert outlook._stage_stored_attachments(_one_pdf(tmp_path), 1) == []
+
+
+def test_a_refused_staging_leaves_no_half_copy_behind(tmp_path, monkeypatch):
+    """A leftover from a partial attempt is indistinguishable from a good one."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA", "agentB"], True),
+        raising=False,
+    )
+    real_copy = outlook.shutil.copyfile
+
+    def _copy(src, dst):
+        if "agentB" in str(dst):
+            raise PermissionError("read-only")
+        return real_copy(src, dst)
+
+    monkeypatch.setattr(outlook.shutil, "copyfile", _copy)
+    assert outlook._stage_stored_attachments(_one_pdf(tmp_path), 1) == []
+    assert list(uploads.rglob("z.pdf")) == []

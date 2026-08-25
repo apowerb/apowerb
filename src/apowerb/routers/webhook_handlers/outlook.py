@@ -202,7 +202,7 @@ def _extract_email_sender(email_data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _reader_agent_folders(agent_id, _max_depth: int = 4) -> list[str]:
+def _reader_agent_folders(agent_id, _max_depth: int = 4) -> tuple[list[str], bool]:
     """Folder names to stage into: the triggered agent, then every sub-agent
     below it.
 
@@ -213,11 +213,16 @@ def _reader_agent_folders(agent_id, _max_depth: int = 4) -> list[str]:
     reports an empty ``available_files`` and the run continues without ever
     reading the attachment.
 
-    Returns folder names, triggered agent first. A resolution failure -- at any
-    depth, not just the first query -- falls back to that agent alone: the
-    accumulator is local and only adopted once the whole walk succeeded, so a
-    failure halfway can never return a half-explored tree that reads like a
-    complete one.
+    Returns ``(folder names, complete)``, triggered agent first. ``complete``
+    is False when the list is known NOT to cover every reader -- a resolution
+    failure at any depth, or a walk truncated by the depth cap. Callers must
+    not announce a staged file when it is False: a reader outside the list sees
+    an empty uploads dir, which is the whole defect this function exists for.
+
+    A resolution failure falls back to the triggered agent alone: the
+    accumulator is local and only adopted once the walk succeeded, so a failure
+    halfway can never return a half-explored tree that reads like a complete
+    one.
     """
     parent_only = [f"agent{agent_id}"]
     try:
@@ -244,17 +249,21 @@ def _reader_agent_folders(agent_id, _max_depth: int = 4) -> list[str]:
                             folders.append(f"agent{num}")
             frontier, depth = children, depth + 1
         if frontier:
-            logger.warning(
+            # Truncation means the folder list is NOT the full set of readers,
+            # so nothing downstream may treat it as complete.
+            logger.error(
                 "[OUTLOOK WEBHOOK BG] sub-agent walk of agent_id=%s hit the depth "
-                "cap (%d) -- deeper agents were not staged into", agent_id, _max_depth,
+                "cap (%d) with %d agent(s) left to visit -- the reader list is "
+                "INCOMPLETE", agent_id, _max_depth, len(frontier),
             )
-        return folders
+            return folders, False
+        return folders, True
     except Exception as exc:  # noqa: BLE001 -- staging must never break a replay
         logger.warning(
             "[OUTLOOK WEBHOOK BG] could not resolve sub-agents of agent_id=%s "
             "(%s) -- staging into its own folder only", agent_id, exc,
         )
-        return parent_only
+        return parent_only, False
 
 
 def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
@@ -265,15 +274,19 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
     # Relative path, on purpose: matches tool_download_attachment /
     # tool_pdf_first_page which read/write uploads/agent{id} relative to
     # the service CWD (project root). Staging here = where the agent looks.
-    folders = _reader_agent_folders(agent_id)
+    folders, complete = _reader_agent_folders(agent_id)
     save_dirs = []
     for folder in folders:
         d = str(uploads_dir() / folder)
         try:
             os.makedirs(d, exist_ok=True)
         except OSError as exc:
-            logger.warning(
-                "[OUTLOOK WEBHOOK BG] cannot create uploads dir %s: %s", d, exc
+            # Dropping the folder silently would re-open the defect: the reader
+            # living there would find nothing while the file was announced.
+            complete = False
+            logger.error(
+                "[OUTLOOK WEBHOOK BG] cannot create uploads dir %s: %s -- reader "
+                "coverage is now incomplete", d, exc,
             )
             continue
         save_dirs.append(d)
@@ -286,31 +299,41 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
         if not fn.lower().endswith(".pdf"):
             continue
         base = os.path.basename(fn)
-        failed = []
+        written, failed = [], []
         for save_dir in save_dirs:
+            dst = os.path.join(save_dir, base)
             try:
-                shutil.copyfile(path, os.path.join(save_dir, base))
+                shutil.copyfile(path, dst)
+                written.append(dst)
             except Exception as exc:  # noqa: BLE001 -- collected, reported below
                 failed.append(save_dir)
                 logger.warning(
                     "[OUTLOOK WEBHOOK BG] stage attachment %r into %s failed: %s",
                     fn, save_dir, exc,
                 )
-        # A file is only "staged" once EVERY candidate reader has it. Announcing
-        # a partial copy is how this defect caused wrong verdicts in the first
-        # place: the instruction told the agent the PDF was in its uploads dir,
-        # the agent found nothing, and the pipeline carried on regardless.
-        if save_dirs and not failed:
+        # A file is only "staged" once EVERY candidate reader has it, and only
+        # when the reader list itself is known to be complete. Announcing a
+        # partial copy is how this defect caused wrong verdicts in the first
+        # place: the note told the agent the PDF was in its uploads dir, the
+        # agent found nothing, and the pipeline carried on regardless.
+        if complete and save_dirs and not failed:
             staged.append(base)
-        else:
-            logger.error(
-                "[OUTLOOK WEBHOOK BG] %r NOT staged for %d/%d reader folder(s) -- "
-                "not announcing it to the agent", fn, len(failed) or 1, len(folders),
-            )
+            continue
+        logger.error(
+            "[OUTLOOK WEBHOOK BG] %r NOT announced: %d/%d reader folder(s) failed, "
+            "reader list complete=%s", fn, len(failed), len(folders), complete,
+        )
+        # Leave no half-staged copy behind: a leftover from a previous, partial
+        # attempt is indistinguishable from a good one on the next run.
+        for dst in written:
+            try:
+                os.remove(dst)
+            except OSError:
+                pass
     if staged:
         logger.info(
             "[OUTLOOK WEBHOOK BG] staged %d PDF into %d folder(s): %s",
-            len(staged), len(save_dirs), ", ".join(folders),
+            len(staged), len(save_dirs), ", ".join(save_dirs),
         )
     return staged
 

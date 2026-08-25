@@ -24,17 +24,36 @@ def stored_pdf():
 
 
 class TestStageStoredAttachments:
-    def test_stages_pdf_into_agent_uploads(self, stored_pdf):
+    def test_stages_pdf_into_agent_uploads(self, stored_pdf, monkeypatch):
+        """The reader folder list is resolved from the agent store, which this
+        test has no access to; stub it so this stays a test of the copy, not of
+        the resolution (covered in test_replay_stages_for_the_reader.py)."""
+        from apowerb.routers.webhook_handlers import outlook
         from apowerb.routers.webhook_handlers.outlook import (
             _stage_stored_attachments,
         )
 
+        monkeypatch.setattr(
+            outlook, "_reader_agent_folders", lambda aid, **k: ([f"agent{aid}"], True)
+        )
         staged = _stage_stored_attachments([stored_pdf], 999)
         assert staged == ["AR_CF101085.pdf"]
         dst = os.path.join("uploads", "agent999", "AR_CF101085.pdf")
         assert os.path.exists(dst)
         with open(dst, "rb") as f:
             assert f.read()[:5] == b"%PDF-"
+
+    def test_an_unresolvable_reader_list_stages_nothing(self, stored_pdf):
+        """Without the agent store we cannot know where the reading sub-agent
+        looks. Announcing the PDF anyway is what produced wrong verdicts: the
+        agent was told the file was in its uploads dir, found nothing, and
+        answered from the subject line. Nothing is announced instead, and the
+        backlog worker retries -- a visible failure rather than a silent one."""
+        from apowerb.routers.webhook_handlers.outlook import (
+            _stage_stored_attachments,
+        )
+
+        assert _stage_stored_attachments([stored_pdf], 999) == []
 
     def test_skips_non_pdf_and_missing(self):
         from apowerb.routers.webhook_handlers.outlook import (
@@ -97,6 +116,13 @@ class TestReplayPathIntegration:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
         import apowerb.routers.webhook_handlers.outlook as ol
+
+        # The reader folder list comes from the agent store, unreachable here.
+        # Stub it so this stays an integration test of the replay path rather
+        # than of the resolution (covered in test_replay_stages_for_the_reader).
+        monkeypatch.setattr(
+            ol, "_reader_agent_folders", lambda aid, **k: ([f"agent{aid}"], True)
+        )
 
         # Fake log row: attachments is a LIST (ORM JSON column), agent_message set
         log_row = SimpleNamespace(
