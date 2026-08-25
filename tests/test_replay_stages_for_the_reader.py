@@ -145,3 +145,158 @@ def test_non_pdf_attachments_are_ignored(tmp_path, monkeypatch):
     assert outlook._stage_stored_attachments(
         [{"path": str(src), "filename": "note.docx"}], 3
     ) == []
+
+# ---------------------------------------------------------------------------
+# Coverage added after an external review: the first bench only exercised one
+# flat parent with three direct children, and claimed a fallback contract it
+# never tested at depth.
+# ---------------------------------------------------------------------------
+
+
+def _store_from(tree, fail_at_depth=None):
+    """Fake agent store over {parent_id: [child names]}.
+
+    fail_at_depth: raise on the Nth query (0-based) to exercise a failure that
+    happens AFTER the walk already collected descendants.
+    """
+    state = {"calls": 0}
+
+    class _Row:
+        def __init__(self, sub_agents):
+            self.sub_agents = sub_agents
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, query):
+            if fail_at_depth is not None and state["calls"] - 1 == fail_at_depth:
+                raise RuntimeError("store went away mid-walk")
+            return [
+                _Row(json.dumps(tree[i]) if i in tree else None)
+                for i in getattr(query, "_asked", [])
+            ]
+
+    class _Col:
+        def in_(self, ids):
+            state["calls"] += 1
+            q = type("Q", (), {})()
+            q._asked = list(ids)
+            return q
+
+    class _Table:
+        c = type("C", (), {"agent_id": _Col()})()
+
+        def select(self):
+            return self
+
+        def where(self, cond):
+            return cond
+
+    return type(
+        "S",
+        (),
+        {
+            "agent_table": _Table(),
+            "engine": type("E", (), {"begin": staticmethod(lambda: _Conn())})(),
+        },
+    )()
+
+
+@pytest.fixture
+def folders_for(monkeypatch):
+    def _go(tree, agent_id=1, fail_at_depth=None, **kw):
+        import apowerb.core.agent_main as agent_main
+
+        monkeypatch.setattr(
+            agent_main, "agent_store", _store_from(tree, fail_at_depth)
+        )
+        return outlook._reader_agent_folders(agent_id, **kw)
+
+    return _go
+
+
+def test_a_grandchild_is_reached(folders_for):
+    """The reader can sit two levels down, not just one."""
+    got = folders_for({1: ["agent2"], 2: ["agent3"]})
+    assert got == ["agent1", "agent2", "agent3"]
+
+
+def test_a_cycle_does_not_loop_forever(folders_for):
+    assert sorted(folders_for({1: ["agent2"], 2: ["agent1", "agent3"], 3: ["agent2"]})) == [
+        "agent1",
+        "agent2",
+        "agent3",
+    ]
+
+
+def test_a_shared_child_is_listed_once(folders_for):
+    """Two parents pointing at the same sub-agent must not duplicate it."""
+    got = folders_for({1: ["agent2", "agent3"], 2: ["agent4"], 3: ["agent4"]})
+    assert got.count("agent4") == 1
+
+
+def test_the_depth_cap_stops_the_walk(folders_for):
+    deep = {1: ["agent2"], 2: ["agent3"], 3: ["agent4"], 4: ["agent5"]}
+    assert folders_for(deep, _max_depth=2) == ["agent1", "agent2", "agent3"]
+
+
+def test_a_failure_midway_falls_back_to_the_parent_alone(folders_for):
+    """The regression an external reviewer caught: the accumulator was mutated
+    during the walk, so a late failure returned a half-explored tree that read
+    like a complete one."""
+    assert folders_for({1: ["agent2"], 2: ["agent3"]}, fail_at_depth=1) == ["agent1"]
+
+
+def test_a_partial_copy_is_not_announced_as_staged(tmp_path, monkeypatch):
+    """Announcing a file the reader cannot open is the original defect."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: ["agentA", "agentB"],
+        raising=False,
+    )
+    real_copy = outlook.shutil.copyfile
+
+    def _copy(src, dst):
+        if "agentB" in str(dst):
+            raise PermissionError("read-only")
+        return real_copy(src, dst)
+
+    monkeypatch.setattr(outlook.shutil, "copyfile", _copy)
+    src = tmp_path / "s.pdf"
+    src.write_bytes(b"%PDF-1.4")
+    assert outlook._stage_stored_attachments(
+        [{"path": str(src), "filename": "z.pdf"}], 1
+    ) == []
+
+
+def test_an_undeletable_uploads_dir_does_not_raise(tmp_path, monkeypatch):
+    """makedirs used to sit outside every guard: a permission error there broke
+    the whole replay, despite the documented best-effort contract."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: ["agentA"], raising=False
+    )
+    monkeypatch.setattr(
+        outlook.os, "makedirs", lambda *a, **k: (_ for _ in ()).throw(OSError("nope"))
+    )
+    src = tmp_path / "s.pdf"
+    src.write_bytes(b"%PDF-1.4")
+    assert outlook._stage_stored_attachments(
+        [{"path": str(src), "filename": "z.pdf"}], 1
+    ) == []
+
+
+def test_the_replay_note_never_promises_a_file_that_is_not_there():
+    """An agent told the PDF is present, finding nothing, still answers -- and a
+    confident answer with no document read is the failure mode to close."""
+    empty = outlook._replay_instruction([])
+    assert "NO attachment could be staged" in empty
+    assert "ALREADY in your uploads directory" not in empty
+    full = outlook._replay_instruction(["ar.pdf"])
+    assert "ar.pdf" in full and "ALREADY in your uploads directory" in full
