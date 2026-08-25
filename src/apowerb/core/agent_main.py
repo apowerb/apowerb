@@ -2,6 +2,7 @@ import ast
 import json
 import os
 from datetime import datetime
+from logging import getLogger
 from typing import Dict
 
 from fastapi import HTTPException
@@ -19,6 +20,8 @@ from apowerb.core.agent_helpers.default_llm import (
 )
 from apowerb.core.superagents import compute_template_hash
 from apowerb.helpers.encryptor import encrypt_value_in_dict, decrypt_value_in_dict
+
+logger = getLogger(__name__)
 
 
 # DDL déplacé dans helpers/store_migrations.ensure_store_tables(),
@@ -642,8 +645,9 @@ def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
     # silent and only shows up as wrong results downstream.
     #
     # Same principle as unmask_model_api_key just above, which already protects
-    # the API key this way. Clearing a field on purpose stays possible by
-    # sending an empty string rather than omitting it.
+    # the API key this way. Omission is read from Pydantic's model_fields_set, so a
+    # field the client actually names keeps the value it sent -- clearing on
+    # purpose works with either null or an empty string.
     _PRESERVE_WHEN_OMITTED = (
         "output_key",
         "output_schema_name",
@@ -652,15 +656,19 @@ def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
         "loop_exit_instruction",
         "code_executor",
     )
+    _sent = getattr(agent, "model_fields_set", None) or set()
     for _field in _PRESERVE_WHEN_OMITTED:
-        if getattr(agent, _field, None) is None:
-            _stored = existing.get(_field)
-            if _stored not in (None, ""):
-                setattr(agent, _field, _stored)
-                logger.info(
-                    "[UPDATE_AGENT] %s omitted by the client for agent_id=%s -- "
-                    "keeping the stored value", _field, agent_id,
-                )
+        if _field in _sent:
+            # The client named the field, so its value is intentional --
+            # including None or "". Only silence means "unchanged".
+            continue
+        _stored = existing.get(_field)
+        if _stored is not None:
+            setattr(agent, _field, _stored)
+            logger.info(
+                "[UPDATE_AGENT] %s omitted by the client for agent_id=%s -- "
+                "keeping the stored value", _field, agent_id,
+            )
     model_params_to_store = strip_default_llm_params(
         agent.agent_model, model_params_to_store
     )
