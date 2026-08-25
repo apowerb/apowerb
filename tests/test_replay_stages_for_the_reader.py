@@ -488,3 +488,37 @@ def test_a_failure_while_publishing_is_not_announced(tmp_path, monkeypatch):
 
     monkeypatch.setattr(outlook.os, "replace", _replace)
     assert outlook._stage_stored_attachments(_one_pdf(tmp_path), 1) == []
+
+
+# ---------------------------------------------------------------------------
+# Fifth review pass: a PDF known only by its content type escaped both the
+# staging filter and the guard that counts what must be staged.
+# ---------------------------------------------------------------------------
+
+
+def test_a_pdf_without_the_extension_is_still_staged(tmp_path, monkeypatch):
+    """Graph does not always store a .pdf suffix. Matching on the name alone
+    dropped the file silently: not staged, and not counted as missing either,
+    so the pipeline ran on a document nobody read."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA"], True),
+        raising=False,
+    )
+    src = tmp_path / "s.bin"
+    src.write_bytes(b"%PDF-1.4")
+    staged = outlook._stage_stored_attachments(
+        [{"path": str(src), "filename": "AR_sans_suffixe",
+          "content_type": "application/pdf"}], 1
+    )
+    assert staged == ["AR_sans_suffixe"]
+    assert (uploads / "agentA" / "AR_sans_suffixe").exists()
+
+
+def test_the_predicate_reads_name_and_type_together():
+    assert outlook._is_pdf_attachment({"filename": "a.PDF"})
+    assert outlook._is_pdf_attachment({"filename": "a", "content_type": "application/pdf"})
+    assert not outlook._is_pdf_attachment({"filename": "logo.png",
+                                           "content_type": "image/png"})
+    assert not outlook._is_pdf_attachment({})

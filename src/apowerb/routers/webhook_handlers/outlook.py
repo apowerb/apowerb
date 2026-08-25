@@ -202,6 +202,21 @@ def _extract_email_sender(email_data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _is_pdf_attachment(a: dict) -> bool:
+    """Whether a stored attachment is a PDF, by name OR by declared type.
+
+    Matching on the ``.pdf`` suffix alone silently drops a PDF that Graph
+    stored without an extension: it is neither staged nor counted as expected,
+    so the guard downstream sees nothing missing and the pipeline runs on a
+    document nobody read. Name and content type are checked together, and the
+    same predicate decides what gets staged and what must be accounted for --
+    two criteria that drift apart is exactly how a file goes unnoticed.
+    """
+    if str(a.get("filename") or "").lower().endswith(".pdf"):
+        return True
+    return "pdf" in str(a.get("content_type") or "").lower()
+
+
 def _reader_agent_folders(agent_id, _max_depth: int = 4) -> tuple[list[str], bool]:
     """Folder names to stage into: the triggered agent, then every sub-agent
     below it.
@@ -310,7 +325,7 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
         fn = a.get("filename")
         if not path or not fn or not os.path.exists(path):
             continue
-        if not fn.lower().endswith(".pdf"):
+        if not _is_pdf_attachment(a):
             continue
         base = os.path.basename(fn)
         # Two phases, so a failure never touches what is already on disk: copy
@@ -746,13 +761,20 @@ async def process_webhook_log_row(log_id: int) -> str | None:
             # leave the outcome to the model: told no document is available, it
             # may still answer from the subject line, and that answer is
             # persisted and mailed exactly like a real one.
-            _pdfs = [
-                a for a in (stored_attachments or [])
-                if str(a.get("filename") or "").lower().endswith(".pdf")
-            ]
+            _pdfs = [a for a in (stored_attachments or []) if _is_pdf_attachment(a)]
             _expected = {
-                os.path.basename(str(a.get("filename"))) for a in _pdfs
+                os.path.basename(str(a.get("filename")))
+                for a in _pdfs
+                if a.get("filename")
             }
+            # An attachment we recognised as a PDF but cannot even name is not
+            # something to shrug at: it cannot be staged, so it cannot be read.
+            if len(_expected) != len(_pdfs):
+                raise RuntimeError(
+                    f"replay of log_id={log_id} carries {len(_pdfs) - len(_expected)} "
+                    "unnamed PDF attachment(s) -- refusing to run the pipeline on a "
+                    "document that cannot be staged"
+                )
             _missing = sorted(_expected - set(staged))
             if _missing:
                 # "at least one staged" is not enough: an email carrying two
