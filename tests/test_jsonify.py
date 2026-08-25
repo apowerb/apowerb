@@ -129,3 +129,31 @@ def test_clean_values_are_not_reported(caplog):
         to_jsonable({"k": "plain", "j": 2})
 
     assert caplog.records == []
+
+
+def test_coercing_an_unknown_type_is_reported(caplog):
+    """The str() fallback discards type and structure.
+
+    The tool-response callback routes non-dict responses through to_jsonable,
+    so a structured object can reach this path and be flattened into a string.
+    That loss has to be visible.
+    """
+
+    class Custom:
+        def __repr__(self):
+            return "Custom(label='x')"
+
+    with caplog.at_level("WARNING"):
+        result = to_jsonable(Custom())
+
+    assert result == "Custom(label='x')"
+    assert any("structure are lost" in r.message for r in caplog.records)
+
+
+def test_known_types_do_not_trigger_the_coercion_warning(caplog):
+    import datetime
+
+    with caplog.at_level("WARNING"):
+        to_jsonable({"a": 1, "b": [2.5, "x"], "c": datetime.date(2026, 1, 1)})
+
+    assert caplog.records == []

@@ -132,4 +132,13 @@ def to_jsonable(value: Any) -> Any:
     except Exception:
         pass
 
+    # Last resort: anything with no JSON equivalent becomes its repr. That
+    # discards the value's type and structure, so it is reported -- the
+    # callback now routes non-dict tool responses through here too, and a
+    # structured object quietly flattened into a string is exactly the kind
+    # of loss this module is supposed to make visible.
+    logger.warning(
+        "coercing a %s to its string form; type and structure are lost",
+        type(value).__name__,
+    )
     return strip_nul(str(value))
