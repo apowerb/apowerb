@@ -213,14 +213,17 @@ def _reader_agent_folders(agent_id, _max_depth: int = 4) -> list[str]:
     reports an empty ``available_files`` and the run continues without ever
     reading the attachment.
 
-    Returns folder names, triggered agent first. Falls back to that agent
-    alone if the sub-agent list cannot be read -- staging is best effort and
-    must never break the replay.
+    Returns folder names, triggered agent first. A resolution failure -- at any
+    depth, not just the first query -- falls back to that agent alone: the
+    accumulator is local and only adopted once the whole walk succeeded, so a
+    failure halfway can never return a half-explored tree that reads like a
+    complete one.
     """
-    folders = [f"agent{agent_id}"]
+    parent_only = [f"agent{agent_id}"]
     try:
         from apowerb.core.agent_main import agent_store
 
+        folders = list(parent_only)
         seen = {str(agent_id)}
         frontier, depth = [str(agent_id)], 0
         while frontier and depth < _max_depth:
@@ -240,12 +243,18 @@ def _reader_agent_folders(agent_id, _max_depth: int = 4) -> list[str]:
                             children.append(num)
                             folders.append(f"agent{num}")
             frontier, depth = children, depth + 1
-    except Exception as exc:  # noqa: BLE001 -- staging is best effort
+        if frontier:
+            logger.warning(
+                "[OUTLOOK WEBHOOK BG] sub-agent walk of agent_id=%s hit the depth "
+                "cap (%d) -- deeper agents were not staged into", agent_id, _max_depth,
+            )
+        return folders
+    except Exception as exc:  # noqa: BLE001 -- staging must never break a replay
         logger.warning(
             "[OUTLOOK WEBHOOK BG] could not resolve sub-agents of agent_id=%s "
             "(%s) -- staging into its own folder only", agent_id, exc,
         )
-    return folders
+        return parent_only
 
 
 def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
@@ -260,7 +269,13 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
     save_dirs = []
     for folder in folders:
         d = str(uploads_dir() / folder)
-        os.makedirs(d, exist_ok=True)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "[OUTLOOK WEBHOOK BG] cannot create uploads dir %s: %s", d, exc
+            )
+            continue
         save_dirs.append(d)
     staged: list[str] = []
     for a in stored_attachments or []:
@@ -271,18 +286,27 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
         if not fn.lower().endswith(".pdf"):
             continue
         base = os.path.basename(fn)
-        copied = False
+        failed = []
         for save_dir in save_dirs:
             try:
                 shutil.copyfile(path, os.path.join(save_dir, base))
-                copied = True
-            except Exception as exc:  # noqa: BLE001 -- log and continue
+            except Exception as exc:  # noqa: BLE001 -- collected, reported below
+                failed.append(save_dir)
                 logger.warning(
                     "[OUTLOOK WEBHOOK BG] stage attachment %r into %s failed: %s",
                     fn, save_dir, exc,
                 )
-        if copied:
+        # A file is only "staged" once EVERY candidate reader has it. Announcing
+        # a partial copy is how this defect caused wrong verdicts in the first
+        # place: the instruction told the agent the PDF was in its uploads dir,
+        # the agent found nothing, and the pipeline carried on regardless.
+        if save_dirs and not failed:
             staged.append(base)
+        else:
+            logger.error(
+                "[OUTLOOK WEBHOOK BG] %r NOT staged for %d/%d reader folder(s) -- "
+                "not announcing it to the agent", fn, len(failed) or 1, len(folders),
+            )
     if staged:
         logger.info(
             "[OUTLOOK WEBHOOK BG] staged %d PDF into %d folder(s): %s",
@@ -294,14 +318,25 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
 def _replay_instruction(staged_names: list[str]) -> str:
     """Note appended to the agent input in replay mode: the email is gone from
     Graph, so the PDFs are pre-staged and the Graph tools must NOT be used."""
-    names = ", ".join(staged_names) if staged_names else "(none)"
-    return (
+    head = (
         "\n\n--- REPLAY MODE ---\n"
         "This email could NOT be re-fetched from Outlook (it left the mailbox). "
-        "Its subject and body are above; its PDF attachment(s) are ALREADY in "
-        f"your uploads directory: {names}. Do NOT call tool_read_email or "
-        "tool_download_attachment (they will fail with 404). Call "
-        "basic.tool_pdf_first_page(<filename>) directly on the candidate AR PDF."
+        "Its subject and body are above. Do NOT call tool_read_email or "
+        "tool_download_attachment (they will fail with 404). "
+    )
+    if not staged_names:
+        # Never claim a file the agent cannot open: an agent told the PDF is
+        # there, finding nothing, still produces an answer -- and a confident
+        # answer with no document read is exactly the failure to avoid.
+        return head + (
+            "NO attachment could be staged for you. Do NOT assume a PDF is "
+            "available and do NOT infer its contents: report that the document "
+            "could not be read rather than answering from the subject alone."
+        )
+    return head + (
+        "Its PDF attachment(s) are ALREADY in your uploads directory: "
+        f"{', '.join(staged_names)}. Call basic.tool_pdf_first_page(<filename>) "
+        "directly on the candidate AR PDF."
     )
 
 

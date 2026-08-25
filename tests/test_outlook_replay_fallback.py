@@ -71,10 +71,20 @@ class TestReplayInstruction:
         assert "tool_pdf_first_page" in note
 
     def test_handles_no_files(self):
+        """With nothing staged, the note must not describe an attachment.
+
+        It used to interpolate "(none)" into a sentence that still asserted the
+        PDFs were "ALREADY in your uploads directory". An agent reading that
+        looks for a file, finds none, and answers anyway -- a confident verdict
+        with no document read. The note now says so plainly instead.
+        """
         from apowerb.routers.webhook_handlers.outlook import _replay_instruction
 
         note = _replay_instruction([])
-        assert "(none)" in note
+        assert "ALREADY in your uploads directory" not in note
+        assert "NO attachment could be staged" in note
+        assert "do NOT infer its contents" in note
+        assert "REPLAY MODE" in note
 
 
 class TestReplayPathIntegration:
