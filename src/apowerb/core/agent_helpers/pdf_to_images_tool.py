@@ -18,6 +18,58 @@ from apowerb.configs.paths import uploads_dir
 
 logger = setup_logging(__name__)
 
+
+def _resolve_uploaded(folder_name: str, filename: str) -> tuple[str | None, list[str]]:
+    """Find an uploaded file, looking where the WRITERS actually write.
+
+    A reader closure is bound to the agent that DECLARES the tool -- in a
+    sequential pipeline, a sub-agent. Every writer, though, resolves
+    ``uploads/agent{ROOT_AGENT_ID}``: the agent the run was triggered on.
+    ``tool_download_attachment`` says so in its own comment and warns that
+    otherwise "downloaded attachments are invisible to subsequent tool calls".
+
+    They were. The intake downloaded an acknowledgment-of-receipt, then
+    reported an empty uploads dir for a file sitting one directory away; the
+    pipeline carried on and published a verdict on a document nobody had read,
+    returning 200 the whole way.
+
+    Returns ``(path or None, folders searched)``. The bound folder wins when
+    both hold the name, so nothing that worked before changes.
+    """
+    candidates = [folder_name]
+    root = os.getenv("ROOT_AGENT_ID", "")
+    if root and f"agent{root}" != folder_name:
+        candidates.append(f"agent{root}")
+    for cand in candidates:
+        path = str(uploads_dir() / cand / filename)
+        if os.path.exists(path):
+            return path, candidates
+    return None, candidates
+
+
+def _uploaded_not_found(filename: str, candidates: list[str]) -> dict:
+    """Error payload naming every folder searched, not just the first."""
+    # Prefix with the folder only when more than one was searched: that is
+    # when the reader needs to know WHERE a name was seen. With a single
+    # folder the answer is unambiguous, and bare names keep the long-standing
+    # contract callers already rely on.
+    many = len(candidates) > 1
+    available: list[str] = []
+    for cand in candidates:
+        directory = str(uploads_dir() / cand)
+        if os.path.exists(directory):
+            available += [
+                f"{cand}/{f}" if many else f
+                for f in os.listdir(directory)
+                if os.path.isfile(os.path.join(directory, f))
+            ]
+    return {
+        "status": "error",
+        "message": f"File '{filename}' not found in " + " or ".join(candidates),
+        "available_files": available,
+    }
+
+
 _MAX_PDF_BYTES = 25_000_000
 
 
@@ -221,21 +273,9 @@ def _make_pdf_to_images(folder_name: str):
                 "message": f"Pillow is not installed: {exc}",
             }
 
-        file_path = str(uploads_dir() / folder_name / filename)
-        if not os.path.exists(file_path):
-            agent_dir = str(uploads_dir() / folder_name)
-            available = []
-            if os.path.exists(agent_dir):
-                available = [
-                    f
-                    for f in os.listdir(agent_dir)
-                    if os.path.isfile(os.path.join(agent_dir, f))
-                ]
-            return {
-                "status": "error",
-                "message": f"File '{filename}' not found in {folder_name}",
-                "available_files": available,
-            }
+        file_path, _searched = _resolve_uploaded(folder_name, filename)
+        if file_path is None:
+            return _uploaded_not_found(filename, _searched)
 
         try:
             doc = fitz.open(file_path)
@@ -343,21 +383,9 @@ def _make_pdf_first_page(folder_name: str):
                 ),
             }
 
-        file_path = str(uploads_dir() / folder_name / filename)
-        if not os.path.exists(file_path):
-            agent_dir = str(uploads_dir() / folder_name)
-            available = []
-            if os.path.exists(agent_dir):
-                available = [
-                    f
-                    for f in os.listdir(agent_dir)
-                    if os.path.isfile(os.path.join(agent_dir, f))
-                ]
-            return {
-                "status": "error",
-                "message": f"File '{filename}' not found in {folder_name}",
-                "available_files": available,
-            }
+        file_path, _searched = _resolve_uploaded(folder_name, filename)
+        if file_path is None:
+            return _uploaded_not_found(filename, _searched)
 
         extracted = extract_first_page_text(file_path)
         if "error" in extracted:
