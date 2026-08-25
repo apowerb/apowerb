@@ -202,15 +202,66 @@ def _extract_email_sender(email_data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _reader_agent_folders(agent_id, _max_depth: int = 4) -> list[str]:
+    """Folder names to stage into: the triggered agent, then every sub-agent
+    below it.
+
+    A webhook triggers ONE agent, but ``tool_pdf_first_page`` is bound by
+    ``bind_pdf_first_page`` to the folder of the agent that DECLARES the tool.
+    In a sequential pipeline that reader is a sub-agent, so staging only into
+    the triggered agent's folder puts the PDF where nobody looks: the reader
+    reports an empty ``available_files`` and the run continues without ever
+    reading the attachment.
+
+    Returns folder names, triggered agent first. Falls back to that agent
+    alone if the sub-agent list cannot be read -- staging is best effort and
+    must never break the replay.
+    """
+    folders = [f"agent{agent_id}"]
+    try:
+        from apowerb.core.agent_main import agent_store
+
+        seen = {str(agent_id)}
+        frontier, depth = [str(agent_id)], 0
+        while frontier and depth < _max_depth:
+            query = agent_store.agent_table.select().where(
+                agent_store.agent_table.c.agent_id.in_(
+                    [int(a) for a in frontier if str(a).isdigit()]
+                )
+            )
+            children: list[str] = []
+            with agent_store.engine.begin() as conn:
+                for row in conn.execute(query):
+                    raw = getattr(row, "sub_agents", None)
+                    for name in json.loads(raw) if raw else []:
+                        num = str(name).replace("agent", "")
+                        if num and num not in seen:
+                            seen.add(num)
+                            children.append(num)
+                            folders.append(f"agent{num}")
+            frontier, depth = children, depth + 1
+    except Exception as exc:  # noqa: BLE001 -- staging is best effort
+        logger.warning(
+            "[OUTLOOK WEBHOOK BG] could not resolve sub-agents of agent_id=%s "
+            "(%s) -- staging into its own folder only", agent_id, exc,
+        )
+    return folders
+
+
 def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
     """Copy stored attachment PDFs (captured at receipt, on disk) into the
-    agent's uploads/ dir so it can read them via tool_pdf_first_page WITHOUT
-    re-fetching from Graph. Returns the staged PDF filenames."""
+    uploads/ dir of every agent that might read them, so they can be read via
+    tool_pdf_first_page WITHOUT re-fetching from Graph. Returns the staged PDF
+    filenames."""
     # Relative path, on purpose: matches tool_download_attachment /
     # tool_pdf_first_page which read/write uploads/agent{id} relative to
     # the service CWD (project root). Staging here = where the agent looks.
-    save_dir = str(uploads_dir() / f"agent{agent_id}")
-    os.makedirs(save_dir, exist_ok=True)
+    folders = _reader_agent_folders(agent_id)
+    save_dirs = []
+    for folder in folders:
+        d = str(uploads_dir() / folder)
+        os.makedirs(d, exist_ok=True)
+        save_dirs.append(d)
     staged: list[str] = []
     for a in stored_attachments or []:
         path = a.get("path")
@@ -219,14 +270,24 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
             continue
         if not fn.lower().endswith(".pdf"):
             continue
-        try:
-            dst = os.path.join(save_dir, os.path.basename(fn))
-            shutil.copyfile(path, dst)
-            staged.append(os.path.basename(fn))
-        except Exception as exc:  # noqa: BLE001 -- log and continue
-            logger.warning(
-                "[OUTLOOK WEBHOOK BG] stage attachment %r failed: %s", fn, exc
-            )
+        base = os.path.basename(fn)
+        copied = False
+        for save_dir in save_dirs:
+            try:
+                shutil.copyfile(path, os.path.join(save_dir, base))
+                copied = True
+            except Exception as exc:  # noqa: BLE001 -- log and continue
+                logger.warning(
+                    "[OUTLOOK WEBHOOK BG] stage attachment %r into %s failed: %s",
+                    fn, save_dir, exc,
+                )
+        if copied:
+            staged.append(base)
+    if staged:
+        logger.info(
+            "[OUTLOOK WEBHOOK BG] staged %d PDF into %d folder(s): %s",
+            len(staged), len(save_dirs), ", ".join(folders),
+        )
     return staged
 
 
