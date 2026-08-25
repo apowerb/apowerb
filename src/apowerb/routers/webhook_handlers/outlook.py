@@ -238,8 +238,10 @@ def _reader_agent_folders(agent_id, _max_depth: int = 4) -> tuple[list[str], boo
                 )
             )
             children: list[str] = []
+            rows = 0
             with agent_store.engine.begin() as conn:
                 for row in conn.execute(query):
+                    rows += 1
                     raw = getattr(row, "sub_agents", None)
                     for name in json.loads(raw) if raw else []:
                         num = str(name).replace("agent", "")
@@ -247,6 +249,18 @@ def _reader_agent_folders(agent_id, _max_depth: int = 4) -> tuple[list[str], boo
                             seen.add(num)
                             children.append(num)
                             folders.append(f"agent{num}")
+            asked = len([a for a in frontier if str(a).isdigit()])
+            if rows < asked:
+                # A missing row is not a leaf: we simply do not know whether
+                # that agent has children, and treating silence as "no
+                # children" is how an unlisted reader gets a file announced
+                # that it never received.
+                logger.error(
+                    "[OUTLOOK WEBHOOK BG] %d of %d agent row(s) missing while "
+                    "walking agent_id=%s -- reader list is INCOMPLETE",
+                    asked - rows, asked, agent_id,
+                )
+                return folders, False
             frontier, depth = children, depth + 1
         if frontier:
             # Truncation means the folder list is NOT the full set of readers,
@@ -299,12 +313,18 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
         if not fn.lower().endswith(".pdf"):
             continue
         base = os.path.basename(fn)
-        written, failed = [], []
+        # Two phases, so a failure never touches what is already on disk: copy
+        # every destination to a sibling temp file first, and only move them
+        # into place once ALL of them landed. A previous cleanup pass deleted
+        # the destination on failure, which could remove a perfectly good copy
+        # staged by an earlier attempt.
+        pending, failed = [], []
         for save_dir in save_dirs:
             dst = os.path.join(save_dir, base)
+            tmp = dst + ".part"
             try:
-                shutil.copyfile(path, dst)
-                written.append(dst)
+                shutil.copyfile(path, tmp)
+                pending.append((tmp, dst))
             except Exception as exc:  # noqa: BLE001 -- collected, reported below
                 failed.append(save_dir)
                 logger.warning(
@@ -317,17 +337,17 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
         # place: the note told the agent the PDF was in its uploads dir, the
         # agent found nothing, and the pipeline carried on regardless.
         if complete and save_dirs and not failed:
+            for tmp, dst in pending:
+                os.replace(tmp, dst)
             staged.append(base)
             continue
         logger.error(
             "[OUTLOOK WEBHOOK BG] %r NOT announced: %d/%d reader folder(s) failed, "
             "reader list complete=%s", fn, len(failed), len(folders), complete,
         )
-        # Leave no half-staged copy behind: a leftover from a previous, partial
-        # attempt is indistinguishable from a good one on the next run.
-        for dst in written:
+        for tmp, _dst in pending:
             try:
-                os.remove(dst)
+                os.remove(tmp)
             except OSError:
                 pass
     if staged:
@@ -709,6 +729,21 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                 return f"[SCEI_SPLIT] parent log_id={log_id} replay-split into {child_ids}"
 
             staged = _stage_stored_attachments(stored_attachments, agent_id)
+            # If the email carried PDFs and none could be staged, failing here
+            # is the only mechanism that produces a retry. Continuing would
+            # leave the outcome to the model: told no document is available, it
+            # may still answer from the subject line, and that answer is
+            # persisted and mailed exactly like a real one.
+            _pdfs = [
+                a for a in (stored_attachments or [])
+                if str(a.get("filename") or "").lower().endswith(".pdf")
+            ]
+            if _pdfs and not staged:
+                raise RuntimeError(
+                    f"replay of log_id={log_id} carried {len(_pdfs)} PDF but none "
+                    "could be staged where the reading agent looks -- refusing to "
+                    "run the pipeline on an unread document"
+                )
             if not base_msg:
                 base_msg = (
                     f"Subject: {(log_row.email_subject or '') if log_row else ''}\n\n"

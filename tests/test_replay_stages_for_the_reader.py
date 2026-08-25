@@ -380,3 +380,83 @@ def test_a_refused_staging_leaves_no_half_copy_behind(tmp_path, monkeypatch):
     monkeypatch.setattr(outlook.shutil, "copyfile", _copy)
     assert outlook._stage_stored_attachments(_one_pdf(tmp_path), 1) == []
     assert list(uploads.rglob("z.pdf")) == []
+
+
+# ---------------------------------------------------------------------------
+# Third review pass: the cleanup could delete a pre-existing good copy, and a
+# missing agent row was read as a leaf.
+# ---------------------------------------------------------------------------
+
+
+def test_a_failed_staging_leaves_a_preexisting_copy_intact(tmp_path, monkeypatch):
+    """The previous cleanup removed the destination on failure -- including a
+    good copy staged by an earlier attempt. Staging is now two-phase: nothing
+    already on disk is touched unless every destination landed."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA", "agentB"], True),
+        raising=False,
+    )
+    good = uploads / "agentA" / "z.pdf"
+    good.parent.mkdir(parents=True)
+    good.write_bytes(b"%PDF-1.4 GOOD COPY FROM AN EARLIER ATTEMPT")
+
+    real_copy = outlook.shutil.copyfile
+
+    def _copy(src, dst):
+        if "agentB" in str(dst):
+            raise PermissionError("read-only")
+        return real_copy(src, dst)
+
+    monkeypatch.setattr(outlook.shutil, "copyfile", _copy)
+    assert outlook._stage_stored_attachments(_one_pdf(tmp_path), 1) == []
+    assert good.exists(), "the earlier good copy was destroyed"
+    assert good.read_bytes() == b"%PDF-1.4 GOOD COPY FROM AN EARLIER ATTEMPT"
+    assert list(uploads.rglob("*.part")) == [], "temp files left behind"
+
+
+def test_a_missing_agent_row_is_not_read_as_a_leaf(monkeypatch):
+    """No row for an agent means we do not know whether it has children.
+    Treating silence as "no children" is how an unlisted reader ends up with a
+    file announced that it never received."""
+    import apowerb.core.agent_main as agent_main
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, query):
+            return []  # the agent row is gone
+
+    class _Col:
+        def in_(self, ids):
+            q = type("Q", (), {})()
+            q._asked = list(ids)
+            return q
+
+    class _Table:
+        c = type("C", (), {"agent_id": _Col()})()
+
+        def select(self):
+            return self
+
+        def where(self, cond):
+            return cond
+
+    monkeypatch.setattr(
+        agent_main,
+        "agent_store",
+        type(
+            "S",
+            (),
+            {
+                "agent_table": _Table(),
+                "engine": type("E", (), {"begin": staticmethod(lambda: _Conn())})(),
+            },
+        )(),
+    )
+    assert outlook._reader_agent_folders(1) == (["agent1"], False)
