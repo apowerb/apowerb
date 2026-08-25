@@ -102,7 +102,7 @@ _BINARY_SNIFF_BYTES = 8192
 _BOM_ENCODINGS = ((b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16"))
 
 
-def _bom_encoding(head: bytes) -> str | None:
+def _bom_encoding(head: bytes) -> Optional[str]:
     """Return the encoding announced by a byte-order mark, if any."""
     for bom, encoding in _BOM_ENCODINGS:
         if head.startswith(bom):
@@ -110,17 +110,18 @@ def _bom_encoding(head: bytes) -> str | None:
     return None
 
 
-def _sniff_head(path) -> bytes | None:
-    """Read the leading block of a file, or None if it cannot be read.
+def _sniff_head(path: os.PathLike) -> bytes:
+    """Read the leading block of a file, for the binary and BOM checks.
 
-    A read failure yields None so the caller falls through to its own error
-    handling instead of this helper masking the real cause.
+    Read errors are deliberately NOT caught. Swallowing them would skip the
+    binary check and fall through to the decoding chain, where ``latin-1``
+    accepts anything -- so a transient failure here (a descriptor exhausted
+    under load, a network mount hiccup) would silently restore the very bug
+    this guard exists to prevent. The caller already turns an OSError into a
+    reported error naming the real cause.
     """
-    try:
-        with open(path, "rb") as handle:
-            return handle.read(_BINARY_SNIFF_BYTES)
-    except OSError:
-        return None
+    with open(path, "rb") as handle:
+        return handle.read(_BINARY_SNIFF_BYTES)
 
 
 def tool_read_file(file_path: str, max_size_mb: int = 10) -> dict:
@@ -172,7 +173,7 @@ def tool_read_file(file_path: str, max_size_mb: int = 10) -> dict:
         # A byte-order mark is checked first: UTF-16 is text, but it is full of
         # zero bytes, so the NUL check below would otherwise reject it — and
         # the fallback chain would mangle it into one character per byte.
-        bom_encoding = _bom_encoding(head) if head else None
+        bom_encoding = _bom_encoding(head)
         if bom_encoding:
             encodings = [bom_encoding]
         else:
@@ -181,7 +182,7 @@ def tool_read_file(file_path: str, max_size_mb: int = 10) -> dict:
             # slips through; ``to_jsonable`` strips NULs again at the tool
             # boundary, which is what keeps the write itself safe. Refusing
             # here is about not handing the model unusable pseudo-text.
-            if head and b"\x00" in head:
+            if b"\x00" in head:
                 return {
                     "status": "error",
                     "error_message": (
@@ -208,9 +209,18 @@ def tool_read_file(file_path: str, max_size_mb: int = 10) -> dict:
                 continue
 
         if content is None:
+            if bom_encoding:
+                # The BOM narrowed `encodings` to one entry, so reporting the
+                # list here would read as "this tool only supports UTF-16".
+                detail = (
+                    f"file announces {bom_encoding} via its byte-order mark "
+                    "but does not decode as it"
+                )
+            else:
+                detail = f"tried: {encodings}"
             return {
                 "status": "error",
-                "error_message": f"Could not decode file with supported encodings: {encodings}",
+                "error_message": f"Could not decode file as text ({detail})",
             }
 
         # Calculate metadata

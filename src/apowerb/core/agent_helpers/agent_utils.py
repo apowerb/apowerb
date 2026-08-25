@@ -749,12 +749,19 @@ def to_agent(agent_name: str) -> LlmAgent:
             event. Without this, a stray ``numpy.bool_`` in any tool response
             makes ``event.model_dump_json`` raise ``PydanticSerializationError``
             and tears down the SSE stream — users read that as the agent
-            silently ignoring their file.
+            silently ignoring their file. The same pass strips NUL characters,
+            which PostgreSQL refuses to store at all.
+
+            Responses that are not dicts are wrapped rather than skipped. ADK
+            wraps them in ``{"result": ...}`` itself, but only *after* this
+            callback runs, so returning None here would let a list or a string
+            reach the event write unsanitised — the sanitising would silently
+            cover only some of the tools.
             """
             from apowerb.helpers.jsonify import to_jsonable
             if isinstance(tool_response, dict):
                 return to_jsonable(tool_response)
-            return None
+            return {"result": to_jsonable(tool_response)}
 
         agent_kwargs = dict(
             name=agent_name,

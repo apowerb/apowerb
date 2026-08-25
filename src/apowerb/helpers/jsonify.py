@@ -31,7 +31,10 @@ encountered) and safe to apply at tool boundaries.
 
 from __future__ import annotations
 
+from logging import getLogger
 from typing import Any
+
+logger = getLogger(__name__)
 
 
 def strip_nul(text: str) -> str:
@@ -39,8 +42,19 @@ def strip_nul(text: str) -> str:
     and ``jsonb`` columns. Every other character is left untouched: control
     characters, newlines and tabs are all valid UTF-8 that PostgreSQL
     accepts, and dropping them would silently mangle real content.
+
+    Removals are logged. This runs at every tool boundary, so it is the one
+    place a NUL-producing bug in any tool would otherwise disappear without
+    trace: the write would start succeeding and nothing would report that a
+    tool is emitting corrupted output.
     """
-    return text.replace("\x00", "") if "\x00" in text else text
+    if "\x00" not in text:
+        return text
+    logger.warning(
+        "stripped %d NUL character(s) from a value before persistence",
+        text.count("\x00"),
+    )
+    return text.replace("\x00", "")
 
 
 def to_jsonable(value: Any) -> Any:
@@ -81,7 +95,21 @@ def to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         # Keys are cleaned as well: PostgreSQL rejects a NUL wherever it sits
         # in the document, not only in values.
-        return {strip_nul(str(k)): to_jsonable(v) for k, v in value.items()}
+        cleaned: dict[str, Any] = {}
+        for k, v in value.items():
+            key = strip_nul(str(k))
+            if key in cleaned:
+                # Two keys differing only by a NUL collapse into one. Keeping
+                # the last is what a dict comprehension would do silently;
+                # what matters is that the dropped value is reported, since
+                # this module exists to stop losses from going unnoticed.
+                logger.warning(
+                    "dropping a value whose key collided with %r after "
+                    "removing NUL characters",
+                    key,
+                )
+            cleaned[key] = to_jsonable(v)
+        return cleaned
 
     if isinstance(value, (list, tuple, set, frozenset)):
         return [to_jsonable(v) for v in value]

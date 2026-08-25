@@ -102,3 +102,30 @@ def test_result_carries_no_nul_escape_once_serialised():
 def test_strips_nul_from_dictionary_keys():
     # PostgreSQL rejects a NUL wherever it sits in the document, keys included.
     assert to_jsonable({"a\x00b": 1}) == {"ab": 1}
+
+
+def test_colliding_keys_keep_the_last_value_and_are_reported(caplog):
+    """Two keys differing only by a NUL collapse into one.
+
+    Keeping the last is what a plain comprehension does; the point is that the
+    dropped value is reported rather than vanishing.
+    """
+    with caplog.at_level("WARNING"):
+        result = to_jsonable({"a\x00b": 1, "ab": 2})
+
+    assert result == {"ab": 2}
+    assert any("collided" in r.message for r in caplog.records)
+
+
+def test_stripping_a_nul_is_reported(caplog):
+    with caplog.at_level("WARNING"):
+        to_jsonable({"k": "a\x00b"})
+
+    assert any("stripped" in r.message for r in caplog.records)
+
+
+def test_clean_values_are_not_reported(caplog):
+    with caplog.at_level("WARNING"):
+        to_jsonable({"k": "plain", "j": 2})
+
+    assert caplog.records == []

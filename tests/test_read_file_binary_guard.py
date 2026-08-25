@@ -157,3 +157,66 @@ def test_utf8_text_containing_a_nul_is_now_refused(tmp_path):
 
     assert result["status"] == "error"
     assert "not text" in result["error_message"]
+
+
+def test_unreadable_sniff_is_reported_not_silently_skipped(tmp_path, monkeypatch):
+    """A failed sniff must not fall through to the decoding chain.
+
+    Swallowing the error would skip the binary check, and `latin-1` accepts
+    anything -- restoring the exact defect this guard prevents, with no trace.
+    """
+    import builtins
+
+    path = _write(tmp_path, "attachment.pdf", PDF_BYTES)
+    real_open = builtins.open
+    calls = {"n": 0}
+
+    def flaky_open(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:  # the sniff, and only the sniff
+            raise OSError(24, "Too many open files")
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", flaky_open)
+    result = tool_read_file(path)
+
+    assert result["status"] == "error"
+    assert "content" not in result
+
+
+def test_bom_decode_failure_does_not_claim_utf16_is_all_we_support(tmp_path):
+    # A BOM narrows the encoding list to one entry, so echoing that list back
+    # would read as "this tool only handles UTF-16".
+    path = tmp_path / "broken.txt"
+    path.write_bytes(b"\xff\xfe" + b"\x41\x00\x42")  # odd byte count
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "error"
+    assert "byte-order mark" in result["error_message"]
+
+
+def test_one_byte_partial_bom_is_not_mistaken_for_a_bom(tmp_path):
+    # Boundary for the two-byte startswith check.
+    path = _write(tmp_path, "tiny.txt", b"\xff")
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "success"
+    assert result["encoding"] != "utf-16"
+
+
+def test_binary_without_a_leading_nul_is_a_known_blind_spot(tmp_path):
+    """Pins down what the guard does NOT catch.
+
+    The sniff keys on NUL, so a binary payload that happens to contain none in
+    its first block still decodes. That is accepted: with no NUL anywhere, the
+    write cannot fail. This test exists so the blind spot stays a documented
+    choice instead of drifting silently.
+    """
+    path = _write(tmp_path, "payload.bin", bytes(range(128, 256)) * 100)
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "success"
+    assert "\x00" not in result["content"]
