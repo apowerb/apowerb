@@ -337,10 +337,22 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
         # place: the note told the agent the PDF was in its uploads dir, the
         # agent found nothing, and the pipeline carried on regardless.
         if complete and save_dirs and not failed:
+            published = True
             for tmp, dst in pending:
-                os.replace(tmp, dst)
-            staged.append(base)
-            continue
+                try:
+                    os.replace(tmp, dst)
+                except OSError as exc:
+                    published = False
+                    logger.error(
+                        "[OUTLOOK WEBHOOK BG] publishing %r into %s failed: %s",
+                        fn, dst, exc,
+                    )
+            if published:
+                staged.append(base)
+                continue
+            # Some readers may now hold the file and others not. Not announcing
+            # it is what matters: the caller refuses the whole replay rather
+            # than running on a document only part of the pipeline can see.
         logger.error(
             "[OUTLOOK WEBHOOK BG] %r NOT announced: %d/%d reader folder(s) failed, "
             "reader list complete=%s", fn, len(failed), len(folders), complete,
@@ -738,11 +750,19 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                 a for a in (stored_attachments or [])
                 if str(a.get("filename") or "").lower().endswith(".pdf")
             ]
-            if _pdfs and not staged:
+            _expected = {
+                os.path.basename(str(a.get("filename"))) for a in _pdfs
+            }
+            _missing = sorted(_expected - set(staged))
+            if _missing:
+                # "at least one staged" is not enough: an email carrying two
+                # PDFs of which one is unreadable would run on half a document
+                # and answer with the same confidence as on a whole one.
                 raise RuntimeError(
-                    f"replay of log_id={log_id} carried {len(_pdfs)} PDF but none "
-                    "could be staged where the reading agent looks -- refusing to "
-                    "run the pipeline on an unread document"
+                    f"replay of log_id={log_id} carried {len(_pdfs)} PDF but "
+                    f"{len(_missing)} could not be staged where the reading agent "
+                    f"looks ({', '.join(_missing)}) -- refusing to run the "
+                    "pipeline on an incompletely read document"
                 )
             if not base_msg:
                 base_msg = (

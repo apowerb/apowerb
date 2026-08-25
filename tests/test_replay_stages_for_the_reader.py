@@ -460,3 +460,31 @@ def test_a_missing_agent_row_is_not_read_as_a_leaf(monkeypatch):
         )(),
     )
     assert outlook._reader_agent_folders(1) == (["agent1"], False)
+
+
+# ---------------------------------------------------------------------------
+# Fourth review pass: "at least one PDF staged" let a half-read email through,
+# and a failure during the publish phase was unhandled.
+# ---------------------------------------------------------------------------
+
+
+def test_a_failure_while_publishing_is_not_announced(tmp_path, monkeypatch):
+    """os.replace ran unguarded: a failure on the second destination left the
+    first published and the file announced as if all readers had it."""
+    uploads = tmp_path / "uploads"
+    monkeypatch.setattr(outlook, "uploads_dir", lambda: uploads)
+    monkeypatch.setattr(
+        outlook, "_reader_agent_folders", lambda aid, **k: (["agentA", "agentB"], True),
+        raising=False,
+    )
+    real_replace = outlook.os.replace
+    calls = {"n": 0}
+
+    def _replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk went away mid-publish")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(outlook.os, "replace", _replace)
+    assert outlook._stage_stored_attachments(_one_pdf(tmp_path), 1) == []

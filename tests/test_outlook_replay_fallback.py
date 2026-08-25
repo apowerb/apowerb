@@ -238,9 +238,78 @@ class TestReplayPathIntegration:
         monkeypatch.setattr(ol, "run_agent_for_webhook", _run)
         monkeypatch.setattr(ol, "create_webhook_notification", AsyncMock(), raising=False)
 
-        with _pytest.raises(RuntimeError, match="none could be staged"):
+        with _pytest.raises(RuntimeError, match="could not be staged"):
             await ol.process_webhook_log_row(998)
         assert not ran["called"], "the pipeline ran on an unread document"
+
+    async def test_a_replay_missing_one_of_two_pdfs_fails(self, stored_pdf, monkeypatch):
+        """"At least one staged" let a half-read email through.
+
+        An email carrying two PDFs of which one is unreadable would run on half
+        a document and answer with the same confidence as on a whole one. Every
+        PDF the email carried must be staged, or the replay fails.
+        """
+        import contextlib
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        import pytest as _pytest
+        import apowerb.routers.webhook_handlers.outlook as ol
+
+        # Only the first of the two PDFs makes it to the reader folder.
+        monkeypatch.setattr(
+            ol, "_stage_stored_attachments", lambda a, i: ["AR_CF101085.pdf"]
+        )
+        second = dict(stored_pdf)
+        second["filename"] = "AR_SECOND.pdf"
+
+        log_row = SimpleNamespace(
+            id=997,
+            subscription_id=1,
+            user_id=3,
+            agent_id=997,
+            resource_id="res",
+            agent_message="Subject: CC n CF101085\n\nbody",
+            email_subject="CC n 11077978 V/R:CF101085",
+            email_sender="x@dupont-est.fr",
+            attachments=[stored_pdf, second],
+        )
+
+        class _DB:
+            async def get(self, model, _id):
+                return log_row
+
+            async def commit(self):
+                return None
+
+        @contextlib.asynccontextmanager
+        async def _session():
+            yield _DB()
+
+        monkeypatch.setattr(ol.sessionmanager, "session", _session)
+        monkeypatch.setattr(
+            ol.OutlookWebhookService, "get_access_token_for_user",
+            AsyncMock(return_value="tok"),
+        )
+        monkeypatch.setattr(
+            ol.OutlookWebhookService, "fetch_email",
+            AsyncMock(side_effect=RuntimeError(
+                "Failed to fetch email from Graph API (HTTP 404): ErrorItemNotFound")),
+        )
+        # The fan-out splits multi-PDF emails, so neutralise it to reach the
+        # staging guard itself rather than the split branch.
+        monkeypatch.setattr(ol, "_fanout_should_split", lambda a: False)
+        ran = {"called": False}
+
+        async def _run(**kw):
+            ran["called"] = True
+            return "done"
+
+        monkeypatch.setattr(ol, "run_agent_for_webhook", _run)
+        monkeypatch.setattr(ol, "create_webhook_notification", AsyncMock(), raising=False)
+
+        with _pytest.raises(RuntimeError, match="AR_SECOND.pdf"):
+            await ol.process_webhook_log_row(997)
+        assert not ran["called"], "the pipeline ran on a half-read email"
 
     async def test_401_does_not_replay_propagates(self, monkeypatch):
         import contextlib
