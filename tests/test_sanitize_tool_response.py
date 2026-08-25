@@ -54,3 +54,35 @@ def test_no_response_shape_leaves_a_nul_escape_in_the_persisted_json():
     for response in ({"content": "a\x00b"}, "a\x00b", ["a\x00b"], ("a\x00b",)):
         serialised = json.dumps(_adk_would_wrap(_sanitise(response)))
         assert "\\u0000" not in serialised
+
+
+def test_an_altered_response_names_the_tool_that_produced_it(caplog):
+    """jsonify logs WHAT changed; only this layer knows WHICH tool."""
+
+    class Tool:
+        name = "some_tool"
+
+    with caplog.at_level("WARNING"):
+        sanitize_tool_response(
+            tool=Tool(),
+            args={},
+            tool_context=None,
+            tool_response={"content": "a\x00b"},
+        )
+
+    assert any("some_tool" in r.getMessage() for r in caplog.records)
+
+
+def test_an_untouched_response_names_no_tool(caplog):
+    class Tool:
+        name = "some_tool"
+
+    with caplog.at_level("WARNING"):
+        sanitize_tool_response(
+            tool=Tool(),
+            args={},
+            tool_context=None,
+            tool_response={"content": "plain"},
+        )
+
+    assert caplog.records == []

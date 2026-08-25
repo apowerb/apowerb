@@ -262,3 +262,27 @@ def test_utf16_carries_non_bmp_characters_intact(tmp_path):
     assert result["status"] == "success"
     assert result["content"] == text
     assert result["content"].encode("utf-8")  # no lone surrogate survives
+
+
+def test_utf32_carries_accents_and_non_bmp_characters(tmp_path):
+    # The UTF-32 path was only ever exercised with ASCII, which would not
+    # catch a byte-order or width mistake in the decoder.
+    text = "r\u00e9f\u00e9rence \U0001f600 fin"
+    path = tmp_path / "u32.txt"
+    path.write_bytes(b"\xff\xfe\x00\x00" + text.encode("utf-32-le"))
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "success"
+    assert result["content"] == text
+
+
+def test_utf32_be_carries_accents_and_non_bmp_characters(tmp_path):
+    text = "r\u00e9f\u00e9rence \U0001f600 fin"
+    path = tmp_path / "u32be.txt"
+    path.write_bytes(b"\x00\x00\xfe\xff" + text.encode("utf-32-be"))
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "success"
+    assert result["content"] == text

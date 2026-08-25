@@ -344,9 +344,18 @@ def sanitize_tool_response(tool, args, tool_context, tool_response):
     """
     from apowerb.helpers.jsonify import to_jsonable
 
+    cleaned = to_jsonable(tool_response)
+    if cleaned != tool_response:
+        # jsonify logs WHAT it changed; only this layer knows WHICH tool
+        # produced it. Without the tool name, a warning in a concurrent run
+        # cannot be traced back to the tool that needs fixing.
+        logger.warning(
+            "[TOOL_SANITIZE] %s: response was altered to make it storable",
+            getattr(tool, "name", tool),
+        )
     if isinstance(tool_response, dict):
-        return to_jsonable(tool_response)
-    return {"result": to_jsonable(tool_response)}
+        return cleaned
+    return {"result": cleaned}
 
 
 def to_agent(agent_name: str) -> LlmAgent:
