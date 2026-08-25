@@ -96,10 +96,20 @@ def tool_thaink2_forecast(
 
 _BINARY_SNIFF_BYTES = 8192
 
-# UTF-16 text is full of zero bytes, so a NUL sniff alone would misfile it as
-# binary. A byte-order mark settles it: these two are the only encodings the
-# BOM can announce that a NUL sniff would otherwise reject.
-_BOM_ENCODINGS = ((b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16"))
+# UTF-16 and UTF-32 text is full of zero bytes, so a NUL sniff alone would
+# misfile it as binary. A byte-order mark settles it: these are the encodings
+# the BOM can announce that a NUL sniff would otherwise reject.
+#
+# Order matters. The UTF-32LE mark is FF FE 00 00, which *starts with* the
+# UTF-16LE mark FF FE, so the longer one has to be tested first. Matching
+# UTF-16 there would decode a UTF-32 file into convincing-looking nonsense
+# reported as success -- worse than the mojibake it replaced.
+_BOM_ENCODINGS = (
+    (b"\xff\xfe\x00\x00", "utf-32"),
+    (b"\x00\x00\xfe\xff", "utf-32"),
+    (b"\xff\xfe", "utf-16"),
+    (b"\xfe\xff", "utf-16"),
+)
 
 
 def _bom_encoding(head: bytes) -> Optional[str]:

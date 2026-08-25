@@ -220,3 +220,45 @@ def test_binary_without_a_leading_nul_is_a_known_blind_spot(tmp_path):
 
     assert result["status"] == "success"
     assert "\x00" not in result["content"]
+
+
+def test_utf32_le_is_not_mistaken_for_utf16(tmp_path):
+    """The UTF-32LE mark FF FE 00 00 starts with the UTF-16LE mark FF FE.
+
+    Matching UTF-16 here decoded the file into convincing-looking nonsense
+    reported as success -- worse than the mojibake it replaced.
+    """
+    text = "Commande AB12"
+    path = tmp_path / "u32le.txt"
+    path.write_bytes(b"\xff\xfe\x00\x00" + text.encode("utf-32-le"))
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "success"
+    assert result["content"] == text
+
+
+def test_utf32_be_is_read_as_text(tmp_path):
+    text = "Commande AB12"
+    path = tmp_path / "u32be.txt"
+    path.write_bytes(b"\x00\x00\xfe\xff" + text.encode("utf-32-be"))
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "success"
+    assert result["content"] == text
+
+
+def test_utf16_carries_non_bmp_characters_intact(tmp_path):
+    # Astral characters are encoded as surrogate pairs in UTF-16; a decoder
+    # that mishandled them would either raise or emit lone surrogates, which
+    # cannot be encoded back to UTF-8 for the database.
+    text = "facture \U0001f9fe et \U0001d11e"
+    path = tmp_path / "astral.txt"
+    path.write_bytes(b"\xff\xfe" + text.encode("utf-16-le"))
+
+    result = tool_read_file(str(path))
+
+    assert result["status"] == "success"
+    assert result["content"] == text
+    assert result["content"].encode("utf-8")  # no lone surrogate survives
