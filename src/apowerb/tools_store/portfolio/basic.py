@@ -94,6 +94,35 @@ def tool_thaink2_forecast(
         response.raise_for_status()  # Raise an exception for HTTP errors
 
 
+_BINARY_SNIFF_BYTES = 8192
+
+# UTF-16 text is full of zero bytes, so a NUL sniff alone would misfile it as
+# binary. A byte-order mark settles it: these two are the only encodings the
+# BOM can announce that a NUL sniff would otherwise reject.
+_BOM_ENCODINGS = ((b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16"))
+
+
+def _bom_encoding(head: bytes) -> str | None:
+    """Return the encoding announced by a byte-order mark, if any."""
+    for bom, encoding in _BOM_ENCODINGS:
+        if head.startswith(bom):
+            return encoding
+    return None
+
+
+def _sniff_head(path) -> bytes | None:
+    """Read the leading block of a file, or None if it cannot be read.
+
+    A read failure yields None so the caller falls through to its own error
+    handling instead of this helper masking the real cause.
+    """
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(_BINARY_SNIFF_BYTES)
+    except OSError:
+        return None
+
+
 def tool_read_file(file_path: str, max_size_mb: int = 10) -> dict:
     """
     Reads the content of a file and returns it with metadata.
@@ -132,8 +161,40 @@ def tool_read_file(file_path: str, max_size_mb: int = 10) -> dict:
                 "error_message": f"File too large: {file_size / 1024 / 1024:.2f}MB exceeds limit of {max_size_mb}MB",
             }
 
-        # Try reading with different encodings
-        encodings = ["utf-8", "latin-1", "iso-8859-1", "cp1252"]
+        # ``latin-1`` maps every one of the 256 byte values to a character, so
+        # it can never raise UnicodeDecodeError. Without a guard, the fallback
+        # chain below therefore "succeeds" on any binary file and returns its
+        # bytes as pseudo-text. That text carries NUL characters, which
+        # PostgreSQL refuses to store, so the caller's whole run is lost to an
+        # opaque write error further down.
+        head = _sniff_head(file_path_obj)
+
+        # A byte-order mark is checked first: UTF-16 is text, but it is full of
+        # zero bytes, so the NUL check below would otherwise reject it — and
+        # the fallback chain would mangle it into one character per byte.
+        bom_encoding = _bom_encoding(head) if head else None
+        if bom_encoding:
+            encodings = [bom_encoding]
+        else:
+            # Same heuristic as git and grep: a NUL byte in the leading block
+            # means binary. Only the leading block is read, so a NUL further in
+            # slips through; ``to_jsonable`` strips NULs again at the tool
+            # boundary, which is what keeps the write itself safe. Refusing
+            # here is about not handing the model unusable pseudo-text.
+            if head and b"\x00" in head:
+                return {
+                    "status": "error",
+                    "error_message": (
+                        f"File is not text: {file_path_obj.name}. Reading it "
+                        "as text would produce unusable output. Use a tool "
+                        "that understands this file format instead."
+                    ),
+                }
+            # Order is left as-is on purpose: ``latin-1`` sits ahead of the
+            # encodings that follow it and always succeeds, so they never run.
+            # Reordering would change how existing text files decode, which is
+            # a separate change from the failure fixed here.
+            encodings = ["utf-8", "latin-1", "iso-8859-1", "cp1252"]
         content = None
         detected_encoding = None
 
