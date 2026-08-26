@@ -26,7 +26,7 @@ from pathlib import Path as _Path
 
 from apowerb.storage.filename import sanitize_filename
 from apowerb.storage.webhook_attachments import resolve_attachment_path
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.auth.dependencies import get_current_user
@@ -743,28 +743,145 @@ async def receive_notification(
 # ---------------------------------------------------------------------------
 
 
+# Statuses a caller may filter on. Anything else is rejected rather than
+# silently returning everything -- a filter that quietly does nothing is worse
+# than one that errors, because the operator trusts the empty-looking result.
+_LOG_STATUSES = frozenset(
+    {"pending", "in_progress", "success", "error", "retrying"}
+)
+
+# "failed" is what an operator looks for, and it spans two stored states.
+_STATUS_GROUPS = {"failed": ("error", "retrying")}
+
+
+def _parse_log_moment(value: str, field: str) -> datetime:
+    """Parse an ISO date or datetime, and make it timezone-aware.
+
+    A bare date means the whole day in UTC: ``since=2026-08-21`` starts at
+    00:00 and ``until=2026-08-21`` must still include 23:59, so the caller
+    does not have to know that comparing a date against a timestamp silently
+    excludes the day itself.
+    """
+    raw = (value or "").strip()
+    try:
+        moment = datetime.fromisoformat(raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field} must be an ISO date or datetime, got {value!r}",
+        )
+    if len(raw) == 10 and field == "until":
+        moment = moment.replace(hour=23, minute=59, second=59, microsecond=999999)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
 @router.get("/logs")
 async def list_webhook_logs(
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
     subscription_id: int | None = Query(default=None),
+    agent_id: str | None = Query(default=None),
+    status: str | None = Query(
+        default=None,
+        description="One or more statuses, comma separated. "
+        "'failed' expands to error+retrying.",
+    ),
+    since: str | None = Query(default=None, description="ISO date or datetime"),
+    until: str | None = Query(default=None, description="ISO date or datetime"),
+    q: str | None = Query(default=None, description="Search subject and sender"),
+    classification: str | None = Query(
+        default=None, description="Agent classification, e.g. 'ar' or 'not_ar'"
+    ),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
 ):
     """Return webhook execution logs for the current user.
 
-    Supports optional filtering by ``subscription_id`` and pagination
-    via ``limit`` / ``offset``.  Results are ordered newest-first.
+    Filters: ``subscription_id``, ``agent_id``, ``status``, ``since`` /
+    ``until``, ``q`` (subject or sender), ``classification``. They combine
+    with AND. Pagination via ``limit`` / ``offset``, newest-first.
+
+    Note: the ``status`` parameter shadows fastapi's ``status`` module inside
+    this function; raise with literal codes here rather than ``status.HTTP_*``.
+
+    Filtering happens here, not in the browser: a client can only filter the
+    page it holds, which turns "show me the failures" into "show me the
+    failures among the last 40" -- the same answer for a healthy day and a
+    catastrophic one.
     """
-    query = select(WebhookLog).where(WebhookLog.user_id == current_user.user_id)
+    filters = [WebhookLog.user_id == current_user.user_id]
     if subscription_id is not None:
-        query = query.where(WebhookLog.subscription_id == subscription_id)
-    query = query.order_by(WebhookLog.created_at.desc()).limit(limit).offset(offset)
+        filters.append(WebhookLog.subscription_id == subscription_id)
+    if agent_id:
+        filters.append(WebhookLog.agent_id == agent_id)
+
+    if status:
+        wanted: set[str] = set()
+        for token in status.split(","):
+            token = token.strip().lower()
+            if not token:
+                continue
+            if token in _STATUS_GROUPS:
+                wanted.update(_STATUS_GROUPS[token])
+            elif token in _LOG_STATUSES:
+                wanted.add(token)
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"unknown status {token!r}; expected one of "
+                        + ", ".join(sorted(_LOG_STATUSES | set(_STATUS_GROUPS)))
+                    ),
+                )
+        if wanted:
+            filters.append(WebhookLog.status.in_(sorted(wanted)))
+
+    if since:
+        filters.append(WebhookLog.created_at >= _parse_log_moment(since, "since"))
+    if until:
+        filters.append(WebhookLog.created_at <= _parse_log_moment(until, "until"))
+
+    if q:
+        # Escape the LIKE wildcards: a subject containing '%' must match
+        # itself, not everything.
+        needle = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        if needle:
+            pattern = f"%{needle}%"
+            filters.append(
+                or_(
+                    WebhookLog.email_subject.ilike(pattern, escape="\\"),
+                    WebhookLog.email_sender.ilike(pattern, escape="\\"),
+                )
+            )
+
+    if classification:
+        token = classification.strip()
+        if token:
+            # The classification lives inside the agent's JSON answer. Match
+            # the quoted value so 'ar' cannot also match 'not_ar'.
+            filters.append(
+                WebhookLog.agent_response.ilike(f'%"email_classification": "{token}"%')
+            )
+
+    total = await db.scalar(
+        select(func.count()).select_from(WebhookLog).where(*filters)
+    )
+
+    query = (
+        select(WebhookLog)
+        .where(*filters)
+        .order_by(WebhookLog.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
 
     result = await db.execute(query)
     logs = result.scalars().all()
 
     return {
+        "total": total or 0,
         "logs": [
             {
                 "id": log.id,
