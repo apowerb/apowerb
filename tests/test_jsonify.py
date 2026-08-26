@@ -59,3 +59,101 @@ def test_pandas_records_from_dataframe_are_json_safe():
 
 def test_nat_becomes_none():
     assert to_jsonable(pd.NaT) is None
+
+
+def test_strips_nul_from_a_string():
+    assert to_jsonable("ab\x00cd") == "abcd"
+
+
+def test_leaves_a_clean_string_byte_for_byte():
+    clean = "Ligne 1\nLigne 2\tfin\r\n - accentue (c)"
+    assert to_jsonable(clean) == clean
+
+
+def test_keeps_control_characters_other_than_nul():
+    # PostgreSQL accepts every control character except NUL; dropping them
+    # would mangle content the caller still needs.
+    assert to_jsonable("a\x01b\x1fc") == "a\x01b\x1fc"
+
+
+def test_strips_nul_inside_nested_structures():
+    payload = {"content": ["x\x00y", {"deep": "z\x00"}], "ok": "plain"}
+    assert to_jsonable(payload) == {
+        "content": ["xy", {"deep": "z"}],
+        "ok": "plain",
+    }
+
+
+def test_strips_nul_from_a_stringified_fallback_value():
+    class Weird:
+        def __str__(self):
+            return "we\x00ird"
+
+    assert to_jsonable(Weird()) == "weird"
+
+
+def test_result_carries_no_nul_escape_once_serialised():
+    # PostgreSQL rejects the NUL escape in both text and jsonb, so it must be
+    # gone from the serialised payload, not merely from the Python repr.
+    serialised = json.dumps(to_jsonable({"content": "a\x00b"}))
+    assert "\\u0000" not in serialised
+
+
+def test_strips_nul_from_dictionary_keys():
+    # PostgreSQL rejects a NUL wherever it sits in the document, keys included.
+    assert to_jsonable({"a\x00b": 1}) == {"ab": 1}
+
+
+def test_colliding_keys_keep_the_last_value_and_are_reported(caplog):
+    """Two keys differing only by a NUL collapse into one.
+
+    Keeping the last is what a plain comprehension does; the point is that the
+    dropped value is reported rather than vanishing.
+    """
+    with caplog.at_level("WARNING"):
+        result = to_jsonable({"a\x00b": 1, "ab": 2})
+
+    assert result == {"ab": 2}
+    assert any("collided" in r.message for r in caplog.records)
+
+
+def test_stripping_a_nul_is_reported(caplog):
+    with caplog.at_level("WARNING"):
+        to_jsonable({"k": "a\x00b"})
+
+    assert any("stripped" in r.message for r in caplog.records)
+
+
+def test_clean_values_are_not_reported(caplog):
+    with caplog.at_level("WARNING"):
+        to_jsonable({"k": "plain", "j": 2})
+
+    assert caplog.records == []
+
+
+def test_coercing_an_unknown_type_is_reported(caplog):
+    """The str() fallback discards type and structure.
+
+    The tool-response callback routes non-dict responses through to_jsonable,
+    so a structured object can reach this path and be flattened into a string.
+    That loss has to be visible.
+    """
+
+    class Custom:
+        def __repr__(self):
+            return "Custom(label='x')"
+
+    with caplog.at_level("WARNING"):
+        result = to_jsonable(Custom())
+
+    assert result == "Custom(label='x')"
+    assert any("structure are lost" in r.message for r in caplog.records)
+
+
+def test_known_types_do_not_trigger_the_coercion_warning(caplog):
+    import datetime
+
+    with caplog.at_level("WARNING"):
+        to_jsonable({"a": 1, "b": [2.5, "x"], "c": datetime.date(2026, 1, 1)})
+
+    assert caplog.records == []

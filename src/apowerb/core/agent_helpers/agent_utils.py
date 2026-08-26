@@ -322,6 +322,42 @@ def _lookup_output_schema(name: str):
 from apowerb.core.extensions.registry import registry as _ext_registry  # noqa: E402
 
 
+def sanitize_tool_response(tool, args, tool_context, tool_response):
+    """ADK ``after_tool_callback``: make a tool response safe to persist.
+
+    Coerces numpy scalars and other non-JSON values, without which a stray
+    ``numpy.bool_`` makes ``event.model_dump_json`` raise
+    ``PydanticSerializationError`` and tears down the SSE stream — users read
+    that as the agent silently ignoring their file. The same pass strips NUL
+    characters, which PostgreSQL refuses to store in ``text`` and ``jsonb``
+    columns at all.
+
+    Responses that are not dicts are wrapped here rather than skipped. ADK
+    wraps them in ``{"result": ...}`` itself, but only *after* this callback
+    runs, so returning None would let a list or a string reach the event write
+    unsanitised — the sanitising would cover some tools while appearing to
+    cover all of them. Wrapping here is not a double wrap: ADK leaves a dict
+    alone.
+
+    Kept at module level, outside ``to_agent``, so the behaviour can be tested
+    directly; it captures nothing from its former enclosing scope.
+    """
+    from apowerb.helpers.jsonify import to_jsonable
+
+    cleaned = to_jsonable(tool_response)
+    if cleaned != tool_response:
+        # jsonify logs WHAT it changed; only this layer knows WHICH tool
+        # produced it. Without the tool name, a warning in a concurrent run
+        # cannot be traced back to the tool that needs fixing.
+        logger.warning(
+            "[TOOL_SANITIZE] %s: response was altered to make it storable",
+            getattr(tool, "name", tool),
+        )
+    if isinstance(tool_response, dict):
+        return cleaned
+    return {"result": cleaned}
+
+
 def to_agent(agent_name: str) -> LlmAgent:
     """Convert the schema to an Agent instance."""
     logger.info(f"[TO_AGENT] Loading agent: {agent_name}")
@@ -744,18 +780,6 @@ def to_agent(agent_name: str) -> LlmAgent:
                 "error": f"Tool '{tool_name}' failed: {type(error).__name__}: {error}",
             }
 
-        def _sanitize_tool_response(tool, args, tool_context, tool_response):
-            """Coerce numpy scalars / non-JSON values before ADK persists the
-            event. Without this, a stray ``numpy.bool_`` in any tool response
-            makes ``event.model_dump_json`` raise ``PydanticSerializationError``
-            and tears down the SSE stream — users read that as the agent
-            silently ignoring their file.
-            """
-            from apowerb.helpers.jsonify import to_jsonable
-            if isinstance(tool_response, dict):
-                return to_jsonable(tool_response)
-            return None
-
         agent_kwargs = dict(
             name=agent_name,
             model=model,
@@ -765,7 +789,7 @@ def to_agent(agent_name: str) -> LlmAgent:
             sub_agents=sub_agents,
             tools=tools_funcs,  # type: ignore
             on_tool_error_callback=_on_tool_error,
-            after_tool_callback=_sanitize_tool_response,
+            after_tool_callback=sanitize_tool_response,
         )
         # ADK output_key — when set, the agent's final text is written
         # to session.state[output_key] so a downstream sub-agent in a

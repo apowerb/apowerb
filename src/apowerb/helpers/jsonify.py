@@ -11,14 +11,50 @@ ADK when persisting events) rejects them with::
 and the whole SSE stream is torn down mid-response — from the UI it looks
 like the agent silently ignored the file it just read.
 
+A second, unrelated family of values breaks the same write: strings
+carrying a NUL character (``U+0000``). JSON and Python are perfectly happy
+with them, but PostgreSQL is not — it stores text as UTF-8 and rejects the
+NUL byte outright, so persisting the event raises::
+
+    UntranslatableCharacterError: unsupported Unicode escape sequence
+    DETAIL:  \u0000 cannot be converted to text.
+
+The tool call is lost and the caller sees an opaque 500. NULs reach a tool
+response whenever a tool decodes binary data as text — see the binary guard
+in ``tool_read_file``, which is where they came from in practice.
+
 ``to_jsonable`` walks a value and converts anything non-JSON into its
-closest native Python equivalent. It is cheap (no numpy import unless a
-numpy value is actually encountered) and safe to apply at tool boundaries.
+closest native Python equivalent, and strips NULs from every string it
+meets. It is cheap (no numpy import unless a numpy value is actually
+encountered) and safe to apply at tool boundaries.
 """
 
 from __future__ import annotations
 
+from logging import getLogger
 from typing import Any
+
+logger = getLogger(__name__)
+
+
+def strip_nul(text: str) -> str:
+    """Remove NUL characters, which PostgreSQL refuses to store in ``text``
+    and ``jsonb`` columns. Every other character is left untouched: control
+    characters, newlines and tabs are all valid UTF-8 that PostgreSQL
+    accepts, and dropping them would silently mangle real content.
+
+    Removals are logged. This runs at every tool boundary, so it is the one
+    place a NUL-producing bug in any tool would otherwise disappear without
+    trace: the write would start succeeding and nothing would report that a
+    tool is emitting corrupted output.
+    """
+    if "\x00" not in text:
+        return text
+    logger.warning(
+        "stripped %d NUL character(s) from a value before persistence",
+        text.count("\x00"),
+    )
+    return text.replace("\x00", "")
 
 
 def to_jsonable(value: Any) -> Any:
@@ -51,11 +87,29 @@ def to_jsonable(value: Any) -> Any:
 
     if isinstance(value, float):
         return value if value == value else None  # NaN → None
-    if isinstance(value, (int, str)):
+    if isinstance(value, str):
+        return strip_nul(value)
+    if isinstance(value, int):
         return value
 
     if isinstance(value, dict):
-        return {str(k): to_jsonable(v) for k, v in value.items()}
+        # Keys are cleaned as well: PostgreSQL rejects a NUL wherever it sits
+        # in the document, not only in values.
+        cleaned: dict[str, Any] = {}
+        for k, v in value.items():
+            key = strip_nul(str(k))
+            if key in cleaned:
+                # Two keys differing only by a NUL collapse into one. Keeping
+                # the last is what a dict comprehension would do silently;
+                # what matters is that the dropped value is reported, since
+                # this module exists to stop losses from going unnoticed.
+                logger.warning(
+                    "dropping a value whose key collided with %r after "
+                    "removing NUL characters",
+                    key,
+                )
+            cleaned[key] = to_jsonable(v)
+        return cleaned
 
     if isinstance(value, (list, tuple, set, frozenset)):
         return [to_jsonable(v) for v in value]
@@ -78,4 +132,13 @@ def to_jsonable(value: Any) -> Any:
     except Exception:
         pass
 
-    return str(value)
+    # Last resort: anything with no JSON equivalent becomes its repr. That
+    # discards the value's type and structure, so it is reported -- the
+    # callback now routes non-dict tool responses through here too, and a
+    # structured object quietly flattened into a string is exactly the kind
+    # of loss this module is supposed to make visible.
+    logger.warning(
+        "coercing a %s to its string form; type and structure are lost",
+        type(value).__name__,
+    )
+    return strip_nul(str(value))
