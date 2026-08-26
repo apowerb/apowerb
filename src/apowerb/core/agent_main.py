@@ -2,6 +2,7 @@ import ast
 import json
 import os
 from datetime import datetime
+from logging import getLogger
 from typing import Dict
 
 from fastapi import HTTPException
@@ -19,6 +20,8 @@ from apowerb.core.agent_helpers.default_llm import (
 )
 from apowerb.core.superagents import compute_template_hash
 from apowerb.helpers.encryptor import encrypt_value_in_dict, decrypt_value_in_dict
+
+logger = getLogger(__name__)
 
 
 # DDL déplacé dans helpers/store_migrations.ensure_store_tables(),
@@ -625,6 +628,47 @@ def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
     model_params_to_store = unmask_model_api_key(
         agent.agent_model_params, existing.get("agent_model_params")
     )
+
+    # An absent field means "unchanged", never "clear it".
+    #
+    # update_agent writes every column unconditionally, so any field the client
+    # omits arrives as None and wipes the stored value. The edit form does not
+    # expose the sub-agent pipeline fields, so saving an agent from the UI to
+    # change something unrelated — a model, a key, a description — silently
+    # cleared them.
+    #
+    # The blast radius is much wider than it looks. Without output_key an ADK
+    # sequential pipeline stops handing state from one sub-agent to the next,
+    # and any gate whose trigger reads output_key or output_schema_name stops
+    # being wired at all. The pipeline still runs and still returns 200: each
+    # sub-agent simply sees nothing from the previous one, so the failure is
+    # silent and only shows up as wrong results downstream.
+    #
+    # Same principle as unmask_model_api_key just above, which already protects
+    # the API key this way. Omission is read from Pydantic's model_fields_set, so a
+    # field the client actually names keeps the value it sent -- clearing on
+    # purpose works with either null or an empty string.
+    _PRESERVE_WHEN_OMITTED = (
+        "output_key",
+        "output_schema_name",
+        "skip_when_upstream",
+        "superagent_template_id",
+        "loop_exit_instruction",
+        "code_executor",
+    )
+    _sent = getattr(agent, "model_fields_set", None) or set()
+    for _field in _PRESERVE_WHEN_OMITTED:
+        if _field in _sent:
+            # The client named the field, so its value is intentional --
+            # including None or "". Only silence means "unchanged".
+            continue
+        _stored = existing.get(_field)
+        if _stored is not None:
+            setattr(agent, _field, _stored)
+            logger.info(
+                "[UPDATE_AGENT] %s omitted by the client for agent_id=%s -- "
+                "keeping the stored value", _field, agent_id,
+            )
     model_params_to_store = strip_default_llm_params(
         agent.agent_model, model_params_to_store
     )
