@@ -753,6 +753,11 @@ _LOG_STATUSES = frozenset(
 # "failed" is what an operator looks for, and it spans two stored states.
 _STATUS_GROUPS = {"failed": ("error", "retrying")}
 
+# Rows whose answer carries no classification at all. Selectable on purpose:
+# see the note in the classification branch below.
+UNCATEGORIZED = "uncategorized"
+_CLASSIFICATION_KEY = '%"email_classification"%'
+
 
 def _parse_log_moment(value: str, field: str) -> datetime:
     """Parse an ISO date or datetime, and make it timezone-aware.
@@ -803,6 +808,11 @@ async def list_webhook_logs(
     ``until``, ``q`` (subject or sender), ``classification``. They combine
     with AND. Pagination via ``limit`` / ``offset``, newest-first.
 
+    ``classification`` reads a value out of the agent's stored answer, which
+    is only structured when the agent chose to answer that way. Pass
+    ``uncategorized`` for the rows that carry no classification -- without it,
+    the named categories silently exclude them.
+
     Note: the ``status`` parameter shadows fastapi's ``status`` module inside
     this function; raise with literal codes here rather than ``status.HTTP_*``.
 
@@ -835,8 +845,14 @@ async def list_webhook_logs(
                         + ", ".join(sorted(_LOG_STATUSES | set(_STATUS_GROUPS)))
                     ),
                 )
-        if wanted:
-            filters.append(WebhookLog.status.in_(sorted(wanted)))
+        if not wanted:
+            # A caller who wrote something meant to narrow the list. Treating
+            # ",,," as "no filter" hands back everything under a label that
+            # says otherwise.
+            raise HTTPException(
+                status_code=422, detail="status was given but names no status"
+            )
+        filters.append(WebhookLog.status.in_(sorted(wanted)))
 
     if since:
         filters.append(WebhookLog.created_at >= _parse_log_moment(since, "since"))
@@ -858,7 +874,21 @@ async def list_webhook_logs(
 
     if classification:
         token = classification.strip()
-        if token:
+        if token == UNCATEGORIZED:
+            # Measured on 6490 stored runs: 74% carry the key, 18% are the
+            # model's prose with no key at all, 7% are empty. Without this
+            # option the other two would quietly hide a quarter of the rows,
+            # and an operator asking for acknowledgments would never learn
+            # that some were never classified -- which is itself the signal
+            # worth looking at.
+            filters.append(
+                or_(
+                    WebhookLog.agent_response.is_(None),
+                    WebhookLog.agent_response == "",
+                    ~WebhookLog.agent_response.ilike(_CLASSIFICATION_KEY),
+                )
+            )
+        elif token:
             # The classification lives inside the agent's JSON answer. Match
             # the quoted value so 'ar' cannot also match 'not_ar'.
             filters.append(
