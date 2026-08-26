@@ -145,6 +145,21 @@ class TestBadInputIsRefused:
         assert resp.status_code == 422
         assert "whatever" in resp.text
 
+    def test_an_empty_status_is_a_422(self, session):
+        """ is a caller asking to narrow the list with an empty hand.
+        A falsy string used to fall through the guard and return everything."""
+        assert _client(session).get("/api/webhooks/logs?status=").status_code == 422
+
+    def test_the_order_is_total_so_paging_cannot_skip_a_row(self, session):
+        """created_at alone is not a total order: two rows stored in the same
+        instant can swap between requests, and with offset pagination a swap at
+        a page boundary serves one row twice and another never."""
+        _client(session).get("/api/webhooks/logs")
+        sql = _sql(session.statements[0]).lower()
+        assert "order by" in sql
+        tail = sql.split("order by")[1]
+        assert "created_at desc" in tail and "id desc" in tail
+
     def test_a_status_naming_nothing_is_a_422(self, session):
         """',,,' asked to narrow the list. Returning everything under that
         label hands back a result the caller will read as filtered."""

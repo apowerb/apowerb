@@ -806,7 +806,9 @@ async def list_webhook_logs(
 
     Filters: ``subscription_id``, ``agent_id``, ``status``, ``since`` /
     ``until``, ``q`` (subject or sender), ``classification``. They combine
-    with AND. Pagination via ``limit`` / ``offset``, newest-first.
+    with AND. Pagination via ``limit`` / ``offset``, newest-first, ordered by
+    ``created_at`` then ``id`` so the sequence is total and paging cannot skip
+    or repeat a row.
 
     ``classification`` reads a value out of the agent's stored answer, which
     is only structured when the agent chose to answer that way. Pass
@@ -827,7 +829,10 @@ async def list_webhook_logs(
     if agent_id:
         filters.append(WebhookLog.agent_id == agent_id)
 
-    if status:
+    # `is not None`, not truthiness: `?status=` is a caller asking to narrow the
+    # list with an empty hand. Falling through on a falsy string returns
+    # everything under a label that says otherwise.
+    if status is not None:
         wanted: set[str] = set()
         for token in status.split(","):
             token = token.strip().lower()
@@ -902,7 +907,11 @@ async def list_webhook_logs(
     query = (
         select(WebhookLog)
         .where(*filters)
-        .order_by(WebhookLog.created_at.desc())
+        # created_at alone is not a total order: two rows stored in the same
+        # instant can swap between two requests, and with offset pagination a
+        # swap at a page boundary means one row served twice and another never.
+        # The id breaks the tie and never repeats.
+        .order_by(WebhookLog.created_at.desc(), WebhookLog.id.desc())
         .limit(limit)
         .offset(offset)
     )
