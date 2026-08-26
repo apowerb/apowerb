@@ -101,12 +101,18 @@ class TestFiltersReachTheQuery:
         sql = _sql(session.statements[0])
         assert "IS NULL" in sql
         assert "NOT" in sql.upper()
+        # A VALUE, not the mere presence of the word: 21 stored runs contain
+        # "email_classification" only inside a validation error naming the
+        # field the agent failed to produce, and those are uncategorised.
+        assert '[^"]+' in sql
 
     def test_a_named_category_cannot_match_its_own_negation(self, session):
         """'ar' must not also select 'not_ar': the quoted value is matched."""
         _client(session).get("/api/webhooks/logs?classification=ar")
         sql = _sql(session.statements[0])
-        assert '"email_classification": "ar"' in sql
+        # Tolerant to spacing, and anchored on the quotes so 'ar' cannot also
+        # select 'not_ar'.
+        assert '"email_classification"[[:space:]]*:[[:space:]]*"ar"' in sql
 
     def test_filters_combine_with_and(self, session):
         _client(session).get(

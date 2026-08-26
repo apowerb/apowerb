@@ -15,6 +15,7 @@ Endpoints:
     POST   /api/webhooks/logs/{log_id}/retrigger                (auth)  Re-trigger a log from its stored payload
 """
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -756,7 +757,22 @@ _STATUS_GROUPS = {"failed": ("error", "retrying")}
 # Rows whose answer carries no classification at all. Selectable on purpose:
 # see the note in the classification branch below.
 UNCATEGORIZED = "uncategorized"
-_CLASSIFICATION_KEY = '%"email_classification"%'
+
+# A POSIX regex, not a LIKE pattern, for two reasons measured on the stored
+# runs:
+#   - LIKE cannot tolerate whitespace. The pattern would hard-code the space
+#     after the colon, and a compact serialisation would silently match
+#     nothing. Today 0 rows are compact; that is a fact about today's data.
+#   - Presence of the KEY is not presence of a VALUE. 21 rows contain the
+#     string "email_classification" only inside a schema-validation error
+#     naming the field the agent failed to produce. They carry no
+#     classification at all, and are the ones most worth finding.
+_CLASSIFIED_RE = r'"email_classification"[[:space:]]*:[[:space:]]*"[^"]+"'
+
+
+def _classified_as(value: str) -> str:
+    """Regex matching a classification whose value is exactly ``value``."""
+    return r'"email_classification"[[:space:]]*:[[:space:]]*"' + value + '"'
 
 
 def _parse_log_moment(value: str, field: str) -> datetime:
@@ -810,10 +826,11 @@ async def list_webhook_logs(
     ``created_at`` then ``id`` so the sequence is total and paging cannot skip
     or repeat a row.
 
-    ``classification`` reads a value out of the agent's stored answer, which
-    is only structured when the agent chose to answer that way. Pass
-    ``uncategorized`` for the rows that carry no classification -- without it,
-    the named categories silently exclude them.
+    ``classification`` reads a VALUE out of the agent's stored answer, which is
+    only structured when the agent answered that way. Pass ``uncategorized``
+    for the rows carrying no classification -- including the ones whose answer
+    is a schema-validation error naming the field the agent failed to produce.
+    Without it the named categories silently exclude them.
 
     Note: the ``status`` parameter shadows fastapi's ``status`` module inside
     this function; raise with literal codes here rather than ``status.HTTP_*``.
@@ -880,6 +897,7 @@ async def list_webhook_logs(
     if classification:
         token = classification.strip()
         if token == UNCATEGORIZED:
+            # "carries no classification", not "does not contain the word".
             # Measured on 6490 stored runs: 74% carry the key, 18% are the
             # model's prose with no key at all, 7% are empty. Without this
             # option the other two would quietly hide a quarter of the rows,
@@ -890,14 +908,16 @@ async def list_webhook_logs(
                 or_(
                     WebhookLog.agent_response.is_(None),
                     WebhookLog.agent_response == "",
-                    ~WebhookLog.agent_response.ilike(_CLASSIFICATION_KEY),
+                    ~WebhookLog.agent_response.op("~")(_CLASSIFIED_RE),
                 )
             )
         elif token:
-            # The classification lives inside the agent's JSON answer. Match
-            # the quoted value so 'ar' cannot also match 'not_ar'.
+            # The classification lives inside the agent's JSON answer. The
+            # quotes around the value are what stop 'ar' from also matching
+            # 'not_ar'; the regex is what stops a change of spacing from
+            # silently matching nothing.
             filters.append(
-                WebhookLog.agent_response.ilike(f'%"email_classification": "{token}"%')
+                WebhookLog.agent_response.op("~")(_classified_as(re.escape(token)))
             )
 
     total = await db.scalar(
