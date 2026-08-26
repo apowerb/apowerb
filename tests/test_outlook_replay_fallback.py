@@ -24,17 +24,36 @@ def stored_pdf():
 
 
 class TestStageStoredAttachments:
-    def test_stages_pdf_into_agent_uploads(self, stored_pdf):
+    def test_stages_pdf_into_agent_uploads(self, stored_pdf, monkeypatch):
+        """The reader folder list is resolved from the agent store, which this
+        test has no access to; stub it so this stays a test of the copy, not of
+        the resolution (covered in test_replay_stages_for_the_reader.py)."""
+        from apowerb.routers.webhook_handlers import outlook
         from apowerb.routers.webhook_handlers.outlook import (
             _stage_stored_attachments,
         )
 
+        monkeypatch.setattr(
+            outlook, "_reader_agent_folders", lambda aid, **k: ([f"agent{aid}"], True)
+        )
         staged = _stage_stored_attachments([stored_pdf], 999)
         assert staged == ["AR_CF101085.pdf"]
         dst = os.path.join("uploads", "agent999", "AR_CF101085.pdf")
         assert os.path.exists(dst)
         with open(dst, "rb") as f:
             assert f.read()[:5] == b"%PDF-"
+
+    def test_an_unresolvable_reader_list_stages_nothing(self, stored_pdf):
+        """Without the agent store we cannot know where the reading sub-agent
+        looks. Announcing the PDF anyway is what produced wrong verdicts: the
+        agent was told the file was in its uploads dir, found nothing, and
+        answered from the subject line. Nothing is announced instead, and the
+        backlog worker retries -- a visible failure rather than a silent one."""
+        from apowerb.routers.webhook_handlers.outlook import (
+            _stage_stored_attachments,
+        )
+
+        assert _stage_stored_attachments([stored_pdf], 999) == []
 
     def test_skips_non_pdf_and_missing(self):
         from apowerb.routers.webhook_handlers.outlook import (
@@ -71,10 +90,20 @@ class TestReplayInstruction:
         assert "tool_pdf_first_page" in note
 
     def test_handles_no_files(self):
+        """With nothing staged, the note must not describe an attachment.
+
+        It used to interpolate "(none)" into a sentence that still asserted the
+        PDFs were "ALREADY in your uploads directory". An agent reading that
+        looks for a file, finds none, and answers anyway -- a confident verdict
+        with no document read. The note now says so plainly instead.
+        """
         from apowerb.routers.webhook_handlers.outlook import _replay_instruction
 
         note = _replay_instruction([])
-        assert "(none)" in note
+        assert "ALREADY in your uploads directory" not in note
+        assert "NO attachment could be staged" in note
+        assert "do NOT infer its contents" in note
+        assert "REPLAY MODE" in note
 
 
 class TestReplayPathIntegration:
@@ -87,6 +116,13 @@ class TestReplayPathIntegration:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
         import apowerb.routers.webhook_handlers.outlook as ol
+
+        # The reader folder list comes from the agent store, unreachable here.
+        # Stub it so this stays an integration test of the replay path rather
+        # than of the resolution (covered in test_replay_stages_for_the_reader).
+        monkeypatch.setattr(
+            ol, "_reader_agent_folders", lambda aid, **k: ([f"agent{aid}"], True)
+        )
 
         # Fake log row: attachments is a LIST (ORM JSON column), agent_message set
         log_row = SimpleNamespace(
@@ -141,6 +177,70 @@ class TestReplayPathIntegration:
         assert atts and atts[0]["filename"] == "AR_CF101085.pdf"
         # staged on disk where tool_pdf_first_page reads
         assert os.path.exists(os.path.join("uploads", "agent999", "AR_CF101085.pdf"))
+
+    async def test_a_replay_that_cannot_stage_its_pdf_fails(self, stored_pdf, monkeypatch):
+        """Nothing staged must fail the job, not proceed on an unread document.
+
+        The note asks the agent to report that it could not read the document,
+        but a prompt is not a mechanism: told no PDF is available, a model can
+        still answer from the subject line, and that answer is persisted and
+        mailed exactly like a real one. Raising is what marks the row failed
+        and lets the backlog worker retry.
+        """
+        import contextlib
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        import pytest as _pytest
+        import apowerb.routers.webhook_handlers.outlook as ol
+
+        # Reader folders unknown -> the helper stages nothing, by design.
+        monkeypatch.setattr(ol, "_stage_stored_attachments", lambda a, i: [])
+
+        log_row = SimpleNamespace(
+            id=998,
+            subscription_id=1,
+            user_id=3,
+            agent_id=998,
+            resource_id="res",
+            agent_message="Subject: CC n CF101085\n\nbody",
+            email_subject="CC n 11077978 V/R:CF101085",
+            email_sender="x@dupont-est.fr",
+            attachments=[stored_pdf],
+        )
+
+        class _DB:
+            async def get(self, model, _id):
+                return log_row
+
+            async def commit(self):
+                return None
+
+        @contextlib.asynccontextmanager
+        async def _session():
+            yield _DB()
+
+        monkeypatch.setattr(ol.sessionmanager, "session", _session)
+        monkeypatch.setattr(
+            ol.OutlookWebhookService, "get_access_token_for_user",
+            AsyncMock(return_value="tok"),
+        )
+        monkeypatch.setattr(
+            ol.OutlookWebhookService, "fetch_email",
+            AsyncMock(side_effect=RuntimeError(
+                "Failed to fetch email from Graph API (HTTP 404): ErrorItemNotFound")),
+        )
+        ran = {"called": False}
+
+        async def _run(**kw):
+            ran["called"] = True
+            return "done"
+
+        monkeypatch.setattr(ol, "run_agent_for_webhook", _run)
+        monkeypatch.setattr(ol, "create_webhook_notification", AsyncMock(), raising=False)
+
+        with _pytest.raises(RuntimeError, match="none could be staged"):
+            await ol.process_webhook_log_row(998)
+        assert not ran["called"], "the pipeline ran on an unread document"
 
     async def test_401_does_not_replay_propagates(self, monkeypatch):
         import contextlib

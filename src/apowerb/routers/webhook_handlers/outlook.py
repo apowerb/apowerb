@@ -202,15 +202,108 @@ def _extract_email_sender(email_data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _reader_agent_folders(agent_id, _max_depth: int = 4) -> tuple[list[str], bool]:
+    """Folder names to stage into: the triggered agent, then every sub-agent
+    below it.
+
+    A webhook triggers ONE agent, but ``tool_pdf_first_page`` is bound by
+    ``bind_pdf_first_page`` to the folder of the agent that DECLARES the tool.
+    In a sequential pipeline that reader is a sub-agent, so staging only into
+    the triggered agent's folder puts the PDF where nobody looks: the reader
+    reports an empty ``available_files`` and the run continues without ever
+    reading the attachment.
+
+    Returns ``(folder names, complete)``, triggered agent first. ``complete``
+    is False when the list is known NOT to cover every reader -- a resolution
+    failure at any depth, or a walk truncated by the depth cap. Callers must
+    not announce a staged file when it is False: a reader outside the list sees
+    an empty uploads dir, which is the whole defect this function exists for.
+
+    A resolution failure falls back to the triggered agent alone: the
+    accumulator is local and only adopted once the walk succeeded, so a failure
+    halfway can never return a half-explored tree that reads like a complete
+    one.
+    """
+    parent_only = [f"agent{agent_id}"]
+    try:
+        from apowerb.core.agent_main import agent_store
+
+        folders = list(parent_only)
+        seen = {str(agent_id)}
+        frontier, depth = [str(agent_id)], 0
+        while frontier and depth < _max_depth:
+            query = agent_store.agent_table.select().where(
+                agent_store.agent_table.c.agent_id.in_(
+                    [int(a) for a in frontier if str(a).isdigit()]
+                )
+            )
+            children: list[str] = []
+            rows = 0
+            with agent_store.engine.begin() as conn:
+                for row in conn.execute(query):
+                    rows += 1
+                    raw = getattr(row, "sub_agents", None)
+                    for name in json.loads(raw) if raw else []:
+                        num = str(name).replace("agent", "")
+                        if num and num not in seen:
+                            seen.add(num)
+                            children.append(num)
+                            folders.append(f"agent{num}")
+            asked = len([a for a in frontier if str(a).isdigit()])
+            if rows < asked:
+                # A missing row is not a leaf: we simply do not know whether
+                # that agent has children, and treating silence as "no
+                # children" is how an unlisted reader gets a file announced
+                # that it never received.
+                logger.error(
+                    "[OUTLOOK WEBHOOK BG] %d of %d agent row(s) missing while "
+                    "walking agent_id=%s -- reader list is INCOMPLETE",
+                    asked - rows, asked, agent_id,
+                )
+                return folders, False
+            frontier, depth = children, depth + 1
+        if frontier:
+            # Truncation means the folder list is NOT the full set of readers,
+            # so nothing downstream may treat it as complete.
+            logger.error(
+                "[OUTLOOK WEBHOOK BG] sub-agent walk of agent_id=%s hit the depth "
+                "cap (%d) with %d agent(s) left to visit -- the reader list is "
+                "INCOMPLETE", agent_id, _max_depth, len(frontier),
+            )
+            return folders, False
+        return folders, True
+    except Exception as exc:  # noqa: BLE001 -- staging must never break a replay
+        logger.warning(
+            "[OUTLOOK WEBHOOK BG] could not resolve sub-agents of agent_id=%s "
+            "(%s) -- staging into its own folder only", agent_id, exc,
+        )
+        return parent_only, False
+
+
 def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
     """Copy stored attachment PDFs (captured at receipt, on disk) into the
-    agent's uploads/ dir so it can read them via tool_pdf_first_page WITHOUT
-    re-fetching from Graph. Returns the staged PDF filenames."""
+    uploads/ dir of every agent that might read them, so they can be read via
+    tool_pdf_first_page WITHOUT re-fetching from Graph. Returns the staged PDF
+    filenames."""
     # Relative path, on purpose: matches tool_download_attachment /
     # tool_pdf_first_page which read/write uploads/agent{id} relative to
     # the service CWD (project root). Staging here = where the agent looks.
-    save_dir = str(uploads_dir() / f"agent{agent_id}")
-    os.makedirs(save_dir, exist_ok=True)
+    folders, complete = _reader_agent_folders(agent_id)
+    save_dirs = []
+    for folder in folders:
+        d = str(uploads_dir() / folder)
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError as exc:
+            # Dropping the folder silently would re-open the defect: the reader
+            # living there would find nothing while the file was announced.
+            complete = False
+            logger.error(
+                "[OUTLOOK WEBHOOK BG] cannot create uploads dir %s: %s -- reader "
+                "coverage is now incomplete", d, exc,
+            )
+            continue
+        save_dirs.append(d)
     staged: list[str] = []
     for a in stored_attachments or []:
         path = a.get("path")
@@ -219,28 +312,74 @@ def _stage_stored_attachments(stored_attachments, agent_id) -> list[str]:
             continue
         if not fn.lower().endswith(".pdf"):
             continue
-        try:
-            dst = os.path.join(save_dir, os.path.basename(fn))
-            shutil.copyfile(path, dst)
-            staged.append(os.path.basename(fn))
-        except Exception as exc:  # noqa: BLE001 -- log and continue
-            logger.warning(
-                "[OUTLOOK WEBHOOK BG] stage attachment %r failed: %s", fn, exc
-            )
+        base = os.path.basename(fn)
+        # Two phases, so a failure never touches what is already on disk: copy
+        # every destination to a sibling temp file first, and only move them
+        # into place once ALL of them landed. A previous cleanup pass deleted
+        # the destination on failure, which could remove a perfectly good copy
+        # staged by an earlier attempt.
+        pending, failed = [], []
+        for save_dir in save_dirs:
+            dst = os.path.join(save_dir, base)
+            tmp = dst + ".part"
+            try:
+                shutil.copyfile(path, tmp)
+                pending.append((tmp, dst))
+            except Exception as exc:  # noqa: BLE001 -- collected, reported below
+                failed.append(save_dir)
+                logger.warning(
+                    "[OUTLOOK WEBHOOK BG] stage attachment %r into %s failed: %s",
+                    fn, save_dir, exc,
+                )
+        # A file is only "staged" once EVERY candidate reader has it, and only
+        # when the reader list itself is known to be complete. Announcing a
+        # partial copy is how this defect caused wrong verdicts in the first
+        # place: the note told the agent the PDF was in its uploads dir, the
+        # agent found nothing, and the pipeline carried on regardless.
+        if complete and save_dirs and not failed:
+            for tmp, dst in pending:
+                os.replace(tmp, dst)
+            staged.append(base)
+            continue
+        logger.error(
+            "[OUTLOOK WEBHOOK BG] %r NOT announced: %d/%d reader folder(s) failed, "
+            "reader list complete=%s", fn, len(failed), len(folders), complete,
+        )
+        for tmp, _dst in pending:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    if staged:
+        logger.info(
+            "[OUTLOOK WEBHOOK BG] staged %d PDF into %d folder(s): %s",
+            len(staged), len(save_dirs), ", ".join(save_dirs),
+        )
     return staged
 
 
 def _replay_instruction(staged_names: list[str]) -> str:
     """Note appended to the agent input in replay mode: the email is gone from
     Graph, so the PDFs are pre-staged and the Graph tools must NOT be used."""
-    names = ", ".join(staged_names) if staged_names else "(none)"
-    return (
+    head = (
         "\n\n--- REPLAY MODE ---\n"
         "This email could NOT be re-fetched from Outlook (it left the mailbox). "
-        "Its subject and body are above; its PDF attachment(s) are ALREADY in "
-        f"your uploads directory: {names}. Do NOT call tool_read_email or "
-        "tool_download_attachment (they will fail with 404). Call "
-        "basic.tool_pdf_first_page(<filename>) directly on the candidate AR PDF."
+        "Its subject and body are above. Do NOT call tool_read_email or "
+        "tool_download_attachment (they will fail with 404). "
+    )
+    if not staged_names:
+        # Never claim a file the agent cannot open: an agent told the PDF is
+        # there, finding nothing, still produces an answer -- and a confident
+        # answer with no document read is exactly the failure to avoid.
+        return head + (
+            "NO attachment could be staged for you. Do NOT assume a PDF is "
+            "available and do NOT infer its contents: report that the document "
+            "could not be read rather than answering from the subject alone."
+        )
+    return head + (
+        "Its PDF attachment(s) are ALREADY in your uploads directory: "
+        f"{', '.join(staged_names)}. Call basic.tool_pdf_first_page(<filename>) "
+        "directly on the candidate AR PDF."
     )
 
 
@@ -590,6 +729,21 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                 return f"[SCEI_SPLIT] parent log_id={log_id} replay-split into {child_ids}"
 
             staged = _stage_stored_attachments(stored_attachments, agent_id)
+            # If the email carried PDFs and none could be staged, failing here
+            # is the only mechanism that produces a retry. Continuing would
+            # leave the outcome to the model: told no document is available, it
+            # may still answer from the subject line, and that answer is
+            # persisted and mailed exactly like a real one.
+            _pdfs = [
+                a for a in (stored_attachments or [])
+                if str(a.get("filename") or "").lower().endswith(".pdf")
+            ]
+            if _pdfs and not staged:
+                raise RuntimeError(
+                    f"replay of log_id={log_id} carried {len(_pdfs)} PDF but none "
+                    "could be staged where the reading agent looks -- refusing to "
+                    "run the pipeline on an unread document"
+                )
             if not base_msg:
                 base_msg = (
                     f"Subject: {(log_row.email_subject or '') if log_row else ''}\n\n"
