@@ -104,7 +104,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # pas le sien — et masquerait la vraie cause.
             raise
         except Exception:
+            # `detail`, not `content`: HTTPException does not take the latter,
+            # and passing it raised TypeError from inside the very handler that
+            # exists to turn a bad token into a 401 -- so every expired session
+            # came back as a bare 500.
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Invalid or expired token"},
+                detail="Invalid or expired token",
             )
