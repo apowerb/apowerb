@@ -114,31 +114,61 @@ class TestFiltersReachTheQuery:
         # select 'not_ar'.
         assert '"email_classification"[[:space:]]*:[[:space:]]*"ar"' in sql
 
-    def test_filters_combine_with_and(self, session):
+    def test_every_filter_combines_at_once(self, session):
+        """All seven together, not three at a time.
+
+        A conjunction proven on a subset says nothing about the rest: one
+        filter silently dropped from the WHERE clause would widen the result
+        without widening the label above it.
+        """
         _client(session).get(
             "/api/webhooks/logs?status=success&q=abc&since=2026-08-01"
+            "&until=2026-08-31&classification=ar&agent_id=12&subscription_id=1"
         )
         sql = _sql(session.statements[0])
-        # Owner + status + search + since = four predicates, so at least three
-        # ANDs join them.
-        assert sql.upper().count(" AND ") >= 3
-        for fragment in ("'success'", "%abc%", "2026-08-01"):
+        for fragment in (
+            "user_id",           # owner scope, never optional
+            "'success'",         # status
+            "%abc%",             # q
+            "2026-08-01",        # since
+            "2026-08-31",        # until
+            "email_classification",  # classification
+            "agent_id",
+            "subscription_id",
+        ):
             assert fragment in sql, fragment
-        # The only OR belongs to the search, and it is parenthesised so it
-        # cannot widen the conjunction around it.
+        # Eight predicates joined by AND.
+        assert sql.upper().count(" AND ") >= 7
+        # The only OR belongs to the search, parenthesised, so it cannot widen
+        # the conjunction around it.
         assert " OR " not in sql.upper().split("(")[0]
 
 
 class TestCountAndPageAgree:
     def test_the_count_uses_the_same_predicates_as_the_page(self, session):
         """A total computed on different predicates is a lie with a number on it."""
-        _client(session).get("/api/webhooks/logs?status=failed&q=abc")
+        _client(session).get(
+            "/api/webhooks/logs?status=failed&q=abc&since=2026-08-01"
+            "&until=2026-08-31&classification=ar&agent_id=12&subscription_id=1"
+        )
         page_sql = _sql(session.statements[0])
         count_sql = _sql(session.count_statements[0])
 
-        for fragment in ("'error'", "'retrying'", "%abc%"):
-            assert fragment in page_sql, fragment
-            assert fragment in count_sql, fragment
+        # Every predicate, on both sides. A total computed on a narrower set
+        # than the page is a lie with a number on it.
+        for fragment in (
+            "user_id",
+            "'error'",
+            "'retrying'",
+            "%abc%",
+            "2026-08-01",
+            "2026-08-31",
+            "email_classification",
+            "agent_id",
+            "subscription_id",
+        ):
+            assert fragment in page_sql, f"page: {fragment}"
+            assert fragment in count_sql, f"count: {fragment}"
 
     def test_the_total_is_returned(self, session):
         body = _client(session).get("/api/webhooks/logs").json()
