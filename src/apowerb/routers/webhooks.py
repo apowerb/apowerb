@@ -15,6 +15,7 @@ Endpoints:
     POST   /api/webhooks/logs/{log_id}/retrigger                (auth)  Re-trigger a log from its stored payload
 """
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -26,7 +27,7 @@ from pathlib import Path as _Path
 
 from apowerb.storage.filename import sanitize_filename
 from apowerb.storage.webhook_attachments import resolve_attachment_path
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.auth.dependencies import get_current_user
@@ -743,28 +744,208 @@ async def receive_notification(
 # ---------------------------------------------------------------------------
 
 
+# Statuses a caller may filter on. Anything else is rejected rather than
+# silently returning everything -- a filter that quietly does nothing is worse
+# than one that errors, because the operator trusts the empty-looking result.
+_LOG_STATUSES = frozenset(
+    {"pending", "in_progress", "success", "error", "retrying"}
+)
+
+# "failed" is what an operator looks for, and it spans two stored states.
+_STATUS_GROUPS = {"failed": ("error", "retrying")}
+
+# Rows whose answer carries no classification at all. Selectable on purpose:
+# see the note in the classification branch below.
+UNCATEGORIZED = "uncategorized"
+
+# A POSIX regex, not a LIKE pattern, for two reasons measured on the stored
+# runs:
+#   - LIKE cannot tolerate whitespace. The pattern would hard-code the space
+#     after the colon, and a compact serialisation would silently match
+#     nothing. Today 0 rows are compact; that is a fact about today's data.
+#   - Presence of the KEY is not presence of a VALUE. 21 rows contain the
+#     string "email_classification" only inside a schema-validation error
+#     naming the field the agent failed to produce. They carry no
+#     classification at all, and are the ones most worth finding.
+_CLASSIFIED_RE = r'"email_classification"[[:space:]]*:[[:space:]]*"[^"]+"'
+
+
+def _classified_as(value: str) -> str:
+    """Regex matching a classification whose value is exactly ``value``."""
+    return r'"email_classification"[[:space:]]*:[[:space:]]*"' + value + '"'
+
+
+def _parse_log_moment(value: str, field: str) -> datetime:
+    """Parse an ISO date or datetime, and make it timezone-aware.
+
+    A bare date means the whole day in UTC: ``since=2026-08-21`` starts at
+    00:00, and ``until=2026-08-21`` becomes the START OF THE NEXT DAY, compared
+    exclusively. Naming an end-of-day instant instead would only ever be right
+    down to whatever precision the caller can express -- a client limited to
+    milliseconds cannot say 23:59:59.999999, and a row landing in the gap would
+    fall outside the day it belongs to. An exclusive bound is exact at any
+    precision.
+    """
+    raw = (value or "").strip()
+    try:
+        moment = datetime.fromisoformat(raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field} must be an ISO date or datetime, got {value!r}",
+        )
+    if len(raw) == 10 and field == "until":
+        moment = moment + timedelta(days=1)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
 @router.get("/logs")
 async def list_webhook_logs(
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
     subscription_id: int | None = Query(default=None),
+    agent_id: str | None = Query(default=None),
+    status: str | None = Query(
+        default=None,
+        description="One or more statuses, comma separated. "
+        "'failed' expands to error+retrying.",
+    ),
+    since: str | None = Query(default=None, description="ISO date or datetime"),
+    until: str | None = Query(default=None, description="ISO date or datetime"),
+    q: str | None = Query(default=None, description="Search subject and sender"),
+    classification: str | None = Query(
+        default=None, description="Agent classification, e.g. 'ar' or 'not_ar'"
+    ),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
 ):
     """Return webhook execution logs for the current user.
 
-    Supports optional filtering by ``subscription_id`` and pagination
-    via ``limit`` / ``offset``.  Results are ordered newest-first.
+    Filters: ``subscription_id``, ``agent_id``, ``status``, ``since`` /
+    ``until`` (EXCLUSIVE), ``q`` (subject or sender), ``classification``. They combine
+    with AND. Pagination via ``limit`` / ``offset``, newest-first, ordered by
+    ``created_at`` then ``id`` so the sequence is total and paging cannot skip
+    or repeat a row.
+
+    ``classification`` reads a VALUE out of the agent's stored answer, which is
+    only structured when the agent answered that way. Pass ``uncategorized``
+    for the rows carrying no classification -- including the ones whose answer
+    is a schema-validation error naming the field the agent failed to produce.
+    Without it the named categories silently exclude them.
+
+    Note: the ``status`` parameter shadows fastapi's ``status`` module inside
+    this function; raise with literal codes here rather than ``status.HTTP_*``.
+
+    Filtering happens here, not in the browser: a client can only filter the
+    page it holds, which turns "show me the failures" into "show me the
+    failures among the last 40" -- the same answer for a healthy day and a
+    catastrophic one.
     """
-    query = select(WebhookLog).where(WebhookLog.user_id == current_user.user_id)
+    filters = [WebhookLog.user_id == current_user.user_id]
     if subscription_id is not None:
-        query = query.where(WebhookLog.subscription_id == subscription_id)
-    query = query.order_by(WebhookLog.created_at.desc()).limit(limit).offset(offset)
+        filters.append(WebhookLog.subscription_id == subscription_id)
+    if agent_id:
+        filters.append(WebhookLog.agent_id == agent_id)
+
+    # `is not None`, not truthiness: `?status=` is a caller asking to narrow the
+    # list with an empty hand. Falling through on a falsy string returns
+    # everything under a label that says otherwise.
+    if status is not None:
+        wanted: set[str] = set()
+        for token in status.split(","):
+            token = token.strip().lower()
+            if not token:
+                continue
+            if token in _STATUS_GROUPS:
+                wanted.update(_STATUS_GROUPS[token])
+            elif token in _LOG_STATUSES:
+                wanted.add(token)
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"unknown status {token!r}; expected one of "
+                        + ", ".join(sorted(_LOG_STATUSES | set(_STATUS_GROUPS)))
+                    ),
+                )
+        if not wanted:
+            # A caller who wrote something meant to narrow the list. Treating
+            # ",,," as "no filter" hands back everything under a label that
+            # says otherwise.
+            raise HTTPException(
+                status_code=422, detail="status was given but names no status"
+            )
+        filters.append(WebhookLog.status.in_(sorted(wanted)))
+
+    if since:
+        filters.append(WebhookLog.created_at >= _parse_log_moment(since, "since"))
+    if until:
+        # Exclusive: see _parse_log_moment. `until` names the first instant
+        # NOT wanted, so no row can fall between the bound and the day's end.
+        filters.append(WebhookLog.created_at < _parse_log_moment(until, "until"))
+
+    if q:
+        # Escape the LIKE wildcards: a subject containing '%' must match
+        # itself, not everything.
+        needle = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        if needle:
+            pattern = f"%{needle}%"
+            filters.append(
+                or_(
+                    WebhookLog.email_subject.ilike(pattern, escape="\\"),
+                    WebhookLog.email_sender.ilike(pattern, escape="\\"),
+                )
+            )
+
+    if classification:
+        token = classification.strip()
+        if token == UNCATEGORIZED:
+            # "carries no classification", not "does not contain the word".
+            # Measured on 6490 stored runs: 74% carry the key, 18% are the
+            # model's prose with no key at all, 7% are empty. Without this
+            # option the other two would quietly hide a quarter of the rows,
+            # and an operator asking for acknowledgments would never learn
+            # that some were never classified -- which is itself the signal
+            # worth looking at.
+            filters.append(
+                or_(
+                    WebhookLog.agent_response.is_(None),
+                    WebhookLog.agent_response == "",
+                    ~WebhookLog.agent_response.op("~")(_CLASSIFIED_RE),
+                )
+            )
+        elif token:
+            # The classification lives inside the agent's JSON answer. The
+            # quotes around the value are what stop 'ar' from also matching
+            # 'not_ar'; the regex is what stops a change of spacing from
+            # silently matching nothing.
+            filters.append(
+                WebhookLog.agent_response.op("~")(_classified_as(re.escape(token)))
+            )
+
+    total = await db.scalar(
+        select(func.count()).select_from(WebhookLog).where(*filters)
+    )
+
+    query = (
+        select(WebhookLog)
+        .where(*filters)
+        # created_at alone is not a total order: two rows stored in the same
+        # instant can swap between two requests, and with offset pagination a
+        # swap at a page boundary means one row served twice and another never.
+        # The id breaks the tie and never repeats.
+        .order_by(WebhookLog.created_at.desc(), WebhookLog.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
 
     result = await db.execute(query)
     logs = result.scalars().all()
 
     return {
+        "total": total or 0,
         "logs": [
             {
                 "id": log.id,

@@ -41,13 +41,20 @@ class _FakeSession:
         scalar_one_or_none=None,
         scalars_all=None,
         scalar_one=None,
+        scalar=0,
     ):
         self._scalar_one_or_none = scalar_one_or_none
         self._scalars_all = scalars_all if scalars_all is not None else []
         self._scalar_one = scalar_one
+        # /logs also asks for a COUNT so the UI can report how many rows match
+        # the filters without walking the pages.
+        self._scalar = scalar
         self._added: list = []
         self._deleted: list = []
         self.committed = False
+
+    async def scalar(self, stmt):
+        return self._scalar
 
     async def execute(self, stmt):
         res = MagicMock()
