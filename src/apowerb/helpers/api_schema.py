@@ -2,7 +2,7 @@
 
 FastAPI serves `/openapi.json`, `/docs` and `/redoc` to anyone by default.
 On this platform that hands out the full route inventory -- 215 routes on
-production, 216 on the SCEI deployment -- with every path parameter and
+one deployment, 216 on another -- with every path parameter and
 response shape, to a caller holding no credentials. It is how the running
 ADK version was fingerprinted from the outside on 2026-08-06: counting the
 `eval-*` routes that ADK 2.x removed is enough to date the deployment.

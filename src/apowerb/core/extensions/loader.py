@@ -32,7 +32,7 @@ from apowerb.core.extensions.registry import registry
 logger = logging.getLogger(__name__)
 
 #: Les deux noms acceptés pour le point d'entrée d'une extension. ``register``
-#: est le nom courant ; ``init_overlay`` est conservé parce que l'overlay SCEI
+#: est le nom courant ; ``init_overlay`` est conservé parce qu'un overlay client
 #: l'utilise en production et qu'un renommage le casserait au déploiement.
 _ENTRYPOINTS = ("register", "init_overlay")
 
@@ -71,7 +71,7 @@ def load_overlay() -> str | None:
     """Compat : l'ancien appel, qui ne connaissait qu'un seul overlay.
 
     Conserve parce que ``main.py`` et les tests l'appellent, et parce que le
-    deploiement SCEI depend de son contrat de retour (le nom du module, ou None).
+    deploiement client depend de son contrat de retour (le nom du module, ou None).
     """
     noms = load_extensions()
     return noms[-1] if noms else None

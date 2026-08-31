@@ -7,7 +7,7 @@ indexes. The runtime relies on
 ``Base.metadata.create_all(checkfirst=True)`` which only creates
 *missing tables* — it never alters an existing one.
 
-On SCEI_PROD this meant the table stayed on the old shape after the
+On that deployment this meant the table stayed on the old shape after the
 PR #120 deploy and every Microsoft Graph notification raised
 ``UndefinedColumnError``. The fix was a one-shot migration script,
 but the same trap is waiting on every other environment that

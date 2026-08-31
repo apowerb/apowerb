@@ -8,7 +8,7 @@ name (``_is_valid_state_name`` → ``isidentifier()`` or
 so looks it up in ``session.state``. Missing → ``KeyError``. The optional
 ``?`` suffix makes the lookup return ``''`` instead of raising.
 
-Two consequences that surprised people on the 2026-05-13 SCEI prod
+Two consequences that surprised people on the 2026-05-13 production
 incident:
 
 * **``{{xxx}}`` is NOT an escape.** ADK strips *all* braces, so

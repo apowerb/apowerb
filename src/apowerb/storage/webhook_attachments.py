@@ -2,7 +2,7 @@
 
 Layout
 ------
-``/home/ubuntu/scei_webhook_attachments/<YYYY>/<MM>/<log_id>/<safe_filename>``
+``<attachment root>/<YYYY>/<MM>/<log_id>/<safe_filename>``
 
 Design notes
 ------------

@@ -400,7 +400,7 @@ async def _split_into_children(
     ``should_split(stored_attachments)`` before calling this helper; calling it
     with fewer than 2 PDFs is harmless (it returns an empty list) but wasteful.
 
-    The parent row is marked ``status='success'`` with a ``[SCEI_SPLIT]`` message
+    The parent row is marked ``status='success'`` with a ``[SPLIT]`` message
     via a fresh db2 session (same pattern as the original inline code) so the
     commit does not interfere with the current ``db`` session's open transaction.
     """
@@ -422,7 +422,7 @@ async def _split_into_children(
         )
         if existing.scalar_one_or_none() is not None:
             logger.info(
-                "[SCEI_FANOUT] log_id=%s child idx=%d already exists (%s) — skip",
+                "[FANOUT] log_id=%s child idx=%d already exists (%s) — skip",
                 log_id, idx, child_resource_id,
             )
             continue
@@ -450,7 +450,7 @@ async def _split_into_children(
                 # archived / purged). A missing child is visible and
                 # retryable; a child with a stale path silently fails.
                 logger.error(
-                    "[SCEI_FANOUT] copy PDF failed for %r (log_id=%s child_id=%s)"
+                    "[FANOUT] copy PDF failed for %r (log_id=%s child_id=%s)"
                     " — child NOT created: %s",
                     pdf_meta.get("filename"), log_id, child_id, exc_pdf,
                 )
@@ -463,7 +463,7 @@ async def _split_into_children(
             await db.commit()
             child_ids.append(child_id)
             logger.info(
-                "[SCEI_FANOUT] log_id=%s created child_id=%s for PDF %r",
+                "[FANOUT] log_id=%s created child_id=%s for PDF %r",
                 log_id, child_id, pdf_meta.get("filename"),
             )
         except IntegrityError:
@@ -473,7 +473,7 @@ async def _split_into_children(
             except Exception:
                 pass
             logger.info(
-                "[SCEI_FANOUT] log_id=%s child %r already exists (IntegrityError) — skip",
+                "[FANOUT] log_id=%s child %r already exists (IntegrityError) — skip",
                 log_id, child_resource_id,
             )
 
@@ -484,12 +484,12 @@ async def _split_into_children(
         if parent_row:
             parent_row.status = "success"
             parent_row.agent_response = (
-                f"[SCEI_SPLIT] split into {n} children: {child_ids}"
+                f"[SPLIT] split into {n} children: {child_ids}"
             )
             await db2.commit()
 
     logger.info(
-        "[SCEI_FANOUT] log_id=%s split complete — %d children created: %s",
+        "[FANOUT] log_id=%s split complete — %d children created: %s",
         log_id, len(child_ids), child_ids,
     )
     return child_ids
@@ -517,7 +517,7 @@ async def process_webhook_log_row(log_id: int) -> str | None:
         user_id = _claimed.user_id
         agent_id = _claimed.agent_id
         notification_resource = _claimed.resource_id or ""
-        # Email reception time (PR #273 / SCEI DateReceptionAR). Capture the
+        # Email reception time (PR #273 / the overlay's reception date). Capture the
         # scalar WHILE _claimed is attached; the overlay maps it to
         # email_received_at via the initial_state_extras hook (generic core
         # just forwards the timestamp in the hook ctx).
@@ -671,7 +671,7 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                     child_ids = await _split_into_children(
                         db, log_id, stored_attachments, _parent_snap
                     )
-                    return f"[SCEI_SPLIT] parent log_id={log_id} split into {child_ids}"
+                    return f"[SPLIT] parent log_id={log_id} split into {child_ids}"
         else:
             # 3-replay. Email gone from Graph -- reuse the copy captured at
             # receipt (agent_message + body + PDFs already on disk). Stage the
@@ -723,10 +723,10 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                     db, log_id, stored_attachments, _parent_snap_replay
                 )
                 logger.info(
-                    "[SCEI_FANOUT REPLAY] log_id=%s replay-split complete — %d children: %s",
+                    "[FANOUT REPLAY] log_id=%s replay-split complete — %d children: %s",
                     log_id, len(child_ids), child_ids,
                 )
-                return f"[SCEI_SPLIT] parent log_id={log_id} replay-split into {child_ids}"
+                return f"[SPLIT] parent log_id={log_id} replay-split into {child_ids}"
 
             staged = _stage_stored_attachments(stored_attachments, agent_id)
             # If the email carried PDFs and none could be staged, failing here
@@ -764,7 +764,7 @@ async def process_webhook_log_row(log_id: int) -> str | None:
     # Note: we drop the DB session before the call because the agent
     # run can take minutes and we don't want to hold a connection idle.
     session_id = f"webhook_{log_id}"
-    # Fan-out child runs may need extra initial_state keys (e.g. SCEI
+    # Fan-out child runs may need extra initial_state keys (e.g. an overlay
     # suppresses the buyer mail for a split child). Supplied by the overlay
     # via the "initial_state_extras" hook; empty dict for the generic core.
     _extras_hook = _ext_registry.webhook_hook("initial_state_extras")
@@ -783,7 +783,7 @@ async def process_webhook_log_row(log_id: int) -> str | None:
             # Outlook : session UNIQUE par webhook (webhook_<log_id>) -> session
             # fraiche a chaque run (delete-then-create). Cf _common.py.
             fresh_session=True,
-            # Tag the ADK session state so SCEI's tool_persist_ar_record
+            # Tag the ADK session state so the overlay's persist tool
             # can stamp the AR row with the originating webhook_log id.
             # No-op for other agents (they don't read this key).
             initial_state={
@@ -817,17 +817,17 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                     }
                     for a in stored_attachments
                 ],
-                # Overlay-supplied extras (e.g. SCEI fan-out child suppresses
+                # Overlay-supplied extras (e.g. an overlay fan-out child suppresses
                 # the buyer mail: the AR is still recorded — recorder runs BEFORE
-                # notifier — but tool_send_scei_mail redirects to the internal
+                # notifier — but the overlay mail tool redirects to the internal
                 # address, avoiding N mails for one email carrying N PDFs).
                 **_initial_state_extras,
             },
         )
     except Exception:
         # Crash path (e.g. a sentinel that 500s before the recorder): the run
-        # is already surfaced as status='error', but classify + LOUD-log the
-        # SCEI outcome so a silent AR drop is countable. Never masks the error.
+        # is already surfaced as status='error', but classify + LOUD-log
+        # the overlay outcome so a silent drop is countable. Never masks the error.
         await _emit_run_outcome(
             agent_id=agent_id, user_id=user_id,
             session_id=session_id, log_id=log_id, crashed=True,
@@ -845,7 +845,7 @@ async def process_webhook_log_row(log_id: int) -> str | None:
     # agent_response is the LLM's free text — tool functionResponses are
     # filtered out by extract_agent_response and the LLM cannot be trusted
     # to echo them. An overlay can append a DETERMINISTIC block here (e.g.
-    # SCEI's [RESEND_DIFF], incident 2026-07-15) before the worker persists
+    # the overlay's [RESEND_DIFF], incident 2026-07-15) before the worker persists
     # the response. Best-effort: a hook failure never breaks the run.
     agent_response_text = await _augment_agent_response(
         agent_id=agent_id, user_id=user_id, session_id=session_id,

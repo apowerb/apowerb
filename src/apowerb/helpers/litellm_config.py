@@ -182,7 +182,7 @@ def drop_old_image_blobs_from_messages(kwargs: Dict[str, Any]) -> Dict[str, Any]
     the base64 image attachments that were already inspected on the
     *first* turn they appeared. Keeping all of them in scope is the
     fastest way to saturate Gemini's per-minute input-token quota
-    (cf. SCEI prod 2026-05-07: a single AR run was burning ~5 M tokens
+    (cf. one deployment, 2026-05-07: a single AR run was burning ~5 M tokens
     over 5+ chain-of-thought turns because each turn re-sent the same
     PDF page images).
 
@@ -490,7 +490,7 @@ def configure_litellm_for_ovhcloud():
         kwargs = _ovhcloud_handler.modify_messages_for_ovhcloud(kwargs)
         # Drop image blobs from non-last messages so vision-LLM costs
         # do not multiply by the conversation length on long tool chains
-        # (cf. SCEI prod 2026-05-07: a single AR was burning ~5M Gemini
+        # (cf. one deployment, 2026-05-07: a single AR was burning ~5M Gemini
         # input tokens per run because each of the 5+ chain-of-thought
         # turns re-sent the same base64 PDF pages).
         kwargs = drop_old_image_blobs_from_messages(kwargs)
@@ -543,7 +543,7 @@ def configure_litellm_for_ovhcloud():
                 # Modify kwargs for OVHCloud compatibility
                 kwargs = _ovhcloud_handler.modify_messages_for_ovhcloud(kwargs)
                 # Drop image blobs from non-last messages — see comment
-                # in patched_acompletion above for the SCEI rationale.
+                # in patched_acompletion above for the rationale.
                 kwargs = drop_old_image_blobs_from_messages(kwargs)
                 kwargs = _strip_extra_tool_calls_for_ovh(kwargs)
                 kwargs = _strip_thought_signatures(kwargs)  # Gemini __thought__ fix (multi-tours)

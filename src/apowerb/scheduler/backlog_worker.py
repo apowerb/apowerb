@@ -48,8 +48,8 @@ _WORKER_TASK: Optional[asyncio.Task] = None
 # has elapsed. Otherwise the worker keeps draining the queue at full
 # speed (one pick every ~2 s), each pick paying the full input-token
 # cost of an LLM call, which re-hits the per-minute quota immediately
-# and turns every row into a doomed retry. SCEI prod 2026-05-07 hit
-# this loop after PR #137: 100+ pending rows, every one of them
+# and turns every row into a doomed retry. One deployment hit
+# this loop on 2026-05-07, after PR #137: 100+ pending rows, every one of them
 # RateLimit'd within seconds because the cooldown was per-row instead
 # of process-wide.
 _RATE_LIMIT_COOLDOWN_UNTIL: Optional[datetime] = None
@@ -325,7 +325,7 @@ def start_in_background(processor: ProcessorFn) -> asyncio.Task:
     """Idempotent — spawn the worker once per process.
 
     Logs the spawn at INFO so an operator can confirm the FastAPI
-    startup hook actually reached this point (cf. SCEI prod 2026-05-07
+    startup hook actually reached this point (cf. one deployment, 2026-05-07
     where the worker silently never started and there was no log to
     diagnose). Attaches a done-callback that surfaces unexpected
     crashes — without it, an exception inside ``run_worker`` would
@@ -348,7 +348,7 @@ def start_in_background(processor: ProcessorFn) -> asyncio.Task:
 
     async def _bootstrap_and_run() -> None:
         # Self-heal the webhook_logs schema on first boot of any
-        # environment that pre-dates PR #120 (cf. SCEI prod 2026-05-07
+        # environment that pre-dates PR #120 (cf. one deployment, 2026-05-07
         # where the table was missing the queue columns and every
         # webhook crashed). Idempotent — no-op once the columns are
         # there. Failures are logged but never block the loop.

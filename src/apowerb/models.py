@@ -206,7 +206,7 @@ class Integration(Base):
         # Defense in depth: any token persisted here MUST be Fernet ciphertext
         # (prefix gAAAAA, stable until year 2106). Blocks raw INSERT/UPDATE
         # bypassing save_integration_tokens() — root cause of the 2026-05-07
-        # plaintext-token incident on SCEI prod.
+        # plaintext-token incident on one deployment.
         CheckConstraint(
             "access_token IS NULL OR access_token = '' OR access_token LIKE 'gAAAAA%'",
             name="ck_integrations_access_token_fernet",
@@ -390,7 +390,7 @@ class WebhookLog(Base):
     email_body_html = Column(Text)  # raw HTML body from Graph
     email_body_text = Column(Text)  # plain-text strip for search
     # JSONB list of {filename, path, content_type, size} for each PJ
-    # stored under /home/ubuntu/scei_webhook_attachments/.
+    # stored under the attachment root.
     attachments = Column(JSON)
 
     # Relationships

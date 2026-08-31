@@ -2,7 +2,7 @@
 
 Lets the agent see what's still queued behind the row it is currently
 processing — pending count, top of the FIFO, recent throughput. Used
-by webhook-driven agents (SCEI ARs, future analogues) to mention the
+by webhook-driven agents (client overlays) to mention the
 backlog state in their final response so the operator knows whether
 to wait for more output or start triaging manually.
 

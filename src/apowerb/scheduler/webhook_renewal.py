@@ -61,7 +61,7 @@ async def _renew_expiring_subscriptions() -> None:
             # ``expire_on_commit=True``). Touching ``sub.<attr>`` after
             # that point triggers a lazy load from an async context, which
             # raises ``greenlet_spawn has not been called`` and kills the
-            # whole pass. Live regression 2026-05-10 04:33 UTC SCEI_PROD.
+            # whole pass. Live regression on 2026-05-10 04:33 UTC.
             sub_db_id = sub.id
             sub_graph_id = sub.subscription_id
             sub_user_id = sub.user_id

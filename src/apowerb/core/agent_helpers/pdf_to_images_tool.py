@@ -126,8 +126,8 @@ def extract_all_pages_words(path: str) -> dict:
 
     ``page`` is 0-based. This is the coordinate-aware sibling of
     ``extract_all_pages_text``: use it when downstream logic reconstructs
-    positioned rows from word coordinates (SCEI coord-based AR line
-    extraction, ``scei_coord_rows.reconstruct_rows``) rather than from a flat
+    positioned rows from word coordinates (an overlay's coordinate-based line
+    extraction, the overlay's coordinate extractor) rather than from a flat
     text layer.
     """
     try:
@@ -305,7 +305,7 @@ def _make_pdf_first_page(folder_name: str):
 
     Extracts ONLY the first page of an uploaded PDF as a NATIVE single-page
     PDF (no image rendering, no conversion) so a multimodal LLM reads the
-    document directly. Built for the SCEI intake redesign: an AR's first
+    document directly. Built for a client overlay's intake redesign: an AR's first
     page carries the order number, supplier and key fields, and native PDF
     preserves text + layout fidelity (avoids the PNG/JPEG render bugs).
     """
@@ -315,7 +315,7 @@ def _make_pdf_first_page(folder_name: str):
 
         Use this to read an acknowledgment-of-receipt (AR) document: the
         first page holds the order number, supplier and lines. We return
-        the page's native text layer (no image conversion) — the SCEI AR
+        the page's native text layer (no image conversion) — that overlay's document
         corpus is 100% text-native. If a PDF were a pure scan, ``text`` is
         empty and ``has_text_layer`` is False, a signal the caller can act
         on explicitly.

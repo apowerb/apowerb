@@ -1,4 +1,4 @@
-"""ADK callbacks for SCEI sub-agent communication.
+"""ADK callbacks for client-overlay sub-agent communication.
 
 Two building blocks:
 
@@ -401,7 +401,7 @@ def is_upstream_skip(state, state_key: str) -> bool:
     """True if ``state[state_key]`` is a JSON object that marks an upstream
     skip. Five forms are recognised:
     - ``status == "skip"`` (legacy ARIntakePayload),
-    - ``email_classification == "not_ar"`` (SCEIIntakePayload, intake v2),
+    - ``email_classification == "not_ar"`` (the overlay's intake payload, intake v2),
     - ``__skipped_upstream__ is True`` (cascade from a previous sub-agent),
     - ``status_final == "SKIPPED"`` (ARRecordPayload: recorder skipped the
       insert because the AR is out-of-scope or already recorded).
