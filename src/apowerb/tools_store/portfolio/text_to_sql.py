@@ -289,7 +289,7 @@ def _get_state(agent_name: str) -> _AgentState:
 
 # ── Optional connection pooling (opt-in via SQL_POOL_ENABLED) ─────────────────
 # The shared OVH Postgres caps connections (max_connections=100, split across
-# th2dev/th2scei/th2prod). The default per-query open/close has NO ceiling, so a
+# one database per environment). The default per-query open/close has NO ceiling, so a
 # burst of concurrent queries can spike connections and saturate the shared DB.
 # A bounded ThreadedConnectionPool both reuses connections AND acts as a hard
 # cap (maxconn) — a semaphore that protects the shared DB. PostgreSQL only.

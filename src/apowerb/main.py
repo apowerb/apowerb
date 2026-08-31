@@ -25,7 +25,7 @@ from apowerb.routers.adk_runner import router as adk_runner_router
 from apowerb.routers.artifacts import router as artifacts_router
 from apowerb.auth.router import router as auth_router
 # Scheduler integration is optional — controlled by settings.scheduler_enabled
-# (env: SCHEDULER_ENABLED). Disabled deployments (e.g. SCEI) skip Mage entirely.
+# (env: SCHEDULER_ENABLED). Disabled deployments (e.g. a client overlay) skip Mage entirely.
 from apowerb.configs.settings import get_settings as _settings_for_sched
 if _settings_for_sched().scheduler_enabled:
     from apowerb.routers.scheduler import router as scheduler_router
@@ -353,7 +353,7 @@ app = get_fast_api_app(
     # memory_service_uri="rag://",  # Disabled: RAG corpus was empty
     session_service_uri=_SESSION_DB_URI,
     # Borne le pool ADK (sinon 15 conns/worker via create_async_engine) : la
-    # base defaultdb est PARTAGEE (th2scei prod incluse, max 100 conns). 5/worker.
+    # base defaultdb est PARTAGEE (celle d'un client incluse, max 100 conns). 5/worker.
     session_db_kwargs={
         "pool_size": 3, "max_overflow": 2, "pool_timeout": 10,
         "pool_recycle": 300, "pool_pre_ping": True,
@@ -398,7 +398,7 @@ app.state.adk_agent_loader = _ADK_HANDLES.get("agent_loader")
 # for it. FastAPI adds /openapi.json, /docs and /redoc itself, ahead of
 # ADKAuthMiddleware's path list, so the 401 that guards everything else never
 # applies to them -- measured from the internet on 2026-08-06: 215 routes
-# readable with no credentials on prod, 216 on the SCEI deployment.
+# readable with no credentials on one deployment, 216 on another.
 #
 # Removed rather than guarded: Swagger UI cannot send a bearer token on its
 # first load, so requiring one yields a broken page, not a protected one.
@@ -540,7 +540,7 @@ from apowerb.routers.webhook_handlers.outlook import process_webhook_log_row
 
 async def _start_webhook_renewal():
     import asyncio
-    # Debug breadcrumbs (cf. SCEI prod 2026-05-07 where this hook was
+    # Debug breadcrumbs (cf. one deployment, 2026-05-07 where this hook was
     # apparently never reaching backlog_worker.start_in_background and
     # there were no logs to triage). prints survive any logger config
     # so we can confirm in journalctl which step the hook actually
@@ -618,7 +618,7 @@ async def _start_webhook_renewal():
 # ``@app.on_event("startup")`` decorator and an ``app.add_event_handler``
 # call -- are gone. Starlette 1.0 removed both APIs, and they had never
 # fired anyway: ADK installs its own lifespan, Starlette honours only that,
-# and the comments here already recorded it (SCEI prod, 2026-05-07: neither
+# and the comments here already recorded it (one deployment, 2026-05-07: neither
 # hook ever printed, the backlog worker never started). The lifespan wrapper
 # below is the one that works, and it is now the only one.
 
@@ -628,7 +628,7 @@ async def _start_webhook_renewal():
 # in an ``@asynccontextmanager``). When that pattern is in use, both
 # ``@app.on_event("startup")`` and ``app.add_event_handler("startup",
 # ...)`` are silently *ignored* — Starlette only honours the lifespan
-# context. Verified on SCEI prod 2026-05-07: with both hooks above
+# context. Verified on one deployment, 2026-05-07: with both hooks above
 # defined, journalctl never showed the ``[STARTUP HOOK] entered``
 # print, so the worker never started and the webhook backlog stalled.
 #
@@ -646,10 +646,10 @@ def _preflight_validate_templates() -> None:
     contains an unescaped ``{xxx}`` ADK placeholder that cannot be a real
     session.state variable.
 
-    Background: SCEI prod 2026-05-13 → 2026-05-18, 53 ARs dropped to
-    ``error`` because ``scei_ar_assistant`` shipped with 5 illustrative
+    Background: one deployment, 2026-05-13 → 2026-05-18, 53 documents
+    dropped to ``error`` because a client template shipped with 5 illustrative
     ``{xxx}`` examples that ADK tried to resolve at runtime. PR #172
-    escaped the SCEI placeholders; this check stops the next regression
+    escaped those placeholders; this check stops the next regression
     from booting at all.
     """
     from apowerb.core.superagents.templates import SUPERAGENT_TEMPLATES

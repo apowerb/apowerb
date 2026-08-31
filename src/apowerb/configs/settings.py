@@ -170,7 +170,7 @@ def _warn_duplicate_env_keys(env_path: str = _ENV_FILE) -> None:
 
     pydantic-settings (and python-dotenv under the hood) silently keep the
     last definition when a key appears multiple times. This makes copy-paste
-    or merge mistakes invisible — exactly what produced the 2026-05-07 SCEI
+    or merge mistakes invisible — exactly what produced the 2026-05-07
     incident, where ``JWT_SECRET_KEY`` ended up with conflicting values.
 
     The function is best-effort: it only flags exact duplicates of the same
@@ -417,8 +417,8 @@ class Settings(BaseSettings):
     default_llm_plan_quotas: dict[str, int] = {}
 
     # Registration feature flag — set AUTH_REGISTER_ENABLED=false to keep
-    # the login endpoint open while disabling user self-registration. SCEI
-    # uses this so internal users can sign in but the public POST /users/
+    # the login endpoint open while disabling user self-registration. One
+    # deployment uses this so internal users can sign in but the public POST /users/
     # endpoint stays closed.
     auth_register_enabled: bool = True
 
@@ -478,7 +478,7 @@ class Settings(BaseSettings):
     super_admin_email: str = ""
     # Public base URL of the front app, for verify/reset links.
     app_public_url: str = "http://localhost:3000"
-    # Email-verification gate. OFF by default; never enable on SCEI until
+    # Email-verification gate. OFF by default; never enable on such a deployment until
     # the email_verified backfill is confirmed in prod.
     auth_email_verification_enabled: bool = False
     email_verify_token_expire_hours: int = 24

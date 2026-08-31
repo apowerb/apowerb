@@ -90,7 +90,7 @@ def _should_inject_chat_action_tools(agent_details: dict) -> bool:
     Agents with a non-empty ``output_schema_name`` are fully-automatic pipeline
     agents (webhook, no human in the loop). They must NOT receive
     ``request_user_input`` and friends, nor the ``INTERACTIVE_UI_INSTRUCTION``
-    that pushes the LLM to call them -- doing so caused the SCEI intake (Qwen)
+    that pushes the LLM to call them -- doing so caused a client overlay's intake (Qwen)
     to emit ``request_user_input`` instead of classifying/extracting, blocking
     the whole pipeline (incident 2026-05-22).
 
@@ -301,7 +301,7 @@ def _inject_google_integration_tokens(tools_names: list[str], owner_id: str | No
 
 def _lookup_output_schema(name: str):
     """Resolve a Pydantic schema class by name from the extension registry
-    (populated by client overlays, e.g. SCEI). Returns None if unknown."""
+    (populated by client overlays). Returns None if unknown."""
     return _ext_registry.schemas().get(name)
 
 
@@ -317,7 +317,7 @@ def _lookup_output_schema(name: str):
 
 
 
-# Extension registry consumed below (the SCEI overlay's init_overlay
+# Extension registry consumed below (a client overlay's init_overlay
 # registers the gate appliers + tool rebinders; the core only consumes).
 from apowerb.core.extensions.registry import registry as _ext_registry  # noqa: E402
 
@@ -577,7 +577,7 @@ def to_agent(agent_name: str) -> LlmAgent:
             agent_name, tools_ids, tools_funcs, owner_id=owner_id
         )
 
-        # Rebind client-overlay tools (e.g. SCEI persist/mail) to bound
+        # Rebind client-overlay tools (e.g. an overlay's persist/mail) to bound
         # MSSQL db_params via the extension registry — same per-request
         # rebinders, applied in registration order (persist, mail).
         for _tool_name, _rebinder in _ext_registry.tool_rebinders().items():
@@ -613,7 +613,7 @@ def to_agent(agent_name: str) -> LlmAgent:
         # dashboard it is linked to (mini chat sets AGENT_DASHBOARD_ID).
         _add_auto_tool(tool_get_dashboard_data)
         # Chat action-card tools -- only for chat agents (output_schema_name absent).
-        # Structured-output pipeline agents (SCEI intake/matcher/recorder/notifier)
+        # Structured-output pipeline agents (an overlay's intake/matcher/recorder/notifier)
         # must not receive these tools: they cause the LLM to emit
         # request_user_input instead of producing the expected JSON output.
         if _should_inject_chat_action_tools(agent_details):
@@ -795,7 +795,7 @@ def to_agent(agent_name: str) -> LlmAgent:
         # to session.state[output_key] so a downstream sub-agent in a
         # SequentialAgent can reference it via {output_key} in its prompt.
         # See [[project_th2agent_pr173]] for the brace-resolution gotcha
-        # and the SCEI sub-agent design.
+        # and a client overlay's sub-agent design.
         _output_key = agent_details.get("output_key")
         if _output_key:
             agent_kwargs["output_key"] = _output_key

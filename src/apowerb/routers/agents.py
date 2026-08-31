@@ -118,7 +118,7 @@ async def template_status(
 
         {
             "agent_id": 6,
-            "template_id": "scei_ar_assistant" | null,
+            "template_id": "a_template_id" | null,
             "is_in_sync": true | false,
             "stored_hash": "abc..." | null,
             "current_hash": "def..." | null,

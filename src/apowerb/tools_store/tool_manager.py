@@ -93,7 +93,7 @@ class ToolsStore(BaseModel):
         all_tools = {}
         for category in self.get_categories():
             all_tools[category] = self.get_tools_in_category(category)
-        # Overlay tools (e.g. SCEI) live outside apowerb.tools_store.portfolio;
+        # Overlay tools (e.g. a client overlay) live outside apowerb.tools_store.portfolio;
         # surface them so the resolver can find them by name.
         try:
             from apowerb.core.extensions.registry import registry as _ext_registry

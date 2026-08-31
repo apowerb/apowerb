@@ -27,7 +27,7 @@ def registration_enabled() -> None:
     """Dependency: returns 404 when AUTH_REGISTER_ENABLED is false.
 
     Stacks on top of basic_auth_enabled — both must be true for the
-    registration endpoint to be reachable. SCEI uses this to keep login
+    registration endpoint to be reachable. One deployment uses this to keep login
     open while closing self-registration.
     """
     if not get_settings().auth_register_enabled:

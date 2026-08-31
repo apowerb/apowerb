@@ -119,7 +119,7 @@ def register_agent(agent: AgentCreateSchema) -> dict:
             agent_tools=json.dumps(agent.agent_tools or []),
             sub_agents=json.dumps(agent.sub_agents or []),
             # v2 sub-agent pipeline fields (PR #174 + #176).
-            # Persisting these is what makes scei_ar_assistant_v2
+            # Persisting these is what makes the overlay's assistant template
             # actually function — without them, ADK output_key,
             # after_agent_callback validation, and skip-cascade
             # short-circuit all stay armed=False at runtime.
@@ -694,7 +694,7 @@ def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
             agent_tools=json.dumps(agent.agent_tools or []),
             sub_agents=json.dumps(agent.sub_agents or []),
             # v2 sub-agent pipeline fields (PR #174 + #176).
-            # Persisting these is what makes scei_ar_assistant_v2
+            # Persisting these is what makes the overlay's assistant template
             # actually function — without them, ADK output_key,
             # after_agent_callback validation, and skip-cascade
             # short-circuit all stay armed=False at runtime.

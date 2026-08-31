@@ -13,7 +13,7 @@ async def list_templates(
     """List SuperAgent templates visible to the authenticated user.
 
     Templates marked ``visible_to_orgs`` are filtered out for callers
-    outside those orgs (e.g. ``scei_ar_assistant`` is hidden from non-SCEI
+    outside those orgs (e.g. an overlay's template is hidden from other
     users).
     """
     return list_superagent_templates(user=current_user)

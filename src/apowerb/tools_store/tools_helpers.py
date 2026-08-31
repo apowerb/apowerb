@@ -467,7 +467,7 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
             ]
             module_to_load = target_category[0] if target_category else None
             if module_to_load is None or module_to_load == "overlay":
-                # Overlay-registered tool (scei_*): resolve from the extension
+                # Overlay-registered tool (the overlay's prefix): resolve from the extension
                 # registry instead of the hardcoded portfolio path.
                 from apowerb.core.extensions.registry import registry as _ext_registry
                 _ovl = _ext_registry.overlay_tools()

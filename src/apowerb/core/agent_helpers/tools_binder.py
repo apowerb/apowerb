@@ -123,7 +123,7 @@ def bind_create_downloadable_file(agent_name: str, tools_funcs: list) -> None:
 def bind_pdf_first_page(agent_name: str, tools_funcs: list) -> list:
     """Replace the ``tool_pdf_first_page`` placeholder with a folder-bound
     closure. Replace-only (no auto-append): unlike pdf_to_images, only agents
-    that explicitly declare this tool (e.g. the SCEI intake) receive it.
+    that explicitly declare this tool (e.g. a client overlay's intake) receive it.
     """
     from apowerb.tools_store.portfolio.basic import (
         tool_pdf_first_page as _placeholder,

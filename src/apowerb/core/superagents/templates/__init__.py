@@ -28,7 +28,7 @@ def _build_templates() -> list[dict]:
 
     # Templates apportes par les briques et overlays, via le registre.
     # Le noyau ne nomme aucun template commercial : la prospection arrive par
-    # ce chemin exactement comme l'overlay SCEI.
+    # ce chemin exactement comme un overlay client.
     for tpl in _ext_registry.templates():
         by_id.setdefault(tpl["template_id"], tpl)
 
@@ -49,7 +49,7 @@ def _build_templates() -> list[dict]:
         "audio_assistant",
     ]
     ordered = [by_id[t] for t in ordered_ids if t in by_id]
-    # Overlay-provided templates (e.g. SCEI) are appended in registration
+    # Overlay-provided templates (e.g. a client overlay) are appended in registration
     # order — the core never hardcodes client template ids.
     _placed = set(ordered_ids)
     for _tpl in _ext_registry.templates():
