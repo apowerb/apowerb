@@ -83,7 +83,7 @@ class TestFiltersReachTheQuery:
             "/api/webhooks/logs?since=2026-08-21&until=2026-08-22"
         )
         sql = _sql(session.statements[0])
-        assert "created_at >=" in sql and "created_at <=" in sql
+        assert "created_at >=" in sql and "created_at <" in sql
 
     def test_search_covers_subject_and_sender(self, session):
         _client(session).get("/api/webhooks/logs?q=socomec")
@@ -131,7 +131,7 @@ class TestFiltersReachTheQuery:
             "'success'",         # status
             "%abc%",             # q
             "2026-08-01",        # since
-            "2026-08-31",        # until
+            "2026-09-01",        # until
             "email_classification",  # classification
             "agent_id",
             "subscription_id",
@@ -162,7 +162,7 @@ class TestCountAndPageAgree:
             "'retrying'",
             "%abc%",
             "2026-08-01",
-            "2026-08-31",
+            "2026-09-01",
             "email_classification",
             "agent_id",
             "subscription_id",
@@ -212,10 +212,14 @@ class TestBadInputIsRefused:
 
 
 class TestUntilCoversTheWholeDay:
-    def test_a_bare_until_date_reaches_the_end_of_that_day(self, session):
+    def test_a_bare_until_date_bounds_at_the_next_midnight_exclusively(self, session):
+        """An inclusive end-of-day is only right to the precision the caller can
+        write. The bound is the first instant NOT wanted, and the comparison is
+        strict, so nothing can fall between it and the end of the day."""
         _client(session).get("/api/webhooks/logs?until=2026-08-21")
         sql = _sql(session.statements[0])
-        assert "23:59:59" in sql
+        assert "2026-08-22 00:00:00" in sql
+        assert "created_at <" in sql and "created_at <=" not in sql
 
     def test_a_bare_since_date_starts_at_midnight(self, session):
         _client(session).get("/api/webhooks/logs?since=2026-08-21")

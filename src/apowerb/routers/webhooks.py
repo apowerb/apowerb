@@ -779,9 +779,12 @@ def _parse_log_moment(value: str, field: str) -> datetime:
     """Parse an ISO date or datetime, and make it timezone-aware.
 
     A bare date means the whole day in UTC: ``since=2026-08-21`` starts at
-    00:00 and ``until=2026-08-21`` must still include 23:59, so the caller
-    does not have to know that comparing a date against a timestamp silently
-    excludes the day itself.
+    00:00, and ``until=2026-08-21`` becomes the START OF THE NEXT DAY, compared
+    exclusively. Naming an end-of-day instant instead would only ever be right
+    down to whatever precision the caller can express -- a client limited to
+    milliseconds cannot say 23:59:59.999999, and a row landing in the gap would
+    fall outside the day it belongs to. An exclusive bound is exact at any
+    precision.
     """
     raw = (value or "").strip()
     try:
@@ -792,7 +795,7 @@ def _parse_log_moment(value: str, field: str) -> datetime:
             detail=f"{field} must be an ISO date or datetime, got {value!r}",
         )
     if len(raw) == 10 and field == "until":
-        moment = moment.replace(hour=23, minute=59, second=59, microsecond=999999)
+        moment = moment + timedelta(days=1)
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment
@@ -821,7 +824,7 @@ async def list_webhook_logs(
     """Return webhook execution logs for the current user.
 
     Filters: ``subscription_id``, ``agent_id``, ``status``, ``since`` /
-    ``until``, ``q`` (subject or sender), ``classification``. They combine
+    ``until`` (EXCLUSIVE), ``q`` (subject or sender), ``classification``. They combine
     with AND. Pagination via ``limit`` / ``offset``, newest-first, ordered by
     ``created_at`` then ``id`` so the sequence is total and paging cannot skip
     or repeat a row.
@@ -879,7 +882,9 @@ async def list_webhook_logs(
     if since:
         filters.append(WebhookLog.created_at >= _parse_log_moment(since, "since"))
     if until:
-        filters.append(WebhookLog.created_at <= _parse_log_moment(until, "until"))
+        # Exclusive: see _parse_log_moment. `until` names the first instant
+        # NOT wanted, so no row can fall between the bound and the day's end.
+        filters.append(WebhookLog.created_at < _parse_log_moment(until, "until"))
 
     if q:
         # Escape the LIKE wildcards: a subject containing '%' must match

@@ -26,16 +26,17 @@ class TestParseMoment:
             2026, 8, 21, 0, 0, 0, tzinfo=timezone.utc
         )
 
-    def test_a_bare_until_date_covers_the_whole_day(self):
-        """`until=2026-08-21` must include 21 August.
+    def test_a_bare_until_date_becomes_the_next_midnight(self):
+        """`until=2026-08-21` must cover the whole of 21 August.
 
-        Comparing a bare date against a timestamp otherwise cuts at midnight
-        and silently drops the very day the operator asked for -- a filter
-        that returns fewer rows than it should is indistinguishable from a
-        quiet system.
+        Naming 23:59:59.999999 would only ever be right down to the precision
+        the caller can express -- a client limited to milliseconds cannot say
+        it, and a row landing in the gap would fall outside its own day. The
+        bound is the first instant NOT wanted, compared exclusively.
         """
         got = _parse_log_moment("2026-08-21", "until")
-        assert got.hour == 23 and got.minute == 59 and got.second == 59
+        assert (got.year, got.month, got.day) == (2026, 8, 22)
+        assert (got.hour, got.minute, got.second, got.microsecond) == (0, 0, 0, 0)
 
     def test_a_full_datetime_is_left_alone(self):
         got = _parse_log_moment("2026-08-21T14:43:00", "until")
