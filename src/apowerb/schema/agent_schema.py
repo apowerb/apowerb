@@ -1,4 +1,10 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+# Credential-bearing keys: pasted by hand, so the same whitespace accident
+# applies to them as to the model name. Module level on purpose — a
+# leading-underscore name inside a pydantic v2 model body becomes a private
+# attribute, not a plain tuple.
+_CREDENTIAL_KEYS = ("model_api_key", "model_api_base")
 
 
 class McpServerConfig(BaseModel):
@@ -55,6 +61,39 @@ class AgentCreateSchema(BaseModel):
     agent_name: str
     agent_model: str
     agent_model_params: dict | None = None
+
+    @field_validator("agent_model", mode="before")
+    @classmethod
+    def _strip_agent_model(cls, value):
+        """Normalise the model name at the boundary: what is validated must be
+        what is stored.
+
+        Measured on 2026-09-01: an agent saved as ``"ovhcloud/Qwen3.5-9B "``
+        passed ``validate_agent_model`` and then failed *every* call with
+        ``model_not_found: The model `Qwen3.5-9B ` does not exist``. The guard
+        checks ``agent_model.strip()`` (llm_model_builder.py) while the raw
+        value is the one persisted — a guard that normalises to verify and lets
+        the original through guards nothing. Nothing warned at save time: from
+        the guard's point of view the model was valid.
+        """
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("agent_model_params", mode="before")
+    @classmethod
+    def _strip_credentials(cls, value):
+        """Same accident, one field over.
+
+        An API key or an endpoint copied with a trailing newline is never
+        intentional, and it fails the same silent way — an authentication
+        error that names neither the cause nor the field. Only the two
+        credential keys are touched; every other parameter is left verbatim.
+        """
+        if not isinstance(value, dict):
+            return value
+        return {
+            key: (item.strip() if key in _CREDENTIAL_KEYS and isinstance(item, str) else item)
+            for key, item in value.items()
+        }
     agent_description: str
     agent_instruction: str
     agent_tools: list[str] | None = []
