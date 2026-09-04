@@ -638,6 +638,15 @@ async def _start_webhook_renewal():
 # "running" phase of the application.
 import contextlib as _stdlib_contextlib
 
+# Called inside the lifespan, not at import: th2pulse reuses the logger
+# provider ADK installs at server startup, which does not exist before then.
+# ADK exports its own spans by itself; this is what carries application log
+# records, which it does not bridge.
+from apowerb.configs.observability import (  # noqa: E402
+    bridge_logs_to_collector,
+    flush_observability,
+)
+
 _inner_lifespan = getattr(app.router, "lifespan_context", None)
 
 
@@ -672,6 +681,7 @@ async def _wrapped_lifespan(scope_app):
     if _inner_lifespan is not None:
         try:
             async with _inner_lifespan(scope_app):
+                bridge_logs_to_collector()
                 await _start_webhook_renewal()
                 yield
         except TypeError:
@@ -679,11 +689,16 @@ async def _wrapped_lifespan(scope_app):
             # ``()`` depending on its version — try the no-arg form
             # before giving up.
             async with _inner_lifespan():
+                bridge_logs_to_collector()
                 await _start_webhook_renewal()
                 yield
     else:
+        bridge_logs_to_collector()
         await _start_webhook_renewal()
         yield
+    # Records are batched: without this the last window is lost, and that is
+    # exactly the window explaining why the process is going away.
+    flush_observability()
     print("[STARTUP HOOK via lifespan wrapper] exited", flush=True)
 
 

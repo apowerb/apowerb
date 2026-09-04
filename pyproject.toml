@@ -93,6 +93,17 @@ Issues = "https://github.com/apowerb/apowerb/issues"
 Changelog = "https://github.com/apowerb/apowerb/releases"
 
 [project.optional-dependencies]
+# Bridges application log records to an OTLP collector. ADK already exports
+# its own GenAI spans when OTEL_EXPORTER_OTLP_ENDPOINT is set; it does not
+# bridge standard Python logging, which is why this exists.
+#
+# An extra, not a dependency: a deployment with no collector must not carry
+# it, and one without this installed still boots — the bridge says out loud
+# that it is missing and the application runs untouched.
+otel = [
+    "th2pulse>=0.1.4",
+]
+
 s3 = [
     "s3fs>=2024.6.0",
     "fsspec>=2024.6.0",
