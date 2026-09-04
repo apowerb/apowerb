@@ -100,8 +100,18 @@ Changelog = "https://github.com/apowerb/apowerb/releases"
 # An extra, not a dependency: a deployment with no collector must not carry
 # it, and one without this installed still boots — the bridge says out loud
 # that it is missing and the application runs untouched.
+#
+# The marker is not decoration: this project declares requires-python >=3.10
+# while th2pulse needs >=3.11, and uv resolves the whole declared window, so
+# an unmarked entry makes `uv sync` unsatisfiable on a Python nobody actually
+# runs here (image, CI and publishing are all 3.13). Marked, 3.10 simply gets
+# no bridge and the application says so at boot.
+#
+# The cleaner fix is to raise requires-python to >=3.11, since nothing builds
+# or ships on 3.10 -- but that changes what this package promises its users,
+# which is not this change's call.
 otel = [
-    "th2pulse>=0.1.4",
+    "th2pulse>=0.1.4; python_version >= '3.11'",
 ]
 
 s3 = [
