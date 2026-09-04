@@ -340,6 +340,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+otel = [
+    { name = "th2pulse", marker = "python_full_version >= '3.11'" },
+]
 s3 = [
     { name = "aiobotocore" },
     { name = "fsspec" },
@@ -408,12 +411,13 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.45" },
     { name = "stripe", specifier = ">=14.3.0" },
     { name = "tavily-python", specifier = ">=0.7.22" },
+    { name = "th2pulse", marker = "python_full_version >= '3.11' and extra == 'otel'", specifier = ">=0.1.4" },
     { name = "typer", specifier = ">=0.12.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
     { name = "websockets", specifier = ">=13.0" },
     { name = "xlrd", specifier = ">=2.0.2" },
 ]
-provides-extras = ["s3"]
+provides-extras = ["otel", "s3"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4684,6 +4688,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/47/c6/ee486fd809e357697ee8a44d3d69222b344920433d3b6666ccd9b374630c/tenacity-9.1.4.tar.gz", hash = "sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a", size = 49413, upload-time = "2026-02-07T10:45:33.841Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d7/c1/eb8f9debc45d3b7918a32ab756658a0904732f75e555402972246b0b8e71/tenacity-9.1.4-py3-none-any.whl", hash = "sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55", size = 28926, upload-time = "2026-02-07T10:45:32.24Z" },
+]
+
+[[package]]
+name = "th2pulse"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "python_full_version >= '3.11'" },
+    { name = "opentelemetry-sdk", marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0e/ce/61fff5c76f2746d51417b06109f7ca85aee8cedf8a7302c1e713ae495f9b/th2pulse-0.1.4.tar.gz", hash = "sha256:5309503db91ef471291534799af3d67292abcb716997eb2a5b4ea2bf47e96bc9", size = 84333, upload-time = "2026-08-21T15:08:52.663Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/4f/d8ebadc44996aead58a5c5303a2344e0b4617caffdc103f6d7009d0e001d/th2pulse-0.1.4-py3-none-any.whl", hash = "sha256:f1ee5b6ee2b5f3615abba9c1a411afbb49967567c3ef9a2ad6ef5d4c2e86b4a5", size = 28788, upload-time = "2026-08-21T15:08:51.623Z" },
 ]
 
 [[package]]

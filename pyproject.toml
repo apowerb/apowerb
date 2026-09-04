@@ -93,6 +93,27 @@ Issues = "https://github.com/apowerb/apowerb/issues"
 Changelog = "https://github.com/apowerb/apowerb/releases"
 
 [project.optional-dependencies]
+# Bridges application log records to an OTLP collector. ADK already exports
+# its own GenAI spans when OTEL_EXPORTER_OTLP_ENDPOINT is set; it does not
+# bridge standard Python logging, which is why this exists.
+#
+# An extra, not a dependency: a deployment with no collector must not carry
+# it, and one without this installed still boots — the bridge says out loud
+# that it is missing and the application runs untouched.
+#
+# The marker is not decoration: this project declares requires-python >=3.10
+# while th2pulse needs >=3.11, and uv resolves the whole declared window, so
+# an unmarked entry makes `uv sync` unsatisfiable on a Python nobody actually
+# runs here (image, CI and publishing are all 3.13). Marked, 3.10 simply gets
+# no bridge and the application says so at boot.
+#
+# The cleaner fix is to raise requires-python to >=3.11, since nothing builds
+# or ships on 3.10 -- but that changes what this package promises its users,
+# which is not this change's call.
+otel = [
+    "th2pulse>=0.1.4; python_version >= '3.11'",
+]
+
 s3 = [
     "s3fs>=2024.6.0",
     "fsspec>=2024.6.0",
