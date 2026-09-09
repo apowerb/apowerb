@@ -1,3 +1,18 @@
+"""MageAI-backed orchestrator client for scheduled agent runs.
+
+Internal to apowerb. The rest of the codebase reaches this module through
+``get_orchestrator()`` and never instantiates ``MageAPIClient`` /
+``AgentOrchestrator`` itself; the orchestrator backend is chosen by the
+``ORCHESTRATOR`` setting, not by importing a class.
+
+The stable, documented contract for scheduled runs is the behaviour of the
+HTTP routes that use this client and the ``OrchestratorUnavailable`` exception
+they translate (see ``apowerb.scheduler.th2etl_client`` and ``CHANGELOG.md``).
+The classes and methods here are an implementation detail and may change
+between releases without a changelog entry -- ``__all__`` below records what
+apowerb itself relies on, nothing more.
+"""
+
 import json
 from apowerb.configs.th2logger import setup_logging
 from typing import Any
@@ -13,6 +28,15 @@ logger = setup_logging(__name__)
 
 
 settings = get_settings()
+
+# Names apowerb's own routers/workers import from this module. Not a public
+# API surface: see the module docstring.
+__all__ = [
+    "AgentOrchestrator",
+    "MageAPIClient",
+    "get_orchestrator",
+    "process_agent_registration",
+]
 
 
 class MageAPIClient:

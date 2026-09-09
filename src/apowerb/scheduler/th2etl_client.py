@@ -16,6 +16,14 @@ Mapping conventions (one th2etl scheduler per agent, named by ``agent_id``):
 
 This module deliberately has NO th2agent imports so it can be unit-tested in
 isolation with ``requests`` mocked.
+
+Public surface: ``OrchestratorUnavailable`` only. It is the exception the
+scheduler and BI-refresh HTTP routes raise on an unreachable orchestrator,
+and consumers catch it -- it is covered by the versioning promise in
+``CHANGELOG.md``. ``Th2etlAPIClient`` and the helper functions here are
+internal: apowerb selects the orchestrator backend through the
+``ORCHESTRATOR`` setting, and these may change between releases without a
+changelog entry. ``__all__`` records what apowerb itself imports.
 """
 from __future__ import annotations
 
@@ -33,6 +41,18 @@ from requests.exceptions import TooManyRedirects as _RedirectLoop
 from apowerb.configs.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+# ``OrchestratorUnavailable`` is the only public name (see module docstring);
+# the rest is listed because apowerb's routers/clients/tests import it, not as
+# a stability guarantee.
+__all__ = [
+    "OrchestratorUnavailable",
+    "Th2etlAPIClient",
+    "ask_orchestrator",
+    "degrade_unless_unreachable",
+    "orchestrator_is_unreachable",
+    "interval_to_cron",
+]
 
 # Mage "@interval" shortcuts -> 5-field cron expressions used by th2etl triggers.
 _INTERVAL_TO_CRON = {

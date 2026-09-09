@@ -848,6 +848,21 @@ ruff check .
 ruff format .
 ```
 
+### Versioning and changelog
+
+[`CHANGELOG.md`](CHANGELOG.md) records every backwards-incompatible change to
+the public contract — the HTTP routes, the `apowerb` CLI, the
+`schedule_agent_run` / `trigger_agent_run_now` entry points, and
+`OrchestratorUnavailable` — and states which of those are public in the first
+place. The client classes under `apowerb.scheduler` are **not**: they are
+selected through the `ORCHESTRATOR` setting, not imported, and may change
+between releases.
+
+Releases follow [SemVer](https://semver.org/); below `1.0.0` the minor number
+carries the "breaking" signal. The published version comes from the git
+release tag — the `version` in `pyproject.toml` is a placeholder. See the top
+of the changelog for the full rule.
+
 ---
 
 ## Troubleshooting

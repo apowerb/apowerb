@@ -1,6 +1,9 @@
 [project]
 name = "apowerb"
-version = "0.1.1"
+# Placeholder only: the published version is written from the git release tag
+# at publish time (.github/workflows/pypi-publish.yml). Kept in step with the
+# next intended release line per CHANGELOG.md's versioning rules.
+version = "0.2.0"
 description = "Agentic framework for building and deploying AI agents with flexible orchestration, custom tool integration, RAG, Text-to-SQL, webhooks, and scheduled runs."
 readme = "README.md"
 authors = [
@@ -90,7 +93,7 @@ dependencies = [
 Homepage = "https://github.com/apowerb/apowerb"
 Repository = "https://github.com/apowerb/apowerb"
 Issues = "https://github.com/apowerb/apowerb/issues"
-Changelog = "https://github.com/apowerb/apowerb/releases"
+Changelog = "https://github.com/apowerb/apowerb/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 # Bridges application log records to an OTLP collector. ADK already exports
