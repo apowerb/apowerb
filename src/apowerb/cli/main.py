@@ -3,6 +3,7 @@ import uvicorn
 from apowerb.cli.agents import app as agents_app
 from apowerb.cli.tools import app as tools_app
 from apowerb.cli.runs import app as runs_app
+from apowerb.cli.config import app as config_app
 
 app = typer.Typer()
 
@@ -31,6 +32,7 @@ def serve(
 app.add_typer(agents_app, name="agents", help="Manage agents")
 app.add_typer(tools_app, name="tools", help="Manage tools")
 app.add_typer(runs_app, name="runs", help="Manage agent runs")
+app.add_typer(config_app, name="config", help="Configuration posée depuis l'écran d'administration")
 
 if __name__ == "__main__":
     app()

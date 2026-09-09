@@ -83,6 +83,22 @@ RUN apt-get update \
 
 COPY --from=builder /opt/venv /opt/venv
 
+# Applique la configuration posee depuis l'ecran d'administration avant de
+# lancer la commande de l'image. Ici et pas dans le chart Helm : le chart ne
+# couvrirait que Kubernetes, en laissant derriere Compose, l'hebergement
+# manage et les VM. L'image est le seul point commun aux quatre.
+#
+# Le script ne peut pas empecher le demarrage : base injoignable, systeme de
+# fichiers en lecture seule ou sous-commande absente d'une version publiee plus
+# ancienne se traversent toutes, et le service demarre alors avec son
+# environnement seul -- exactement son comportement d'avant.
+COPY docker/entrypoint.sh /usr/local/bin/apowerb-entrypoint
+RUN chmod +x /usr/local/bin/apowerb-entrypoint
+
 EXPOSE 8000
 
+# ENTRYPOINT en forme exec, CMD inchange : le chart et les deux composes le
+# passent tel quel, et `docker run <image> <autre commande>` continue de
+# remplacer le CMD sans court-circuiter l'application de la configuration.
+ENTRYPOINT ["/usr/local/bin/apowerb-entrypoint"]
 CMD ["apowerb", "serve", "--host", "0.0.0.0", "--port", "8000", "--no-reload"]

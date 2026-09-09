@@ -89,6 +89,7 @@ from apowerb.helpers.user_migration import ensure_user_columns
 from apowerb.helpers.core_tables import ensure_core_tables
 from apowerb.helpers.default_superadmin import ensure_default_superadmin
 from apowerb.admin.migration import ensure_admin_tables, ensure_superadmin_grant
+from apowerb.core.config_admin.migration import ensure_config_admin_tables
 from apowerb.helpers.store_migrations import ensure_store_tables
 from apowerb.core.adk_agent_builder import ensure_agent_modules
 
@@ -169,6 +170,11 @@ def bootstrap(force: bool = False) -> None:
     # variable d'environnement, deux gestes distincts, d'ou les deux noms.
     ensure_admin_tables()
     ensure_superadmin_grant()
+
+    # Les deux tables de l'écran de configuration. Après le panneau, et
+    # pas avant : le verrou d'écriture lit `admin_superadmin`, que les
+    # deux appels ci-dessus viennent de créer et de peupler.
+    ensure_config_admin_tables()
 
     # Qui peut lire les sessions d'autrui. Le noyau porte desormais la notion
     # de superadmin, donc il repond lui-meme au lieu d'attendre une brique.
@@ -513,8 +519,10 @@ api_router.include_router(workflows_router, prefix="/api")
 # admin-only, through the core's own `is_admin`, which normalises the role's
 # casing -- see `apowerb/admin/guard.py`.
 from apowerb.admin.router import router as admin_router
+from apowerb.core.config_admin.router import router as config_admin_router
 
 api_router.include_router(admin_router, prefix="/api")
+api_router.include_router(config_admin_router, prefix="/api")
 
 # Routeurs apportes par les briques branchees (TH2_EXTENSIONS). Montes apres
 # ceux du noyau, donc une brique ajoute des routes sans pouvoir masquer les
