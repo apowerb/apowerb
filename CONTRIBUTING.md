@@ -23,8 +23,13 @@ merged. Two things it does, and one it does not:
   already permits that, provided attribution and the `NOTICE` file are kept.
   The CLA relieves us of those obligations — it does not create the right.
 
-The CLA bot comments on your first pull request; one signature covers everything
-you contribute afterwards.
+The text is in [CLA.md](./CLA.md). A bot comments on your first pull request and asks you
+to sign by replying to it; one signature covers everything you contribute afterwards, and
+signatures are recorded in `signatures/cla.json` in this repository.
+
+A lighter alternative exists, should the CLA prove heavy for what it buys: the **DCO**
+(Developer Certificate of Origin), a `Signed-off-by:` line in each commit. It covers the
+first point above and neither of the other two.
 
 Note also that the licence covers the code and not the marks: see
 [TRADEMARK.md](./TRADEMARK.md) before naming a fork or reusing the logo.
