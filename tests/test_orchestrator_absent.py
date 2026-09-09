@@ -197,10 +197,15 @@ def test_nothing_configured_says_how_to_turn_it_off(client):
         scheduler_router_mod, "get_settings", lambda: _settings()
     ):
         detail = client.get("/api/pipelines").json()["detail"]
-    assert "SCHEDULER_ENABLED" in detail
+    # A payload the front recognises, with the sentence as its message: the
+    # screen has to be able to tell "never set up" from "down", and both are
+    # 503 on purpose.
+    assert detail["code"] == "NOT_CONFIGURED"
+    assert detail["capability"] == "orchestration"
+    assert "SCHEDULER_ENABLED" in detail["message"]
     # The operator never typed this address; quoting it back at him is what
     # made the original message unreadable.
-    assert "localhost:6789" not in detail
+    assert "localhost:6789" not in detail["message"]
 
 
 def test_a_configured_orchestrator_that_is_down_is_still_an_error(client, caplog):
