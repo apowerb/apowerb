@@ -4,9 +4,22 @@ Thanks for taking the time. This file describes how this repository actually
 works — the conventions below were read off the history and the tooling, not
 invented for the occasion.
 
-By contributing, you agree that your contribution is licensed under the
-[MIT License](./LICENSE), like the rest of the project. You keep the copyright
-on what you write.
+## Licence and CLA
+
+Contributions are licensed under the [Apache License 2.0](./LICENSE), like the
+rest of the project. You keep the copyright on what you write.
+
+A **Contributor License Agreement** is required before a pull request can be
+merged. It grants thaink² the right to sublicense your contribution, which is
+what allows the same code to live in the open-source core and in the commercial
+bricks. Without it, a contribution cannot be accepted — not as a formality, but
+because the alternative is a codebase nobody can relicense later.
+
+The CLA bot comments on your first pull request; one signature covers everything
+you contribute afterwards.
+
+Note also that the licence covers the code and not the marks: see
+[TRADEMARK.md](./TRADEMARK.md) before naming a fork or reusing the logo.
 
 ## Getting set up
 

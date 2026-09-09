@@ -1,0 +1,14 @@
+apowerb
+Copyright 2025-2026 thaink²
+
+This product includes software developed at thaink² (https://www.thaink2.com).
+
+apowerb is the open-source core of the apowerb platform. Commercial
+components — billing, usage metering, prospection, identity-provider
+sign-in, multi-factor authentication, agent evaluation, supervision and
+organisation management — are distributed separately under commercial
+terms and are not covered by this license.
+
+"apowerb" and the apowerb logo are trademarks of thaink². Use of the
+Apache License 2.0 does not grant permission to use these marks. See
+TRADEMARK.md.
