@@ -190,10 +190,14 @@ def test_nothing_configured_says_how_to_turn_the_feature_off(client, method, url
         mod, "_get_user_agent_ids", _no_db
     ):
         detail = client.request(method, url, json=body).json()["detail"]
-    assert "SCHEDULER_ENABLED" in detail
+    # A payload, not a sentence: the front tells "not set up" from "broken" by
+    # this code, never by the status -- both are 503 on purpose.
+    assert detail["code"] == "NOT_CONFIGURED"
+    assert detail["capability"] == "orchestration"
+    assert "SCHEDULER_ENABLED" in detail["message"]
     # He never typed this address; quoting it back at him is what made the
     # original message unreadable.
-    assert "localhost:6789" not in detail
+    assert "localhost:6789" not in detail["message"]
 
 
 @pytest.mark.parametrize("method,url,body", ROUTES, ids=IDS)
@@ -601,7 +605,9 @@ def test_the_dashboard_schedule_list_answers_503_not_500(dashboard_client):
     ), patch.object(bi, "fetch_agents", lambda _email: []):
         got = dashboard_client.get("/api/v1/dashboards/d1/schedules")
     assert got.status_code == 503, got.text
-    assert "SCHEDULER_ENABLED" in got.json()["detail"]
+    detail = got.json()["detail"]
+    assert detail["code"] == "NOT_CONFIGURED"
+    assert "SCHEDULER_ENABLED" in detail["message"]
 
 
 def test_deleting_a_dashboard_schedule_answers_503_not_404(dashboard_client):

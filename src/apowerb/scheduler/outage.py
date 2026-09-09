@@ -98,9 +98,22 @@ def outage_response(exc, doing: str, settings, logger) -> HTTPException:
     consumers on their own FastAPI app (see ``_OrchestratorClientProxy``), and
     a handler registered in ``main.py`` would leave every one of them with the
     500s this replaces.
+
+    The same split decides the SHAPE of the body, and not only the log level.
+    The front tells "not set up" from "broken" by a code in the payload
+    (``parseNotConfiguredError``, `src/lib/setup.js`), never by the status:
+    both are 503 on purpose. This branch used to answer a bare sentence, so
+    the Orchestrator screen could only read it as a failure -- the one screen
+    ``NOT_CONFIGURED`` names in its own documented example. The sentence is
+    kept, as the message of a payload the front recognises.
     """
     if not orchestrator_is_configured(settings):
         logger.debug("no orchestrator configured while %s; %s", doing, exc)
-        return HTTPException(status_code=503, detail=NOT_CONFIGURED)
+        # Imported here and not at module level: `setup_status` imports this
+        # module for `orchestrator_is_configured`, so the two only meet inside
+        # a call.
+        from apowerb.core.setup_status import not_configured
+
+        return not_configured("orchestration", NOT_CONFIGURED)
     logger.error("orchestrator unreachable while %s: %s", doing, exc)
     return HTTPException(status_code=503, detail=str(exc))
