@@ -422,6 +422,15 @@ if not publishes_api_schema(settings):
     _logging.getLogger(__name__).info(
         "[SCHEMA] not published, routes removed: %s", _hidden
     )
+# Comptage des jetons et plafond du modèle mutualisé : noyau depuis le
+# 09/09/26. Enregistré AVANT l'overlay, pour que le noyau se réserve les
+# capacités et qu'une brique restée sur l'ancien découpage ne double pas le
+# comptage. Aucun accès base ici : la migration est un crochet de démarrage.
+from apowerb.core.extensions.registry import registry as _core_registry  # noqa: E402
+from apowerb.core.usage_wiring import register_core_usage  # noqa: E402
+
+register_core_usage(_core_registry)
+
 # Câblage pur (routes + tools de l'overlay client) : doit rester à la
 # construction de l'app, avant l'inclusion des routers. Aucun accès base.
 from apowerb.core.extensions.loader import load_overlay  # noqa: E402
