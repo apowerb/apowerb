@@ -1,0 +1,66 @@
+name: CLA
+
+# Demande la signature du CLA sur la premiere pull request d'une personne, puis
+# la laisse tranquille : une signature couvre toutes ses contributions suivantes.
+# Le texte signe vit dans CLA.md, les signatures dans signatures/cla.json.
+#
+# ⚠️ CE WORKFLOW NE FAIT RIEN TANT QUE LE SECRET N'EXISTE PAS.
+#
+# Il lui faut un Personal Access Token classique, avec la portee `repo`, stocke
+# en secret de depot sous le nom PERSONAL_ACCESS_TOKEN. Le `GITHUB_TOKEN`
+# fourni par Actions ne suffit pas : l'action doit ECRIRE le fichier de
+# signatures, et un jeton d'Actions ne declenche pas les workflows qui
+# suivraient cette ecriture.
+#
+# Sans ce secret, le job echoue sur les PR externes -- visible, pas silencieux,
+# ce qui est le bon comportement : mieux vaut un rouge explicite qu'un CLA que
+# tout le monde croit actif.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, synchronize]
+
+# pull_request_target s'execute avec les droits du depot de base et NE DOIT PAS
+# faire tourner le code de la PR. Ce workflow ne fait que lire des metadonnees
+# et ecrire un fichier de signatures : il ne checkout jamais la branche du
+# contributeur. Ne rien ajouter ici qui execute quoi que ce soit du fork.
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Vérifier la signature du CLA
+        if: (github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        uses: contributor-assistant/github-action@v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        with:
+          path-to-signatures: 'signatures/cla.json'
+          path-to-document: 'https://github.com/apowerb/apowerb/blob/main/CLA.md'
+          branch: 'main'
+          allowlist: 'dgnaglo,faridovski,bot*'
+          custom-notsigned-prcomment: |
+            Merci pour cette contribution.
+
+            Avant qu'elle puisse être mergée, nous avons besoin que vous signiez
+            le [Contributor License Agreement](https://github.com/apowerb/apowerb/blob/main/CLA.md).
+            Il ne transfère pas la propriété de votre code — vous en gardez le
+            droit d'auteur — et il ne change pas la licence du projet.
+
+            Pour signer, répondez à cette pull request avec exactement :
+
+            ```
+            I have read the CLA Document and I hereby sign the CLA
+            ```
+
+            Une seule signature couvre toutes vos contributions futures.
+          custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
+          custom-allsigned-prcomment: 'CLA signé. Merci — la pull request peut suivre son cours.'
