@@ -10,10 +10,18 @@ Contributions are licensed under the [Apache License 2.0](./LICENSE), like the
 rest of the project. You keep the copyright on what you write.
 
 A **Contributor License Agreement** is required before a pull request can be
-merged. It grants thaink² the right to sublicense your contribution, which is
-what allows the same code to live in the open-source core and in the commercial
-bricks. Without it, a contribution cannot be accepted — not as a formality, but
-because the alternative is a codebase nobody can relicense later.
+merged. Two things it does, and one it does not:
+
+- It records that you actually hold the rights to what you contribute. The
+  usual reason someone does not is code written while employed elsewhere —
+  which is worth settling before the code ships, not after.
+- It lets the project be relicensed later without tracking down every past
+  contributor. This repository moved from MIT to Apache-2.0 in a single day
+  precisely because every line belonged to thaink²; that would not have been
+  true with a dozen external contributors and no agreement.
+- It does **not** unlock commercial use of your contribution. Apache-2.0
+  already permits that, provided attribution and the `NOTICE` file are kept.
+  The CLA relieves us of those obligations — it does not create the right.
 
 The CLA bot comments on your first pull request; one signature covers everything
 you contribute afterwards.
