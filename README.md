@@ -873,10 +873,29 @@ Guides, quickstart and the generated API reference are at
 
 ---
 
+## Contributing
+
+Contributions are welcome. [CONTRIBUTING.md](./CONTRIBUTING.md) covers the
+development setup, the branch and commit conventions this repository actually
+uses, and what makes a pull request reviewable.
+
+Security issues take a different path: see [SECURITY.md](./SECURITY.md), and do
+not open a public issue for one.
+
 ## Support
 
-For questions or contributions, contact the thaink² team.
+For questions, contact the thaink² team or open an issue.
 
 ## License
 
-Proprietary - thaink² 2025
+apowerb is distributed under the [Apache License 2.0](./LICENSE).
+Copyright 2025-2026 thaink².
+
+This repository holds the **open-source core**. The commercial bricks — billing,
+usage metering, prospection, identity-provider sign-in, multi-factor
+authentication, agent evaluation, supervision and organisation management — are
+distributed separately under commercial terms and are not covered by this
+licence.
+
+"apowerb" and the apowerb logo are trademarks of thaink². The licence covers the
+code, not the marks — see [TRADEMARK.md](./TRADEMARK.md).
