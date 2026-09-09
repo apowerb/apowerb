@@ -873,10 +873,19 @@ Guides, quickstart and the generated API reference are at
 
 ---
 
+## Contributing
+
+Contributions are welcome. [CONTRIBUTING.md](./CONTRIBUTING.md) covers the
+development setup, the branch and commit conventions this repository actually
+uses, and what makes a pull request reviewable.
+
+Security issues take a different path: see [SECURITY.md](./SECURITY.md), and do
+not open a public issue for one.
+
 ## Support
 
-For questions or contributions, contact the thaink² team.
+For questions, contact the thaink² team or open an issue.
 
 ## License
 
-Proprietary - thaink² 2025
+MIT — see [LICENSE](./LICENSE). Copyright (c) 2026 thaink².
