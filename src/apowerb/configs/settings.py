@@ -407,6 +407,24 @@ class Settings(BaseSettings):
     # never capped. 0 (or negative) = unlimited, which serves as a
     # kill-switch without redeploying if the guard blocks incorrectly.
     default_llm_monthly_token_quota: int = 1_000_000
+
+    # Plafond que le noyau applique LUI-MEME, sur la seule consommation du
+    # modele mutualise (`llm_usage.billed_to_thaink2`) : une cle API
+    # personnelle est payee par son proprietaire, la plafonner serait une
+    # faute. Jusqu'au 09/09/2026 l'OSS comptait cette consommation sans
+    # jamais la borner -- `apply_run_guards` sortait faute de garde
+    # enregistree -- et `/api/config` annonce le modele mutualise a un
+    # visiteur anonyme.
+    #
+    # La fenetre est GLISSANTE, pas calendaire : une remise a zero a minuit
+    # laisserait prendre un plein a 23h59 et un autre a 00h01.
+    # 0 desactive le plafond correspondant.
+    default_llm_user_token_cap: int = 1_000_000
+    # Un plafond par compte ne vaut que si le nombre de comptes est borne.
+    # Celui-ci borne le deploiement quoi qu'il arrive, y compris les runs
+    # sans identite resolvable.
+    default_llm_global_token_cap: int = 20_000_000
+    default_llm_cap_window_hours: int = 24
     # What one purchased credit is worth in tokens on the shared model.
     # 100,000 tokens per credit puts the Starter package (10 credits, $10)
     # at the equivalent of one month of the default quota. Commercial
