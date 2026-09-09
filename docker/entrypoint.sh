@@ -27,11 +27,14 @@
 #     réseau n'est pas prêt, l'installation n'en a pas encore) ;
 #  2. le système de fichiers est en lecture seule et le fichier ne peut pas
 #     être écrit ;
-#  3. `apowerb config export-env` n'existe pas — l'image installe `apowerb`
-#     depuis PyPI, donc une image construite sur une version publiée plus
-#     ancienne que cette fonctionnalité n'a pas la sous-commande. Sans cette
+#  3. `apowerb-config-env` n'existe pas — l'image installe `apowerb` depuis
+#     PyPI, donc une image bâtie sur une version publiée antérieure à cette
+#     fonctionnalité n'a pas la commande. Le shell rend 127, que le `if`
+#     ci-dessous attrape comme n'importe quel autre échec. Sans cette
 #     tolérance, ajouter cet ENTRYPOINT casserait au démarrage toutes les
-#     images épinglées sur une version antérieure.
+#     images épinglées sur une version antérieure — exercé en CI le
+#     09/09/2026 sur l'image bâtie depuis `apowerb` 0.2.12 publié, où les
+#     quatre conteneurs du smoke test ont démarré malgré l'échec.
 #
 # Dans les trois cas le service démarre avec son environnement seul, ce qui est
 # exactement son comportement d'avant. L'écran, lui, dit « en attente de
@@ -40,9 +43,16 @@
 
 OVERLAY="${APOWERB_CONFIG_OVERLAY_FILE:-/tmp/apowerb-config-overlay.env}"
 
+# `apowerb-config-env`, et non `apowerb config export-env` qui fait pourtant la
+# même chose : la sous-commande passe par `apowerb.cli.main`, qui importe
+# uvicorn et les trois autres sous-applications — dont `cli.runs`, qui
+# construit Settings. 4,0 s mesurées contre 0,41 s pour le script dédié, et ces
+# 4 s se paieraient à chaque démarrage de conteneur, chaque redémarrage de pod
+# et chaque mise à jour progressive, avant même que le serveur ne commence.
+#
 # Sortie sur stderr : stdout de ce conteneur appartient au serveur. La commande
 # n'imprime jamais une valeur, seulement les NOMS qu'elle a exportés.
-if apowerb config export-env --out "$OVERLAY" >&2; then
+if apowerb-config-env --out "$OVERLAY" >&2; then
     # `set -a` exporte tout ce que le fichier définit ; il est refermé juste
     # après pour ne pas exporter par inadvertance ce que la commande finale
     # définirait.

@@ -63,6 +63,17 @@ def test_le_catalogue_ne_contient_aucun_nom_interdit():
         "DB_SCHEMA", "DB_TYPE", "DB_SSLMODE",
         "DEFAULT_SUPERADMIN_EMAIL", "DEFAULT_SUPERADMIN_PASSWORD",
         "RAG_WEBHOOK_SECRET",
+        # Les plafonds de jetons du modèle mutualisé (arrivés dans le cœur le
+        # 09/09/2026, `core/run_gate.py`). Même classe que `BYPASS_AUTH` : ce
+        # sont des garde-fous que le déploiement possède, pas de la
+        # configuration de capacité. Un superadministrateur qui pourrait
+        # relever son propre plafond depuis un écran web n'aurait plus de
+        # plafond. `setup_status` ne les nomme pas, donc rien ne les réclamait
+        # ici — cette ligne est là pour qu'on ne les ajoute pas par symétrie.
+        "DEFAULT_LLM_USER_TOKEN_CAP",
+        "DEFAULT_LLM_GLOBAL_TOKEN_CAP",
+        "DEFAULT_LLM_CAP_WINDOW_HOURS",
+        "DEFAULT_LLM_MONTHLY_TOKEN_QUOTA",
     }
     assert interdits & set(catalog.BY_NAME) == set()
 

@@ -126,6 +126,16 @@ s3 = [
 # et elle aurait chargé tout le serveur pour lancer une commande.
 apowerb = "apowerb.cli.main:app"
 
+# Point d'entree du DEMARRAGE, distinct a dessein de `apowerb config export-env`
+# qui fait la meme chose. `apowerb.cli.main` importe uvicorn et les trois
+# sous-applications, dont `cli.runs` qui construit Settings : 4,0 s mesurees,
+# contre 0,41 s pour le seul module `config`. Ces 4 s se paieraient a chaque
+# demarrage de conteneur, chaque redemarrage de pod et chaque mise a jour
+# progressive, avant meme que le serveur ne commence a demarrer.
+#
+# La sous-commande reste, pour qui utilise deja la CLI a la main.
+apowerb-config-env = "apowerb.cli.config:app"
+
 [build-system]
 requires = ["uv_build>=0.8.14,<0.9.0"]
 build-backend = "uv_build"

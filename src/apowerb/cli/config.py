@@ -1,9 +1,19 @@
-"""``apowerb config`` — appliquer la configuration posée depuis l'écran.
+"""Appliquer la configuration posée depuis l'écran d'administration.
 
 Une seule commande, appelée par l'ENTRYPOINT de l'image AVANT que le serveur
 ne démarre. Voir ``core/config_admin/overlay.py`` pour la raison pour laquelle
-c'est le seul emplacement honnête, et ``docker/entrypoint.sh`` pour le
-câblage.
+c'est le seul emplacement honnête, et ``docker/entrypoint.sh`` pour le câblage.
+
+Deux chemins vers la même fonction, et ce n'est pas un doublon :
+
+- ``apowerb-config-env`` — le script console que l'ENTRYPOINT appelle. Il
+  n'importe que ce module, soit 0,41 s mesurées ;
+- ``apowerb config export-env`` — la sous-commande, pour qui utilise déjà la
+  CLI à la main. Elle passe par ``apowerb.cli.main``, qui importe uvicorn et
+  les trois autres sous-applications : 4,0 s mesurées.
+
+Ces 4 s se paieraient sinon à chaque démarrage de conteneur, chaque
+redémarrage de pod et chaque mise à jour progressive.
 """
 
 from __future__ import annotations
@@ -69,3 +79,7 @@ def export_env(
         f"[config] {len(names)} variable(s) appliquée(s) : " + ", ".join(names),
         err=True,
     )
+
+
+if __name__ == "__main__":  # pragma: no cover - `python -m apowerb.cli.config`
+    app()
