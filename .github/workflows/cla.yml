@@ -36,8 +36,14 @@ jobs:
   cla:
     runs-on: ubuntu-latest
     steps:
+      # `contains`, et non `==` : une egalite stricte rejette silencieusement une
+      # signature qui porte un point final, une majuscule differente ou un espace
+      # en trop -- le job serait `skipped`, le contributeur ne verrait rien se
+      # passer et ne saurait pas pourquoi. Le filtre ci-dessous sert seulement a
+      # eviter de demarrer un job pour chaque commentaire ; c'est l'action qui
+      # decide ensuite si la phrase vaut signature.
       - name: Vérifier la signature du CLA
-        if: (github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+        if: contains(github.event.comment.body, 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
         uses: contributor-assistant/github-action@v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
