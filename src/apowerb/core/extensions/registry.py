@@ -100,6 +100,27 @@ class ExtensionRegistry:
         self._model_observers: list[Callable[..., Any]] = []
         self._bootstrap_hooks: list[Callable[[], Any]] = []
         self._feature_flags: dict[str, Callable[[], Any]] = {}
+        # Capacites deja fournies, par nom. Le noyau s'enregistre AVANT les
+        # briques (main.py, juste avant load_overlay) : une brique qui apporte
+        # la meme capacite est alors ignoree plutot que de doubler. Sans cela
+        # une brique restee sur l'ancien decoupage compterait chaque jeton
+        # deux fois, en silence -- une jauge fausse est pire qu'absente.
+        self._provided: set[str] = set()
+
+    def _claim(self, provides: str | None, quoi: str) -> bool:
+        """True si l'appelant peut enregistrer. False si deja fourni."""
+        if not provides:
+            return True
+        if provides in self._provided:
+            from logging import getLogger
+
+            getLogger(__name__).info(
+                "[EXTENSIONS] %s deja fourni, second enregistrement ignore (%s)",
+                provides, quoi,
+            )
+            return False
+        self._provided.add(provides)
+        return True
 
     # -- packs d'outils (une brique = schémas + implémentations appariés) ---
     # Le noyau enregistre le sien au démarrage ; une distribution commerciale
@@ -149,10 +170,18 @@ class ExtensionRegistry:
 
     # -- gardes d'execution -------------------------------------------------
     # Consultees avant chaque run d'agent. Une garde leve pour refuser (402,
-    # 429...). Aucune garde => le run passe, et c'est le comportement du noyau
-    # open source : le tableau d'offres y annonce des quotas illimites, donc
-    # l'absence de plafond n'est pas un oubli, c'est l'offre.
-    def register_run_guard(self, fn: Callable[..., Any]) -> None:
+    # 429...). Aucune garde => le run passe.
+    #
+    # Depuis le 09/09/26 le noyau en enregistre une lui-meme : le plafond du
+    # modele mutualise est passe open source avec la jauge (decision produit,
+    # voir usage_wiring). Une installation qui veut des runs illimites met
+    # DEFAULT_LLM_USER_TOKEN_CAP a 0 -- le plafond se desactive par reglage,
+    # plus par absence de brique.
+    def register_run_guard(
+        self, fn: Callable[..., Any], *, provides: str | None = None
+    ) -> None:
+        if not self._claim(provides, "run_guard"):
+            return
         self._run_guards.append(fn)
 
     def run_guards(self) -> list[Callable[..., Any]]:
@@ -160,12 +189,11 @@ class ExtensionRegistry:
 
     # -- plafond du modele mutualise ----------------------------------------
     # Le noyau COMPTE la consommation de « thaink2/default » (colonne
-    # ``llm_usage.billed_to_thaink2``) et la sert a la jauge ; il ne la
-    # plafonne pas. Une brique fournit le plafond mensuel en jetons --
-    # ``async fn(db, *, owner_id, plan) -> int | None`` (None = illimite) --
-    # et la jauge affiche alors une limite, un reste, une alerte. Sans
-    # brique, elle ne montre qu'un compteur : l'OSS ne nomme que ce qu'il
-    # contient.
+    # ``llm_usage.billed_to_thaink2``), la sert a la jauge, ET la plafonne :
+    # depuis le 09/09/26 le compteur comme la barre sont open source.
+    # ``async fn(db, *, owner_id, plan) -> int | None`` (None = illimite).
+    # Le point d'extension reste ouvert : une distribution qui vend des plans
+    # y branche son propre bareme, qui remplace celui du noyau.
     def register_default_llm_cap(self, fn: Callable[..., Any]) -> None:
         self._default_llm_cap = fn
 
@@ -174,10 +202,14 @@ class ExtensionRegistry:
 
     # -- observateurs de reponse LLM ----------------------------------------
     # Une fabrique ``(**contexte) -> callback | None`` appelee a la
-    # construction d'un agent. Sert a la comptabilisation des jetons, qui est
-    # commerciale. Le noyau, lui, garde le chainage des callbacks ADK : c'est
-    # un utilitaire generique, pas une fonctionnalite vendue.
-    def register_model_observer(self, fn: Callable[..., Any]) -> None:
+    # construction d'un agent. Le noyau en enregistre un : l'ecriture de
+    # ``llm_usage``, sans laquelle la jauge afficherait zero pour toujours.
+    # Le point reste ouvert a une brique qui observerait autre chose.
+    def register_model_observer(
+        self, fn: Callable[..., Any], *, provides: str | None = None
+    ) -> None:
+        if not self._claim(provides, "model_observer"):
+            return
         self._model_observers.append(fn)
 
     def model_observers(self) -> list[Callable[..., Any]]:
@@ -186,7 +218,11 @@ class ExtensionRegistry:
     # -- crochets de demarrage ----------------------------------------------
     # Joues par ``main.bootstrap()``. Une brique qui a besoin de sa propre
     # table la cree ici, au demarrage reel — jamais a l'import.
-    def register_bootstrap_hook(self, fn: Callable[[], Any]) -> None:
+    def register_bootstrap_hook(
+        self, fn: Callable[[], Any], *, provides: str | None = None
+    ) -> None:
+        if not self._claim(provides, "bootstrap_hook"):
+            return
         self._bootstrap_hooks.append(fn)
 
     def bootstrap_hooks(self) -> list[Callable[[], Any]]:
