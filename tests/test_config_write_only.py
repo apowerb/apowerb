@@ -248,7 +248,10 @@ def test_l_environnement_gagne_sur_la_base():
         {"SMTP_HOST": "depuis-la-base", "SMTP_PORT": "587"},
         env={"SMTP_HOST": "depuis-le-deploiement"},
     )
-    assert lignes == ["SMTP_PORT='587'"]
+    # Le marqueur accompagne l'export : il nomme ce que l'overlay a posé, et
+    # c'est ce qui permet au processus de ne pas confondre sa propre empreinte
+    # avec celle du déploiement au redémarrage suivant.
+    assert lignes == ["SMTP_PORT='587'", f"{store.OVERLAY_MARKER}='SMTP_PORT'"]
 
 
 def test_une_variable_declaree_vide_ne_reprend_pas_la_main():
@@ -256,7 +259,7 @@ def test_une_variable_declaree_vide_ne_reprend_pas_la_main():
     comporte comme rien — le plus vieux piège de ce dépôt. Elle ne doit
     donc PAS faire taire l'overlay."""
     lignes = overlay.overlay_lines({"SMTP_HOST": "depuis-la-base"}, env={"SMTP_HOST": "  "})
-    assert lignes == ["SMTP_HOST='depuis-la-base'"]
+    assert lignes == ["SMTP_HOST='depuis-la-base'", f"{store.OVERLAY_MARKER}='SMTP_HOST'"]
 
 
 def test_env_holds_ignore_une_variable_vide(monkeypatch):
@@ -285,7 +288,7 @@ def test_le_fichier_d_overlay_est_cree_en_0600(tmp_path, monkeypatch):
 
     assert noms == ["SMTP_PORT"]
     assert stat.S_IMODE(os.stat(cible).st_mode) == 0o600
-    assert cible.read_text() == "SMTP_PORT='587'\n"
+    assert cible.read_text() == "SMTP_PORT='587'\nAPOWERB_CONFIG_APPLIED='SMTP_PORT'\n"
 
 
 def _engine_bidon():

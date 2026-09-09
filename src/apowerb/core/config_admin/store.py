@@ -31,6 +31,22 @@ SOURCE_ENV = "env"
 SOURCE_DATABASE = "database"
 SOURCE_UNSET = "unset"
 
+# Les NOMS que notre propre entrypoint a exportés au démarrage, jamais leurs
+# valeurs. Sans cette trace, le processus ne peut pas distinguer sa propre
+# empreinte de celle du déploiement : au redémarrage, une valeur posée depuis
+# l'écran EST dans `os.environ` (c'est tout l'objet de l'overlay), et une
+# lecture naïve la déclarerait « imposée par le déploiement » — l'écran
+# retirerait alors le champ de la variable qu'on venait d'y poser, sans plus
+# aucun moyen de la corriger depuis l'interface.
+#
+# Limite assumée : un opérateur qui poserait CETTE variable à la main dans son
+# déploiement, en y nommant une variable qu'il pose aussi lui-même et qui a une
+# ligne en base, verrait l'écran lui offrir un champ dont l'écriture resterait
+# inerte. Il faut pour cela nommer soi-même une variable interne ; la
+# précédence, elle, reste intacte — `overlay_lines` n'exporte jamais par-dessus
+# une variable présente dans l'environnement.
+OVERLAY_MARKER = "APOWERB_CONFIG_APPLIED"
+
 
 @dataclass(frozen=True)
 class VariableState:
@@ -57,14 +73,33 @@ def _schema() -> str:
     return get_settings().db_schema
 
 
-def env_holds(name: str) -> bool:
-    """L'environnement du processus impose-t-il cette variable ?
+def env_holds(name: str, env=None) -> bool:
+    """L'environnement du processus porte-t-il une valeur pour ce nom ?
 
     Non vide, pas seulement présent : une variable déclarée vide dans un
     déploiement se lit comme configurée et se comporte comme rien — le plus
     vieux piège de ce dépôt (cf. ``_usable_as_a_base`` dans settings.py).
+    Un ``secretKeyRef`` en ``optional: true`` dont la clé manque au Secret ne
+    déclare rien du tout : la variable est absente, et reste donc posable.
+
+    C'est LA règle de précédence, et ``overlay.overlay_lines`` applique la
+    même : ce qui est ici ne sera jamais recouvert par l'overlay.
     """
-    return bool((os.environ.get(name) or "").strip())
+    e = os.environ if env is None else env
+    return bool((e.get(name) or "").strip())
+
+
+def overlay_applied(name: str, env=None) -> bool:
+    """Est-ce NOTRE entrypoint qui a mis ce nom dans l'environnement ?
+
+    Répond à partir de ``OVERLAY_MARKER``, une liste de noms — jamais de
+    valeurs. Sépare « le déploiement impose » de « nous avons appliqué ce que
+    l'écran a posé », deux situations identiques vues de ``os.environ`` et
+    opposées pour l'administrateur.
+    """
+    e = os.environ if env is None else env
+    poses = (e.get(OVERLAY_MARKER) or "").split(",")
+    return name in {pose.strip() for pose in poses if pose.strip()}
 
 
 async def list_states(db: AsyncSession) -> list[VariableState]:
@@ -78,10 +113,21 @@ async def list_states(db: AsyncSession) -> list[VariableState]:
     states: list[VariableState] = []
     for variable in CATALOG:
         posed = stored.get(variable.name)
-        if env_holds(variable.name):
-            # Précédence : l'environnement gagne. Une ligne en base peut
-            # exister par-dessous — elle est inerte, et l'écran doit le dire
-            # plutôt que laisser croire qu'elle s'applique.
+        # Trois cas, et le second est celui qui a manqué au premier jet :
+        #
+        # - le déploiement porte une valeur que nous n'avons pas exportée :
+        #   il gagne, et une ligne en base par-dessous est inerte. L'écran le
+        #   dit plutôt que de laisser croire qu'elle s'applique ;
+        # - le déploiement porte une valeur, mais c'est NOTRE overlay qui l'y
+        #   a mise au démarrage, et la ligne en base existe : c'est donc bien
+        #   une valeur posée depuis l'écran, encore modifiable depuis l'écran ;
+        # - rien dans l'environnement : la ligne en base décide, ou rien.
+        #
+        # La ligne en base est exigée dans le second cas : un marqueur qui
+        # nommerait une variable sans ligne correspondante ne prouve rien, et
+        # le déploiement doit alors garder la main.
+        notre_empreinte = overlay_applied(variable.name) and posed is not None
+        if env_holds(variable.name) and not notre_empreinte:
             source = SOURCE_ENV
         elif posed is not None:
             source = SOURCE_DATABASE

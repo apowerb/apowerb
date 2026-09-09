@@ -40,7 +40,11 @@ from pathlib import Path
 from sqlalchemy import create_engine
 
 from apowerb.configs.settings import get_settings
-from apowerb.core.config_admin.store import read_all_decrypted
+from apowerb.core.config_admin.store import (
+    OVERLAY_MARKER,
+    env_holds,
+    read_all_decrypted,
+)
 from apowerb.helpers.database_connection import DBConfig
 
 
@@ -55,20 +59,33 @@ def _quote(value: str) -> str:
 
 def overlay_lines(stored: dict[str, str], env=None) -> list[str]:
     """Les lignes à exporter : les variables posées que l'environnement
-    n'impose PAS déjà.
+    n'impose PAS déjà, plus le marqueur qui dit lesquelles.
 
-    C'est ici que vit la règle de précédence, et elle vit à un seul endroit.
-    Un opérateur qui pose la variable dans son déploiement reprend la main
-    sans toucher à la base : sa valeur est là, l'overlay se tait.
+    La règle de précédence vit à un seul endroit — ``store.env_holds``, la
+    même que celle dont l'écran se sert pour dire d'où vient une variable. Un
+    opérateur qui pose la variable dans son déploiement reprend la main sans
+    toucher à la base : sa valeur est là, l'overlay se tait.
+
+    Le marqueur ne transporte que des NOMS. Il est ce qui permet au processus
+    de reconnaître sa propre empreinte au redémarrage ; sans lui, une valeur
+    posée depuis l'écran deviendrait « imposée par le déploiement » dès le
+    premier redémarrage, et l'écran retirerait son champ.
+
+    Rien à exporter, rien du tout : écrire un marqueur vide par-dessus un
+    marqueur hérité effacerait l'information au lieu de la préciser.
 
     Pure et paramétrée pour être éprouvable sans base ni fichier.
     """
-    e = os.environ if env is None else env
-    return [
-        f"{name}={_quote(value)}"
+    applique = {
+        name: value
         for name, value in sorted(stored.items())
-        if not (e.get(name) or "").strip()
-    ]
+        if not env_holds(name, env)
+    }
+    if not applique:
+        return []
+    lignes = [f"{name}={_quote(value)}" for name, value in applique.items()]
+    lignes.append(f"{OVERLAY_MARKER}={_quote(','.join(applique))}")
+    return lignes
 
 
 def write_overlay(out: str | Path) -> list[str]:
@@ -90,6 +107,13 @@ def write_overlay(out: str | Path) -> list[str]:
         stored = read_all_decrypted(settings.db_schema, conn)
 
     lines = overlay_lines(stored)
+    # Le marqueur est de la plomberie, pas une configuration : il part dans le
+    # fichier, jamais dans le compte rendu fait à l'opérateur.
+    noms = [
+        line.split("=", 1)[0]
+        for line in lines
+        if not line.startswith(f"{OVERLAY_MARKER}=")
+    ]
 
     path = Path(out)
     # os.open plutôt que Path.write_text : le mode passe à la création.
@@ -103,4 +127,4 @@ def write_overlay(out: str | Path) -> list[str]:
         # une configuration à moitié appliquée sans que rien ne le signale.
         path.unlink(missing_ok=True)
         raise
-    return [line.split("=", 1)[0] for line in lines]
+    return noms
