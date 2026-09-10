@@ -1,7 +1,7 @@
 # Trademarks
 
 "apowerb", "thaink²" and the apowerb logo are trademarks of thaink².
-
+whatever
 The Apache License 2.0 covers the code. It grants no rights over trademarks —
 see section 6 of the licence.
 
