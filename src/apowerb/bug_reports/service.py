@@ -208,8 +208,19 @@ async def create_bug_report(
         )
 
     db.add(report)
+    # Les deux valeurs du signalement canonique sont lues AVANT le commit,
+    # et gardées en variables locales. `commit()` expire les objets de la
+    # session ; en asyncio, le rechargement paresseux qui suivrait un accès
+    # à `canonical.occurrences` lève `MissingGreenlet` — l'attribut ne peut
+    # pas déclencher d'entrée-sortie hors du contexte greenlet.
+    # Mesuré le 10/09/2026 sur un parcours réel : le PREMIER signalement
+    # passait (aucun canonique à relire), le SECOND échouait en 500. Les
+    # tests unitaires ne pouvaient pas le voir, faute de base.
+    duplicate_of = canonical.id if canonical else None
+    occurrences = 1
     if canonical:
-        canonical.occurrences = (canonical.occurrences or 1) + 1
+        occurrences = (canonical.occurrences or 1) + 1
+        canonical.occurrences = occurrences
     await db.commit()
     await db.refresh(report)
 
@@ -219,14 +230,14 @@ async def create_bug_report(
         report.id,
         fingerprint,
         len(server_logs),
-        canonical.id if canonical else "—",
+        duplicate_of if duplicate_of else "—",
     )
 
     return BugReportCreated(
         id=report.id,
         fingerprint=fingerprint,
-        occurrences=canonical.occurrences if canonical else 1,
-        duplicate_of=canonical.id if canonical else None,
+        occurrences=occurrences,
+        duplicate_of=duplicate_of,
         logs_attached=len(server_logs),
     )
 
