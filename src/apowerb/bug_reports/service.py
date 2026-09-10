@@ -127,8 +127,6 @@ async def create_bug_report(
     reporter_email: Optional[str],
     payload: BugReportCreate,
 ) -> BugReportCreated:
-    settings = get_settings()
-
     context = redact_mapping(payload.context.model_dump(mode="json")) or {}
     context["url"] = redact_url(context.get("url"))
     calls = _sanitised_calls(payload)
