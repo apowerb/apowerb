@@ -75,11 +75,40 @@ WORKDIR /app
 # to satisfy that dependency -- apt resolves it like any other missing
 # dependency, it does not error out. There is no permanently broken state;
 # worst case is a slightly bigger derived image, not a failed build.
+#
+# util-linux and the command-line packages built from the same source (mount,
+# login, bsdutils) carry four HIGH advisories -- CVE-2026-76642, -78408, -78409,
+# -78410 -- about failed mount helpers running privileged post-hooks,
+# `nsenter --join-cgroup`, and X-mount path resolution. A pure Python ASGI
+# service invokes none of that: nothing in this repository, in the entrypoint,
+# or in apowerb/apowerb-hosting execs mount, login, su or nsenter. Purging the
+# four is a leaf operation -- apt removes nothing else -- and it takes 16 of the
+# 46 OS advisories on this image with it.
+#
+# The shared libraries from that same source (libmount1, libblkid1, libuuid1,
+# libsmartcols1, liblastlog2-2) stay: the base image links them. Scanners
+# attribute a source CVE to every binary package built from it, so those five
+# keep being reported even though the vulnerable code -- the mount helpers --
+# is gone with the binaries above.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends unixodbc \
     && apt-get purge -y --allow-remove-essential perl-base \
+    && apt-get purge -y --allow-remove-essential util-linux mount login bsdutils \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# pip is never used at runtime: the application runs out of /opt/venv, which uv
+# built and which carries no pip of its own. The copy shipped in the base image
+# vendors its whole dependency tree under pip/_vendor, and that vendored tree --
+# not the application's dependencies -- is what the setuptools (CVE-2025-47273)
+# and msgpack (GHSA-6v7p-g79w-8964) advisories on this image are reported
+# against. Removing pip removes both, and they are the only two Python
+# advisories here that have a fix at all.
+#
+# Consequence for anyone extending this image (FROM apowerb/apowerb): `pip` is
+# gone. Use uv, or run `python -m ensurepip` first.
+RUN python -m pip uninstall -y pip \
+    && rm -rf /usr/local/lib/python3.13/site-packages/pip*
 
 COPY --from=builder /opt/venv /opt/venv
 
