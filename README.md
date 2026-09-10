@@ -57,6 +57,10 @@ Full documentation: [docs.apowerb.com](https://docs.apowerb.com).
 - **Artifact generation**: agents can create and execute code files
 - **Agent Hub**: publish and clone agents across organizations
 - **Scheduled runs**: cron-based agent execution, driven by an external orchestrator
+- **Bug reports**: any user files a defect from the app; the server attaches the server
+  log lines of the failing request (correlated by `X-Request-ID`), where the user was,
+  and an optional consented screenshot. Reviewed in a triage screen before any issue
+  is created — and the GitHub sink refuses a public repository
 - **Supervision**: an auditable session list, scoped to what the caller may read
 - **Revocable sessions**: a per-account cut-off that refuses tokens minted before it
 - **Persistent sessions** with conversation context
@@ -398,6 +402,7 @@ Route families in this edition, all under `/api` unless noted:
 |--------|----------------|
 | `auth` | Email/password login, refresh, logout, password reset, email verification |
 | `users` | User CRUD, `me` |
+| `bug-reports` | In-app defect reports, triage, and the reviewed GitHub issue sink |
 | `agents` | Agent CRUD, reload, status, template resync, run |
 | `adk` | ADK execution: run, streaming (`run_sse`), sessions, titles, traces |
 | `tools`, `tools_config` | Tool registry and per-agent tool configuration |
