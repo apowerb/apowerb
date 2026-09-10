@@ -569,6 +569,23 @@ class Settings(BaseSettings):
     linkedin_client_id: str = "tbd"
     linkedin_client_secret: str = "tbd"
 
+    # ── Signalement de bug ────────────────────────────────────────────
+    # Sortie GitHub des signalements. Non configurée par défaut : un
+    # déploiement traite ses tickets dans son écran de triage, et rien ne
+    # quitte la base tant que personne ne l'a décidé.
+    #
+    # ⚠️ Le dépôt DOIT être privé. Un corps d'issue produit par cette
+    # fonctionnalité porte des logs serveur, des messages d'erreur du
+    # navigateur et l'adresse de celui qui a signalé ; le garde de
+    # `bug_reports/sinks/github.py` lit la visibilité réelle du dépôt
+    # avant chaque écriture et refuse un dépôt public.
+    bug_report_github_repo: str = ""
+    bug_report_github_token: str = ""
+    # Échappatoire pour un déploiement de démonstration sans donnée
+    # client. Jamais en production : elle désarme le seul garde qui
+    # empêche une capture d'écran d'utilisateur d'être indexée.
+    bug_report_github_allow_public: bool = False
+
     # Stripe (NEW)
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
