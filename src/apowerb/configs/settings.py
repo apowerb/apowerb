@@ -850,8 +850,18 @@ class Settings(BaseSettings):
         return self
 
     # Accept extra values
+    #
+    # env_ignore_empty=True: a var declared but left blank (`FOO=`, as
+    # .env.example shipped DEFAULT_LLM_PLAN_QUOTAS) is treated as absent
+    # rather than as the literal string "". Without it, pydantic-settings
+    # still tries to JSON-decode "" for any dict/list-typed field --
+    # json.loads("") raises, and that exception took the whole app down on
+    # import, before a single route was registered. A blank var meant "not
+    # configured" everywhere else in this file's own comments; this makes
+    # the parser agree.
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,
+        env_ignore_empty=True,
         extra="ignore",
     )
 
