@@ -51,10 +51,12 @@ from apowerb.routers.skills import router as skills_router
 from apowerb.routers.audio_stream import router as audio_stream_router
 from apowerb.routers.workflows import router as workflows_router
 from apowerb.routers.health import router as health_router
+from apowerb.routers.bug_reports import router as bug_reports_router
 from apowerb.helpers.integrations_migration import ensure_integrations_table
 from apowerb.helpers.webhook_migration import ensure_webhook_subscriptions_table, ensure_webhook_subscriptions_columns
 from apowerb.helpers.webhook_log_migration import ensure_webhook_logs_table
 from apowerb.helpers.notification_migration import ensure_notifications_table
+from apowerb.helpers.bug_report_migration import ensure_bug_reports_table
 from apowerb.helpers.business_intelligence_migration import ensure_business_intelligence_table
 from apowerb.helpers.share_migration import ensure_shared_conversations_columns
 from apowerb.helpers.oauth_states_migration import ensure_oauth_states_table
@@ -150,6 +152,7 @@ def bootstrap(force: bool = False) -> None:
     ensure_webhook_subscriptions_columns()
     ensure_webhook_logs_table()
     ensure_notifications_table()
+    ensure_bug_reports_table()
     ensure_business_intelligence_table()
     ensure_shared_conversations_columns()
     ensure_oauth_states_table()
@@ -210,6 +213,21 @@ def bootstrap(force: bool = False) -> None:
 
     # Charts BI : lecture en base, donc au boot et pas à l'import.
     _load_charts_on_startup()
+
+    # Tampon des lignes de log par identifiant de requête, qui alimente
+    # les signalements de bug. Branché ici et pas à l'import : il pose un
+    # handler sur le logger racine, et un import ne doit pas modifier la
+    # configuration de journalisation du processus appelant.
+    #
+    # Le niveau est WARNING : ce sont les lignes qui prouvent un défaut.
+    # Descendre à INFO remplirait le tampon de bruit et ferait sortir de
+    # la fenêtre l'erreur qu'on cherche.
+    try:
+        from apowerb.bug_reports.log_buffer import install as _install_bug_log_buffer
+
+        _install_bug_log_buffer()
+    except Exception as _exc:  # pragma: no cover - confort, jamais bloquant
+        print(f"[WARNING] Bug-report log buffer not installed: {_exc}")
 
     _BOOTSTRAPPED = True
 
@@ -507,6 +525,7 @@ api_router.include_router(api_keys_router, prefix="/api")
 api_router.include_router(integrations_router, prefix="/api")
 api_router.include_router(webhooks_router, prefix="/api")
 api_router.include_router(notifications_router, prefix="/api")
+api_router.include_router(bug_reports_router, prefix="/api")
 api_router.include_router(emailing_router, prefix="/api")
 api_router.include_router(onedrive_browser_router)
 api_router.include_router(google_drive_browser_router)

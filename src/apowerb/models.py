@@ -636,3 +636,87 @@ class LlmUsage(Base):
             f"<LlmUsage(id={self.id}, agent_id={self.agent_id}, "
             f"model={self.model!r}, total_tokens={self.total_tokens})>"
         )
+
+
+class BugReport(Base):
+    """Un défaut signalé depuis l'application, avec de quoi le reproduire.
+
+    Les colonnes `*_json` portent des listes ou des objets sérialisés
+    plutôt que des tables filles : elles ne sont jamais interrogées ligne
+    par ligne, seulement lues en bloc avec le signalement qu'elles
+    documentent. Trois tables de plus auraient coûté trois jointures pour
+    aucune requête existante.
+
+    `user_id` est SET NULL et non CASCADE, et `reporter_email` est
+    recopié : un compte supprimé n'efface pas le bug qu'il a trouvé.
+    """
+
+    __tablename__ = "bug_reports"
+    __table_args__ = (
+        Index("ix_bug_reports_status_created", "status", "created_at"),
+        Index("ix_bug_reports_fingerprint", "fingerprint"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("user.user_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reporter_email = Column(String(320))
+
+    title = Column(String(200), nullable=False)
+    # « Où j'étais », dans les mots de l'utilisateur. Le contexte machine
+    # (route, écran, fil de navigation) est dans `context_json` ; celui-ci
+    # dit ce que la route ne dit pas — l'onglet, l'agent, l'intention.
+    where_i_was = Column(Text)
+    what_i_did = Column(Text)
+    expected = Column(Text)
+    observed = Column(Text)
+
+    # Zone fonctionnelle, déduite de la route puis corrigeable au triage.
+    # Colonne texte et non ENUM Postgres : la liste s'allonge à chaque
+    # fonctionnalité du produit, et un ALTER TYPE pour ça serait une
+    # migration bloquante par nouveauté.
+    area = Column(String(40), nullable=False, default="other")
+    severity = Column(String(20), nullable=False, default="major")
+    status = Column(String(30), nullable=False, default="new")
+
+    # Regroupement : même empreinte = même défaut. `occurrences` ne vit
+    # que sur la ligne canonique ; les suivantes portent `duplicate_of`.
+    fingerprint = Column(String(32), nullable=False)
+    occurrences = Column(Integer, nullable=False, default=1)
+    duplicate_of = Column(
+        Integer, ForeignKey("bug_reports.id", ondelete="SET NULL"), nullable=True
+    )
+
+    route = Column(String(512))
+    # De quel processus serveur viennent les lignes de log jointes. Sans
+    # lui, un redéploiement rend l'extrait indatable (cf th2logger).
+    run_id = Column(String(100))
+    server_version = Column(String(50))
+
+    context_json = Column(Text)
+    api_calls_json = Column(Text)
+    console_json = Column(Text)
+    server_logs_json = Column(Text)
+    request_ids_json = Column(Text)
+
+    # Chemin dans le storage (S3 ou disque), jamais l'image elle-même :
+    # une capture PNG en base gonfle chaque SELECT de la liste.
+    screenshot_path = Column(String(500))
+
+    issue_url = Column(String(500))
+    issue_number = Column(Integer)
+    admin_note = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self):
+        return (
+            f"<BugReport(id={self.id}, severity={self.severity!r}, "
+            f"status={self.status!r}, fingerprint={self.fingerprint!r})>"
+        )
