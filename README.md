@@ -10,6 +10,8 @@ commercial bricks and are **absent here**. Where the core holds a hook for one, 
 documented as such. A `404` on those routes means "not in this edition", not "object not
 found".
 
+Hello
+
 The **administration panel is part of this edition**: users, groups, permissions, MFA
 enforcement. Only the management of *organisations* is sold separately — deciding which
 tenant a person belongs to governs other people's reach, rather than serving whoever runs
