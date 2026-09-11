@@ -10,20 +10,26 @@ un défaut à corriger, c'est le mode par défaut assumé — et c'est pourquoi
 elle ne doit pas gonfler le compteur des configurations manquantes.
 """
 
+from apowerb.configs.settings import get_settings
 from apowerb.core.setup_status import capabilities, setup_status
 
 
-class _Settings:
-    """Les seuls attributs que la capacité lit."""
+def _Settings(repo="", token=""):
+    """Les vrais réglages, avec les deux seuls champs qui nous concernent forcés.
 
-    def __init__(self, repo="", token=""):
-        self.bug_report_github_repo = repo
-        self.bug_report_github_token = token
-
-    def __getattr__(self, nom):
-        # Les autres capacités lisent leurs propres réglages ; elles ne
-        # sont pas le sujet de ce test.
-        return ""
+    Un faux objet qui rendrait une chaîne vide pour tout attribut inconnu
+    serait plus court, et faux : `capabilities()` calcule TOUTES les
+    capacités, et certaines attendent des types précis — `scheduler/outage`
+    fait une intersection d'ensembles et lève `TypeError: unsupported
+    operand type(s) for &: 'set' and 'str'` sur une chaîne vide. La leçon
+    vaut au-delà de ce test : une doublure qui répond à tout ne double rien.
+    """
+    return get_settings().model_copy(
+        update={
+            "bug_report_github_repo": repo,
+            "bug_report_github_token": token,
+        }
+    )
 
 
 def _capacite(settings):
