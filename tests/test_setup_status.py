@@ -56,6 +56,7 @@ def test_every_capability_is_listed_once():
         "orchestration",
         "observability",
         "system_mail",
+        "bug_reports",
     ]
 
 
