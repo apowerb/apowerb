@@ -35,6 +35,7 @@ keeps this change from replacing one lie with another.
 
 from __future__ import annotations
 
+import ast
 import logging
 from unittest.mock import patch
 
@@ -936,6 +937,134 @@ def test_scheduling_a_chart_refresh_answers_503(client):
     assert got.status_code == 503, got.text
 
 
+# The transport these two modules are allowed to reach only through `_ask`:
+# the `requests` module, a `requests.Session()`, and the `self._http` a client
+# holds. Every verb of it, and `request` itself.
+_HTTP_VERBS = {"get", "post", "put", "delete", "patch", "head", "options", "request"}
+
+
+def _is_transport(node, transports: set[str]) -> bool:
+    """Does this expression evaluate to `requests` / a session?
+
+    `transports` is the set of local names already known to alias one -- so
+    `http` after `http = self._http`, resolved to a fixed point by the caller.
+    `requests.Session()` and `getattr(<transport>, ...)` count too: the first
+    builds one, the second hands back the object (or a bound verb of it).
+    """
+    if isinstance(node, ast.Name):
+        return node.id == "requests" or node.id in transports
+    if isinstance(node, ast.Attribute):
+        return node.attr == "_http"
+    if isinstance(node, ast.Call):
+        f = node.func
+        if isinstance(f, ast.Attribute) and f.attr == "Session":
+            return _is_transport(f.value, transports)
+        if isinstance(f, ast.Name) and f.id == "getattr" and node.args:
+            return _is_transport(node.args[0], transports)
+    return False
+
+
+def _transport_aliases(tree) -> tuple[set[str], set[str]]:
+    """Every local name in the module that stands in for the transport.
+
+    Two kinds. `transports`: a name for the object itself -- `http = self._http`
+    to shorten a line, `r = requests`. `bound_verbs`: a name for one verb of it
+    already looked up -- `send = requests.get`, `send = getattr(self._http, v)`.
+    Either one lets a call reach the orchestrator without `requests` or
+    `self._http` appearing at the call site, which the first syntax-tree version
+    of the guard read as "not an HTTP call" and waved straight through.
+
+    Collected to a fixed point: `a = self._http; b = a` needs a second pass.
+    """
+    transports: set[str] = set()
+    bound_verbs: set[str] = set()
+
+    def _is_bound_verb(node) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in bound_verbs
+        if isinstance(node, ast.Attribute):
+            return node.attr in _HTTP_VERBS and _is_transport(node.value, transports)
+        if isinstance(node, ast.Call):  # getattr(<transport>, "get")
+            f = node.func
+            return (
+                isinstance(f, ast.Name)
+                and f.id == "getattr"
+                and bool(node.args)
+                and _is_transport(node.args[0], transports)
+            )
+        return False
+
+    def _bindings(node):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    yield t.id, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None:
+                yield node.target.id, node.value
+        elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+            yield node.target.id, node.value
+
+    for _ in range(10):
+        seen = (len(transports), len(bound_verbs))
+        for n in ast.walk(tree):
+            for name, value in _bindings(n):
+                if _is_transport(value, transports):
+                    transports.add(name)
+                elif _is_bound_verb(value):
+                    bound_verbs.add(name)
+        if (len(transports), len(bound_verbs)) == seen:
+            break
+    return transports, bound_verbs
+
+
+def _http_call_lines(node, transports: set[str], bound_verbs: set[str]) -> set[int]:
+    """Line of every call within `node` that reaches the transport -- directly,
+    through an alias, through a name bound to one of its verbs, or through
+    `getattr` on it, which is rejected outright rather than resolved."""
+
+    def _getattr_on_transport(call) -> bool:
+        f = call.func
+        return (
+            isinstance(f, ast.Name)
+            and f.id == "getattr"
+            and bool(call.args)
+            and _is_transport(call.args[0], transports)
+        )
+
+    def _hits(call) -> bool:
+        f = call.func
+        if (
+            isinstance(f, ast.Attribute)
+            and f.attr in _HTTP_VERBS
+            and _is_transport(f.value, transports)
+        ):
+            return True
+        if isinstance(f, ast.Name) and f.id in bound_verbs:
+            return True
+        if isinstance(f, ast.Call) and _getattr_on_transport(f):
+            return True
+        return _getattr_on_transport(call)
+
+    return {n.lineno for n in ast.walk(node) if isinstance(n, ast.Call) and _hits(n)}
+
+
+def _classification_bypasses(tree) -> set[int]:
+    """Lines where an HTTP call is made outside `ask_orchestrator` / `_ask` --
+    the single point where a failed call is classified."""
+    transports, bound_verbs = _transport_aliases(tree)
+    classified: set[int] = set()
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        goes_through = (
+            isinstance(n.func, ast.Attribute) and n.func.attr == "_ask"
+        ) or (isinstance(n.func, ast.Name) and n.func.id == "ask_orchestrator")
+        if goes_through:
+            classified |= _http_call_lines(n, transports, bound_verbs)
+    return _http_call_lines(tree, transports, bound_verbs) - classified
+
+
 def test_no_orchestrator_call_bypasses_the_single_classification_point():
     """The guard against a seventh generation of this bug.
 
@@ -952,48 +1081,106 @@ def test_no_orchestrator_call_bypasses_the_single_classification_point():
     Both re-introduced the exact bug, both left the test green. Proximity is not
     containment, and an alternation is not a category.
 
+    The syntax-tree version was then broken a third way: an alias. `http =
+    self._http` to shorten a line -- an ordinary refactor, not an adversarial
+    move -- and the call site no longer names anything the guard recognised.
+    So does `r = requests`, `send = requests.get`, and `getattr(self._http,
+    verb)` picking the verb at runtime. `_transport_aliases` resolves the first
+    three back to what they are; `getattr` on the transport is rejected rather
+    than followed.
+
     The Mage *block content* -- Python this file hands to Mage, executed inside
     Mage -- is a string literal, so it is not in the tree and needs no
     exception carved out for it.
+
+    Its scope is the two client modules and only those. An orchestrator call
+    made from a router reaches `_ask` through the client like any other, but a
+    router that talked to `requests` directly would be invisible here -- see
+    `test_deleting_a_dashboard_schedule_answers_503_not_404` for where that
+    class of leak is caught instead.
     """
-    import ast
     import pathlib
 
     from apowerb.scheduler import mage as mage_src
     from apowerb.scheduler import th2etl_client as etl_src
 
-    VERBS = {"get", "post", "put", "delete", "patch", "head", "options", "request"}
+    for module in (etl_src, mage_src):
+        source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+        assert _classification_bypasses(ast.parse(source)) == set(), module.__name__
 
-    def _http_calls(node):
-        """Line numbers of every HTTP call made on `requests` or `self._http`."""
-        out = set()
-        for n in ast.walk(node):
-            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)):
-                continue
-            if n.func.attr not in VERBS:
-                continue
-            base = n.func.value
-            on_requests = isinstance(base, ast.Name) and base.id == "requests"
-            on_session = isinstance(base, ast.Attribute) and base.attr == "_http"
-            if on_requests or on_session:
-                out.add(n.lineno)
-        return out
 
-    def _bypasses(module) -> set[int]:
-        tree = ast.parse(pathlib.Path(module.__file__).read_text())
-        classified = set()
-        for n in ast.walk(tree):
-            if not isinstance(n, ast.Call):
-                continue
-            goes_through = (
-                isinstance(n.func, ast.Attribute) and n.func.attr == "_ask"
-            ) or (isinstance(n.func, ast.Name) and n.func.id == "ask_orchestrator")
-            if goes_through:
-                classified |= _http_calls(n)
-        return _http_calls(tree) - classified
+def test_the_guard_resolves_an_alias_back_to_the_transport():
+    """The positive control the syntax-tree version shipped without.
 
-    assert _bypasses(etl_src) == set()
-    assert _bypasses(mage_src) == set()
+    Every call here reaches `requests` or a session without either name at the
+    call site -- the line-shortening `http = self._http` included -- and none
+    goes through `_ask`. A guard that only recognises `requests.<verb>(` and
+    `self._http.<verb>(` sees nothing to flag, and the silent `[]` this whole
+    file exists to stop walks back in behind a local variable. A guard that
+    cannot see the bug is not a guard.
+    """
+    import textwrap
+
+    aliased = textwrap.dedent(
+        """
+        import requests
+
+        class C:
+            def __init__(self):
+                self._http = requests.Session()
+
+            def line_shortened(self):
+                http = self._http
+                return http.get("u")
+
+            def module_aliased(self):
+                r = requests
+                return r.post("u")
+
+            def verb_at_runtime(self):
+                return getattr(self._http, "get")("u")
+
+            def bound_method(self):
+                send = requests.get
+                return send("u")
+
+            def two_hops(self):
+                a = self._http
+                b = a
+                return b.delete("u")
+        """
+    )
+    tree = ast.parse(aliased)
+    transports, bound_verbs = _transport_aliases(tree)
+    assert _http_call_lines(tree, transports, bound_verbs) == {10, 14, 17, 21, 26}
+    # Nothing is classified here, so every one of them is a bypass.
+    assert _classification_bypasses(tree) == {10, 14, 17, 21, 26}
+
+
+def test_an_alias_that_goes_through_ask_is_not_a_bypass():
+    """The negative control on the one above. The point of resolving aliases is
+    to follow `http = self._http` through to a call that still lands in `_ask`,
+    not to forbid the refactor -- flagging every alias unconditionally would
+    pass this file's own guard while making the codebase worse."""
+    import textwrap
+
+    ok = textwrap.dedent(
+        """
+        import requests
+
+        class C:
+            def __init__(self):
+                self._http = requests.Session()
+
+            def _ask(self, send):
+                return send()
+
+            def list_things(self):
+                http = self._http
+                return self._ask(lambda: http.get("u"))
+        """
+    )
+    assert _classification_bypasses(ast.parse(ok)) == set()
 
 def test_a_null_error_field_alongside_a_good_payload_is_not_an_outage():
     """The key is not the answer; the value is.
