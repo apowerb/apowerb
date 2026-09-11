@@ -147,6 +147,10 @@ async def list_states(db: AsyncSession) -> list[VariableState]:
                 source == SOURCE_DATABASE
                 and updated_at is not None
                 and updated_at > PROCESS_STARTED_AT
+                # Sauf celles que leur consommateur relit à l'usage : leur
+                # annoncer un redémarrage ferait redémarrer un service pour
+                # rien, et décrédibiliserait le même message quand il est vrai.
+                and not variable.applied_live
             ),
         ))
     return states

@@ -59,6 +59,18 @@ class Variable:
     # seule ne fait pas d'exception — mais le drapeau permet à l'écran de
     # prévenir avant de coller une valeur dans un champ visible.
     secret: bool = True
+    # Vrai seulement si le code qui lit cette variable la relit AU MOMENT DE
+    # L'USAGE. Le défaut est `False`, et il doit le rester : `overlay.py`
+    # explique pourquoi le rechargement à chaud est refusé en général — 33
+    # modules capturent `Settings` à l'import, et n'en recharger qu'une partie
+    # donnerait un processus à moitié à jour.
+    #
+    # Poser ce drapeau sans que le consommateur relise vraiment produirait le
+    # pire des messages : l'écran dirait « appliqué » sur une valeur inerte.
+    # Le poser à tort dans l'autre sens coûte un redémarrage pour rien — vécu
+    # le 11/09/2026, quelques minutes après la livraison de la lecture à chaud
+    # du ticketing.
+    applied_live: bool = False
     # Normalise et refuse. Rend la valeur telle qu'elle sera STOCKÉE : le
     # 04/09, un espace final avait passé une garde qui nettoyait sans
     # stocker le nettoyé. Ici c'est le retour qui part en base.
@@ -200,13 +212,20 @@ CATALOG: tuple[Variable, ...] = (
     # l'adresse de celui qui l'a envoyé. L'exposer dans cet écran offrirait
     # un interrupteur « publier les captures d'écran de mes utilisateurs »,
     # à deux clics — la même raison qui tient `BYPASS_AUTH` dehors.
-    Variable("BUG_REPORT_GITHUB_REPO", "bug_reports", secret=False, normalize=_github_repo),
-    Variable("BUG_REPORT_GITHUB_TOKEN", "bug_reports"),
+    Variable(
+        "BUG_REPORT_GITHUB_REPO",
+        "bug_reports",
+        secret=False,
+        normalize=_github_repo,
+        applied_live=True,
+    ),
+    Variable("BUG_REPORT_GITHUB_TOKEN", "bug_reports", applied_live=True),
     Variable(
         "BUG_REPORT_GITHUB_PROJECT",
         "bug_reports",
         secret=False,
         normalize=_project_number,
+        applied_live=True,
     ),
 )
 
