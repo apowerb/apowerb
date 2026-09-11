@@ -836,8 +836,31 @@ Via LiteLLM, all major model providers are supported:
 - **OpenAI**: `openai/gpt-4o`, `openai/gpt-4`, `openai/gpt-3.5-turbo`
 - **Mistral**: `mistral/mistral-large-latest`
 - **Google**: `gemini/gemini-pro`
+- **Azure AI Foundry**: `azure_ai/llama-3-3-70b-instruct`
 - **OVHcloud**: `ovhcloud/DeepSeek-R1-Distill-Llama-70B`
 - And more...
+
+### Azure AI Foundry
+
+For a Foundry serverless endpoint, set the model name with the `azure_ai/`
+provider prefix and pass the endpoint settings in `agent_model_params`:
+
+```json
+{
+  "agent_model": "azure_ai/llama-3-3-70b-instruct",
+  "agent_model_params": {
+    "model_api_base": "https://<resource>.models.ai.azure.com",
+    "model_api_key": "<api-key>",
+    "model_api_version": "2025-04-01-preview"
+  }
+}
+```
+
+`model_api_version` is optional and is also accepted as `api_version`.
+For Microsoft Entra ID, resolve a bearer token with `DefaultAzureCredential`
+in the deployment environment and provide that token as `model_api_key`; LiteLLM
+passes it through the same `api_key` argument. Tool schemas and tool calls remain
+enabled through the normal ADK `LiteLlm` path.
 
 ---
 

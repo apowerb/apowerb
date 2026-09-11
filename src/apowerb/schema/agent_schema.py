@@ -4,7 +4,7 @@ from pydantic import BaseModel, field_validator
 # applies to them as to the model name. Module level on purpose — a
 # leading-underscore name inside a pydantic v2 model body becomes a private
 # attribute, not a plain tuple.
-_CREDENTIAL_KEYS = ("model_api_key", "model_api_base")
+_CREDENTIAL_KEYS = ("model_api_key", "model_api_base", "model_api_version")
 
 
 class McpServerConfig(BaseModel):
