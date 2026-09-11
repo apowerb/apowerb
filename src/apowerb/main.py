@@ -54,7 +54,10 @@ from apowerb.routers.health import router as health_router
 from apowerb.routers.bug_reports import router as bug_reports_router
 from apowerb.helpers.integrations_migration import ensure_integrations_table
 from apowerb.helpers.webhook_migration import ensure_webhook_subscriptions_table, ensure_webhook_subscriptions_columns
-from apowerb.helpers.webhook_log_migration import ensure_webhook_logs_table
+from apowerb.helpers.webhook_log_migration import (
+    ensure_webhook_logs_table,
+    ensure_webhook_logs_columns,
+)
 from apowerb.helpers.notification_migration import ensure_notifications_table
 from apowerb.helpers.bug_report_migration import ensure_bug_reports_table
 from apowerb.helpers.business_intelligence_migration import ensure_business_intelligence_table
@@ -151,6 +154,9 @@ def bootstrap(force: bool = False) -> None:
     ensure_webhook_subscriptions_table()
     ensure_webhook_subscriptions_columns()
     ensure_webhook_logs_table()
+    # Apres la creation : une base plus ancienne que les colonnes du
+    # modele resterait sinon incomplete pour toujours.
+    ensure_webhook_logs_columns()
     ensure_notifications_table()
     ensure_bug_reports_table()
     ensure_business_intelligence_table()
