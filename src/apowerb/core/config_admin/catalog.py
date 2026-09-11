@@ -102,6 +102,33 @@ def _storage_mode(value: str) -> str:
     return v
 
 
+def _github_repo(value: str) -> str:
+    """``organisation/dépôt``, et rien d'autre.
+
+    Ni URL, ni nom seul : le sink construit ses appels d'API à partir de
+    cette valeur, et une URL collée depuis la barre du navigateur y
+    produirait des chemins comme ``/repos/https://github.com/org/dépôt``.
+    On refuse tôt, avec un message qui montre la forme attendue, plutôt
+    que de laisser GitHub répondre 404 le jour de la première publication.
+    """
+    v = _plain(value)
+    if v.startswith(("http://", "https://", "git@")):
+        raise InvalidValue(
+            "Attendu « organisation/dépôt », pas une URL — par exemple "
+            "acme/support et non https://github.com/acme/support."
+        )
+    parts = v.split("/")
+    if len(parts) != 2 or not all(parts) or any(c in v for c in " \t"):
+        raise InvalidValue("Attendu « organisation/dépôt », par exemple acme/support.")
+    for part in parts:
+        if not all(c.isalnum() or c in "._-" for c in part):
+            raise InvalidValue(
+                "Nom de dépôt invalide : lettres, chiffres, point, tiret et "
+                "tiret bas seulement."
+            )
+    return v
+
+
 def _email(value: str) -> str:
     v = _plain(value)
     # Volontairement minimal : la validation d'adresse appartient au serveur
@@ -142,6 +169,20 @@ CATALOG: tuple[Variable, ...] = (
     Variable("SMTP_FROM", "system_mail", secret=False, normalize=_email),
     Variable("SMTP_USER", "system_mail", secret=False, normalize=_plain),
     Variable("SMTP_PASSWORD", "system_mail"),
+    # -- signalement de bug -------------------------------------------------
+    # Où partent les issues créées depuis l'écran de triage. Chaque
+    # déploiement a le sien : laisser ce choix à l'environnement obligeait
+    # à passer par celui qui déploie pour une décision qui appartient à
+    # l'administrateur du produit.
+    #
+    # ⚠️ `BUG_REPORT_GITHUB_ALLOW_PUBLIC` n'est PAS ici, et c'est délibéré.
+    # Elle désarme le garde qui refuse d'écrire dans un dépôt public, alors
+    # qu'un signalement porte des logs serveur, des erreurs client et
+    # l'adresse de celui qui l'a envoyé. L'exposer dans cet écran offrirait
+    # un interrupteur « publier les captures d'écran de mes utilisateurs »,
+    # à deux clics — la même raison qui tient `BYPASS_AUTH` dehors.
+    Variable("BUG_REPORT_GITHUB_REPO", "bug_reports", secret=False, normalize=_github_repo),
+    Variable("BUG_REPORT_GITHUB_TOKEN", "bug_reports"),
 )
 
 BY_NAME: dict[str, Variable] = {v.name: v for v in CATALOG}
