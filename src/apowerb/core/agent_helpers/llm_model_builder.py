@@ -16,6 +16,7 @@ from apowerb.core.agent_helpers.default_llm import (
     is_default_llm_model,
     resolve_model_credentials,
 )
+from apowerb.core.agent_helpers.reasoning_strip import CleaningLiteLLMClient
 from apowerb.helpers.encryptor import decrypt_value_in_dict
 
 
@@ -76,6 +77,7 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
             api_base=model_api_base,
             api_key=model_api_key,
             drop_params=True,
+            llm_client=CleaningLiteLLMClient(),
             **_litellm_kwargs,
         )
 
@@ -95,7 +97,11 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
         _litellm_kwargs["reasoning_effort"] = os.environ.get(
             "GEMINI_REASONING_EFFORT", "low"
         )
-    return LiteLlm(model=agent_details["agent_model"], **_litellm_kwargs)
+    return LiteLlm(
+        model=agent_details["agent_model"],
+        llm_client=CleaningLiteLLMClient(),
+        **_litellm_kwargs,
+    )
 
 
 def validate_agent_model(agent_model: str, agent_model_params=None, agent_type: str | None = None) -> None:
