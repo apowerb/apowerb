@@ -8,7 +8,7 @@ from apowerb.scheduler.th2etl_client import (
     ask_orchestrator,
     degrade_unless_unreachable,
 )
-
+__all__ = ["MageAPIClient", "AgentOrchestrator", "get_orchestrator"]
 logger = setup_logging(__name__)
 
 
@@ -268,6 +268,28 @@ class MageAPIClient:
             )
         except OrchestratorUnavailable as e:
             return degrade_unless_unreachable(e, None, logger, "update a schedule")
+        
+    # #93: Route schedule deletion through the shared orchestrator
+    # handling to return a proper 503 when the orchestrator is unavailable.  
+    def delete_schedule(self, schedule_id: int) -> None:
+        """Delete a pipeline schedule through the shared orchestrator
+        classification point.
+        """
+        url = (
+            f"{self.base_url}/api/pipeline_schedules/{schedule_id}"
+            f"?project={self.project_name}"
+        )
+
+        self._ask(
+            lambda: requests.delete(
+                url,
+                headers=self._get_headers(),
+                timeout=15,
+            ),
+            doing="delete a schedule",
+            body=False,
+        )
+
 
     def trigger_pipeline_run_for_schedule(
         self,

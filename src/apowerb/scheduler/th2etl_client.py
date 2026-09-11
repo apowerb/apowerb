@@ -31,7 +31,7 @@ from requests.exceptions import RequestException as _RequestFailed
 from requests.exceptions import TooManyRedirects as _RedirectLoop
 
 from apowerb.configs.settings import get_settings
-
+__all__ = ["Th2etlAPIClient", "OrchestratorUnavailable", "ask_orchestrator"]
 logger = logging.getLogger(__name__)
 
 # Mage "@interval" shortcuts -> 5-field cron expressions used by th2etl triggers.
