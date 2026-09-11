@@ -104,3 +104,28 @@ def test_un_rapport_minimal_ne_casse_pas_le_rendu():
     corps = render_issue_body({"id": 1, "fingerprint": "x", "what_i_did": "rien"})
     assert "## Reproduction" in corps
     assert "Signalement #1" in corps
+
+
+def test_les_valeurs_d_enum_s_affichent_par_leur_valeur():
+    """Vécu le 11/09/2026 sur `apowerb/roadmap#26` : l'en-tête de l'issue
+    annonçait « BugArea.CHAT » et « BugSeverity.BLOCKER » au lieu de « chat »
+    et « blocker ».
+
+    La cause n'est pas dans ce module mais chez son appelant : `issue_payload`
+    passe par `model_dump()`, qui rend les membres d'énumération tels quels.
+    Une classe `(str, Enum)` garde le `__str__` d'`Enum`, donc `str(membre)`
+    vaut son nom qualifié — et `BugArea("BugArea.CHAT")` lève. Le rendu doit
+    donc accepter ce que son appelant lui donne réellement.
+    """
+    from apowerb.bug_reports.areas import BugArea
+    from apowerb.schema.bug_report_schema import BugSeverity
+
+    corps = render_issue_body(
+        {**RAPPORT, "area": BugArea.CHAT, "severity": BugSeverity.BLOCKER}
+    )
+
+    assert "BugArea.CHAT" not in corps
+    assert "BugSeverity.BLOCKER" not in corps
+    # La zone garde son libellé lisible et son identifiant technique.
+    assert "chat" in corps
+    assert "Bloquant" in corps

@@ -26,6 +26,22 @@ _MAX_API_CALLS = 15
 _MAX_CONSOLE = 15
 
 
+def _plain(value: Any) -> Any:
+    """La valeur d'un membre d'énumération, ou la valeur telle quelle.
+
+    `issue_payload` construit son dictionnaire avec `model_dump()`, qui rend
+    les membres d'énumération sans les convertir. Une classe `(str, Enum)`
+    garde le `__str__` d'`Enum` : `str(BugArea.CHAT)` vaut « BugArea.CHAT »,
+    pas « chat ». Le 11/09/2026, l'en-tête de `apowerb/roadmap#26` affichait
+    ainsi « BugArea.CHAT » et « BugSeverity.BLOCKER » à des lecteurs humains.
+
+    Normaliser ici plutôt que chez l'appelant : ce module reçoit un
+    dictionnaire de provenances variées — base, API, test — et c'est le
+    dernier endroit avant le texte publié.
+    """
+    return getattr(value, "value", value)
+
+
 def _area_label(area: Any) -> str | None:
     """Libellé lisible de la zone, jamais son identifiant seul.
 
@@ -127,7 +143,7 @@ def render_issue_body(report: Mapping[str, Any], *, app_url: str | None = None) 
     signifié qu'un appelant qui l'oublie publie des secrets ; c'est en
     amont, à l'écriture en base, que l'expurgation a lieu, une fois.
     """
-    severity = str(report.get("severity") or "major")
+    severity = str(_plain(report.get("severity")) or "major")
     occurrences = int(report.get("occurrences") or 1)
     context: Mapping[str, Any] = report.get("context") or {}
 
@@ -135,7 +151,7 @@ def render_issue_body(report: Mapping[str, Any], *, app_url: str | None = None) 
 
     header = _table(
         [
-            ("Fonctionnalité", _area_label(report.get("area"))),
+            ("Fonctionnalité", _area_label(_plain(report.get("area")))),
             ("Sévérité", _SEVERITY_LABEL.get(severity, severity)),
             (
                 "Signalements",

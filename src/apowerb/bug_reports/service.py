@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 from logging import getLogger
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from sqlalchemy import func, select
@@ -389,18 +390,43 @@ async def get_bug_report(db: AsyncSession, report_id: int) -> Optional[BugReport
 # --------------------------------------------------------------------------
 
 
-def build_sink():
+def build_sink(posed: Optional[Mapping[str, str]] = None):
     """Instancie la sortie configurée, ou ``None`` si aucune ne l'est.
 
     ``None`` n'est pas une erreur : un déploiement qui garde ses
     signalements dans son écran de triage est un déploiement valide, et
     c'est même le défaut.
+
+    ``posed`` porte les valeurs posées depuis l'écran d'administration, lues
+    au moment de l'usage. Elles ne comblent que ce que le déploiement laisse
+    vide — la précédence que l'écran annonce, « imposée par le déploiement ».
+
+    Pourquoi une lecture à chaud ici, quand `config_admin/overlay.py` la
+    refuse partout ailleurs : ce refus vaut pour les 33 modules qui capturent
+    ``Settings`` à l'import, où ne recharger qu'une partie donnerait un
+    processus à moitié à jour. Ce domaine n'en fait pas partie — cette
+    fonction appelle ``get_settings()`` dans son corps, à chaque création
+    d'issue. Il n'y a donc aucune moitié à désynchroniser, et l'administrateur
+    n'a pas à redémarrer un service pour changer un dépôt de destination.
     """
     settings = get_settings()
-    repo = getattr(settings, "bug_report_github_repo", "") or ""
-    token = getattr(settings, "bug_report_github_token", "") or ""
+    posed = posed or {}
+
+    def _value(attribut: str, nom_pose: str) -> str:
+        return (getattr(settings, attribut, "") or "") or (posed.get(nom_pose) or "")
+
+    repo = _value("bug_report_github_repo", "BUG_REPORT_GITHUB_REPO")
+    token = _value("bug_report_github_token", "BUG_REPORT_GITHUB_TOKEN")
     if not repo or not token:
         return None
+
+    # Une valeur abîmée en base ne doit pas empêcher de créer un ticket :
+    # on range dans le tableau si on peut, on crée l'issue dans tous les cas.
+    raw_project = _value("bug_report_github_project", "BUG_REPORT_GITHUB_PROJECT")
+    try:
+        project_number = int(str(raw_project).strip().lstrip("#")) or None
+    except (TypeError, ValueError):
+        project_number = None
 
     from apowerb.bug_reports.sinks.github import GitHubIssueSink
 
@@ -410,6 +436,7 @@ def build_sink():
         allow_public_repo=bool(
             getattr(settings, "bug_report_github_allow_public", False)
         ),
+        project_number=project_number,
     )
 
 
@@ -432,7 +459,24 @@ async def create_issue_for(
     n'appellent pas la même réaction de l'administrateur.
     """
     settings = get_settings()
-    sink = build_sink()
+    # Les valeurs posées depuis l'écran, lues maintenant plutôt qu'au
+    # démarrage : l'administrateur qui change de dépôt n'a pas à faire
+    # redémarrer un service pour cela. Le déploiement garde la main sur ce
+    # qu'il porte — la préséance est appliquée dans `build_sink`.
+    from apowerb.core.config_admin.store import read_posed
+
+    try:
+        posed = await read_posed(
+            db,
+            (
+                "BUG_REPORT_GITHUB_REPO",
+                "BUG_REPORT_GITHUB_TOKEN",
+                "BUG_REPORT_GITHUB_PROJECT",
+            ),
+        )
+    except Exception:  # noqa: BLE001 — une table absente n'est pas une panne
+        posed = {}
+    sink = build_sink(posed)
     if sink is None:
         from apowerb.bug_reports.sinks.github import SinkConfigurationError
 
@@ -465,6 +509,9 @@ async def create_issue_for(
                 f"area:{report.area or 'other'}",
                 "from:app",
             ],
+            # Le type d'issue de l'organisation. Les tableaux de projet
+            # filtrent dessus : sans type, un bug n'y apparaît pas.
+            issue_type="Bug",
         )
         url, number = created["html_url"], created["number"]
 
