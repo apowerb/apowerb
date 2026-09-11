@@ -222,6 +222,32 @@ def capabilities(settings=None, env=None) -> list[Capability]:
             docs_url=f"{DOCS_BASE}/mail",
         )
     )
+    # -- signalement de bug : la sortie vers un traqueur de tickets --------
+    # `optional=True` : sans dépôt configuré, le signalement fonctionne
+    # entièrement — il reste dans l'écran de triage, ce qui est le mode par
+    # défaut assumé. Cette ligne n'est donc pas un défaut à corriger, elle
+    # existe pour qu'un administrateur DÉCOUVRE la possibilité. Sans elle,
+    # on ne l'apprend qu'en cliquant sur « Créer l'issue » et en tombant
+    # sur un refus.
+    bug_report_missing = [
+        n
+        for n, v in (
+            ("BUG_REPORT_GITHUB_REPO", s.bug_report_github_repo),
+            ("BUG_REPORT_GITHUB_TOKEN", s.bug_report_github_token),
+        )
+        if _blank(v)
+    ]
+    items.append(
+        Capability(
+            key="bug_reports",
+            configured=not bug_report_missing,
+            mode="github" if not bug_report_missing else "in_app",
+            optional=True,
+            blocks=[],
+            missing=bug_report_missing,
+            docs_url=f"{DOCS_BASE}/bug-reports",
+        )
+    )
     return items
 
 
