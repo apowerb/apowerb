@@ -229,11 +229,17 @@ def capabilities(settings=None, env=None) -> list[Capability]:
     # existe pour qu'un administrateur DÉCOUVRE la possibilité. Sans elle,
     # on ne l'apprend qu'en cliquant sur « Créer l'issue » et en tombant
     # sur un refus.
+    # `getattr` et non un accès direct : `capabilities(settings=...)` accepte
+    # n'importe quel objet, et cinq suites de tests lui passent leur propre
+    # doublure. Exiger d'elles un attribut apparu après leur écriture les
+    # casse toutes — mesuré, le job `unit` a rougi sur cinq fichiers que
+    # cette fonctionnalité ne concerne pas. Une capacité nouvelle se lit
+    # avec un défaut ; c'est le prix d'un paramètre ouvert.
     bug_report_missing = [
         n
         for n, v in (
-            ("BUG_REPORT_GITHUB_REPO", s.bug_report_github_repo),
-            ("BUG_REPORT_GITHUB_TOKEN", s.bug_report_github_token),
+            ("BUG_REPORT_GITHUB_REPO", getattr(s, "bug_report_github_repo", "")),
+            ("BUG_REPORT_GITHUB_TOKEN", getattr(s, "bug_report_github_token", "")),
         )
         if _blank(v)
     ]
