@@ -102,6 +102,25 @@ def _storage_mode(value: str) -> str:
     return v
 
 
+def _project_number(value: str) -> str:
+    """Le numéro du tableau de projet, pas son adresse.
+
+    L'erreur naturelle est de coller l'URL vue dans le navigateur
+    (`https://github.com/orgs/apowerb/projects/2`). Le dire vaut mieux que
+    d'enregistrer une valeur qui ne marchera pas — et le `#2` du langage
+    courant est accepté, c'est la même intention.
+    """
+    clean = (value or "").strip().lstrip("#").strip()
+    if not clean.isdigit() or int(clean) < 1:
+        raise InvalidValue(
+            "BUG_REPORT_GITHUB_PROJECT attend le NUMÉRO du tableau, par "
+            "exemple « 2 » — celui que montre l'adresse "
+            "github.com/orgs/<organisation>/projects/<numéro>. "
+            f"Reçu {value!r}."
+        )
+    return clean
+
+
 def _github_repo(value: str) -> str:
     """``organisation/dépôt``, et rien d'autre.
 
@@ -183,6 +202,12 @@ CATALOG: tuple[Variable, ...] = (
     # à deux clics — la même raison qui tient `BYPASS_AUTH` dehors.
     Variable("BUG_REPORT_GITHUB_REPO", "bug_reports", secret=False, normalize=_github_repo),
     Variable("BUG_REPORT_GITHUB_TOKEN", "bug_reports"),
+    Variable(
+        "BUG_REPORT_GITHUB_PROJECT",
+        "bug_reports",
+        secret=False,
+        normalize=_project_number,
+    ),
 )
 
 BY_NAME: dict[str, Variable] = {v.name: v for v in CATALOG}

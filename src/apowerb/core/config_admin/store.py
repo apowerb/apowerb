@@ -9,6 +9,7 @@ processus d'entrypoint : elle n'est jamais atteignable depuis une requête.
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -236,3 +237,34 @@ def read_all_decrypted(schema: str, connection) -> dict[str, str]:
         for r in rows
         if r[0] in BY_NAME
     }
+
+
+async def read_posed(db: AsyncSession, names: Sequence[str]) -> dict[str, str]:
+    """Les valeurs posées pour CES noms, déchiffrées, au moment de l'usage.
+
+    Existe pour les rares consommateurs qui peuvent appliquer une valeur sans
+    redémarrer — aujourd'hui la sortie GitHub des signalements, dont le sink
+    est construit à chaque création d'issue. Voir `overlay.py` pour la raison
+    générale du refus de recharger à chaud, et `bug_reports/service.py` pour
+    la raison précise de cette exception.
+
+    Trois garde-fous, dans cet ordre :
+
+    - **liste blanche d'appel** — l'appelant nomme ce qu'il veut lire, et rien
+      d'autre ne sort ; il n'existe pas de « lis-moi tout » ici ;
+    - **filtre du catalogue** — un nom hors catalogue est ignoré même s'il est
+      demandé, comme dans `read_all_decrypted` : une ligne arrivée par un autre
+      chemin ne devient pas une valeur applicable ;
+    - **rien dans les journaux** — cette fonction ne trace pas ce qu'elle rend.
+    """
+    wanted = [n for n in names if n in BY_NAME]
+    if not wanted:
+        return {}
+    rows = (await db.execute(
+        text(
+            f"SELECT name, value_enc FROM {_schema()}.admin_config_variable "
+            "WHERE name = ANY(:names)"
+        ),
+        {"names": wanted},
+    )).all()
+    return {r[0]: encryptor.decrypt_value(r[1]) for r in rows if r[0] in BY_NAME}

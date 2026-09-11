@@ -88,3 +88,28 @@ def test_les_formes_qui_ne_sont_pas_un_depot_sont_refusees(invalide):
 def test_un_depot_valide_passe():
     for valide in ("acme/support", "thaink2/apowerb", "org-1/repo.name_2"):
         assert normalize("BUG_REPORT_GITHUB_REPO", valide) == valide
+
+
+def test_le_tableau_de_projet_est_configurable():
+    """Un Project v2 n'ajoute pas les issues tout seul : il faut son numéro.
+
+    Mesuré le 11/09/2026 sur `apowerb/roadmap` — les sept dernières issues
+    y sont entrées par un ajout manuel, jamais par une automatisation.
+    """
+    assert "BUG_REPORT_GITHUB_PROJECT" in BY_NAME
+    assert BY_NAME["BUG_REPORT_GITHUB_PROJECT"].secret is False
+
+
+@pytest.mark.parametrize("valeur", ["2", " 2 ", "#2"])
+def test_le_numero_de_projet_accepte_les_formes_courantes(valeur):
+    assert normalize("BUG_REPORT_GITHUB_PROJECT", valeur) == "2"
+
+
+@pytest.mark.parametrize(
+    "valeur",
+    ["deux", "https://github.com/orgs/apowerb/projects/2", "-1", "0"],
+)
+def test_un_numero_de_projet_invalide_est_refuse(valeur):
+    """Coller l'URL du tableau est l'erreur naturelle : elle doit être dite."""
+    with pytest.raises(InvalidValue):
+        normalize("BUG_REPORT_GITHUB_PROJECT", valeur)

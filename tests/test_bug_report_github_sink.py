@@ -174,3 +174,180 @@ def test_la_recherche_de_doublon_ne_bloque_pas_quand_elle_echoue():
     """
     session = FakeSession(get_response=FakeResponse(503, {}))
     assert _sink(session).find_existing_issue("ab12cd34") is None
+
+
+# ---------------------------------------------------------------------------
+# Type de l'issue et couleur des étiquettes
+#
+# Vécu le 11/09/2026 sur `apowerb/roadmap#26`, le premier signalement vraiment
+# publié : l'issue est arrivée sans **type**, alors que le tableau de David
+# filtre là-dessus — un bug sans type n'y apparaît pas. Et les trois étiquettes
+# que ce module nomme (`severity:…`, `area:…`, `from:app`) n'existaient pas
+# dans le dépôt : GitHub les a créées d'office, toutes en gris `#ededed`, y
+# compris `severity:blocker`. Le code couleur du dépôt était perdu.
+# ---------------------------------------------------------------------------
+
+
+class SessionParChemin:
+    """Doublure qui répond selon l'URL, et retient ce qu'on lui a envoyé."""
+
+    def __init__(self, *, labels_existants=(), depot_prive=True):
+        self.labels_existants = list(labels_existants)
+        self.depot_prive = depot_prive
+        self.posts = []
+        self.gets = []
+
+    def get(self, url, **kwargs):
+        self.gets.append((url, kwargs))
+        if url.endswith("/labels"):
+            return FakeResponse(
+                200, [{"name": n, "color": "112233"} for n in self.labels_existants]
+            )
+        return FakeResponse(200, {"private": self.depot_prive, "visibility": "private"})
+
+    def post(self, url, **kwargs):
+        self.posts.append((url, kwargs))
+        if url.endswith("/labels"):
+            nom = (kwargs.get("json") or {}).get("name")
+            self.labels_existants.append(nom)
+            return FakeResponse(201, {"name": nom})
+        return FakeResponse(201, {"html_url": "https://github.com/org/depot/issues/7",
+                                  "number": 7, "node_id": "I_node7"})
+
+    def _posts_vers(self, suffixe):
+        return [k for u, k in self.posts if u.endswith(suffixe)]
+
+
+def test_l_issue_est_creee_avec_son_type():
+    session = SessionParChemin(labels_existants=["bug"])
+    sink = _sink(session)
+
+    sink.create_issue(title="T", body="B", labels=["bug"], issue_type="Bug")
+
+    (creation,) = session._posts_vers("/issues")
+    assert creation["json"]["type"] == "Bug"
+
+
+def test_une_etiquette_absente_est_creee_avec_une_couleur_choisie():
+    session = SessionParChemin(labels_existants=["bug"])
+    sink = _sink(session)
+
+    sink.create_issue(
+        title="T", body="B", labels=["bug", "severity:blocker", "from:app"]
+    )
+
+    crees = {k["json"]["name"]: k["json"]["color"] for k in session._posts_vers("/labels")}
+    assert set(crees) == {"severity:blocker", "from:app"}
+    # Une couleur choisie, pas celle que GitHub tire au sort.
+    assert crees["severity:blocker"] == "B60205"
+    assert all(c and c != "ededed" for c in crees.values())
+
+
+def test_une_etiquette_deja_presente_nest_pas_recreee():
+    """Sa couleur appartient au dépôt : la réécrire effacerait un choix."""
+    session = SessionParChemin(
+        labels_existants=["bug", "severity:blocker", "area:chat", "from:app"]
+    )
+    sink = _sink(session)
+
+    sink.create_issue(
+        title="T", body="B", labels=["bug", "severity:blocker", "area:chat", "from:app"]
+    )
+
+    assert session._posts_vers("/labels") == []
+
+
+def test_une_etiquette_inconnue_du_bareme_reste_posee():
+    """On ne refuse pas une étiquette faute de couleur prévue."""
+    session = SessionParChemin(labels_existants=[])
+    sink = _sink(session)
+
+    sink.create_issue(title="T", body="B", labels=["quelque-chose-de-neuf"])
+
+    (creation,) = session._posts_vers("/issues")
+    assert "quelque-chose-de-neuf" in creation["json"]["labels"]
+
+
+def test_un_echec_de_creation_d_etiquette_ne_bloque_pas_l_issue():
+    """Le ticket vaut mieux que sa couleur."""
+
+    class SessionQuiRefuseLesLabels(SessionParChemin):
+        def post(self, url, **kwargs):
+            if url.endswith("/labels"):
+                self.posts.append((url, kwargs))
+                return FakeResponse(403, {}, text="pas le droit")
+            return super().post(url, **kwargs)
+
+    session = SessionQuiRefuseLesLabels(labels_existants=[])
+    sink = _sink(session)
+
+    cree = sink.create_issue(title="T", body="B", labels=["bug", "from:app"])
+
+    assert cree["number"] == 7
+
+
+# ---------------------------------------------------------------------------
+# Rattachement au tableau de projet
+#
+# Mesuré le 11/09/2026 sur `apowerb/roadmap` : les sept dernières issues ont
+# toutes rejoint le Project 2, et à chaque fois par un ajout manuel — l'auteur
+# de l'événement `added_to_project_v2` est une personne, jamais
+# `github-project-automation[bot]`. Le projet automatise le statut, pas
+# l'entrée. Un ticket créé par ce module resterait donc hors du tableau.
+# ---------------------------------------------------------------------------
+
+
+class SessionAvecProjet(SessionParChemin):
+    """Ajoute à la doublure précédente les deux appels GraphQL du projet."""
+
+    def __init__(self, *, projet_id="PVT_test", echoue=False, **kwargs):
+        super().__init__(**kwargs)
+        self.projet_id = projet_id
+        self.echoue = echoue
+        self.mutations = []
+
+    def post(self, url, **kwargs):
+        if url.endswith("/graphql"):
+            self.posts.append((url, kwargs))
+            requete = (kwargs.get("json") or {}).get("query", "")
+            if self.echoue:
+                return FakeResponse(200, {"errors": [{"message": "jeton sans droit"}]})
+            if "addProjectV2ItemById" in requete:
+                self.mutations.append(kwargs["json"].get("variables"))
+                return FakeResponse(200, {"data": {"addProjectV2ItemById":
+                                                   {"item": {"id": "PVTI_1"}}}})
+            return FakeResponse(
+                200, {"data": {"organization": {"projectV2": {"id": self.projet_id}}}}
+            )
+        return super().post(url, **kwargs)
+
+
+def test_l_issue_rejoint_le_tableau_quand_un_projet_est_configure():
+    session = SessionAvecProjet(labels_existants=["bug"])
+    sink = _sink(session, project_number=2)
+
+    sink.create_issue(title="T", body="B", labels=["bug"])
+
+    assert session.mutations, "aucune mutation d'ajout au projet"
+    variables = session.mutations[0]
+    assert variables["projectId"] == "PVT_test"
+    assert variables["contentId"] == "I_node7"
+
+
+def test_sans_projet_configure_aucun_appel_graphql():
+    session = SessionAvecProjet(labels_existants=["bug"])
+    sink = _sink(session)
+
+    sink.create_issue(title="T", body="B", labels=["bug"])
+
+    assert session._posts_vers("/graphql") == []
+
+
+def test_un_projet_inaccessible_ne_fait_pas_echouer_le_ticket():
+    """Le jeton peut ne pas porter le droit `project` : le ticket reste créé."""
+    session = SessionAvecProjet(labels_existants=["bug"], echoue=True)
+    sink = _sink(session, project_number=2)
+
+    cree = sink.create_issue(title="T", body="B", labels=["bug"])
+
+    assert cree["number"] == 7

@@ -581,6 +581,10 @@ class Settings(BaseSettings):
     # avant chaque écriture et refuse un dépôt public.
     bug_report_github_repo: str = ""
     bug_report_github_token: str = ""
+    # Numéro du tableau de projet où ranger les tickets, s'il y en a un.
+    # Un Project v2 automatise le statut d'une carte, pas son entrée : sans
+    # ce numéro, un ticket créé ici reste hors du tableau.
+    bug_report_github_project: str = ""
     # Échappatoire pour un déploiement de démonstration sans donnée
     # client. Jamais en production : elle désarme le seul garde qui
     # empêche une capture d'écran d'utilisateur d'être indexée.
