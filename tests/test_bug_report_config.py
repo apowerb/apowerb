@@ -113,3 +113,32 @@ def test_un_numero_de_projet_invalide_est_refuse(valeur):
     """Coller l'URL du tableau est l'erreur naturelle : elle doit être dite."""
     with pytest.raises(InvalidValue):
         normalize("BUG_REPORT_GITHUB_PROJECT", valeur)
+
+
+def test_les_variables_du_ticketing_sont_appliquees_a_chaud():
+    """L'écran ne doit pas réclamer un redémarrage qui ne sert à rien.
+
+    Vécu le 11/09/2026, quelques minutes après avoir livré la lecture à chaud :
+    un administrateur pose `BUG_REPORT_GITHUB_PROJECT`, l'écran affiche « en
+    attente de redémarrage », et pourtant l'issue suivante part déjà rangée
+    dans le tableau. `pending_restart` ne connaissait que la règle générale —
+    « posée après le démarrage, donc inerte » — vraie pour tout le catalogue
+    sauf pour ces trois-là.
+
+    Un message faux dans ce sens-ci coûte cher : il pousse à redémarrer un
+    service en production pour rien, et il décrédibilise le même message quand
+    il est vrai.
+    """
+    for nom in (
+        "BUG_REPORT_GITHUB_REPO",
+        "BUG_REPORT_GITHUB_TOKEN",
+        "BUG_REPORT_GITHUB_PROJECT",
+    ):
+        assert BY_NAME[nom].applied_live is True, nom
+
+
+def test_les_autres_variables_exigent_toujours_un_redemarrage():
+    """La règle générale ne bouge pas : 33 modules capturent Settings à
+    l'import, et `overlay.py` explique pourquoi on ne recharge pas à chaud."""
+    for nom in ("DEFAULT_LLM_MODEL", "DEFAULT_LLM_API_KEY", "STORAGE_MODE"):
+        assert BY_NAME[nom].applied_live is False, nom
