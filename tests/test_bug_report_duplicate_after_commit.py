@@ -76,6 +76,15 @@ class SessionSimulee:
     def add(self, objet):
         self.ajoutes.append(objet)
 
+    async def flush(self):
+        # Comme SQLAlchemy : `flush()` envoie les écritures et attribue les
+        # identifiants, mais n'expire RIEN. C'est ce qui permet au service
+        # d'écrire le journal du signalement avant le commit sans rouvrir le
+        # défaut que ce fichier protège.
+        for objet in self.ajoutes:
+            if getattr(objet, "id", None) is None:
+                objet.id = 42
+
     async def commit(self):
         if self._canonique is not None:
             self._canonique.expire = True

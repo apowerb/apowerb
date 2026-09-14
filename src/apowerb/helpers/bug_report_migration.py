@@ -108,6 +108,39 @@ def ensure_bug_reports_table() -> None:
                 conn.commit()
                 logger.debug("'bug_reports' table already exists -- columns ensured.")
 
+            # Le journal de chaque signalement. Créé à part de `bug_reports`
+            # et hors de la branche « table absente » : un déploiement qui a
+            # déjà la table des signalements doit recevoir le journal aussi.
+            # CASCADE : supprimer un signalement emporte son histoire, qui
+            # n'a pas de sens sans lui.
+            conn.execute(
+                text(f"""
+                CREATE TABLE IF NOT EXISTS {settings.db_schema}.bug_report_events (
+                    id             SERIAL PRIMARY KEY,
+                    bug_report_id  INTEGER NOT NULL
+                                       REFERENCES {settings.db_schema}.bug_reports(id)
+                                       ON DELETE CASCADE,
+                    kind           VARCHAR(40) NOT NULL,
+                    actor_user_id  INTEGER
+                                       REFERENCES {settings.db_schema}."user"(user_id)
+                                       ON DELETE SET NULL,
+                    from_value     VARCHAR(60),
+                    to_value       VARCHAR(60),
+                    detail         TEXT,
+                    created_at     TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+            )
+            # La frise d'un signalement, et la dernière alerte envoyée : les
+            # deux lectures de ce journal passent par ce couple.
+            conn.execute(
+                text(f"""
+                CREATE INDEX IF NOT EXISTS ix_bug_report_events_report_created
+                ON {settings.db_schema}.bug_report_events (bug_report_id, created_at);
+            """)
+            )
+            conn.commit()
+
         engine.dispose()
     except Exception as exc:
         # Comme ses voisines : une migration qui lève au boot rendrait le

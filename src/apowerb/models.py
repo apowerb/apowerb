@@ -720,3 +720,46 @@ class BugReport(Base):
             f"<BugReport(id={self.id}, severity={self.severity!r}, "
             f"status={self.status!r}, fingerprint={self.fingerprint!r})>"
         )
+
+
+class BugReportEvent(Base):
+    """Ce qui est arrivé à un signalement, dans l'ordre.
+
+    Une ligne par transition : création, doublon reçu, statut, sévérité ou
+    zone changés, note modifiée, issue créée, issue fermée, retard alerté.
+    `updated_at` sur le signalement ne disait que « quelque chose a bougé » ;
+    ce journal dit quoi, qui, et quand.
+
+    Il sert aussi de mémoire à la veille : la dernière alerte envoyée est lue
+    ici, en base, et survit donc aux redémarrages du service — une mémoire en
+    processus relancerait une alerte à chaque déploiement.
+
+    Le contenu d'une note d'administrateur n'y est jamais recopié.
+    """
+
+    __tablename__ = "bug_report_events"
+    # Même convention que `BugReport` : pas de schéma dans le modèle, le
+    # `search_path` de la connexion le fournit. Un schéma ici ferait chercher
+    # à la clé étrangère une table `schema.bug_reports` que la métadonnée ne
+    # connaît que sous le nom `bug_reports`.
+    __table_args__ = (
+        Index("ix_bug_report_events_report_created", "bug_report_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bug_report_id = Column(
+        Integer,
+        ForeignKey("bug_reports.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(String(40), nullable=False)
+    actor_user_id = Column(
+        Integer,
+        ForeignKey("user.user_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    from_value = Column(String(60))
+    to_value = Column(String(60))
+    detail = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+

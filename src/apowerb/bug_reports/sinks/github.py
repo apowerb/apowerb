@@ -165,6 +165,30 @@ class GitHubIssueSink:
                 )
         return payload
 
+    def get_issue_state(self, number: int) -> Optional[str]:
+        """« open », « closed », ou ``None`` si on n'a pas pu savoir.
+
+        Lecture seule : pas de garde de visibilité ici, rien ne sort. Et
+        jamais d'exception — la veille qui l'appelle tourne en tâche de fond,
+        et ne doit pas mourir d'une coupure réseau. ``None`` ne résout rien :
+        un bug n'est pas déclaré corrigé faute de réponse.
+        """
+        try:
+            response = self._session.get(
+                f"{self._api}/repos/{self.repo}/issues/{int(number)}",
+                headers=self._headers(),
+                timeout=_TIMEOUT,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            state = response.json().get("state")
+        except Exception:  # noqa: BLE001
+            return None
+        return state if state in ("open", "closed") else None
+
     # -- écriture ---------------------------------------------------------
 
     def find_existing_issue(self, fingerprint: str) -> Optional[dict[str, Any]]:

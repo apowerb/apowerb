@@ -203,11 +203,24 @@ async def update_bug_report(
     report_id: int,
     payload: BugReportUpdate,
     db: AsyncSession = Depends(get_db),
-    _: user_schemas.User = Depends(require_admin),
+    admin: user_schemas.User = Depends(require_admin),
 ) -> BugReportDetail:
+    from apowerb.bug_reports import tracking
+
     report = await service.get_bug_report(db, report_id)
     if report is None:
         raise HTTPException(status_code=404, detail="Signalement introuvable.")
+
+    # Le journal compare avant d'appliquer : après, l'ancienne valeur serait
+    # perdue, et « qui a fait passer ce bug de bloquant à mineur » ne se
+    # retrouverait plus.
+    events = tracking.diff_update(
+        report,
+        status=payload.status.value if payload.status is not None else None,
+        severity=payload.severity.value if payload.severity is not None else None,
+        area=payload.area.value if payload.area is not None else None,
+        admin_note=payload.admin_note,
+    )
 
     if payload.status is not None:
         report.status = payload.status.value
@@ -218,6 +231,9 @@ async def update_bug_report(
     if payload.admin_note is not None:
         report.admin_note = payload.admin_note
 
+    tracking.record_events(
+        db, report.id, events, actor_user_id=getattr(admin, "user_id", None)
+    )
     await db.commit()
     await db.refresh(report)
     return service.to_detail(report)
@@ -226,6 +242,25 @@ async def update_bug_report(
 # ---------------------------------------------------------------------------
 # 7. POST /api/bug-reports/{id}/issue -- publier après relecture
 # ---------------------------------------------------------------------------
+
+
+@router.get("/{report_id}/events")
+async def list_bug_report_events(
+    report_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: user_schemas.User = Depends(require_admin),
+) -> list[dict]:
+    """Ce qui est arrivé à ce signalement, du plus ancien au plus récent."""
+    from apowerb.bug_reports import tracking
+
+    report = await service.get_bug_report(db, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Signalement introuvable.")
+    events = await tracking.list_events(db, report_id)
+    for event in events:
+        if event["created_at"] is not None:
+            event["created_at"] = event["created_at"].isoformat()
+    return events
 
 
 @router.post("/{report_id}/issue", response_model=BugReportDetail)
@@ -249,7 +284,9 @@ async def create_issue(
         return service.to_detail(report)
 
     try:
-        url, number = await service.create_issue_for(db, report)
+        url, number = await service.create_issue_for(
+            db, report, actor_user_id=getattr(admin, "user_id", None)
+        )
     except SinkRefusal as refusal:
         # 409 et non 403 : ce n'est pas l'administrateur qui manque d'un
         # droit, c'est la configuration du dépôt qui est incompatible avec

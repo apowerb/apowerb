@@ -222,6 +222,28 @@ async def create_bug_report(
     if canonical:
         occurrences = (canonical.occurrences or 1) + 1
         canonical.occurrences = occurrences
+
+    # Le journal part dans la même transaction que le signalement. `flush()`
+    # donne son identifiant au nouveau signalement sans rien expirer — seul
+    # `commit()` expire, et tout ce qu'il faut a déjà été lu plus haut.
+    await db.flush()
+    from apowerb.bug_reports import tracking
+
+    tracking.record_events(
+        db, report.id, [tracking.PendingEvent(tracking.EVENT_CREATED)],
+        actor_user_id=user_id,
+    )
+    if duplicate_of:
+        tracking.record_events(
+            db,
+            duplicate_of,
+            [tracking.PendingEvent(
+                tracking.EVENT_DUPLICATE_RECEIVED,
+                to_value=str(report.id),
+                detail=f"{occurrences} occurrence(s)",
+            )],
+            actor_user_id=user_id,
+        )
     await db.commit()
     await db.refresh(report)
 
@@ -449,7 +471,7 @@ def issue_payload(report: BugReport, *, app_url: Optional[str] = None) -> dict[s
 
 
 async def create_issue_for(
-    db: AsyncSession, report: BugReport
+    db: AsyncSession, report: BugReport, *, actor_user_id: Optional[int] = None
 ) -> tuple[str, int]:
     """Crée l'issue (ou commente l'existante) et enregistre le lien.
 
@@ -515,6 +537,19 @@ async def create_issue_for(
         )
         url, number = created["html_url"], created["number"]
 
+    from apowerb.bug_reports import tracking
+
+    tracking.record_events(
+        db,
+        report.id,
+        [tracking.PendingEvent(
+            tracking.EVENT_ISSUE_CREATED,
+            from_value=report.status,
+            to_value=f"#{number}",
+            detail=url,
+        )],
+        actor_user_id=actor_user_id,
+    )
     report.issue_url = url
     report.issue_number = number
     report.status = BugReportStatus.ISSUE_CREATED.value

@@ -577,6 +577,7 @@ from apowerb.scheduler.webhook_renewal import webhook_renewal_loop
 from apowerb.scheduler.events_retention import events_retention_loop
 from apowerb.scheduler import backlog_worker
 from apowerb.scheduler.notifier_watch import notifier_watch_loop
+from apowerb.bug_reports.tracking import bug_report_watch_loop
 from apowerb.routers.webhook_handlers.outlook import process_webhook_log_row
 
 
@@ -617,6 +618,14 @@ async def _start_webhook_renewal():
         print("[STARTUP HOOK] notifier_watch_loop scheduled", flush=True)
     except Exception as e:
         print(f"[STARTUP HOOK] notifier_watch_loop schedule raised: {e!r}", flush=True)
+
+    try:
+        # Signalements : issues fermées sur GitHub → résolus, et alerte des
+        # superadministrateurs quand un bug attend plus de 48 h.
+        asyncio.create_task(bug_report_watch_loop())
+        print("[STARTUP HOOK] bug_report_watch_loop scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] bug_report_watch_loop schedule raised: {e!r}", flush=True)
 
     try:
         retention_task = asyncio.create_task(events_retention_loop())
