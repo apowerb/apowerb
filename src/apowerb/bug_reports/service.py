@@ -125,11 +125,13 @@ def _error_signature(
 
 
 def _failing_call(calls: list[dict[str, Any]]) -> dict[str, Any]:
-    """L'appel qui a échoué, à défaut le dernier.
+    """L'appel qui a échoué, ou rien.
 
-    L'empreinte se calcule sur celui-là : c'est lui qui identifie le
-    défaut. Prendre « le dernier appel » sans regarder le statut ferait
-    dépendre le regroupement de ce que le front a chargé après l'erreur.
+    L'empreinte et la zone se calculent sur celui-là : c'est lui qui
+    identifie le défaut. Sans échec, aucun appel ne le dit — retenir le
+    dernier ferait dépendre le classement de ce que le navigateur a chargé
+    juste avant, un préchargement de page par exemple ; la route de
+    l'écran prend alors le relais.
     """
     failures = [c for c in calls if isinstance(c.get("status"), int) and c["status"] >= 400]
     if failures:
@@ -137,7 +139,7 @@ def _failing_call(calls: list[dict[str, Any]]) -> dict[str, Any]:
     no_response = [c for c in calls if c.get("status") is None and c.get("error")]
     if no_response:
         return no_response[-1]
-    return calls[-1] if calls else {}
+    return {}
 
 
 async def create_bug_report(
