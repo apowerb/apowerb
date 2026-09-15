@@ -222,8 +222,6 @@ async def update_bug_report(
         admin_note=payload.admin_note,
     )
 
-    if payload.status is not None:
-        report.status = payload.status.value
     if payload.severity is not None:
         report.severity = payload.severity.value
     if payload.area is not None:
@@ -231,11 +229,26 @@ async def update_bug_report(
     if payload.admin_note is not None:
         report.admin_note = payload.admin_note
 
+    # Décidé une fois la note posée (un rejet l'envoie avec la clôture) mais
+    # avant le statut, qui dit s'il y a clôture. Envoyé après le commit :
+    # `commit()` expire l'objet, et une clôture annulée n'annonce rien.
+    notice = (
+        tracking.closure_notice(
+            report, to_status=payload.status.value, actor_user_id=getattr(admin, "user_id", None)
+        )
+        if payload.status is not None
+        else None
+    )
+    if payload.status is not None:
+        report.status = payload.status.value
+
     tracking.record_events(
         db, report.id, events, actor_user_id=getattr(admin, "user_id", None)
     )
     await db.commit()
     await db.refresh(report)
+    if notice is not None:
+        await tracking.send_notice(notice)
     return service.to_detail(report)
 
 

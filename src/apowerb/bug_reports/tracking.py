@@ -67,6 +67,16 @@ class TickPlan:
     to_alert: list[Any] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class Notice:
+    """Ce que l'auteur d'un signalement doit apprendre, décidé avant d'être envoyé."""
+
+    user_id: int
+    title: str
+    message: str
+    type: str
+
+
 def _aware(moment: Optional[datetime]) -> Optional[datetime]:
     """La colonne est `TIMESTAMPTZ`, mais une doublure ou un pilote peut rendre
     une date sans fuseau ; comparer naïf et conscient lève en Python."""
@@ -143,6 +153,49 @@ def diff_update(report: Any, **new_values: Optional[str]) -> list[PendingEvent]:
         if (getattr(report, "admin_note", None) or "") != (new_values["admin_note"] or ""):
             events.append(PendingEvent(EVENT_NOTE_CHANGED))
     return events
+
+
+def closure_notice(
+    report: Any, *, to_status: str, actor_user_id: Optional[int] = None
+) -> Optional[Notice]:
+    """Ce qu'il faut dire à l'auteur quand son signalement passe à ``to_status``.
+
+    Constat du 15/09/2026 : seule la fermeture d'une issue prévenait l'auteur,
+    jamais le triage, jamais un rejet ni un doublon.
+
+    Rien n'est dit hors d'un passage d'un état ouvert à un état clos : c'est ce
+    qui garantit une seule notification par clôture, que le signalement soit
+    clos par le triage puis ignoré par la veille, ou l'inverse. Personne à
+    prévenir pour un signalement anonyme, ni pour l'administrateur qui clôt le
+    sien. La note de triage n'accompagne que le rejet, seul cas où l'auteur
+    attend une explication ; les journaux joints ne partent jamais.
+    """
+    author = getattr(report, "user_id", None)
+    if (
+        to_status not in CLOSED_STATUSES
+        or getattr(report, "status", None) in CLOSED_STATUSES
+        or not author
+        or author == actor_user_id
+    ):
+        return None
+
+    number = f"#{report.id}"
+    subject = f"« {report.title} »"
+    if to_status == "resolved":
+        return Notice(author, f"Votre signalement {number} est corrigé",
+                      f"{subject} est marqué corrigé.", "success")
+    if to_status == "rejected":
+        message = f"{subject} a été examiné et ne sera pas traité comme un bug."
+        note = (getattr(report, "admin_note", None) or "").strip()
+        if note:
+            message += f"\n\nNote : {note}"
+        return Notice(author, f"Votre signalement {number} a été examiné", message, "info")
+    original = getattr(report, "duplicate_of", None)
+    if original:
+        return Notice(author, f"Votre signalement {number} rejoint le #{original}, déjà suivi",
+                      f"{subject} décrit un problème déjà signalé, suivi sous le #{original}.", "info")
+    return Notice(author, f"Votre signalement {number} est déjà suivi",
+                  f"{subject} décrit un problème déjà signalé.", "info")
 
 
 def _age_label(report: Any, now: datetime) -> str:
@@ -253,7 +306,15 @@ async def _superadmins(db: Any) -> list[tuple[int, Optional[str]]]:
     return [(row[0], row[1]) for row in rows]
 
 
-async def _notify_in_app(user_id: int, title: str, message: str, link: str) -> None:
+async def send_notice(notice: Notice) -> None:
+    """Prévient l'auteur. Sans lien : il n'a aucune page qui liste ses
+    signalements, et un lien vers l'accueil ne mène à rien."""
+    await _notify_in_app(notice.user_id, notice.title, notice.message, None, type_=notice.type)
+
+
+async def _notify_in_app(
+    user_id: int, title: str, message: str, link: Optional[str], *, type_: str = "warning"
+) -> None:
     """Une notification en base, poussée en temps réel. Ne lève jamais."""
     from apowerb.helpers.database import sessionmanager
     from apowerb.helpers.notification_bus import notify as push_notification
@@ -265,7 +326,7 @@ async def _notify_in_app(user_id: int, title: str, message: str, link: str) -> N
                 user_id=user_id,
                 title=title[:255],
                 message=message,
-                type="warning",
+                type=type_,
                 link=link,
                 metadata_json=json.dumps({"source": "bug_reports"}),
                 is_read=False,
@@ -360,7 +421,7 @@ async def run_tick(now: Optional[datetime] = None) -> dict[str, int]:
         # Tout ce qui sert après le commit est lu AVANT : `commit()` expire les
         # objets, et les relire en asyncio lève `MissingGreenlet` (vécu le
         # 10/09/2026 sur ce même domaine).
-        resolved = [(r.id, r.title, r.user_id) for r in plan.to_resolve]
+        notices = [closure_notice(r, to_status="resolved") for r in plan.to_resolve]
         for report in plan.to_resolve:
             record_events(
                 db,
@@ -377,14 +438,9 @@ async def run_tick(now: Optional[datetime] = None) -> dict[str, int]:
         superadmins = await _superadmins(db) if digest else []
         await db.commit()
 
-    for report_id, title, user_id in resolved:
-        if user_id:
-            await _notify_in_app(
-                user_id,
-                f"Votre signalement #{report_id} est corrigé",
-                f"« {title} » : l'issue correspondante a été fermée.",
-                "/",
-            )
+    for notice in notices:
+        if notice is not None:
+            await send_notice(notice)
 
     if digest:
         title, body = digest
@@ -401,9 +457,9 @@ async def run_tick(now: Optional[datetime] = None) -> dict[str, int]:
 
     logger.info(
         "bug_report_watch: %d résolu(s) par issue fermée, %d en retard alerté(s)",
-        len(resolved), len(plan.to_alert),
+        len(notices), len(plan.to_alert),
     )
-    return {"resolved": len(resolved), "alerted": len(plan.to_alert)}
+    return {"resolved": len(notices), "alerted": len(plan.to_alert)}
 
 
 async def bug_report_watch_loop() -> None:
