@@ -306,6 +306,77 @@ async def _superadmins(db: Any) -> list[tuple[int, Optional[str]]]:
     return [(row[0], row[1]) for row in rows]
 
 
+async def close_with_duplicates(
+    db: Any,
+    canonical: Any,
+    to_status: str,
+    *,
+    actor_user_id: Optional[int] = None,
+    record_canonical: bool = True,
+) -> list[Notice]:
+    """Clôt un signalement ET les doublons qui le suivent.
+
+    Vu en dev le 16/09/2026 : deux doublons affichés « Issue créée » alors que
+    leur issue était fermée depuis deux jours. La veille les écarte de sa
+    sélection — les alerter compterait deux fois le même défaut — donc elle ne
+    les résolvait jamais, et le triage ne regardait que le signalement ouvert.
+    Une seule clôture ici, pour les deux chemins.
+
+    Rend les avis à envoyer APRÈS le commit : l'auteur d'un doublon attend une
+    réponse à son envoi, sans avoir à savoir qu'il a été rattaché à un autre.
+    """
+    from sqlalchemy import select
+
+    from apowerb.models import BugReport
+
+    notices = [closure_notice(canonical, to_status=to_status, actor_user_id=actor_user_id)]
+    # Le triage a déjà tracé son changement de statut via `diff_update` : le
+    # retracer ici ferait deux lignes pour une seule décision.
+    if record_canonical:
+        record_events(
+            db,
+            canonical.id,
+            [PendingEvent(EVENT_STATUS_CHANGED, from_value=canonical.status, to_value=to_status)],
+            actor_user_id=actor_user_id,
+        )
+    canonical.status = to_status
+
+    duplicates = list(
+        (
+            await db.execute(
+                select(BugReport).where(
+                    BugReport.duplicate_of == canonical.id,
+                    BugReport.status.notin_(sorted(CLOSED_STATUSES)),
+                )
+            )
+        ).scalars()
+    )
+    for duplicate in duplicates:
+        # La requête les écarte déjà ; la garde tient si l'appelant fournit
+        # sa propre liste.
+        if duplicate.status in CLOSED_STATUSES:
+            continue
+        notices.append(
+            closure_notice(duplicate, to_status=to_status, actor_user_id=actor_user_id)
+        )
+        record_events(
+            db,
+            duplicate.id,
+            [
+                PendingEvent(
+                    EVENT_STATUS_CHANGED,
+                    from_value=duplicate.status,
+                    to_value=to_status,
+                    detail=f"suit le signalement #{canonical.id}",
+                )
+            ],
+            actor_user_id=actor_user_id,
+        )
+        duplicate.status = to_status
+
+    return [n for n in notices if n is not None]
+
+
 async def send_notice(notice: Notice) -> None:
     """Prévient l'auteur. Sans lien : il n'a aucune page qui liste ses
     signalements, et un lien vers l'accueil ne mène à rien."""
@@ -421,7 +492,7 @@ async def run_tick(now: Optional[datetime] = None) -> dict[str, int]:
         # Tout ce qui sert après le commit est lu AVANT : `commit()` expire les
         # objets, et les relire en asyncio lève `MissingGreenlet` (vécu le
         # 10/09/2026 sur ce même domaine).
-        notices = [closure_notice(r, to_status="resolved") for r in plan.to_resolve]
+        notices = []
         for report in plan.to_resolve:
             record_events(
                 db,
@@ -429,7 +500,7 @@ async def run_tick(now: Optional[datetime] = None) -> dict[str, int]:
                 [PendingEvent(EVENT_ISSUE_CLOSED, from_value=report.status, to_value="resolved",
                               detail=f"issue #{report.issue_number} fermée")],
             )
-            report.status = "resolved"
+            notices.extend(await close_with_duplicates(db, report, "resolved"))
 
         digest = build_overdue_digest(plan.to_alert, now=now) if plan.to_alert else None
         for report in plan.to_alert:
@@ -439,8 +510,7 @@ async def run_tick(now: Optional[datetime] = None) -> dict[str, int]:
         await db.commit()
 
     for notice in notices:
-        if notice is not None:
-            await send_notice(notice)
+        await send_notice(notice)
 
     if digest:
         title, body = digest
@@ -457,9 +527,9 @@ async def run_tick(now: Optional[datetime] = None) -> dict[str, int]:
 
     logger.info(
         "bug_report_watch: %d résolu(s) par issue fermée, %d en retard alerté(s)",
-        len(notices), len(plan.to_alert),
+        len(plan.to_resolve), len(plan.to_alert),
     )
-    return {"resolved": len(notices), "alerted": len(plan.to_alert)}
+    return {"resolved": len(plan.to_resolve), "alerted": len(plan.to_alert)}
 
 
 async def bug_report_watch_loop() -> None:

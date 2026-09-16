@@ -232,22 +232,27 @@ async def update_bug_report(
     # Décidé une fois la note posée (un rejet l'envoie avec la clôture) mais
     # avant le statut, qui dit s'il y a clôture. Envoyé après le commit :
     # `commit()` expire l'objet, et une clôture annulée n'annonce rien.
-    notice = (
-        tracking.closure_notice(
-            report, to_status=payload.status.value, actor_user_id=getattr(admin, "user_id", None)
-        )
-        if payload.status is not None
-        else None
-    )
+    # Une clôture entraîne les doublons rattachés : sinon ils restent « en
+    # attente » à l'écran alors que le défaut est réglé (vu en dev le 16/09).
+    notices: list = []
     if payload.status is not None:
-        report.status = payload.status.value
+        if payload.status.value in tracking.CLOSED_STATUSES:
+            notices = await tracking.close_with_duplicates(
+                db,
+                report,
+                payload.status.value,
+                actor_user_id=getattr(admin, "user_id", None),
+                record_canonical=False,
+            )
+        else:
+            report.status = payload.status.value
 
     tracking.record_events(
         db, report.id, events, actor_user_id=getattr(admin, "user_id", None)
     )
     await db.commit()
     await db.refresh(report)
-    if notice is not None:
+    for notice in notices:
         await tracking.send_notice(notice)
     return service.to_detail(report)
 

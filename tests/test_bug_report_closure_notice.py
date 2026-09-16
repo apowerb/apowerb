@@ -147,10 +147,19 @@ async def test_la_notification_ne_porte_ni_lien_ni_avertissement(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+class _SansDoublon:
+    def scalars(self):
+        return []
+
+
 class _Db:
     def __init__(self):
         self.ajoutes = []
         self.commits = 0
+
+    async def execute(self, *_args, **_kwargs):
+        # La clôture cherche les doublons rattachés ; ici il n'y en a pas.
+        return _SansDoublon()
 
     def add(self, objet):
         self.ajoutes.append(objet)
@@ -220,6 +229,8 @@ def test_la_veille_passe_par_la_meme_decision():
 
     source = (Path(tracking.__file__)).read_text()
     corps = source[source.index("async def run_tick("): source.index("async def bug_report_watch_loop(")]
-    assert "closure_notice(" in corps
+    # Depuis le 16/09, la veille passe par `close_with_duplicates`, qui décide
+    # via `closure_notice` et entraîne les doublons.
+    assert "close_with_duplicates(" in corps
     assert "send_notice(" in corps
     assert "est corrigé" not in corps
