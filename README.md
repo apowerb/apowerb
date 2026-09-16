@@ -1,7 +1,28 @@
+<div align="center">
+
+<img src="https://avatars.githubusercontent.com/u/310538280?v=4&s=160" alt="apowerb" width="96" />
+
 # apowerb
 
-Agentic framework for building and deploying AI agents: flexible orchestration, custom
-tool integration, RAG, Text-to-SQL, webhooks and scheduled runs.
+**The open-source agentic framework to build, orchestrate, and operate production AI agents.**
+
+[![Documentation](https://img.shields.io/badge/docs-apowerb.com-blue?style=for-the-badge&logo=googledocs&logoColor=white)](https://docs.apowerb.com/)
+[![PyPI version](https://img.shields.io/pypi/v/apowerb?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/apowerb/)
+[![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](LICENSE)
+[![Discord](https://img.shields.io/badge/Community-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/channels/1470717940075597896)
+
+<p align="center">
+  <a href="https://docs.apowerb.com/">Documentation</a> •
+  <a href="https://docs.apowerb.com/quickstart">Quickstart</a> •
+  <a href="https://docs.apowerb.com/api-reference/introduction">API Reference</a> •
+  <a href="https://docs.apowerb.com/deployment/dockercompose">Deployment</a> •
+  <a href="https://thaink2.com">thaink2</a>
+</p>
+
+</div>
+
+---
 
 This repository is the **open-source core**. Some capabilities named in the product —
 billing, usage metering, prospection, identity-provider sign-in, multi-factor
