@@ -409,6 +409,21 @@ class Dashboard(BaseModel):
     # Helpers
     # ------------------------------------------------------------------
 
+    def next_free_row(self) -> int:
+        """Premiere ligne libre sous tous les composants.
+
+        Un appelant qui ne precise pas de position veut ajouter "a la suite" :
+        c'est la ligne rendue ici. On raisonne sur ``row + height``, et non sur
+        ``row`` seul -- un composant haut de six lignes pose en ligne 2 occupe
+        jusqu'a la ligne 8, et s'arreter a ``max(row)`` le ferait recouvrir.
+
+        Deux composants cote a cote partagent la meme ligne : le maximum, et
+        non la somme, est donc la bonne mesure.
+        """
+        if not self.components:
+            return 0
+        return max(c.position.row + c.position.height for c in self.components)
+
     def add_component(self, component: DashboardComponent) -> "Dashboard":
         """Return a new Dashboard with the component appended (immutable)."""
         return self.model_copy(

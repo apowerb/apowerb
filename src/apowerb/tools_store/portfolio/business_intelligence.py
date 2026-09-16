@@ -370,6 +370,25 @@ async def _async_create_dashboard(
         }
 
 
+async def _resolve_position(svc, dashboard_id: str, row: int, col: int) -> tuple[int, int]:
+    """Traduit une position non precisee en "sous tout le reste".
+
+    ``row < 0`` est la sentinelle : elle dit que l'appelant n'a pas choisi de
+    place. C'est le cas par defaut des outils d'ajout, parce qu'un modele qui
+    choisit sa ligne le fait sans connaitre l'occupation reelle de la grille --
+    il rejoue le gabarit de son instruction et pose son element au milieu de
+    ceux que l'utilisateur avait ranges.
+
+    Un ajout empile part aussi de la colonne 0 : il prend la largeur demandee a
+    gauche, et l'utilisateur le deplace ensuite a la souris s'il le souhaite.
+    Une position explicite (``row >= 0``) est respectee telle quelle.
+    """
+    if row >= 0:
+        return row, col
+    dashboard = await svc.get(dashboard_id)
+    return dashboard.next_free_row(), 0
+
+
 async def _async_add_chart_to_dashboard(
     dashboard_id: str,
     chart_id: str,
@@ -388,6 +407,7 @@ async def _async_add_chart_to_dashboard(
     async with _get_session() as db:
         store = DatabaseDashboardStore(db, owner=owner_email)
         svc = DashboardService(store)
+        row, col = await _resolve_position(svc, dashboard_id, row, col)
         # Resolve chart_id: accept UUID directly or look up by name
         from apowerb.bi.db_stores import DatabaseChartStore
         chart_store = DatabaseChartStore(db, owner=owner_email)
@@ -474,6 +494,7 @@ async def _async_add_kpi_to_dashboard(
     async with _get_session() as db:
         store = DatabaseDashboardStore(db, owner=owner_email)
         svc = DashboardService(store)
+        row, col = await _resolve_position(svc, dashboard_id, row, col)
 
         component_schema = ComponentCreateSchema(
             component_type="key_value",
@@ -1080,7 +1101,7 @@ def tool_create_dashboard(
 def tool_add_chart_to_dashboard(
     chart_id: str,
     dashboard_id: str = "",
-    row: int = 0,
+    row: int = -1,
     col: int = 0,
     width: int = 6,
     height: int = 4,
@@ -1096,7 +1117,9 @@ def tool_add_chart_to_dashboard(
         chart_id:       ID of the chart to embed (from tool_create_chart).
         dashboard_id:   Target dashboard id. OPTIONAL — in a dashboard's own
                         chat it defaults to that dashboard automatically.
-        row:            Grid row position (0-based, top to bottom).
+        row:            Grid row position (0-based, top to bottom). Leave
+                        unset to stack the component under everything
+                        already on the dashboard -- that is the default.
         col:            Grid column position (0-based, 0-11).
         width:          Column span (1-12, default 6 = half width).
         height:         Row span in grid units (default 4).
@@ -1134,7 +1157,7 @@ def tool_add_kpi_to_dashboard(
     trend_value: float = 0.0,
     trend_direction: str = "neutral",
     trend_sentiment: str = "neutral",
-    row: int = 0,
+    row: int = -1,
     col: int = 0,
     width: int = 4,
     height: int = 2,
@@ -1156,7 +1179,8 @@ def tool_add_kpi_to_dashboard(
         trend_value:     Numeric trend delta or percentage (e.g. 12.5). Set to 0 for no trend.
         trend_direction: Trend arrow direction: "up", "down", or "neutral".
         trend_sentiment: Trend color meaning: "positive" (green), "negative" (red), or "neutral".
-        row:             Grid row position.
+        row:             Grid row position. Leave unset to stack under the
+                         existing components -- that is the default.
         col:             Grid column position.
         width:           Column span (default 4).
         height:          Row span (default 2).
@@ -1599,7 +1623,7 @@ def make_bi_tools(
     def tool_add_chart_to_dashboard(
         dashboard_id: str,
         chart_id: str,
-        row: int = 0,
+        row: int = -1,
         col: int = 0,
         width: int = 6,
         height: int = 4,
@@ -1613,7 +1637,10 @@ def make_bi_tools(
         Args:
             dashboard_id:   ID of the target dashboard.
             chart_id:       ID of the chart to embed (from tool_create_chart).
-            row:            Grid row position (0-based, top to bottom).
+            row:            Grid row position (0-based, top to bottom). Leave
+                            unset to stack under the existing components. Leave
+                        unset to stack the component under everything
+                        already on the dashboard -- that is the default.
             col:            Grid column position (0-based, 0-11).
             width:          Column span (1-12, default 6 = half width).
             height:         Row span in grid units (default 4).
@@ -1641,7 +1668,7 @@ def make_bi_tools(
         trend_value: float = 0.0,
         trend_direction: str = "neutral",
         trend_sentiment: str = "neutral",
-        row: int = 0,
+        row: int = -1,
         col: int = 0,
         width: int = 4,
         height: int = 2,
@@ -1661,7 +1688,9 @@ def make_bi_tools(
             trend_value:     Numeric trend delta or percentage (e.g. 12.5). Set to 0 for no trend.
             trend_direction: Trend arrow direction: "up", "down", or "neutral".
             trend_sentiment: Trend color meaning: "positive" (green), "negative" (red), or "neutral".
-            row:             Grid row position.
+            row:             Grid row position. Leave unset to stack under
+                             the existing components. Leave unset to stack under the
+                         existing components -- that is the default.
             col:             Grid column position.
             width:           Column span (default 4).
             height:          Row span (default 2).

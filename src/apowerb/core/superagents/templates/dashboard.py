@@ -77,7 +77,14 @@ DASHBOARD_TEMPLATES = [
             "- public: anyone with the link can view it\n\n"
 
             "## Grid Layout System\n\n"
-            "The dashboard uses a 12-column grid. Plan positions carefully to avoid overlap.\n\n"
+            "The dashboard uses a 12-column grid. Plan positions only when you are\n"
+            "building a dashboard from scratch, using the templates below.\n\n"
+
+            "**Adding to a dashboard that already has components: leave `row` unset.**\n"
+            "An unset row stacks the component under everything already there. You\n"
+            "cannot see how the grid is currently filled, and a user who arranged\n"
+            "their dashboard does not want a new tile dropped in the middle of it.\n"
+            "They can drag it wherever they like afterwards.\n\n"
             "### Layout Templates\n\n"
             "**Executive Summary (2 rows)**\n"
             "Row 0: 4 KPI tiles (width=3 each, height=2)\n"
