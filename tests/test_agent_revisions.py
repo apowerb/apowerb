@@ -27,12 +27,14 @@ OTHER = "someone-else@example.com"
 
 
 def _sqlite_engine():
-    """An in-memory engine that answers to the store's ``public`` schema.
+    """An in-memory engine that answers to whichever schema the store uses.
 
-    The store's tables are declared with ``schema="public"`` (Postgres in
-    production). SQLite reaches that name through an ATTACHed database, and
-    StaticPool keeps the single connection alive so the attached schema — and
-    everything written into it — survives between ``engine.begin()`` blocks.
+    ``DB_SCHEMA`` decides it: "public" by default (Postgres in production),
+    empty on the CI bench, where the tables carry no schema at all. SQLite
+    reaches a named schema through an ATTACHed database, so ``public`` is
+    attached unconditionally — harmless when nothing is qualified with it.
+    StaticPool keeps the single connection alive, so everything written
+    survives between ``engine.begin()`` blocks.
     """
     engine = create_engine(
         "sqlite://",
