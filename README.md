@@ -25,11 +25,11 @@
 ---
 
 This repository is the **open-source core**. Some capabilities named in the product —
-billing, usage metering, prospection, identity-provider sign-in, multi-factor
-authentication, agent evaluation, supervision, organisation management — ship as separate
-commercial bricks and are **absent here**. Where the core holds a hook for one, it is
-documented as such. A `404` on those routes means "not in this edition", not "object not
-found".
+billing, the consumption analysis screen, prospection, identity-provider sign-in,
+multi-factor authentication, agent evaluation, the supervision screen, organisation
+management — ship as separate commercial bricks and are **absent here**. Where the
+core holds a hook for one, it is documented as such. A `404` on those routes means
+"not in this edition", not "object not found".
 
 The **administration panel is part of this edition**: users, groups, permissions, MFA
 enforcement. Only the management of *organisations* is sold separately — deciding which
@@ -437,9 +437,10 @@ apowerb/
 └── pyproject.toml
 ```
 
-Routers not to look for here — they arrive with the bricks: billing, usage, prospection,
-identity-provider sign-in, MFA, evaluation, supervision, organisation management
-(`/api/admin/organizations*`). The rest of `/api/admin` is here.
+Routers not to look for here — they arrive with the bricks: billing, usage analytics,
+prospection, identity-provider sign-in, MFA, evaluation, organisation management
+(`/api/admin/organizations*`). The rest of `/api/admin` is here. Session listing and
+traces are served here; only the supervision screen is a brick.
 
 ### Startup Sequence
 
@@ -978,10 +979,11 @@ apowerb is distributed under the [Apache License 2.0](./LICENSE).
 Copyright 2025-2026 thaink².
 
 This repository holds the **open-source core**. The commercial bricks — billing,
-usage metering, prospection, identity-provider sign-in, multi-factor
-authentication, agent evaluation, supervision and organisation management — are
-distributed separately under commercial terms and are not covered by this
-licence.
+the consumption analysis screen, prospection, identity-provider sign-in,
+multi-factor authentication, agent evaluation, the supervision screen and
+organisation management — are distributed separately under commercial terms and
+are not covered by this licence. The token metering and the cap themselves live in
+this repository, so they are covered by it.
 
 "apowerb" and the apowerb logo are trademarks of thaink². The licence covers the
 code, not the marks — see [TRADEMARK.md](./TRADEMARK.md).
