@@ -286,6 +286,11 @@ def resync_agent_to_template(agent_id: int, user_id: str) -> dict:
         .values(**update_values)
     )
     with agent_store.engine.begin() as conn:
+        # Un resync écrase instruction, outils et tags : même perte que sur un
+        # update ordinaire, donc même archive.
+        previous = _fetch_agent_row(conn, agent_id, user_id)
+        if previous is not None:
+            _archive_revision(conn, previous, revised_by=user_id, reason="resync")
         conn.execute(upd)
 
     # Re-read the agent module on disk so subsequent /run_sse calls pick up
@@ -617,6 +622,171 @@ def propagate_api_key(
     return {"propagated_to": propagated, "count": len(propagated)}
 
 
+# Colonnes qu'une restauration réécrit. L'identité (``agent_id``), la
+# propriété (``owner_id``, ``organization_id``, ``project_id``) et la date de
+# création restent celles de l'agent vivant : restaurer une définition ne doit
+# pas rendre un agent à un ancien propriétaire ni le déplacer de projet.
+_NON_RESTORABLE_COLUMNS = frozenset(
+    {"agent_id", "owner_id", "organization_id", "project_id", "created_at"}
+)
+
+# Champs dont la liste des révisions annonce le changement, sans exposer la
+# ligne brute (qui porte les secrets chiffrés).
+_REVISION_DIFF_FIELDS = (
+    "agent_name",
+    "agent_model",
+    "agent_model_params",
+    "agent_description",
+    "agent_instruction",
+    "agent_tools",
+    "sub_agents",
+    "agent_type",
+    "output_key",
+    "output_schema_name",
+    "mcp_servers",
+    "agent_skills",
+    "guardrails_config",
+    "tags",
+)
+
+
+def _fetch_agent_row(conn, agent_id: int, user_id: str) -> dict | None:
+    """The agent row exactly as stored — secrets still encrypted.
+
+    ``get_agent`` déchiffre la clé API pour ses appelants ; l'archive ne doit
+    surtout pas passer par là, sous peine d'écrire un secret en clair dans
+    l'historique.
+    """
+    row = conn.execute(
+        agent_store.agent_table.select().where(
+            agent_store.agent_table.c.agent_id == agent_id,
+            agent_store.agent_table.c.owner_id == user_id,
+        )
+    ).fetchone()
+    return row._asdict() if row else None
+
+
+def _archive_revision(conn, row: dict, revised_by: str, reason: str) -> None:
+    """Copy the definition about to be overwritten into ``agent_revisions``.
+
+    Appelé **dans** la transaction d'écriture : si l'UPDATE échoue ou ne
+    correspond à aucune ligne, l'archive disparaît avec lui plutôt que de
+    laisser une révision fantôme.
+    """
+    conn.execute(
+        agent_store.revision_table.insert().values(
+            agent_id=row.get("agent_id"),
+            agent_name=row.get("agent_name"),
+            organization_id=row.get("organization_id"),
+            project_id=row.get("project_id"),
+            owner_id=row.get("owner_id"),
+            revised_by=revised_by,
+            revised_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            reason=reason,
+            payload=json.dumps(row, default=str),
+        )
+    )
+
+
+def list_agent_revisions(agent_id: int, user_id: str) -> list[dict]:
+    """Les définitions archivées d'un agent, de la plus récente à la plus ancienne.
+
+    La charge utile n'est pas renvoyée : elle contient les colonnes brutes,
+    donc la clé API chiffrée. On expose de quoi choisir une révision — quand,
+    par qui, pourquoi, et quels champs diffèrent de l'état courant.
+    """
+    with agent_store.engine.begin() as conn:
+        current = _fetch_agent_row(conn, agent_id, user_id) or {}
+        rows = conn.execute(
+            agent_store.revision_table.select()
+            .where(
+                agent_store.revision_table.c.agent_id == agent_id,
+                agent_store.revision_table.c.owner_id == user_id,
+            )
+            .order_by(agent_store.revision_table.c.revision_id.desc())
+        ).fetchall()
+
+    revisions = []
+    for row in rows:
+        entry = row._asdict()
+        try:
+            archived = json.loads(entry.pop("payload"))
+        except (TypeError, json.JSONDecodeError):
+            archived = {}
+        entry["changed_fields"] = [
+            field
+            for field in _REVISION_DIFF_FIELDS
+            if archived.get(field) != current.get(field)
+        ]
+        revisions.append(entry)
+    return revisions
+
+
+def restore_agent_revision(agent_id: int, revision_id: int, user_id: str) -> dict:
+    """Put an archived definition back in place, without a redeploy.
+
+    L'état courant est lui-même archivé avant d'être remplacé : un retour
+    arrière reste réversible, sinon ce n'est qu'un écrasement de plus.
+    """
+    with agent_store.engine.begin() as conn:
+        revision = conn.execute(
+            agent_store.revision_table.select().where(
+                agent_store.revision_table.c.revision_id == revision_id,
+                agent_store.revision_table.c.agent_id == agent_id,
+                agent_store.revision_table.c.owner_id == user_id,
+            )
+        ).fetchone()
+        if revision is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Revision not found, or you do not have permission to restore it.",
+            )
+
+        current = _fetch_agent_row(conn, agent_id, user_id)
+        if current is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Agent not found, or you do not have permission to update it.",
+            )
+
+        archived = json.loads(revision._asdict()["payload"])
+        values = {
+            column: value
+            for column, value in archived.items()
+            if column not in _NON_RESTORABLE_COLUMNS
+            and column in agent_store.agent_table.c
+        }
+        values["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        _archive_revision(conn, current, revised_by=user_id, reason="restore")
+        conn.execute(
+            agent_store.agent_table.update()
+            .where(
+                agent_store.agent_table.c.agent_id == agent_id,
+                agent_store.agent_table.c.owner_id == user_id,
+            )
+            .values(**values)
+        )
+
+    # Rematérialiser le module ADK sur disque : sans cela, la définition
+    # restaurée vit en base mais l'agent continue de répondre avec l'ancienne
+    # jusqu'au prochain redémarrage — exactement ce que la fonctionnalité
+    # promet d'éviter.
+    create_agent_module(
+        agent_name=str(agent_id),
+        description=archived.get("agent_description"),
+        instruction=archived.get("agent_instruction"),
+        tools=_parse_string_list(archived.get("agent_tools")),
+        model=archived.get("agent_model"),
+    )
+
+    return {
+        "agent_id": f"agent{agent_id}",
+        "restored_from_revision": revision_id,
+        "message": "Agent restored from revision.",
+    }
+
+
 def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
     """Update an existing agent in the agent store."""
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -722,6 +892,11 @@ def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
     )
 
     with agent_store.engine.begin() as conn:
+        # Archiver AVANT d'écraser, dans la même transaction : une définition
+        # perdue ici ne se retrouve nulle part ailleurs.
+        previous = _fetch_agent_row(conn, agent_id, user_id)
+        if previous is not None:
+            _archive_revision(conn, previous, revised_by=user_id, reason="update")
         result = conn.execute(update_query)
         if result.rowcount == 0:
             raise HTTPException(

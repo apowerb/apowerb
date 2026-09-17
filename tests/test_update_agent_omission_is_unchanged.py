@@ -55,8 +55,24 @@ def written(monkeypatch):
             captured.update(kw)
             return self
 
+    class _Row:
+        """A stored row, rendered the way SQLAlchemy renders one."""
+
+        def __init__(self, data: dict):
+            self._data = data
+
+        def _asdict(self):
+            return dict(self._data)
+
     class _Result:
         rowcount = 1
+
+        def fetchone(self):
+            # update_agent now archives the definition it is about to
+            # overwrite, so the simulated connection has to
+            # answer a SELECT as well as the UPDATE. The captured values —
+            # what these tests actually assert on — are unaffected.
+            return _Row(dict(STORED, agent_id=1, owner_id="u@example.com"))
 
     class _Conn:
         def __enter__(self):

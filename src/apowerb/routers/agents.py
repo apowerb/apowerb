@@ -6,6 +6,8 @@ from apowerb.core.agent_main import (
     get_agent,
     get_agent_template_status,
     resync_agent_to_template,
+    list_agent_revisions,
+    restore_agent_revision,
 )
 from apowerb.schema.agent_schema import AgentCreateSchema
 from apowerb.auth.dependencies import get_current_user
@@ -105,6 +107,41 @@ async def remove_agent(
     clean_id = agent_id.replace("agent", "")
     delete_agent(clean_id, user_id=current_user.email)
     return {"message": "Agent deleted successfully."}
+
+
+@router.get("/agents/{agent_id}/revisions", tags=["agents"])
+async def agent_revisions(
+    agent_id: str,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """List the definitions this agent overwrote, newest first.
+
+    Chaque entrée porte ``revision_id``, ``revised_at``, ``revised_by``,
+    ``reason`` ("update", "resync" ou "restore") et ``changed_fields`` — les
+    champs qui diffèrent de la définition actuellement en service.
+
+    La ligne archivée elle-même n'est pas renvoyée : elle contient la clé API
+    chiffrée, qui n'a rien à faire dans une réponse HTTP.
+    """
+    clean_id = int(agent_id.replace("agent", ""))
+    return list_agent_revisions(clean_id, user_id=current_user.email)
+
+
+@router.post("/agents/{agent_id}/revisions/{revision_id}/restore", tags=["agents"])
+async def restore_agent(
+    agent_id: str,
+    revision_id: int,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Put an archived definition back in service, without a redeploy.
+
+    L'état courant est archivé au passage, donc une restauration se défait
+    comme n'importe quelle autre modification. Le module ADK est réécrit sur
+    disque dans la foulée : l'agent répond avec la définition restaurée sans
+    redémarrage du service.
+    """
+    clean_id = int(agent_id.replace("agent", ""))
+    return restore_agent_revision(clean_id, revision_id, user_id=current_user.email)
 
 
 @router.get("/agents/{agent_id}/template-status", tags=["agents"])
