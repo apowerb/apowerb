@@ -12,10 +12,21 @@ runs a workflow with an attached file:
   matching run. The streaming task yields a final ``cancelled`` event and
   exits.
 
-Run state lives in an in-memory dict — fine for a single-process deployment,
-and anything cluster-wide would need a shared store. Each run carries:
+* ``GET /api/workflows/runs`` and ``GET /api/workflows/runs/{run_id}`` — what
+  ran, how it ended, and whether its input is still on disk.
+
+* ``POST /api/workflows/runs/{run_id}/replay`` — re-runs one from the input it
+  kept, as a new run that cites the original.
+
+Two pieces of state, deliberately: the **run record** is persisted in
+``agent_runs`` (it must survive a restart, a crash and the end of the stream),
+while the in-memory dict keeps only what cannot be serialised — the
+cancellation event of a run live *in this process*:
 
     ``{"cancel_event": asyncio.Event, "task": asyncio.Task, "owner": email}``
+
+So cancellation still only reaches a run served by this process, but the
+history no longer disappears with it.
 
 The default runner is a thin stub: workflow execution itself is still owned
 by the frontend (see ``DiagramEditor.jsx``'s ``runWorkflow``). The SSE route
@@ -45,6 +56,7 @@ from fastapi.responses import StreamingResponse
 from nanoid import generate as nanoid_generate
 
 from apowerb.auth.dependencies import get_current_user
+from apowerb.core import run_main
 from apowerb.users import schemas as user_schemas
 
 
@@ -101,6 +113,128 @@ _workflow_runner: Callable[
 # ---------------------------------------------------------------------------
 
 
+def _streaming_run(
+    run_id: str,
+    agent_ids: List[str],
+    file_bytes: Optional[bytes],
+    owner: str,
+) -> StreamingResponse:
+    """Drive one run and stream it, recording how it ends.
+
+    Factorisé entre le démarrage et le rejeu : les deux exécutent la même
+    chose, la seule différence étant d'où vient l'entrée. L'issue est écrite
+    en base dans le ``finally``, donc un flux interrompu ne laisse pas une
+    ligne éternellement ``running`` — c'était tout le défaut du registre en
+    mémoire, qui oubliait le run à la fin du flux.
+    """
+    cancel_event = asyncio.Event()
+    _runs[run_id] = {
+        "cancel_event": cancel_event,
+        "owner": owner,
+        "task": None,
+    }
+
+    async def _event_generator() -> AsyncGenerator[bytes, None]:
+        outcome = run_main.STATUS_SUCCESS
+        error_message: Optional[str] = None
+        try:
+            # ``run_id`` est émis d'emblée pour que le client puisse se
+            # raccrocher — y compris après un rejeu, où il diffère du wid
+            # qu'il avait envoyé.
+            yield f"data: {json.dumps({'event': 'run_started', 'wid': run_id})}\n\n".encode()
+            async for chunk in _workflow_runner(
+                run_id, cancel_event, agent_ids, file_bytes
+            ):
+                yield chunk.encode() if isinstance(chunk, str) else chunk
+                if cancel_event.is_set():
+                    # Drain one more iteration if the runner hasn't noticed.
+                    continue
+            if cancel_event.is_set():
+                outcome = run_main.STATUS_CANCELLED
+        except asyncio.CancelledError:
+            outcome = run_main.STATUS_CANCELLED
+            yield f"data: {json.dumps({'event': 'cancelled'})}\n\n".encode()
+            raise
+        except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
+            outcome = run_main.STATUS_ERROR
+            error_message = f"{type(exc).__name__}: {exc}"
+            logger.exception("[workflows] run_id=%s a echoue", run_id)
+            yield (
+                "data: "
+                + json.dumps({"event": "error", "detail": error_message})
+                + "\n\n"
+            ).encode()
+        finally:
+            _runs.pop(run_id, None)
+            try:
+                run_main.finish_run(run_id, status=outcome, error_message=error_message)
+            except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
+                logger.exception(
+                    "[workflows] issue du run_id=%s non consignee", run_id
+                )
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-Workflow-Id": run_id,
+        },
+    )
+
+
+@router.get("/runs")
+async def list_runs(
+    limit: int = 50,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Les runs de l'utilisateur, du plus récent au plus ancien.
+
+    Chaque entrée porte son déclencheur, son statut, la cause de son échec le
+    cas echeant, et ``input_available`` — l'entrée est-elle encore sur disque,
+    c'est-à-dire ce run est-il rejouable.
+    """
+    return run_main.list_runs(current_user.email, limit=limit)
+
+
+@router.get("/runs/{run_id}")
+async def get_run(
+    run_id: str,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Un run précis, s'il appartient à l'appelant."""
+    run = run_main.get_run(run_id, owner_id=current_user.email)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown run: {run_id}",
+        )
+    return run
+
+
+@router.post("/runs/{run_id}/replay")
+async def replay_run(
+    run_id: str,
+    force: bool = False,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Relance un run à partir de l'entrée qu'il avait conservée.
+
+    Un run réussi n'est pas rejoué par accident : ses effets de bord ont déjà
+    eu lieu, il faut ``force=true``. Un run encore en vol est refusé tout
+    court. Le rejeu est un **nouveau** run qui cite l'original.
+    """
+    replay = run_main.prepare_replay(run_id, owner_id=current_user.email, force=force)
+    return _streaming_run(
+        run_id=replay["run_id"],
+        agent_ids=[str(a) for a in replay["agent_ids"]],
+        file_bytes=replay["file_bytes"],
+        owner=current_user.email,
+    )
+
+
 @router.post("/run-sse")
 async def run_workflow_sse(
     canvas_agent_ids: str = Form(...),
@@ -145,50 +279,44 @@ async def run_workflow_sse(
         file_bytes = await file.read()
 
     wid = workflow_id or nanoid_generate(size=21)
-    cancel_event = asyncio.Event()
 
-    _runs[wid] = {
-        "cancel_event": cancel_event,
-        "owner": current_user.email,
-        "task": None,
-    }
+    # Le run est consigné AVANT de démarrer, avec son entrée : c'est elle qui
+    # rend le rejeu possible. ``start_run`` renvoie l'identifiant retenu, qui
+    # peut différer du wid demandé s'il était déjà pris.
+    try:
+        run_id = run_main.start_run(
+            trigger="workflow",
+            owner_id=current_user.email,
+            agent_ids=agent_ids,
+            config=_config,
+            file_bytes=file_bytes,
+            file_name=file.filename if file is not None else None,
+            run_id=wid,
+        )
+    except Exception:  # noqa: BLE001
+        # La trace est précieuse, l'exécution l'est davantage : une base
+        # indisponible doit dégrader le suivi, pas transformer une panne de
+        # stockage en panne du produit. Le run part quand même, sous son wid,
+        # et l'incident est journalisé au niveau qui réveille quelqu'un.
+        logger.exception(
+            "[workflows] run non consigne (wid=%s) — il demarre sans trace, "
+            "donc sans rejeu possible",
+            wid,
+        )
+        run_id = wid
 
     logger.info(
-        "[workflows] run-sse started wid=%s agents=%d owner=%s",
-        wid,
+        "[workflows] run-sse started run_id=%s agents=%d owner=%s",
+        run_id,
         len(agent_ids),
         current_user.email,
     )
 
-    async def _event_generator() -> AsyncGenerator[bytes, None]:
-        try:
-            # ``wid`` is always emitted up front so the client can reconcile.
-            yield f"data: {json.dumps({'event': 'run_started', 'wid': wid})}\n\n".encode()
-            async for chunk in _workflow_runner(
-                wid, cancel_event, agent_ids, file_bytes
-            ):
-                if isinstance(chunk, str):
-                    yield chunk.encode()
-                else:
-                    yield chunk
-                if cancel_event.is_set():
-                    # Drain one more iteration if the runner hasn't noticed.
-                    continue
-        except asyncio.CancelledError:
-            yield f"data: {json.dumps({'event': 'cancelled'})}\n\n".encode()
-            raise
-        finally:
-            _runs.pop(wid, None)
-
-    return StreamingResponse(
-        _event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "X-Workflow-Id": wid,
-        },
+    return _streaming_run(
+        run_id=run_id,
+        agent_ids=agent_ids,
+        file_bytes=file_bytes,
+        owner=current_user.email,
     )
 
 
