@@ -234,6 +234,21 @@ async def platform_metrics(
     session_params: dict[str, object] = dict(params)
     session_params["since"] = since.replace(tzinfo=None)
 
+    # ADK owns `sessions` and creates it lazily, inside `prepare_tables()`,
+    # right before its first database operation -- that is, on the first
+    # conversation. No `ensure_*` of ours declares it. A database that has
+    # never held a conversation therefore has no `sessions` table at all,
+    # and the dashboard is the first screen an administrator opens on a
+    # fresh install: it has to answer zero, not 500.
+    #
+    # Asked once, up front, rather than caught per query: a failed statement
+    # aborts the surrounding transaction, so a `try` around the session
+    # counts would take every panel after it down as well.
+    has_sessions = (await db.execute(
+        text("SELECT to_regclass(:qualified_name)"),
+        {"qualified_name": f"{schema}.sessions"},
+    )).scalar() is not None
+
     totals_row = (await db.execute(text(
         f"SELECT count(*), coalesce(sum(total_tokens),0), "
         f"       count(DISTINCT owner_id), "
@@ -253,10 +268,12 @@ async def platform_metrics(
 
     # ADK sessions key their owner as `user_id`, which holds the email.
     session_clause = "" if emails is None else " AND user_id = ANY(:emails)"
-    sessions_total = (await db.execute(text(
-        f"SELECT count(*) FROM {schema}.sessions "
-        f"WHERE create_time >= :since{session_clause}"
-    ), session_params)).scalar() or 0
+    sessions_total = 0
+    if has_sessions:
+        sessions_total = (await db.execute(text(
+            f"SELECT count(*) FROM {schema}.sessions "
+            f"WHERE create_time >= :since{session_clause}"
+        ), session_params)).scalar() or 0
 
     never_used = (await db.execute(text(
         f'SELECT count(*) FROM {schema}."user" u '
@@ -273,13 +290,15 @@ async def platform_metrics(
             "GROUP BY d ORDER BY d"
         ), params)).all()
     }
-    sessions_by_day = {
-        str(day): int(n or 0)
-        for day, n in (await db.execute(text(
-            f"SELECT date(create_time) AS d, count(*) FROM {schema}.sessions "
-            f"WHERE create_time >= :since{session_clause} GROUP BY d ORDER BY d"
-        ), session_params)).all()
-    }
+    sessions_by_day: dict[str, int] = {}
+    if has_sessions:
+        sessions_by_day = {
+            str(day): int(n or 0)
+            for day, n in (await db.execute(text(
+                f"SELECT date(create_time) AS d, count(*) FROM {schema}.sessions "
+                f"WHERE create_time >= :since{session_clause} GROUP BY d ORDER BY d"
+            ), session_params)).all()
+        }
 
     # Every day in the window, including the empty ones: a line drawn only
     # through the days that have data hides how quiet the others were.
