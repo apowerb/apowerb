@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from typing import Any, Callable, Optional
 
 from apowerb.configs.th2logger import setup_logging
@@ -58,6 +59,61 @@ def _extract_usage(usage_metadata: Any) -> Optional[dict]:
         "cached_tokens": raw.get("cached_content_token_count") or 0,
         "total_tokens": raw.get("total_token_count") or 0,
     }
+
+
+# OpenTelemetry GenAI semantic convention name, in SECONDS. Kept identical
+# to the spec so the observability pipeline can read it without a mapping.
+TTFT_ATTRIBUTE = "gen_ai.server.time_to_first_token"
+
+
+def _has_visible_text(llm_response: Any) -> bool:
+    """True when this chunk puts characters on the user's screen.
+
+    A chunk carrying only a ``function_call`` shows the user nothing: the
+    model asked for a tool, the answer is still to come. Counting it as a
+    first token would report a flattering latency on exactly the turns
+    that feel slow -- the tool-calling ones.
+    """
+    try:
+        content = getattr(llm_response, "content", None)
+        parts = getattr(content, "parts", None) or []
+        return any((getattr(part, "text", None) or "").strip() for part in parts)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _mark_time_to_first_token() -> None:
+    """Stamp time-to-first-token on the active span, once per model call.
+
+    ADK's ``generate_content`` span carries the call's TOTAL duration, which
+    says nothing about perceived latency: on a tool-calling turn the first
+    call streams a function call and the user waits through a second call
+    before seeing a word. Nothing else in the stack records the moment the
+    first character appears -- not nginx (default ``combined`` log format,
+    no timing variables), not the metrics pipeline.
+
+    The first chunk wins: a later chunk must not overwrite the value, or the
+    attribute would end up measuring the whole stream instead of its start.
+
+    Best-effort ABSOLUTE, like the rest of this module: a telemetry hiccup
+    must never break an agent response.
+    """
+    try:
+        from opentelemetry import trace as _otel_trace
+
+        span = _otel_trace.get_current_span()
+        if span is None or not span.is_recording():
+            return
+        # ReadableSpan exposes the attributes already set; re-reading them
+        # avoids keeping per-invocation state of our own.
+        if TTFT_ATTRIBUTE in (getattr(span, "attributes", None) or {}):
+            return
+        start_time = getattr(span, "start_time", None)  # ns, SDK Span
+        if not start_time:
+            return
+        span.set_attribute(TTFT_ATTRIBUTE, (time.time_ns() - start_time) / 1e9)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _extract_tool_names(llm_response: Any) -> Optional[str]:
@@ -200,6 +256,11 @@ def create_usage_recorder_callback(
     async def _usage_recorder_callback(*, callback_context, llm_response):
         try:
             if getattr(llm_response, "partial", False):
+                # Partial chunks carry no usage_metadata, so they are not
+                # recorded -- but the FIRST one carrying text is the only
+                # observable moment the user starts reading an answer.
+                if _has_visible_text(llm_response):
+                    _mark_time_to_first_token()
                 return None
 
             usage = _extract_usage(getattr(llm_response, "usage_metadata", None))

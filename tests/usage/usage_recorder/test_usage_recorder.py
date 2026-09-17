@@ -543,3 +543,140 @@ async def test_span_mirroring_never_breaks_on_missing_span(monkeypatch):
     )
 
     assert len(fake_mgr.store) == 1  # the row is still written
+
+
+# ---------------------------------------------------------------------------
+# Time to first token
+# ---------------------------------------------------------------------------
+
+
+class FakePart:
+    def __init__(self, text=None, function_call=None):
+        self.text = text
+        self.function_call = function_call
+
+
+class FakeFunctionCall:
+    def __init__(self, name):
+        self.name = name
+
+
+class FakeContent:
+    def __init__(self, parts):
+        self.parts = parts
+
+
+class FakeTtftSpan:
+    """Mimics an OTel SDK span: settable + READABLE attributes, and a
+    ``start_time`` in nanoseconds (opentelemetry.sdk.trace.Span.start_time)."""
+
+    def __init__(self, start_time):
+        self.start_time = start_time
+        self.attributes = {}
+
+    def is_recording(self):
+        return True
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+
+def _partial(text=None, tool=None):
+    parts = []
+    if text is not None:
+        parts.append(FakePart(text=text))
+    if tool is not None:
+        parts.append(FakePart(function_call=FakeFunctionCall(tool)))
+    resp = FakeLlmResponse(usage_metadata=None, partial=True)
+    resp.content = FakeContent(parts)
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_first_partial_chunk_with_text_records_ttft(monkeypatch):
+    """The first streamed chunk carrying text is the moment the user sees a
+    character appear. ADK's generate_content span only carries the call's
+    total duration, which on a tool-calling turn says nothing about perceived
+    latency — so the callback marks the first token itself."""
+    import time
+
+    import opentelemetry.trace as otel_trace
+
+    span = FakeTtftSpan(start_time=time.time_ns() - 250_000_000)  # 250 ms ago
+    monkeypatch.setattr(otel_trace, "get_current_span", lambda: span)
+
+    callback = create_usage_recorder_callback(
+        agent_id=1, agent_name="a", owner_id="o", model_name="gemini/gemini-2.5-flash"
+    )
+    ctx = FakeCallbackContext(session_id="sess-ttft")
+
+    assert await callback(callback_context=ctx, llm_response=_partial(text="Bon")) is None
+
+    ttft = span.attributes["gen_ai.server.time_to_first_token"]
+    assert 0.2 < ttft < 1.0, ttft
+
+
+@pytest.mark.asyncio
+async def test_later_chunks_do_not_overwrite_ttft(monkeypatch):
+    """The FIRST token wins: a later chunk must not push the value forward,
+    otherwise the attribute would end up measuring the whole stream."""
+    import time
+
+    import opentelemetry.trace as otel_trace
+
+    span = FakeTtftSpan(start_time=time.time_ns() - 250_000_000)
+    monkeypatch.setattr(otel_trace, "get_current_span", lambda: span)
+
+    callback = create_usage_recorder_callback(
+        agent_id=1, agent_name="a", owner_id="o", model_name="gemini/gemini-2.5-flash"
+    )
+    ctx = FakeCallbackContext(session_id="sess-ttft-2")
+
+    await callback(callback_context=ctx, llm_response=_partial(text="Bon"))
+    first = span.attributes["gen_ai.server.time_to_first_token"]
+    await callback(callback_context=ctx, llm_response=_partial(text="jour"))
+
+    assert span.attributes["gen_ai.server.time_to_first_token"] == first
+
+
+@pytest.mark.asyncio
+async def test_tool_call_chunk_is_not_a_first_token(monkeypatch):
+    """A chunk carrying only a function call shows the user nothing. Counting
+    it would report a flattering TTFT on exactly the turns that feel slow —
+    the tool-calling ones."""
+    import time
+
+    import opentelemetry.trace as otel_trace
+
+    span = FakeTtftSpan(start_time=time.time_ns() - 250_000_000)
+    monkeypatch.setattr(otel_trace, "get_current_span", lambda: span)
+
+    callback = create_usage_recorder_callback(
+        agent_id=1, agent_name="a", owner_id="o", model_name="gemini/gemini-2.5-flash"
+    )
+    ctx = FakeCallbackContext(session_id="sess-ttft-3")
+
+    await callback(callback_context=ctx, llm_response=_partial(tool="get_dashboard_data"))
+    await callback(callback_context=ctx, llm_response=_partial(text="   "))
+
+    assert "gen_ai.server.time_to_first_token" not in span.attributes
+
+
+@pytest.mark.asyncio
+async def test_ttft_marking_never_breaks_the_response(monkeypatch):
+    """Best-effort ABSOLUTE, like the rest of this module: a span that raises
+    must not propagate out of the callback."""
+    import opentelemetry.trace as otel_trace
+
+    class ExplodingSpan:
+        def is_recording(self):
+            raise RuntimeError("telemetry is down")
+
+    monkeypatch.setattr(otel_trace, "get_current_span", lambda: ExplodingSpan())
+
+    callback = create_usage_recorder_callback(
+        agent_id=1, agent_name="a", owner_id="o", model_name="gemini/gemini-2.5-flash"
+    )
+    ctx = FakeCallbackContext(session_id="sess-ttft-4")
+
+    assert await callback(callback_context=ctx, llm_response=_partial(text="Bon")) is None
