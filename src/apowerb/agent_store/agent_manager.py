@@ -64,7 +64,12 @@ class AgentStore(BaseModel):
         self.engine = create_sync_engine(
             f"{self.db_type}://{self.db_user}:{self.db_password}@{self.db_url}"
         )
-        self.metadata = MetaData(schema=self.db_schema)
+        # ``or None`` : un DB_SCHEMA vide doit signifier "pas de schema", pas
+        # un schema nomme "". La difference ne se voit qu au moment ou une
+        # table existe deja : ``create_all(checkfirst=True)`` cherche alors
+        # dans un schema introuvable, conclut que la table manque, et echoue
+        # sur un CREATE en doublon.
+        self.metadata = MetaData(schema=self.db_schema or None)
         self.agent_table = Table(
             self.table_name,
             self.metadata,
@@ -157,7 +162,7 @@ class AgentStore(BaseModel):
         inspector = sa_inspect(self.engine)
         existing = [
             c["name"]
-            for c in inspector.get_columns(self.table_name, schema=self.db_schema)
+            for c in inspector.get_columns(self.table_name, schema=self.db_schema or None)
         ]
         new_cols = {
             "output_key": "VARCHAR",

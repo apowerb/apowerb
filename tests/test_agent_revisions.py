@@ -221,5 +221,10 @@ def test_an_existing_agents_table_still_gets_the_revisions_table(monkeypatch):
 
     from sqlalchemy import inspect as sa_inspect
 
-    tables = sa_inspect(engine).get_table_names(schema="public")
+    # Le schema effectif depend de DB_SCHEMA : "public" en production, vide
+    # (donc aucun schema) sur le banc SQLite de la CI. On interroge celui que
+    # le store utilise vraiment, sinon le test ne prouve rien dans l une des
+    # deux configurations.
+    schema = agent_store.agent_table.schema
+    tables = sa_inspect(engine).get_table_names(schema=schema)
     assert "agent_revisions" in tables
