@@ -480,7 +480,7 @@ Route families in this edition, all under `/api` unless noted:
 | `emailing` | Outlook mail OAuth flow, shared mailboxes |
 | `webhooks` | Subscription CRUD and inbound push dispatch |
 | `notifications` | User notifications and SSE stream |
-| `supervision` | Session list for audit, scoped to what the caller may read |
+| `supervision` | Session list and session trace for audit (`/api/adk/sessions*`), scoped to what the caller may read |
 | `scheduler` | Scheduled runs through the configured orchestrator |
 | `charts`, `dashboards`, `bi-*` | BI: charts, dashboards, datasets, refresh, stats |
 | `share` | Shareable conversation links |
@@ -489,8 +489,11 @@ Route families in this edition, all under `/api` unless noted:
 
 Absent from this edition, provided by bricks: `billing`, `usage`, `prospection`,
 `campaigns`, MFA (`/api/auth/mfa/*`), identity-provider sign-in (`/api/users/{github,google,microsoft,linkedin}`),
-evaluation, supervision, and organisation management (`/api/admin/organizations*`). They
+evaluation, and organisation management (`/api/admin/organizations*`). They
 answer `404` here. The rest of `/api/admin` — users, groups, permissions — is served here.
+Supervision is split: the session list and traces are served here, and the core answers on
+its own who may read another account's session (`register_supervision_scope`, wired to the
+superadmin check); the supervision **screen** is what a brick provides.
 
 ### Upgrading: organisation management left the core
 
@@ -815,8 +818,22 @@ Not in this edition. The `user` row carries a credit balance and `transactions` 
 `credit_purchases` exist in the schema, but the packages, the Stripe checkout and the
 crediting logic belong to the **billing brick**. `/api/billing/*` answers `404` here.
 
-The `llm_usage` table is declared here, but **nothing in the core writes to it**: the
-metering is the usage brick's job. A core-only install has the table and leaves it empty.
+Token metering, by contrast, is in the core since 09/09/26. `register_core_usage()` is
+wired when the app is built, **before** `load_overlay()`, and the recorder writes one
+`llm_usage` row per completed model turn. `GET /api/config/default-llm/usage` serves the
+caller their own gauge. What stays commercial is the **consumption analysis screen** —
+usage broken down per agent, per tool and per user.
+
+The cap came with the counter, and it covers **only the shared `thaink2/default` model**
+(`llm_usage.billed_to_thaink2`): a personal API key is paid for by whoever supplies it, so
+it is never capped. A run over the cap is refused with a `402` before the answer starts,
+never cut mid-stream. `DEFAULT_LLM_MONTHLY_TOKEN_QUOTA` is the per-user allowance for the
+current Europe/Paris calendar month, and `0` means unlimited — the kill-switch to use
+without a redeploy if the guard blocks wrongly. `DEFAULT_LLM_USER_TOKEN_CAP` and
+`DEFAULT_LLM_GLOBAL_TOKEN_CAP` (sliding window of `DEFAULT_LLM_CAP_WINDOW_HOURS`, `0` =
+unlimited) are the fallback cap, per account and for the whole deployment; they apply only
+when no scale is registered on `register_default_llm_cap`, and the core registers one, so
+a standard install is capped by the monthly quota.
 
 ---
 
@@ -884,8 +901,9 @@ Sessions, events and ADK artifacts live in the tables Google ADK owns (`sessions
 agent.
 
 Some columns here serve bricks rather than the core: `credits`, `stripe_customer_id`,
-`mfa_*` and the `transactions` / `credit_purchases` / `llm_usage` tables are declared so a
-brick can use them, and stay untouched without one.
+`mfa_*` and the `transactions` / `credit_purchases` tables are declared so a brick can use
+them, and stay untouched without one. `llm_usage` is no longer one of them: the core writes
+to it itself (see [Credits and billing](#credits-and-billing)).
 
 ---
 
