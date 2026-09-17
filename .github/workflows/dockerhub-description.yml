@@ -1,0 +1,41 @@
+# Synchronise la page publique de l'image sur Docker Hub.
+#
+# Docker Hub plafonne `full_description` a 25 000 caracteres, or le README du
+# depot en fait plus de 37 000 : on publie donc `.github/DOCKERHUB.md`, une
+# description dediee et courte, plutot que le README lui-meme.
+name: Sync Docker Hub description
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/DOCKERHUB.md
+      - .github/workflows/dockerhub-description.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verifier la limite Docker Hub
+        run: |
+          n=$(wc -c < .github/DOCKERHUB.md)
+          echo "description : $n caracteres"
+          if [ "$n" -gt 25000 ]; then
+            echo "::error::La description depasse la limite Docker Hub de 25000 caracteres."
+            exit 1
+          fi
+
+      - name: Publier la description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: apowerb/apowerb
+          readme-filepath: .github/DOCKERHUB.md
+          short-description: ${{ github.event.repository.description }}
