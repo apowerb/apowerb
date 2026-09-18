@@ -1,13 +1,25 @@
 """Chat action-card tools.
 
 Each function in this module is an ADK tool the agent can call to push an
-interactive card into the chat UI. The return dicts follow the contract in
-``scratchpad/action-cards-contract.md``:
+interactive card into the chat UI.
 
-- ``_action_card: True``           — flag the frontend intercepts
-- ``kind: "<kind>"``                — routing key for the React card
-- ``status: "<kind>_pending"``      — lifecycle state before user responds
-- plus all the tool arguments recopied verbatim
+The card is built by the frontend from the tool CALL's arguments
+(``useChat.js``, ``onToolCall`` → ``data: {...toolCall.args}``, in both the
+commercial and the OSS UI) — never from what the tool returns. What the tool
+returns only reaches the model, so it is a short acknowledgement
+(roadmap#79):
+
+- ``status: "displayed"``  — the card is on screen
+- ``kind: "<kind>"``       — which card, so the model can reason about it
+- ``note``                 — tells the model not to repeat the card
+
+It deliberately carries none of the card's content. It used to recopy every
+argument plus an ``_action_card`` flag, and Gemini would copy that dict into
+its text reply: the JSON then showed up in the chat, in ``.md`` exports and
+on public ``/share`` snapshots.
+
+Validation errors still return ``{"status": "error", "message": ...}`` so the
+model knows why the call was refused and can retry.
 
 The ADK LLM layer uses these docstrings to describe the tools to the model,
 so keep ``Args``/``Returns`` sections descriptive and current.
@@ -135,6 +147,26 @@ When the user is chatting from a BI dashboard, the runtime sets
 """
 
 
+def _displayed(kind: str, *, paused: bool = True) -> dict:
+    """Accuse de reception renvoye au modele apres l'affichage d'une carte.
+
+    ``paused`` distingue les cartes qui attendent une reponse de l'utilisateur
+    (le run s'arrete, cf. ``_request_pause``) de celles qui s'affichent sans
+    l'interrompre, comme un graphique integre.
+    """
+    if paused:
+        note = (
+            "The card is shown to the user. Do not repeat its content in your "
+            "reply; wait for the user's answer."
+        )
+    else:
+        note = (
+            "The card is shown in the conversation. Do not repeat its content "
+            "in your reply."
+        )
+    return {"status": "displayed", "kind": kind, "note": note}
+
+
 def request_user_input(
     question: str,
     input_type: str,
@@ -160,8 +192,9 @@ def request_user_input(
         placeholder: Optional placeholder text for free-form inputs.
 
     Returns:
-        dict payload describing the card. If ``input_type`` is invalid,
-        returns ``{"status": "error", "message": ...}`` instead.
+        a short acknowledgement that the card is displayed. It does not echo
+        the card: do not repeat the card in your reply. If ``input_type`` is
+        invalid, returns ``{"status": "error", "message": ...}`` instead.
     """
     if input_type not in VALID_USER_INPUT_TYPES:
         return {
@@ -172,15 +205,7 @@ def request_user_input(
             ),
         }
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "user_input",
-        "status": "user_input_pending",
-        "question": question,
-        "input_type": input_type,
-        "choices": choices,
-        "placeholder": placeholder,
-    }
+    return _displayed("user_input")
 
 
 def confirm_destructive(
@@ -200,17 +225,11 @@ def confirm_destructive(
         item: Optional label of the specific item at stake.
 
     Returns:
-        dict payload describing the confirmation card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "confirm_destructive",
-        "status": "confirm_destructive_pending",
-        "action": action,
-        "impact": impact,
-        "item": item,
-    }
+    return _displayed("confirm_destructive")
 
 
 def request_payment(
@@ -229,18 +248,11 @@ def request_payment(
         checkout_url: Optional hosted checkout link to redirect to.
 
     Returns:
-        dict payload describing the payment card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "payment",
-        "status": "payment_pending",
-        "amount": amount,
-        "currency": currency,
-        "reason": reason,
-        "checkout_url": checkout_url,
-    }
+    return _displayed("payment")
 
 
 def schedule_followup(
@@ -257,17 +269,11 @@ def schedule_followup(
         calendar_link: Optional link to the calendar event.
 
     Returns:
-        dict payload describing the follow-up card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "followup",
-        "status": "followup_pending",
-        "when_iso": when_iso,
-        "recap": recap,
-        "calendar_link": calendar_link,
-    }
+    return _displayed("followup")
 
 
 def propose_artifact_edit(
@@ -284,17 +290,11 @@ def propose_artifact_edit(
         summary: Optional human-readable summary of the edit.
 
     Returns:
-        dict payload describing the artifact-edit card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "artifact_edit",
-        "status": "artifact_edit_pending",
-        "filename": filename,
-        "diff": diff,
-        "summary": summary,
-    }
+    return _displayed("artifact_edit")
 
 
 def request_file_from_user(
@@ -312,17 +312,11 @@ def request_file_from_user(
         max_size_mb: Optional maximum file size in megabytes.
 
     Returns:
-        dict payload describing the file-request card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "file_request",
-        "status": "file_request_pending",
-        "purpose": purpose,
-        "accept": accept,
-        "max_size_mb": max_size_mb,
-    }
+    return _displayed("file_request")
 
 
 def propose_agent_upgrade(
@@ -344,18 +338,11 @@ def propose_agent_upgrade(
         tool_name: Optional name of the tool to enable.
 
     Returns:
-        dict payload describing the upgrade card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "agent_upgrade",
-        "status": "agent_upgrade_pending",
-        "capability": capability,
-        "reason": reason,
-        "skill_id": skill_id,
-        "tool_name": tool_name,
-    }
+    return _displayed("agent_upgrade")
 
 
 def embed_chart(chart_id: str, title: str | None = None) -> dict:
@@ -366,7 +353,8 @@ def embed_chart(chart_id: str, title: str | None = None) -> dict:
         title: Optional override title displayed above the chart.
 
     Returns:
-        dict payload describing the chart-embed card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     # Charts are NOT auto-added to a dashboard anymore — the user decides to send
     # a chart to the BI dashboard (the card's "send" button, or by asking the
@@ -378,12 +366,13 @@ def embed_chart(chart_id: str, title: str | None = None) -> dict:
     # 404s in the UI. Refuse with a clear error so the agent retries with the
     # right id. Only refuse on a definite 'missing' — a DB glitch ('unknown')
     # fails open so a real chart is never blocked.
-    resolved_title = None
+    # The card fetches the chart's own title by chart_id (ChartEmbedCard.jsx);
+    # only the existence check is needed here.
     try:
         from apowerb.tools_store.portfolio.business_intelligence import (
             resolve_chart_for_embed,
         )
-        state, resolved_title = resolve_chart_for_embed(chart_id)
+        state, _ = resolve_chart_for_embed(chart_id)
         if state == "missing":
             return {
                 "success": False,
@@ -395,21 +384,9 @@ def embed_chart(chart_id: str, title: str | None = None) -> dict:
                 ),
             }
     except Exception:  # pragma: no cover - never block embedding
-        resolved_title = None
+        pass
 
-    # Resolve the chart's content title so the card shows what the chart is about
-    # (e.g. "Colis par département") instead of "Chart #<uuid>".
-    if not title:
-        title = resolved_title
-
-    return {
-        "_action_card": True,
-        "kind": "chart_embed",
-        "status": "chart_embed_pending",
-        "chart_id": chart_id,
-        "title": title,
-        "dashboard_id": None,
-    }
+    return _displayed("chart_embed", paused=False)
 
 
 def request_location(reason: str, precision: str | None = None, tool_context=None) -> dict:
@@ -421,13 +398,8 @@ def request_location(reason: str, precision: str | None = None, tool_context=Non
             ``fine``.
 
     Returns:
-        dict payload describing the location-request card.
+        a short acknowledgement that the card is displayed. It does
+        not echo the card: do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return {
-        "_action_card": True,
-        "kind": "location_request",
-        "status": "location_request_pending",
-        "reason": reason,
-        "precision": precision,
-    }
+    return _displayed("location_request")
