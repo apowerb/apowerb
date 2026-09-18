@@ -1,9 +1,12 @@
+import hashlib
 import json
-import os
+import re
 import time
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+from google.adk.tools.tool_context import ToolContext
 
 from apowerb.configs.paths import uploads_dir
 
@@ -13,14 +16,39 @@ _MEMORY_FILENAME = ".agent_memory.json"
 _MAX_MEMORY_ITEMS = 1000
 
 
-def _resolve_folder(folder_name: str) -> str:
+_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9_-]+$")
+
+_UNKNOWN_CALLER = (
+    "memory is unavailable: the calling agent and user could not be identified"
+)
+
+
+def _scoped_folder(folder_name: str, tool_context: Optional[ToolContext]) -> Optional[str]:
+    """Where this caller's memory lives, or ``None`` when the caller is unknown.
+
+    Scope = the agent AND the user. The agent is the explicit ``folder_name``
+    of a tool bound with ``make_memory_tools``, else the root agent of the ADK
+    session; the user is the caller ADK resolved for this run, hashed so an
+    identifier can never shape a path.
+
+    No process environment variable is read. ``AGENT_FOLDER`` is global to the
+    process and nothing set it per run: every agent and every user of the
+    instance ended up in the same ``uploads/default`` file (apowerb/roadmap#84). An
+    unknown caller is refused rather than sent to a shared default.
     """
-    Resolve the effective folder name in this priority order:
-      1. Explicitly passed folder_name argument
-      2. AGENT_FOLDER environment variable
-      3. Fallback: 'default'
-    """
-    return folder_name or os.getenv("AGENT_FOLDER", "default")
+    agent = folder_name
+    if not agent and tool_context is not None:
+        agent = getattr(getattr(tool_context, "session", None), "app_name", "") or ""
+    if not agent or not _SAFE_SEGMENT.match(agent):
+        return None
+    if tool_context is None:
+        # Explicitly bound tool called outside an ADK run: agent scope only.
+        return agent
+    user = getattr(tool_context, "user_id", "") or ""
+    if not user:
+        return None
+    user_key = hashlib.sha256(user.encode("utf-8")).hexdigest()[:16]
+    return f"{agent}/memory/{user_key}"
 
 
 def _memory_path(folder_name: str) -> Path:
@@ -64,10 +92,12 @@ def _trim_to_limit(items: list, limit: int = _MAX_MEMORY_ITEMS) -> list:
 
 def _make_save_memory(folder_name: str = ""):
     """
-    Factory: returns tool_save_memory bound to an agent folder.
-    folder_name is resolved at call time so env vars set after import are honoured.
+    Factory: returns tool_save_memory, scoped per agent and per user at call time
+    (see ``_scoped_folder``).
     """
-    def tool_save_memory(content: str, tag: str = "") -> dict:
+    def tool_save_memory(
+        content: str, tag: str = "", tool_context: Optional[ToolContext] = None
+    ) -> dict:
         """
         Saves a piece of text to the agent's persistent memory.
 
@@ -77,7 +107,9 @@ def _make_save_memory(folder_name: str = ""):
         if not content or not content.strip():
             return {"success": False, "error": "content cannot be empty"}
 
-        folder = _resolve_folder(folder_name)
+        folder = _scoped_folder(folder_name, tool_context)
+        if folder is None:
+            return {"success": False, "error": _UNKNOWN_CALLER}
         store = _load_memory(folder)
 
         item = {
@@ -104,7 +136,12 @@ def _make_save_memory(folder_name: str = ""):
 def _make_search_memory(folder_name: str = ""):
     """Factory: returns tool_search_memory bound to an agent folder."""
 
-    def tool_search_memory(query: str, tag: str = "", max_results: int = 10) -> dict:
+    def tool_search_memory(
+        query: str,
+        tag: str = "",
+        max_results: int = 10,
+        tool_context: Optional[ToolContext] = None,
+    ) -> dict:
         """
         Searches the agent's persistent memory for relevant saved information.
 
@@ -118,7 +155,9 @@ def _make_search_memory(folder_name: str = ""):
         if not query.strip():
             return {"success": False, "error": "query cannot be empty"}
 
-        folder = _resolve_folder(folder_name)
+        folder = _scoped_folder(folder_name, tool_context)
+        if folder is None:
+            return {"success": False, "error": _UNKNOWN_CALLER}
         store = _load_memory(folder)
 
         candidates = store["text_memories"]
@@ -158,6 +197,7 @@ def _make_save_question_tool_usage(folder_name: str = ""):
         tool_name: str,
         tool_args: dict[str, Any],
         result_summary: str = "",
+        tool_context: Optional[ToolContext] = None,
     ) -> dict:
         """
         Saves a successful (question → tool_name + args) pair to memory so the
@@ -169,7 +209,9 @@ def _make_save_question_tool_usage(folder_name: str = ""):
         if not question.strip() or not tool_name.strip():
             return {"success": False, "error": "question and tool_name are required"}
 
-        folder = _resolve_folder(folder_name)
+        folder = _scoped_folder(folder_name, tool_context)
+        if folder is None:
+            return {"success": False, "error": _UNKNOWN_CALLER}
         store = _load_memory(folder)
 
         item: dict[str, Any] = {
@@ -204,6 +246,7 @@ def _make_search_tool_usages(folder_name: str = ""):
         question: str,
         tool_name: str = "",
         max_results: int = 5,
+        tool_context: Optional[ToolContext] = None,
     ) -> dict:
         """
         Retrieves previously saved (question → tool args) patterns that are
@@ -215,7 +258,9 @@ def _make_search_tool_usages(folder_name: str = ""):
         if not question.strip():
             return {"success": False, "error": "question cannot be empty"}
 
-        folder = _resolve_folder(folder_name)
+        folder = _scoped_folder(folder_name, tool_context)
+        if folder is None:
+            return {"success": False, "error": _UNKNOWN_CALLER}
         store = _load_memory(folder)
 
         candidates = store["tool_usages"]
@@ -249,8 +294,8 @@ def _make_search_tool_usages(folder_name: str = ""):
 
 
 # ---------------------------------------------------------------------------
-# Module-level tools (use AGENT_FOLDER env var for folder resolution)
-# These work correctly when AGENT_FOLDER is set in the agent's tool config.
+# Module-level tools, the ones the catalogue serves: scoped per agent and per
+# user from the ADK tool_context injected at call time.
 # ---------------------------------------------------------------------------
 tool_save_memory = _make_save_memory()
 tool_search_memory = _make_search_memory()
