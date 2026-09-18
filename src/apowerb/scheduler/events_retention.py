@@ -12,6 +12,11 @@ detail). The ADK events table lives in the application schema
 (``settings.db_schema``) because the session engine pins ``search_path``
 there (see ``main.py``); the DELETE is schema-qualified accordingly.
 
+ADK creates ``events`` lazily, on its first database operation -- so on the
+first conversation. The loop starts with the app, so on a fresh install the
+table does not exist yet: the pass then has nothing to purge and returns 0,
+instead of failing and logging a warning on every new install.
+
 The pass is defensive: any failure is logged and swallowed so the
 background task never crashes the app.
 """
@@ -82,6 +87,15 @@ async def _purge_old_events() -> int:
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     table = _events_table()
     async with sessionmanager.session() as db:
+        # Asked before anything else touches the table: both the index and the
+        # DELETE below fail on a database ADK has not written to yet.
+        exists = (await db.execute(
+            text("SELECT to_regclass(:qualified_name)"),
+            {"qualified_name": table},
+        )).scalar() is not None
+        if not exists:
+            logger.debug("[EVENTS RETENTION] %s not created by ADK yet, nothing to purge", table)
+            return 0
         # ADK's ``events`` table has only a composite PK and no index on
         # ``timestamp``; without one the daily DELETE seq-scans the table and
         # competes for I/O on the SHARED defaultdb instance (cf 2026-05-22
