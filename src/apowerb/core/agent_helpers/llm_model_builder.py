@@ -54,6 +54,9 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
 
     model_api_base = agent_model_params.get("model_api_base")
     model_api_key = agent_model_params.get("model_api_key")
+    model_api_version = agent_model_params.get("model_api_version") or agent_model_params.get(
+        "api_version"
+    )
 
     logger.info(
         f"[TO_AGENT] model_api_base={'set' if model_api_base else 'not set'}, model_api_key={'set' if model_api_key else 'not set'}"
@@ -70,12 +73,18 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
         _model_name = agent_details["agent_model"]
         # When using a custom OpenAI-compat api_base, force the openai/ provider prefix
         # so litellm uses the OpenAI tool-calling path instead of the Mistral SDK path.
-        if not _model_name.startswith("openai/"):
+        # Azure AI Foundry has its own LiteLLM provider and must keep its prefix.
+        if not _model_name.startswith(("openai/", "azure_ai/")):
             _model_name = "openai/" + _model_name.split("/", 1)[-1]
+        _endpoint_kwargs = {
+            "api_base": model_api_base,
+            "api_key": model_api_key,
+        }
+        if model_api_version:
+            _endpoint_kwargs["api_version"] = model_api_version
         return LiteLlm(
             model=_model_name,
-            api_base=model_api_base,
-            api_key=model_api_key,
+            **_endpoint_kwargs,
             drop_params=True,
             llm_client=CleaningLiteLLMClient(),
             **_litellm_kwargs,
@@ -86,6 +95,8 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
         os.environ["GEMINI_API_KEY"] = model_api_key
     elif model_api_key:
         _litellm_kwargs["api_key"] = model_api_key
+    if model_api_version:
+        _litellm_kwargs["api_version"] = model_api_version
     # Thinking Gemini REACTIVE (22/07/26) : la casse d'appariement __thought__
     # (incident 03/06, PR #196, thinking={"type":"disabled"}) etait une
     # regression google-adk 1.26.0 (#4650), corrigee >=1.27 : la signature

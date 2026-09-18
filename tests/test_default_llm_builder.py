@@ -91,6 +91,59 @@ def test_builder_leaves_a_normal_agent_alone(configured):
     assert model.model.endswith("mistral-large-latest")
 
 
+def test_builder_preserves_azure_ai_provider_and_api_version(configured, monkeypatch):
+    captured = {}
+
+    def fake_litellm(**kwargs):
+        captured.update(kwargs)
+        return type("Model", (), kwargs)()
+
+    monkeypatch.setattr(builder, "LiteLlm", fake_litellm)
+    model = builder.build_litellm_model(
+        {
+            "agent_model": "azure_ai/llama-3-3-70b-instruct",
+            "agent_model_params": {
+                "model_api_base": "https://foundry.example/models",
+                "model_api_key": "azure-token-or-api-key",
+                "model_api_version": "2025-04-01-preview",
+            },
+        },
+        temperature=None,
+    )
+
+    assert captured == {
+        "model": "azure_ai/llama-3-3-70b-instruct",
+        "api_base": "https://foundry.example/models",
+        "api_key": "azure-token-or-api-key",
+        "api_version": "2025-04-01-preview",
+        "drop_params": True,
+    }
+    assert model.model == captured["model"]
+
+
+def test_builder_accepts_api_version_alias(configured, monkeypatch):
+    captured = {}
+
+    def fake_litellm(**kwargs):
+        captured.update(kwargs)
+        return type("Model", (), kwargs)()
+
+    monkeypatch.setattr(builder, "LiteLlm", fake_litellm)
+    builder.build_litellm_model(
+        {
+            "agent_model": "azure_ai/mistral-large",
+            "agent_model_params": {
+                "model_api_base": "https://foundry.example/models",
+                "api_version": "2025-01-01",
+            },
+        },
+        temperature=None,
+    )
+
+    assert captured["model"] == "azure_ai/mistral-large"
+    assert captured["api_version"] == "2025-01-01"
+
+
 def test_validation_accepts_the_default_model_when_configured(configured):
     builder.validate_agent_model("thaink2/default")  # ne doit pas lever
 
