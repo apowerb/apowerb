@@ -99,6 +99,30 @@ def _should_inject_chat_action_tools(agent_details: dict) -> bool:
     return not bool(agent_details.get("output_schema_name"))
 
 
+def _should_inject_dashboard_tool() -> bool:
+    """Return True iff this agent is actually linked to a BI dashboard.
+
+    ``tool_get_dashboard_data`` used to be added to EVERY agent. Without a
+    dashboard it can only ever answer ``{"error": "No dashboard_id provided
+    and no AGENT_DASHBOARD_ID found in the current context"}`` -- and the BI
+    chart pipeline reads that prose back as data, which is one of the two
+    faces of apowerb/roadmap#60 ("Aucune donnee a afficher" instead of an
+    error).
+
+    It was not free either. Measured on a production request on 2026-09-17:
+    tool declarations were 18 035 of 28 023 characters (64%) for a
+    conversation of 361 characters, and this one tool accounted for 1 185 of
+    them -- paid on every single turn, in prefill latency, by every agent
+    that has no dashboard at all.
+
+    ``extras_loader.inject_bi_dashboard_tools`` already injects this very tool
+    under this very condition, so a linked agent keeps it and nothing else
+    changes. Reading the environment (rather than ``agent_details``) is what
+    that function does, and the mini chat sets ``AGENT_DASHBOARD_ID`` there.
+    """
+    return bool(os.environ.get("AGENT_DASHBOARD_ID", "").strip())
+
+
 def _should_inject_artifact_tool(agent_details: dict) -> bool:
     """Return True iff this agent should receive the artifact-saving tool.
 
@@ -609,9 +633,13 @@ def to_agent(agent_name: str) -> LlmAgent:
 
         _add_auto_tool(notify_user)
         _add_auto_tool(request_integration)
-        # Dashboard reader: lets every agent answer questions about the BI
-        # dashboard it is linked to (mini chat sets AGENT_DASHBOARD_ID).
-        _add_auto_tool(tool_get_dashboard_data)
+        # Dashboard reader: only for an agent actually linked to a BI
+        # dashboard (mini chat sets AGENT_DASHBOARD_ID). Injecting it
+        # unconditionally gave every other agent a tool that can only fail,
+        # and charged its schema to every prompt -- see
+        # _should_inject_dashboard_tool.
+        if _should_inject_dashboard_tool():
+            _add_auto_tool(tool_get_dashboard_data)
         # Chat action-card tools -- only for chat agents (output_schema_name absent).
         # Structured-output pipeline agents (an overlay's intake/matcher/recorder/notifier)
         # must not receive these tools: they cause the LLM to emit
