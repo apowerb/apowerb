@@ -984,6 +984,15 @@ def to_agent(agent_name: str) -> LlmAgent:
         if before_tool_cb:
             agent_kwargs["before_tool_callback"] = before_tool_cb
 
+        # Feature: Memory -- remember this conversation for the next ones
+        # (apowerb/roadmap#82). Runs first, returns None, never breaks a run.
+        if memory_enabled:
+            from apowerb.memory.service import with_memory_callback
+
+            agent_kwargs["after_agent_callback"] = with_memory_callback(
+                agent_kwargs.get("after_agent_callback")
+            )
+
         agent = LlmAgent(**agent_kwargs)
 
     logger.info(

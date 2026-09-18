@@ -20,6 +20,8 @@ from apowerb.core.invocation_context import set_current_invoker
 from apowerb.routers.tools import router as tools_router
 from apowerb.routers.agents import router as agents_router
 from apowerb.routers.agent_reload import router as agent_reload_router
+from apowerb.routers.agent_memory import router as agent_memory_router
+from apowerb.memory.service import MEMORY_SERVICE_URI, register_memory_service
 from apowerb.routers.runs import router as runs_router
 from apowerb.routers.adk_runner import router as adk_runner_router
 from apowerb.routers.artifacts import router as artifacts_router
@@ -364,6 +366,11 @@ _SESSION_DB_URI = (
 # enregistre a la main via register_s3_artifact_service().
 register_s3_artifact_service()
 
+# Memoire entre conversations (apowerb/roadmap#82) : sans memory_service_uri,
+# ADK retombe sur InMemoryMemoryService (RAM, par worker, jamais alimentee).
+# Stockee dans la base applicative, rangee par agent ET par utilisateur.
+register_memory_service()
+
 
 def _split_csv(value: str) -> list[str]:
     return [v.strip() for v in value.split(",") if v.strip()]
@@ -380,7 +387,7 @@ app = get_fast_api_app(
     web=False,  # True
     logo_text="welcome to thaink2 agentic platform",
     logo_image_url="https://raw.githubusercontent.com/thaink2/thaink2publicimages/main/thaink2_logo_circle.png",
-    # memory_service_uri="rag://",  # Disabled: RAG corpus was empty
+    memory_service_uri=MEMORY_SERVICE_URI,
     session_service_uri=_SESSION_DB_URI,
     # Borne le pool ADK (sinon 15 conns/worker via create_async_engine) : la
     # base defaultdb est PARTAGEE (celle d'un client incluse, max 100 conns). 5/worker.
@@ -515,6 +522,7 @@ api_router.include_router(auth_router, prefix="/api")
 api_router.include_router(user_router, prefix="/api")
 api_router.include_router(agents_router, prefix="/api")
 api_router.include_router(agent_reload_router, prefix="/api")
+api_router.include_router(agent_memory_router, prefix="/api")
 api_router.include_router(tools_router, prefix="/api")
 api_router.include_router(runs_router, prefix="/api")
 api_router.include_router(adk_runner_router, prefix="/api/adk")
@@ -626,6 +634,15 @@ async def _start_webhook_renewal():
         print("[STARTUP HOOK] bug_report_watch_loop scheduled", flush=True)
     except Exception as e:
         print(f"[STARTUP HOOK] bug_report_watch_loop schedule raised: {e!r}", flush=True)
+
+    try:
+        # Memoire des agents : purge quotidienne au-dela de MEMORY_RETENTION_DAYS.
+        from apowerb.memory.retention import memory_retention_loop
+
+        asyncio.create_task(memory_retention_loop())
+        print("[STARTUP HOOK] memory_retention_loop scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] memory_retention_loop schedule raised: {e!r}", flush=True)
 
     try:
         retention_task = asyncio.create_task(events_retention_loop())
