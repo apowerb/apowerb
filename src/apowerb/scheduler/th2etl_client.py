@@ -610,11 +610,14 @@ class Th2etlAPIClient:
             ),
             doing="trigger a run",
         )
-        # expose both shapes so callers reading "id" or "run_id"/"status" work
+        # Match Mage's response contract so callers do not depend on the
+        # selected orchestrator.
         return {
-            "id": data.get("run_id"),
-            "run_id": data.get("run_id"),
-            "status": data.get("status"),
+            "pipeline_run": {
+                "id": data.get("run_id"),
+                "run_id": data.get("run_id"),
+                "status": data.get("status"),
+            }
         }
 
     def trigger_pipeline(
