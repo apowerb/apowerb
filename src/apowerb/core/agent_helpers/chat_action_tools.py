@@ -5,18 +5,19 @@ interactive card into the chat UI.
 
 The card is built by the frontend from the tool CALL's arguments
 (``useChat.js``, ``onToolCall`` → ``data: {...toolCall.args}``, in both the
-commercial and the OSS UI) — never from what the tool returns. What the tool
-returns only reaches the model, so it is a short acknowledgement
-(roadmap#79):
+commercial and the OSS UI) — never from what the tool returns (roadmap#79).
 
-- ``status: "displayed"``  — the card is on screen
-- ``kind: "<kind>"``       — which card, so the model can reason about it
-- ``note``                 — tells the model not to repeat the card
+A card that waits for the user ends the run (``_request_pause`` sets
+``skip_summarization``) and returns ``None``. With ``skip_summarization``, ADK
+appends ``json.dumps(<tool result>)`` to the response event as a TEXT part
+(``google/adk/flows/llm_flows/functions.py``, ``__build_response_event``), and
+the UI renders every text part in the message: any returned dict showed up as
+JSON under the card, in ``.md`` exports and on public ``/share`` snapshots.
+ADK skips that text part only for a ``None`` result. The model is not called
+again in that run, so it has nothing to read anyway.
 
-It deliberately carries none of the card's content. It used to recopy every
-argument plus an ``_action_card`` flag, and Gemini would copy that dict into
-its text reply: the JSON then showed up in the chat, in ``.md`` exports and
-on public ``/share`` snapshots.
+``embed_chart`` does not pause: the model is called again, so it gets a short
+acknowledgement that carries none of the card's content.
 
 Validation errors still return ``{"status": "error", "message": ...}`` so the
 model knows why the call was refused and can retry.
@@ -147,33 +148,13 @@ When the user is chatting from a BI dashboard, the runtime sets
 """
 
 
-def _displayed(kind: str, *, paused: bool = True) -> dict:
-    """Accuse de reception renvoye au modele apres l'affichage d'une carte.
-
-    ``paused`` distingue les cartes qui attendent une reponse de l'utilisateur
-    (le run s'arrete, cf. ``_request_pause``) de celles qui s'affichent sans
-    l'interrompre, comme un graphique integre.
-    """
-    if paused:
-        note = (
-            "The card is shown to the user. Do not repeat its content in your "
-            "reply; wait for the user's answer."
-        )
-    else:
-        note = (
-            "The card is shown in the conversation. Do not repeat its content "
-            "in your reply."
-        )
-    return {"status": "displayed", "kind": kind, "note": note}
-
-
 def request_user_input(
     question: str,
     input_type: str,
     choices: list[str] | None = None,
     placeholder: str | None = None,
     tool_context=None,
-) -> dict:
+) -> dict | None:
     """Ask the user for a single piece of input via an interactive card.
 
     Use this when the agent needs a specific answer to continue (name,
@@ -192,9 +173,9 @@ def request_user_input(
         placeholder: Optional placeholder text for free-form inputs.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does not echo
-        the card: do not repeat the card in your reply. If ``input_type`` is
-        invalid, returns ``{"status": "error", "message": ...}`` instead.
+        None once the card is displayed; the run then waits for the user.
+        If ``input_type`` is invalid, returns
+        ``{"status": "error", "message": ...}`` instead.
     """
     if input_type not in VALID_USER_INPUT_TYPES:
         return {
@@ -205,7 +186,7 @@ def request_user_input(
             ),
         }
     _request_pause(tool_context)
-    return _displayed("user_input")
+    return None
 
 
 def confirm_destructive(
@@ -213,7 +194,7 @@ def confirm_destructive(
     impact: str,
     item: str | None = None,
     tool_context=None,
-) -> dict:
+) -> dict | None:
     """Ask the user to confirm a destructive or irreversible action.
 
     Use this before deleting data, sending emails on the user's behalf,
@@ -225,11 +206,11 @@ def confirm_destructive(
         item: Optional label of the specific item at stake.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does
-        not echo the card: do not repeat the card in your reply.
+        None once the card is displayed; the run then waits for the user.
+        Do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return _displayed("confirm_destructive")
+    return None
 
 
 def request_payment(
@@ -238,7 +219,7 @@ def request_payment(
     reason: str,
     checkout_url: str | None = None,
     tool_context=None,
-) -> dict:
+) -> dict | None:
     """Request a payment from the user through a payment card.
 
     Args:
@@ -248,11 +229,11 @@ def request_payment(
         checkout_url: Optional hosted checkout link to redirect to.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does
-        not echo the card: do not repeat the card in your reply.
+        None once the card is displayed; the run then waits for the user.
+        Do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return _displayed("payment")
+    return None
 
 
 def schedule_followup(
@@ -260,7 +241,7 @@ def schedule_followup(
     recap: str,
     calendar_link: str | None = None,
     tool_context=None,
-) -> dict:
+) -> dict | None:
     """Propose a follow-up at a given time with a short recap.
 
     Args:
@@ -269,11 +250,11 @@ def schedule_followup(
         calendar_link: Optional link to the calendar event.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does
-        not echo the card: do not repeat the card in your reply.
+        None once the card is displayed; the run then waits for the user.
+        Do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return _displayed("followup")
+    return None
 
 
 def propose_artifact_edit(
@@ -281,7 +262,7 @@ def propose_artifact_edit(
     diff: str,
     summary: str | None = None,
     tool_context=None,
-) -> dict:
+) -> dict | None:
     """Propose an edit to a file as a reviewable diff card.
 
     Args:
@@ -290,11 +271,11 @@ def propose_artifact_edit(
         summary: Optional human-readable summary of the edit.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does
-        not echo the card: do not repeat the card in your reply.
+        None once the card is displayed; the run then waits for the user.
+        Do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return _displayed("artifact_edit")
+    return None
 
 
 def request_file_from_user(
@@ -302,7 +283,7 @@ def request_file_from_user(
     accept: str | None = None,
     max_size_mb: int | None = None,
     tool_context=None,
-) -> dict:
+) -> dict | None:
     """Ask the user to upload a file through a file-drop card.
 
     Args:
@@ -312,11 +293,11 @@ def request_file_from_user(
         max_size_mb: Optional maximum file size in megabytes.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does
-        not echo the card: do not repeat the card in your reply.
+        None once the card is displayed; the run then waits for the user.
+        Do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return _displayed("file_request")
+    return None
 
 
 def propose_agent_upgrade(
@@ -325,7 +306,7 @@ def propose_agent_upgrade(
     skill_id: str | None = None,
     tool_name: str | None = None,
     tool_context=None,
-) -> dict:
+) -> dict | None:
     """Propose to enable a new capability (skill or tool) on this agent.
 
     Use when the user's request requires a capability the agent currently
@@ -338,11 +319,11 @@ def propose_agent_upgrade(
         tool_name: Optional name of the tool to enable.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does
-        not echo the card: do not repeat the card in your reply.
+        None once the card is displayed; the run then waits for the user.
+        Do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return _displayed("agent_upgrade")
+    return None
 
 
 def embed_chart(chart_id: str, title: str | None = None) -> dict:
@@ -386,10 +367,16 @@ def embed_chart(chart_id: str, title: str | None = None) -> dict:
     except Exception:  # pragma: no cover - never block embedding
         pass
 
-    return _displayed("chart_embed", paused=False)
+    return {
+        "status": "displayed",
+        "kind": "chart_embed",
+        "note": "The chart is shown in the conversation. Do not repeat it in your reply.",
+    }
 
 
-def request_location(reason: str, precision: str | None = None, tool_context=None) -> dict:
+def request_location(
+    reason: str, precision: str | None = None, tool_context=None
+) -> dict | None:
     """Ask the user to share their location via an interactive card.
 
     Args:
@@ -398,8 +385,8 @@ def request_location(reason: str, precision: str | None = None, tool_context=Non
             ``fine``.
 
     Returns:
-        a short acknowledgement that the card is displayed. It does
-        not echo the card: do not repeat the card in your reply.
+        None once the card is displayed; the run then waits for the user.
+        Do not repeat the card in your reply.
     """
     _request_pause(tool_context)
-    return _displayed("location_request")
+    return None
