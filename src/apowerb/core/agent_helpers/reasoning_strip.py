@@ -38,6 +38,13 @@ Portée délibérément étroite :
 from __future__ import annotations
 
 from logging import getLogger
+
+from apowerb.core.agent_helpers.gemini_prompt_cache import (
+    explicit_cache_enabled,
+    mark_system_prefix_for_cache,
+)
+
+_cache_logger = getLogger(__name__)
 from typing import Any
 
 from google.adk.models.lite_llm import LiteLLMClient
@@ -102,4 +109,21 @@ class CleaningLiteLLMClient(LiteLLMClient):
         messages = kwargs.get("messages")
         if messages is not None:
             kwargs = {**kwargs, "messages": strip_reasoning_content(messages)}
-        return await self._appel_reel(**kwargs)
+        # Drapeau éteint (défaut) : exactement le chemin d'avant, sans nouvelle
+        # tentative -- une erreur remonte telle quelle, un seul appel.
+        if messages is None or not explicit_cache_enabled():
+            return await self._appel_reel(**kwargs)
+        marked = mark_system_prefix_for_cache(kwargs.get("model") or "", kwargs["messages"])
+        if marked is kwargs["messages"]:
+            return await self._appel_reel(**kwargs)
+        try:
+            return await self._appel_reel(**{**kwargs, "messages": marked})
+        except Exception as exc:  # noqa: BLE001
+            # Le cache est une optimisation : il ne doit jamais coûter une réponse.
+            # On rejoue sans marqueur ; si CET appel échoue aussi, ce n'était pas le
+            # cache, et l'erreur remonte.
+            _cache_logger.warning(
+                "[PROMPT_CACHE] appel avec cache explicite en echec (%s), repli sans cache",
+                type(exc).__name__,
+            )
+            return await self._appel_reel(**kwargs)
