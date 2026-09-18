@@ -1,6 +1,7 @@
 """Unit tests for chat action card tools.
 
-These tools each return a dict shaped like ``{"_action_card": True, ...}``
+These tools each return a short acknowledgement ``{"status": "displayed", "kind": ...}``
+(roadmap#79); the card itself is built by the frontend from the call arguments.
 which the frontend intercepts in ``useChat.js onToolCall`` to render
 interactive cards.
 
@@ -37,13 +38,8 @@ class TestRequestUserInput:
             input_type="text",
             placeholder="Jane Doe",
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "user_input"
-        assert result["status"] == "user_input_pending"
-        assert result["question"] == "What's your name?"
-        assert result["input_type"] == "text"
-        assert result["placeholder"] == "Jane Doe"
-        assert result["choices"] is None
 
     def test_select_input_with_choices(self) -> None:
         choices = ["Red", "Green", "Blue"]
@@ -52,11 +48,8 @@ class TestRequestUserInput:
             input_type="select",
             choices=choices,
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "user_input"
-        assert result["status"] == "user_input_pending"
-        assert result["input_type"] == "select"
-        assert result["choices"] == choices
 
     @pytest.mark.parametrize(
         "valid_type",
@@ -64,9 +57,7 @@ class TestRequestUserInput:
     )
     def test_all_valid_input_types_accepted(self, valid_type: str) -> None:
         result = request_user_input(question="Q?", input_type=valid_type)
-        assert result["_action_card"] is True
-        assert result["status"] == "user_input_pending"
-        assert result["input_type"] == valid_type
+        assert result["status"] == "displayed"
 
     def test_invalid_input_type_returns_error(self) -> None:
         result = request_user_input(question="Q?", input_type="bogus")
@@ -87,20 +78,15 @@ class TestConfirmDestructive:
             impact="Permanent loss of data",
             item="report.pdf",
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "confirm_destructive"
-        assert result["status"] == "confirm_destructive_pending"
-        assert result["action"] == "delete_file"
-        assert result["impact"] == "Permanent loss of data"
-        assert result["item"] == "report.pdf"
 
     def test_item_defaults_to_none(self) -> None:
         result = confirm_destructive(
             action="drop_table",
             impact="All rows lost",
         )
-        assert result["item"] is None
-        assert result["status"] == "confirm_destructive_pending"
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -116,18 +102,12 @@ class TestRequestPayment:
             reason="Monthly subscription",
             checkout_url="https://pay.example.com/x",
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "payment"
-        assert result["status"] == "payment_pending"
-        assert result["amount"] == 19.99
-        assert result["currency"] == "USD"
-        assert result["reason"] == "Monthly subscription"
-        assert result["checkout_url"] == "https://pay.example.com/x"
 
     def test_checkout_url_optional(self) -> None:
         result = request_payment(amount=5.0, currency="EUR", reason="Tip")
-        assert result["checkout_url"] is None
-        assert result["status"] == "payment_pending"
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -142,18 +122,14 @@ class TestScheduleFollowup:
             recap="Review onboarding progress",
             calendar_link="https://cal.example.com/abc",
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "followup"
-        assert result["status"] == "followup_pending"
-        assert result["when_iso"] == "2026-05-01T10:00:00Z"
-        assert result["recap"] == "Review onboarding progress"
-        assert result["calendar_link"] == "https://cal.example.com/abc"
 
     def test_calendar_link_optional(self) -> None:
         result = schedule_followup(
             when_iso="2026-05-01T10:00:00Z", recap="Check in"
         )
-        assert result["calendar_link"] is None
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -168,16 +144,12 @@ class TestProposeArtifactEdit:
             diff="--- a/main.py\n+++ b/main.py\n@@ ...",
             summary="Rename variable",
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "artifact_edit"
-        assert result["status"] == "artifact_edit_pending"
-        assert result["filename"] == "main.py"
-        assert result["diff"].startswith("--- a/main.py")
-        assert result["summary"] == "Rename variable"
 
     def test_summary_optional(self) -> None:
         result = propose_artifact_edit(filename="x.md", diff="@@ ...")
-        assert result["summary"] is None
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -192,17 +164,12 @@ class TestRequestFileFromUser:
             accept="image/*",
             max_size_mb=10,
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "file_request"
-        assert result["status"] == "file_request_pending"
-        assert result["purpose"] == "Upload ID scan"
-        assert result["accept"] == "image/*"
-        assert result["max_size_mb"] == 10
 
     def test_optional_fields_default_none(self) -> None:
         result = request_file_from_user(purpose="Send invoice")
-        assert result["accept"] is None
-        assert result["max_size_mb"] is None
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -218,21 +185,15 @@ class TestProposeAgentUpgrade:
             skill_id="skill_ocr_v1",
             tool_name="pdf_ocr",
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "agent_upgrade"
-        assert result["status"] == "agent_upgrade_pending"
-        assert result["capability"] == "OCR parsing"
-        assert result["reason"] == "Needed to read scanned PDFs"
-        assert result["skill_id"] == "skill_ocr_v1"
-        assert result["tool_name"] == "pdf_ocr"
 
     def test_optional_fields_default_none(self) -> None:
         result = propose_agent_upgrade(
             capability="X",
             reason="Y",
         )
-        assert result["skill_id"] is None
-        assert result["tool_name"] is None
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -243,39 +204,34 @@ class TestProposeAgentUpgrade:
 class TestEmbedChart:
     def test_returns_action_card(self) -> None:
         result = embed_chart(chart_id="chart_42", title="Revenue by month")
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "chart_embed"
-        assert result["status"] == "chart_embed_pending"
-        assert result["chart_id"] == "chart_42"
-        assert result["title"] == "Revenue by month"
 
     def test_title_optional(self) -> None:
         result = embed_chart(chart_id="chart_1")
-        assert result["title"] is None
+        assert result["status"] == "displayed"
 
-    def test_includes_dashboard_id_key(self) -> None:
-        # No AGENT_OWNER in unit context -> helper returns None, key present.
-        result = embed_chart(chart_id="chart_42")
-        assert "dashboard_id" in result
-
-    def test_carries_dashboard_id_from_helper(self) -> None:
+    def test_refuses_a_chart_that_does_not_exist(self) -> None:
+        # Un chart_id invente rendait une carte en 404 : on refuse, avec une
+        # consigne que le modele peut suivre.
         from unittest.mock import patch
         with patch(
-            "apowerb.tools_store.portfolio.business_intelligence.ensure_chart_in_chat_dashboard",
-            return_value="dash_99",
+            "apowerb.tools_store.portfolio.business_intelligence.resolve_chart_for_embed",
+            return_value=("missing", None),
         ):
-            result = embed_chart(chart_id="chart_42")
-        assert result["dashboard_id"] == "dash_99"
+            result = embed_chart(chart_id="invente")
+        assert result["success"] is False
+        assert "tool_create_chart" in result["error"]
 
-    def test_resilient_when_helper_raises(self) -> None:
+    def test_fails_open_when_the_lookup_breaks(self) -> None:
+        # Une panne de base ne doit jamais bloquer un vrai graphique.
         from unittest.mock import patch
         with patch(
-            "apowerb.tools_store.portfolio.business_intelligence.ensure_chart_in_chat_dashboard",
+            "apowerb.tools_store.portfolio.business_intelligence.resolve_chart_for_embed",
             side_effect=RuntimeError("boom"),
         ):
             result = embed_chart(chart_id="chart_42")
-        assert result["_action_card"] is True
-        assert result["dashboard_id"] is None
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -289,15 +245,12 @@ class TestRequestLocation:
             reason="Find nearest store",
             precision="coarse",
         )
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert result["kind"] == "location_request"
-        assert result["status"] == "location_request_pending"
-        assert result["reason"] == "Find nearest store"
-        assert result["precision"] == "coarse"
 
     def test_precision_optional(self) -> None:
         result = request_location(reason="Local weather")
-        assert result["precision"] is None
+        assert result["status"] == "displayed"
 
 
 # --------------------------------------------------------------------------- #
@@ -333,17 +286,17 @@ class TestPauseFlags:
     def test_pause_flags_set(self, call) -> None:
         ctx = _ToolCtx()
         result = call(ctx)
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert ctx.actions.escalate is True
         assert ctx.actions.skip_summarization is True
 
     def test_pause_flags_noop_without_context(self) -> None:
         # Pas de tool_context (tests / appel hors-ADK) : aucun crash.
-        assert request_user_input(question="?", input_type="text")["_action_card"] is True
+        assert request_user_input(question="?", input_type="text")["status"] == "displayed"
 
     def test_embed_chart_does_not_pause(self) -> None:
         ctx = _ToolCtx()
         result = embed_chart(chart_id="c1", title="t")
-        assert result["_action_card"] is True
+        assert result["status"] == "displayed"
         assert ctx.actions.escalate is False
         assert ctx.actions.skip_summarization is False
