@@ -48,18 +48,35 @@ def test_events_table_rejects_unsafe_schema(monkeypatch, evil):
 
 # ── single purge pass ─────────────────────────────────────────────────
 class _FakeResult:
-    def __init__(self, rowcount):
+    def __init__(self, rowcount, scalar=None):
         self.rowcount = rowcount
+        self._scalar = scalar
+
+    def scalar(self):
+        return self._scalar
 
 
 class _FakeDB:
-    def __init__(self, rowcount):
+    """Answers like Postgres about a table it may not have.
+
+    ``to_regclass`` returns NULL for an unknown relation. Any other statement
+    that names ``events`` while the table is absent raises, as asyncpg's
+    UndefinedTableError would -- so a test can tell "skipped" from "tried".
+    """
+
+    def __init__(self, rowcount, *, table_exists=True):
         self._rowcount = rowcount
+        self._table_exists = table_exists
         self.executed = []
         self.committed = False
 
     async def execute(self, stmt, params=None):
-        self.executed.append((str(stmt), params))
+        sql = str(stmt)
+        self.executed.append((sql, params))
+        if "to_regclass" in sql:
+            return _FakeResult(0, scalar="events" if self._table_exists else None)
+        if not self._table_exists and ".events" in sql:
+            raise RuntimeError(f'relation "{sql}" does not exist')
         return _FakeResult(self._rowcount)
 
     async def commit(self):
@@ -84,12 +101,15 @@ async def test_purge_issues_parameterised_delete_and_commits(monkeypatch):
 
     assert deleted == 7
     assert db.committed is True
-    # one CREATE INDEX IF NOT EXISTS (idempotent) then the DELETE
-    assert len(db.executed) == 2
-    index_sql, _ = db.executed[0]
+    # the presence probe, one CREATE INDEX IF NOT EXISTS (idempotent), the DELETE
+    assert len(db.executed) == 3
+    probe_sql, probe_params = db.executed[0]
+    assert "to_regclass" in probe_sql
+    assert probe_params == {"qualified_name": "th2agent_dev.events"}
+    index_sql, _ = db.executed[1]
     assert "CREATE INDEX IF NOT EXISTS" in index_sql
     assert "th2agent_dev.events" in index_sql
-    sql, params = db.executed[1]
+    sql, params = db.executed[2]
     assert "DELETE FROM th2agent_dev.events" in sql
     assert ":cutoff" in sql  # bound, not string-interpolated
     cutoff = params["cutoff"]
@@ -104,3 +124,19 @@ async def test_purge_returns_zero_when_nothing_deleted(monkeypatch):
     _wire_fake_db(monkeypatch, db)
     assert await er._purge_old_events() == 0
     assert db.committed is True
+
+
+# ── fresh database: ADK has not created ``events`` yet ────────────────
+async def test_purge_is_a_no_op_before_adk_created_the_table(monkeypatch):
+    """ADK creates ``events`` lazily, on the first conversation. The loop runs
+    at startup, so on every fresh install its first pass used to fail -- and
+    log ``purge pass failed: relation "public.events" does not exist``. Nothing
+    to purge is the true answer: no index, no DELETE, no exception.
+    """
+    db = _FakeDB(rowcount=0, table_exists=False)
+    _wire_fake_db(monkeypatch, db)
+
+    assert await er._purge_old_events() == 0
+
+    assert [sql for sql, _ in db.executed if "to_regclass" not in sql] == []
+    assert db.committed is False
