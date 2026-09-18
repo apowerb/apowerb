@@ -1,9 +1,9 @@
 """Unit tests for chat action card tools.
 
-These tools each return a short acknowledgement ``{"status": "displayed", "kind": ...}``
-(roadmap#79); the card itself is built by the frontend from the call arguments.
-which the frontend intercepts in ``useChat.js onToolCall`` to render
-interactive cards.
+The card is built by the frontend from the call arguments (``useChat.js``,
+``onToolCall``). Cards that wait for the user return ``None`` (roadmap#79, see
+``test_chat_action_tools_adk.py``); ``embed_chart`` returns a short
+acknowledgement ``{"status": "displayed", "kind": "chart_embed", ...}``.
 
 Contract reference:
 ``scratchpad/action-cards-contract.md``
@@ -38,8 +38,7 @@ class TestRequestUserInput:
             input_type="text",
             placeholder="Jane Doe",
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "user_input"
+        assert result is None
 
     def test_select_input_with_choices(self) -> None:
         choices = ["Red", "Green", "Blue"]
@@ -48,8 +47,7 @@ class TestRequestUserInput:
             input_type="select",
             choices=choices,
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "user_input"
+        assert result is None
 
     @pytest.mark.parametrize(
         "valid_type",
@@ -57,7 +55,7 @@ class TestRequestUserInput:
     )
     def test_all_valid_input_types_accepted(self, valid_type: str) -> None:
         result = request_user_input(question="Q?", input_type=valid_type)
-        assert result["status"] == "displayed"
+        assert result is None
 
     def test_invalid_input_type_returns_error(self) -> None:
         result = request_user_input(question="Q?", input_type="bogus")
@@ -78,15 +76,14 @@ class TestConfirmDestructive:
             impact="Permanent loss of data",
             item="report.pdf",
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "confirm_destructive"
+        assert result is None
 
     def test_item_defaults_to_none(self) -> None:
         result = confirm_destructive(
             action="drop_table",
             impact="All rows lost",
         )
-        assert result["status"] == "displayed"
+        assert result is None
 
 
 # --------------------------------------------------------------------------- #
@@ -102,12 +99,11 @@ class TestRequestPayment:
             reason="Monthly subscription",
             checkout_url="https://pay.example.com/x",
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "payment"
+        assert result is None
 
     def test_checkout_url_optional(self) -> None:
         result = request_payment(amount=5.0, currency="EUR", reason="Tip")
-        assert result["status"] == "displayed"
+        assert result is None
 
 
 # --------------------------------------------------------------------------- #
@@ -122,14 +118,13 @@ class TestScheduleFollowup:
             recap="Review onboarding progress",
             calendar_link="https://cal.example.com/abc",
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "followup"
+        assert result is None
 
     def test_calendar_link_optional(self) -> None:
         result = schedule_followup(
             when_iso="2026-05-01T10:00:00Z", recap="Check in"
         )
-        assert result["status"] == "displayed"
+        assert result is None
 
 
 # --------------------------------------------------------------------------- #
@@ -144,12 +139,11 @@ class TestProposeArtifactEdit:
             diff="--- a/main.py\n+++ b/main.py\n@@ ...",
             summary="Rename variable",
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "artifact_edit"
+        assert result is None
 
     def test_summary_optional(self) -> None:
         result = propose_artifact_edit(filename="x.md", diff="@@ ...")
-        assert result["status"] == "displayed"
+        assert result is None
 
 
 # --------------------------------------------------------------------------- #
@@ -164,12 +158,11 @@ class TestRequestFileFromUser:
             accept="image/*",
             max_size_mb=10,
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "file_request"
+        assert result is None
 
     def test_optional_fields_default_none(self) -> None:
         result = request_file_from_user(purpose="Send invoice")
-        assert result["status"] == "displayed"
+        assert result is None
 
 
 # --------------------------------------------------------------------------- #
@@ -185,15 +178,14 @@ class TestProposeAgentUpgrade:
             skill_id="skill_ocr_v1",
             tool_name="pdf_ocr",
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "agent_upgrade"
+        assert result is None
 
     def test_optional_fields_default_none(self) -> None:
         result = propose_agent_upgrade(
             capability="X",
             reason="Y",
         )
-        assert result["status"] == "displayed"
+        assert result is None
 
 
 # --------------------------------------------------------------------------- #
@@ -245,12 +237,11 @@ class TestRequestLocation:
             reason="Find nearest store",
             precision="coarse",
         )
-        assert result["status"] == "displayed"
-        assert result["kind"] == "location_request"
+        assert result is None
 
     def test_precision_optional(self) -> None:
         result = request_location(reason="Local weather")
-        assert result["status"] == "displayed"
+        assert result is None
 
 
 # --------------------------------------------------------------------------- #
@@ -286,13 +277,13 @@ class TestPauseFlags:
     def test_pause_flags_set(self, call) -> None:
         ctx = _ToolCtx()
         result = call(ctx)
-        assert result["status"] == "displayed"
+        assert result is None
         assert ctx.actions.escalate is True
         assert ctx.actions.skip_summarization is True
 
     def test_pause_flags_noop_without_context(self) -> None:
         # Pas de tool_context (tests / appel hors-ADK) : aucun crash.
-        assert request_user_input(question="?", input_type="text")["status"] == "displayed"
+        assert request_user_input(question="?", input_type="text") is None
 
     def test_embed_chart_does_not_pause(self) -> None:
         ctx = _ToolCtx()
