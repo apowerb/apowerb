@@ -18,7 +18,9 @@ _GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 _GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 _GITHUB_API_URL = "https://api.github.com"
 
-# Scopes requested for the integration token.
+# Scopes requested for the integration token -- honoured by an OAuth App only.
+# A GitHub App ignores ``scope``: its token carries the permissions configured
+# on the app, limited to the repositories where the app is installed.
 # repo        – read/write access to repositories
 # read:user   – read the user's profile
 # user:email  – read the user's email address
@@ -134,9 +136,14 @@ class GitHubIntegrationService:
         github_data: Dict,
         access_token: str,
         scopes: str = "",
+        refresh_token: str | None = None,
     ) -> Integration:
         """
         Upsert the GitHub integration for a user.
+
+        ``refresh_token`` is only issued when the backing GitHub App expires
+        user tokens (8 hours). It must be kept: without it the GitHub tools
+        would stop working the day after each connection.
 
         The access token is Fernet-encrypted at rest via
         :func:`apowerb.integrations.helpers.save_integration_tokens`.
@@ -156,7 +163,7 @@ class GitHubIntegrationService:
             user_id=user_id,
             provider="github",
             access_token=access_token,
-            refresh_token=None,
+            refresh_token=refresh_token,
             provider_username=github_data.get("login"),
             provider_user_id=str(github_data.get("id", "")),
             scopes=scopes,

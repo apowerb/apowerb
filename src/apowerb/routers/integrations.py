@@ -276,6 +276,7 @@ async def github_callback(
         github_data=github_user,
         access_token=access_token,
         scopes=scopes,
+        refresh_token=token_data.get("refresh_token"),
     )
 
     return {
