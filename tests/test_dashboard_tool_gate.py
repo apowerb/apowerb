@@ -1,11 +1,15 @@
-"""Le lecteur de dashboard n'est injecte que pour un agent REELLEMENT lie.
+"""Le lecteur de dashboard n'est injecte automatiquement que si AGENT_DASHBOARD_ID
+est posee -- la condition qu'extras_loader applique deja au reste des outils BI.
 
-``tool_get_dashboard_data`` etait ajoute a TOUS les agents. Sans dashboard il ne
-peut repondre que ``{"error": "No dashboard_id provided ..."}`` -- et le pipeline
-de graphiques BI lit alors cette prose comme une donnee et affiche "Aucune donnee"
-(apowerb/roadmap#60). Il coutait en plus 1 185 caracteres de schema sur CHAQUE
-prompt : mesure du 17/09/2026, les declarations d'outils pesaient 64% d'une requete
-de 28 023 caracteres dont la conversation reelle faisait 361 caracteres.
+``tool_get_dashboard_data`` etait ajoute a TOUS les agents. Sans identifiant, il
+repond ``{"error": "No dashboard_id provided ..."}`` et le pipeline de graphiques BI
+relit cette prose comme une donnee (apowerb/roadmap#60). Il accepte un
+``dashboard_id`` en argument, mais un agent sans la variable n'a aucun outil pour en
+decouvrir un. En prod le 17/09/2026 : 3 appels observes, tous sans identifiant, tous
+en echec. Son schema coutait 1 185 caracteres sur chaque prompt.
+
+Ces tests prouvent la garde, pas un contexte par requete : la variable est globale au
+processus (voir le docstring de _should_inject_dashboard_tool).
 """
 import os
 

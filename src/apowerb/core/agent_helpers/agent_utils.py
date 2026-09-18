@@ -100,25 +100,31 @@ def _should_inject_chat_action_tools(agent_details: dict) -> bool:
 
 
 def _should_inject_dashboard_tool() -> bool:
-    """Return True iff this agent is actually linked to a BI dashboard.
+    """Gate the automatic injection of ``tool_get_dashboard_data``.
 
-    ``tool_get_dashboard_data`` used to be added to EVERY agent. Without a
-    dashboard it can only ever answer ``{"error": "No dashboard_id provided
-    and no AGENT_DASHBOARD_ID found in the current context"}`` -- and the BI
-    chart pipeline reads that prose back as data, which is one of the two
-    faces of apowerb/roadmap#60 ("Aucune donnee a afficher" instead of an
-    error).
+    What it checks: whether ``AGENT_DASHBOARD_ID`` is currently set in the
+    process environment -- the condition under which
+    ``extras_loader.inject_bi_dashboard_tools`` already injects this tool and
+    ``tool_list_dashboards``. It is NOT a proof that the running agent is
+    linked to a dashboard: see "Limit" below.
 
-    It was not free either. Measured on a production request on 2026-09-17:
-    tool declarations were 18 035 of 28 023 characters (64%) for a
-    conversation of 361 characters, and this one tool accounted for 1 185 of
-    them -- paid on every single turn, in prefill latency, by every agent
-    that has no dashboard at all.
+    Why gate it: the reader used to be added to every agent. Without an id it
+    answers ``{"error": "No dashboard_id provided and no AGENT_DASHBOARD_ID
+    found in the current context"}``, and the BI chart pipeline reads that
+    prose back as data (one face of apowerb/roadmap#60). The tool does accept
+    an explicit ``dashboard_id`` argument, so it is not bound to fail -- but
+    an agent without the variable has no tool to discover an id, since
+    ``tool_list_dashboards`` is only injected under the same condition.
+    Measured in production on 2026-09-17: the 3 observed calls of this tool
+    all came without an id and all failed. Its schema also cost 1 185 of the
+    28 023 characters of a request whose conversation was 361.
 
-    ``extras_loader.inject_bi_dashboard_tools`` already injects this very tool
-    under this very condition, so a linked agent keeps it and nothing else
-    changes. Reading the environment (rather than ``agent_details``) is what
-    that function does, and the mini chat sets ``AGENT_DASHBOARD_ID`` there.
+    Limit: ``AGENT_DASHBOARD_ID`` is process-wide. It is written when a
+    dashboard-linked conversation starts and is not cleared afterwards, and
+    ADK builds each agent once and caches it. The value read here, at build
+    time, may therefore come from an earlier request. This gate narrows the
+    injection; it does not make it per-request. Carrying the dashboard
+    context per request is a separate change.
     """
     return bool(os.environ.get("AGENT_DASHBOARD_ID", "").strip())
 
@@ -633,10 +639,11 @@ def to_agent(agent_name: str) -> LlmAgent:
 
         _add_auto_tool(notify_user)
         _add_auto_tool(request_integration)
-        # Dashboard reader: only for an agent actually linked to a BI
-        # dashboard (mini chat sets AGENT_DASHBOARD_ID). Injecting it
-        # unconditionally gave every other agent a tool that can only fail,
-        # and charged its schema to every prompt -- see
+        # Dashboard reader: only when AGENT_DASHBOARD_ID is set (the mini chat
+        # sets it), the condition extras_loader already uses for the rest of
+        # the BI tools. Injecting it unconditionally gave every agent a tool
+        # that failed on every observed call and charged its schema to every
+        # prompt. Not a per-request guarantee -- see
         # _should_inject_dashboard_tool.
         if _should_inject_dashboard_tool():
             _add_auto_tool(tool_get_dashboard_data)
