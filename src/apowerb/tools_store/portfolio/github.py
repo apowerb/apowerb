@@ -2,7 +2,9 @@
 
 Read-only tools for agents working on the user's GitHub repositories, through
 the "GitHub" integration of the Integrations page. Nothing here writes to
-GitHub: no commit, no comment, no pull request.
+GitHub: no commit, no comment, no pull request. ``tool_index_repository_docs``
+copies a repository's documentation into a RAG knowledge base -- it writes to
+the RAG service, never to GitHub.
 
 The token belongs to the user who runs the agent. It is resolved on every call
 as a LOCAL value from that user's integration row, never through a
@@ -22,12 +24,18 @@ The integration may be backed by a GitHub App or an OAuth App:
 
 import base64
 import re
+import tempfile
 from logging import getLogger
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
 from apowerb.configs.settings import get_settings
+# The module, not the function: importing ``tool_create_knowledge`` here would
+# list it a second time, as a GitHub tool (discovery takes every ``tool_*``
+# attribute of the module -- which is how it shows up twice in db_to_rag).
+from apowerb.tools_store.portfolio import rag as _rag
 from apowerb.tools_store.portfolio.integration_status import (
     INTEGRATION_ERROR,
     INTEGRATION_EXPIRED,
@@ -54,6 +62,16 @@ _MAX_FILE_CHARS = 60_000
 _MAX_PATCH_CHARS = 4_000
 _MAX_DIFF_FILES = 50
 _MAX_BODY_CHARS = 8_000
+
+# Repository documentation indexed into RAG: prose, not code, and never the
+# dependencies vendored next to it.
+_DOC_EXTENSIONS = ".md,.mdx,.rst,.txt"
+_EXCLUDED_DIRS = frozenset({
+    "node_modules", "vendor", ".git", ".venv", "venv", "site-packages",
+    "dist", "build", "__pycache__", ".next", "coverage",
+})
+_MAX_DOC_BYTES = 300_000
+_MAX_INDEX_FILES = 200
 
 
 # ---------------------------------------------------------------- auth
@@ -496,3 +514,167 @@ def tool_get_pull_request(repository: str, number: int, include_diff: bool = Tru
         return result
 
     return _run(_action)
+
+
+def tool_index_repository_docs(
+    repository: str,
+    knowledge_name: str = "",
+    path: str = "",
+    ref: str = "",
+    extensions: str = _DOC_EXTENSIONS,
+    max_files: int = 50,
+    wait_for_completion: bool = True,
+) -> dict:
+    """Index a GitHub repository's documentation into a RAG knowledge base.
+
+    Collects the documentation files of the repository (Markdown, reST, text),
+    then creates a knowledge base the agent can query afterwards with
+    ``tool_search_knowledge``. Each document starts with its GitHub URL, so
+    answers can cite where they come from. Code, binaries and vendored
+    dependencies (node_modules, vendor, .venv…) are left out.
+
+    Args:
+        repository: The repository as ``owner/name`` (e.g. "acme/data-models").
+        knowledge_name: Name of the knowledge base. Defaults to
+            "GitHub owner/name".
+        path: Optional folder to index only, e.g. "docs". Defaults to the
+            whole repository.
+        ref: Optional branch, tag or commit SHA. Defaults to the default branch.
+        extensions: Comma-separated file extensions to index.
+            Defaults to ".md,.mdx,.rst,.txt".
+        max_files: Maximum number of documents to index (1-200). Defaults to 50.
+        wait_for_completion: Wait until indexing finishes. Defaults to True.
+
+    Returns:
+        dict with keys: status, knowledge_id, repository, ref, indexed_files,
+        skipped (counts by reason: excluded_folder, other_extension, too_large,
+        binary, unreadable, over_limit), tree_truncated, message.
+    """
+    invalid = _check_repository(repository)
+    if invalid:
+        return invalid
+
+    def _action():
+        repo = repository.strip()
+        branch = (ref or "").strip()
+        if not branch:
+            meta = _get(f"/repos/{repo}")
+            if meta.status_code >= 400:
+                return _api_error(meta, f"Repository {repo}")
+            branch = (meta.json() or {}).get("default_branch") or "main"
+
+        tree_resp = _get(f"/repos/{repo}/git/trees/{quote(branch, safe='')}", params={"recursive": "1"})
+        if tree_resp.status_code >= 400:
+            return _api_error(tree_resp, f"The file tree of {repo}@{branch}")
+        tree = tree_resp.json() or {}
+
+        wanted = tuple(e.strip().lower() for e in (extensions or _DOC_EXTENSIONS).split(",") if e.strip())
+        prefix = (path or "").strip("/")
+        skipped = dict.fromkeys(
+            ("excluded_folder", "other_extension", "too_large", "binary", "unreadable", "over_limit"), 0,
+        )
+        candidates = []
+        for entry in tree.get("tree") or []:
+            if entry.get("type") != "blob":
+                continue
+            file_path = entry.get("path") or ""
+            if prefix and not (file_path == prefix or file_path.startswith(prefix + "/")):
+                continue
+            if any(part in _EXCLUDED_DIRS for part in file_path.split("/")[:-1]):
+                skipped["excluded_folder"] += 1
+            elif not file_path.lower().endswith(wanted):
+                skipped["other_extension"] += 1
+            elif (entry.get("size") or 0) > _MAX_DOC_BYTES:
+                skipped["too_large"] += 1
+            else:
+                candidates.append(file_path)
+        candidates.sort()
+
+        if not candidates:
+            return {
+                "status": "empty",
+                "repository": repo,
+                "ref": branch,
+                "indexed_files": [],
+                "skipped": skipped,
+                "tree_truncated": bool(tree.get("truncated")),
+                "message": f"No documentation file matching {', '.join(wanted)} in {repo}@{branch}. Nothing was indexed.",
+            }
+
+        limit = _clamp(max_files, 1, _MAX_INDEX_FILES)
+        indexed: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="github-docs-") as tmp:
+            written: list[str] = []
+            for position, file_path in enumerate(candidates):
+                if len(indexed) >= limit:
+                    skipped["over_limit"] = len(candidates) - position
+                    break
+                resp = _get(f"/repos/{repo}/contents/{quote(file_path, safe='/')}", params={"ref": branch})
+                data = resp.json() if resp.status_code < 400 else {}
+                if not isinstance(data, dict) or data.get("encoding") != "base64" or not data.get("content"):
+                    skipped["unreadable"] += 1
+                    continue
+                try:
+                    text = base64.b64decode(data["content"]).decode("utf-8")
+                except UnicodeDecodeError:
+                    skipped["binary"] += 1
+                    continue
+                source = f"https://github.com/{repo}/blob/{branch}/{file_path}"
+                # Flattened name: two README.md in different folders must not collide.
+                target = Path(tmp) / file_path.replace("/", "__")
+                target.write_text(f"Source: {source}\n\n{text}", encoding="utf-8")
+                written.append(str(target))
+                indexed.append(file_path)
+
+            if not written:
+                return {
+                    "status": "empty",
+                    "repository": repo,
+                    "ref": branch,
+                    "indexed_files": [],
+                    "skipped": skipped,
+                    "tree_truncated": bool(tree.get("truncated")),
+                    "message": f"No readable documentation file in {repo}@{branch}. Nothing was indexed.",
+                }
+
+            # Upload happens inside the call: the temporary copies can go right after.
+            rag_result = _rag.tool_create_knowledge(
+                name=knowledge_name.strip() or f"GitHub {repo}",
+                description=(
+                    f"Documentation of the GitHub repository {repo} ({branch}"
+                    + (f", folder {prefix}" if prefix else "")
+                    + ")"
+                ),
+                files=written,
+                wait_for_completion=wait_for_completion,
+            )
+
+        result = {
+            "repository": repo,
+            "ref": branch,
+            "indexed_files": indexed,
+            "skipped": skipped,
+            "tree_truncated": bool(tree.get("truncated")),
+        }
+        if rag_result.get("status") == "error":
+            result.update(
+                status="error",
+                retry=False,
+                message=f"The documents were collected but indexing failed: {rag_result.get('message')}",
+            )
+            return result
+
+        result.update(
+            status=rag_result.get("status"),
+            knowledge_id=rag_result.get("knowledge_id"),
+            message=(
+                f"Indexed {len(indexed)} document(s) from {repo}@{branch}. "
+                "Query them with tool_search_knowledge and this knowledge_id."
+            ),
+        )
+        if result["tree_truncated"]:
+            result["message"] += " GitHub truncated the file tree: some files may be missing; index a folder instead."
+        return result
+
+    return _run(_action)
+

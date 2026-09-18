@@ -250,6 +250,144 @@ def test_le_module_n_expose_que_des_outils_de_lecture():
 
     outils = sorted(n for n, o in inspect.getmembers(gh, inspect.isfunction) if n.startswith("tool_"))
     assert outils == [
-        "tool_get_pull_request", "tool_list_pull_requests", "tool_list_repositories",
-        "tool_read_file", "tool_search_code",
+        "tool_get_pull_request", "tool_index_repository_docs", "tool_list_pull_requests",
+        "tool_list_repositories", "tool_read_file", "tool_search_code",
     ]
+
+
+# ---------------------------------------------------------------- indexation RAG
+
+def _b64(text):
+    return base64.b64encode(text.encode()).decode()
+
+
+def _repo_handler(tree, files, default_branch="main", truncated=False):
+    def _handler(url, params, headers):
+        if url.endswith("/repos/acme/data"):
+            return _Resp(200, {"default_branch": default_branch})
+        if "/git/trees/" in url:
+            return _Resp(200, {"tree": tree, "truncated": truncated})
+        path = url.split("/contents/", 1)[1]
+        if path in files:
+            return _Resp(200, {"type": "file", "path": path, "encoding": "base64", "content": files[path]})
+        return _Resp(404, {"message": "Not Found"})
+    return _handler
+
+
+@pytest.fixture()
+def rag_spy(monkeypatch):
+    """Remplace l'indexation : lit les fichiers AU MOMENT de l'appel, comme le vrai envoi."""
+    seen = {"calls": []}
+
+    def _create(name, description, files, prompt="", wait_for_completion=True, **kw):
+        contents = {}
+        for f in files:
+            with open(f, encoding="utf-8") as fh:
+                contents[f.rsplit("/", 1)[-1]] = fh.read()
+        seen["calls"].append({"name": name, "description": description, "files": list(files),
+                              "contents": contents, "wait": wait_for_completion})
+        return {"status": "complete", "knowledge_id": "kb-42", "message": "ok"}
+
+    monkeypatch.setattr(gh._rag, "tool_create_knowledge", _create)
+    return seen
+
+
+def test_indexe_la_documentation_d_un_depot(tokens, monkeypatch, rag_spy):
+    tree = [
+        {"path": "README.md", "type": "blob", "size": 40},
+        {"path": "docs/guide/intro.md", "type": "blob", "size": 30},
+        {"path": "docs/logo.png", "type": "blob", "size": 900},
+        {"path": "node_modules/pkg/README.md", "type": "blob", "size": 20},
+        {"path": "src/app.py", "type": "blob", "size": 50},
+        {"path": "docs", "type": "tree"},
+    ]
+    files = {"README.md": _b64("# Data\nLe depot des modeles."), "docs/guide/intro.md": _b64("Intro au guide.")}
+    calls = _route(monkeypatch, _repo_handler(tree, files))
+
+    out = gh.tool_index_repository_docs("acme/data")
+
+    assert out["status"] == "complete"
+    assert out["knowledge_id"] == "kb-42"
+    assert out["ref"] == "main"
+    assert out["indexed_files"] == ["README.md", "docs/guide/intro.md"]
+    assert out["skipped"]["excluded_folder"] == 1
+    assert out["skipped"]["other_extension"] == 2
+    # Un seul appel d'indexation, avec un fichier par document et sa source en tete.
+    [call] = rag_spy["calls"]
+    assert call["name"] == "GitHub acme/data"
+    assert len(call["files"]) == 2
+    intro = next(v for k, v in call["contents"].items() if "intro" in k)
+    assert intro.startswith("Source: https://github.com/acme/data/blob/main/docs/guide/intro.md")
+    assert intro.rstrip().endswith("Intro au guide.")
+    # Rien ne subsiste sur le disque une fois l'envoi fait.
+    import os
+    assert not any(os.path.exists(f) for f in call["files"])
+    # Les dependances ne sont jamais telechargees.
+    assert not any("node_modules" in c["url"] for c in calls)
+
+
+def test_un_sous_dossier_et_une_branche_restreignent_l_indexation(tokens, monkeypatch, rag_spy):
+    tree = [
+        {"path": "README.md", "type": "blob", "size": 40},
+        {"path": "docs/intro.md", "type": "blob", "size": 30},
+    ]
+    files = {"docs/intro.md": _b64("Intro.")}
+    calls = _route(monkeypatch, _repo_handler(tree, files))
+
+    out = gh.tool_index_repository_docs("acme/data", path="docs", ref="v2", knowledge_name="Docs v2")
+
+    assert out["indexed_files"] == ["docs/intro.md"]
+    assert rag_spy["calls"][0]["name"] == "Docs v2"
+    assert any("/git/trees/v2" in c["url"] for c in calls)
+    assert not any(c["url"].endswith("/repos/acme/data") for c in calls)
+
+
+def test_aucun_document_eligible_ne_cree_pas_de_base_vide(tokens, monkeypatch, rag_spy):
+    tree = [{"path": "src/app.py", "type": "blob", "size": 50}]
+    _route(monkeypatch, _repo_handler(tree, {}))
+    out = gh.tool_index_repository_docs("acme/data")
+    assert out["status"] == "empty"
+    assert rag_spy["calls"] == []
+
+
+def test_les_fichiers_trop_gros_et_binaires_sont_ecartes_et_comptes(tokens, monkeypatch, rag_spy):
+    tree = [
+        {"path": "big.md", "type": "blob", "size": gh._MAX_DOC_BYTES + 1},
+        {"path": "weird.txt", "type": "blob", "size": 10},
+        {"path": "ok.md", "type": "blob", "size": 10},
+    ]
+    binary = base64.b64encode(bytes([0xFF, 0xFE, 0x00, 0x81])).decode()
+    files = {"weird.txt": binary, "ok.md": _b64("ok")}
+    _route(monkeypatch, _repo_handler(tree, files))
+    out = gh.tool_index_repository_docs("acme/data")
+    assert out["indexed_files"] == ["ok.md"]
+    assert out["skipped"]["too_large"] == 1
+    assert out["skipped"]["binary"] == 1
+
+
+def test_le_plafond_de_fichiers_est_respecte_et_signale(tokens, monkeypatch, rag_spy):
+    tree = [{"path": f"doc{i:02d}.md", "type": "blob", "size": 5} for i in range(5)]
+    files = {f"doc{i:02d}.md": _b64(f"doc {i}") for i in range(5)}
+    _route(monkeypatch, _repo_handler(tree, files))
+    out = gh.tool_index_repository_docs("acme/data", max_files=3)
+    assert len(out["indexed_files"]) == 3
+    assert out["skipped"]["over_limit"] == 2
+
+
+def test_un_echec_d_indexation_est_rendu_tel_quel(tokens, monkeypatch):
+    tree = [{"path": "README.md", "type": "blob", "size": 5}]
+    _route(monkeypatch, _repo_handler(tree, {"README.md": _b64("x")}))
+    monkeypatch.setattr(gh._rag, "tool_create_knowledge",
+                        lambda **kw: {"status": "error", "message": "RAG authentication failed", "retry": False})
+    out = gh.tool_index_repository_docs("acme/data")
+    assert out["status"] == "error"
+    assert "RAG authentication failed" in out["message"]
+    assert out["indexed_files"] == ["README.md"]
+
+
+def test_l_indexation_refuse_un_depot_invalide_sans_appel(tokens, monkeypatch, rag_spy):
+    calls = _route(monkeypatch, lambda url, p, h: _Resp(200, {}))
+    out = gh.tool_index_repository_docs("pas un depot")
+    assert out["status"] == "error"
+    assert calls == [] and rag_spy["calls"] == []
+
