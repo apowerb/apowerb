@@ -36,9 +36,12 @@ converti en texte.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import re
 import time
+from datetime import date, datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal, Optional
 
 from google.adk.events import Event
@@ -69,11 +72,15 @@ NodeType = Literal[
     "approval",
     "output",
     "convert",
+    "set",
+    "condition",
 ]
-CONVERT_TARGETS = ("text", "json", "number", "boolean", "list")
+CONVERT_TARGETS = ("text", "json", "number", "boolean", "list", "csv", "date")
 _TRUE = {"true", "yes", "oui", "1", "vrai"}
 _FALSE = {"false", "no", "non", "0", "faux"}
-_ROUTED = {"router", "classifier"}
+_ROUTED = {"router", "classifier", "condition"}
+_CSV_DELIMITERS = ",;\t"
+_DATE_FORMATS = ("%d/%m/%Y",)
 _NOT_YET = {"approval"}
 _MAX_LOOP = 100
 _ITERATION = "iteration"
@@ -206,6 +213,8 @@ def _declared_routes(node: Node) -> set[str]:
         if cfg.get("default_route"):
             routes.add(cfg["default_route"])
         return {r for r in routes if r}
+    if node.type == "condition":
+        return {"true", "false"}
     return {r.get("route") for r in cfg.get("routes") or [] if r.get("route")}
 
 
@@ -289,7 +298,73 @@ def convert_value(value: Any, to: str) -> Any:
                 return parsed
             return [line.strip() for line in value.splitlines() if line.strip()]
         return [value]
+    if to == "csv":
+        if isinstance(value, str):
+            return _csv_to_rows(value)
+        if isinstance(value, list) and all(isinstance(r, dict) for r in value):
+            return _rows_to_csv(value)
+        raise ValueError(f"cannot read csv from {type(value).__name__}")
+    if to == "date":
+        return _parse_date(value).isoformat()
     raise ValueError(f"unknown conversion {to!r}")
+
+
+def _rows_to_csv(rows: list[dict]) -> str:
+    """Liste de dicts -> texte CSV, en-tête = clés en ordre de 1re apparition."""
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for key in row:
+            if key not in seen:
+                seen.add(key)
+                fieldnames.append(key)
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()
+
+
+def _csv_to_rows(text: str) -> list[dict]:
+    """Texte CSV -> liste de dicts ; séparateur détecté, repli ``,``."""
+    try:
+        delimiter = (
+            csv.Sniffer().sniff(text[:4096], delimiters=_CSV_DELIMITERS).delimiter
+        )
+    except csv.Error:
+        delimiter = ","
+    return [dict(row) for row in csv.DictReader(io.StringIO(text), delimiter=delimiter)]
+
+
+def _parse_date(value: Any):
+    """``value`` en ``date`` ou ``datetime`` (naïf, UTC) ; ``ValueError`` sinon."""
+    if isinstance(value, bool):
+        raise ValueError("a boolean is not a date")
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).replace(
+            tzinfo=None
+        )
+    if not isinstance(value, str):
+        raise ValueError(f"cannot read a date from {type(value).__name__}")
+    text = value.strip()
+    if not text:
+        raise ValueError("empty date")
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            pass
+    iso_text = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        return date.fromisoformat(iso_text)
+    except ValueError:
+        pass
+    try:
+        parsed = datetime.fromisoformat(iso_text)
+        return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+    except ValueError:
+        pass
+    raise ValueError(f"{value!r} is not a recognizable date")
 
 
 def validate_graph(graph: WorkflowGraph) -> None:
@@ -324,6 +399,25 @@ def validate_graph(graph: WorkflowGraph) -> None:
                 f"{n.id} : conversion inconnue {cfg.get('to')!r} "
                 f"(attendu : {', '.join(CONVERT_TARGETS)})"
             )
+        if n.type == "set":
+            fields = cfg.get("fields") or []
+            if not fields:
+                raise GraphError(f"{n.id} : aucun champ à définir")
+            keys = [f.get("key") if isinstance(f, dict) else None for f in fields]
+            for key in keys:
+                if not isinstance(key, str) or not key.strip():
+                    raise GraphError(f"{n.id} : clé de champ vide")
+            dupes = sorted({k for k in keys if keys.count(k) > 1})
+            if dupes:
+                raise GraphError(
+                    f"{n.id} : clé de champ dupliquée : {', '.join(dupes)}"
+                )
+        if n.type == "condition":
+            if not cfg.get("rules"):
+                raise GraphError(f"{n.id} : aucune règle de condition")
+            match = cfg.get("match", "all")
+            if match not in ("all", "any"):
+                raise GraphError(f"{n.id} : match inconnu {match!r} (all ou any)")
 
     for e in graph.edges:
         src = by_id[e.source]
@@ -340,6 +434,15 @@ def validate_graph(graph: WorkflowGraph) -> None:
             raise GraphError(
                 f"arête {e.source} -> {e.target} : route sur un nœud qui ne route pas"
             )
+
+    for n in graph.nodes:
+        if n.type == "condition":
+            used = [e.route for e in graph.edges if e.source == n.id]
+            dupes = sorted({r for r in used if r and used.count(r) > 1})
+            if dupes:
+                raise GraphError(
+                    f"{n.id} : au plus une arête par route ({', '.join(dupes)})"
+                )
 
     parents: dict[str, set[str]] = {i: set() for i in by_id}
     for e in graph.edges:
@@ -548,6 +651,24 @@ class _Compiler:
                         code="convert_failed",
                         params={"node": node.id, "to": cfg["to"]},
                     ) from None
+        elif node.type == "set":
+
+            async def body(node_input):
+                return {
+                    f["key"]: render(f.get("value"), self.outputs)
+                    for f in cfg["fields"]
+                }, None
+        elif node.type == "condition":
+
+            async def body(node_input):
+                outcomes = [
+                    evaluate_rule(rule, render(rule.get("field"), self.outputs))
+                    for rule in cfg["rules"]
+                ]
+                matched = (
+                    all(outcomes) if cfg.get("match", "all") == "all" else any(outcomes)
+                )
+                return node_input, "true" if matched else "false"
         elif node.type == "loop":
             body_graph = WorkflowGraph.model_validate(cfg["body"])
 
