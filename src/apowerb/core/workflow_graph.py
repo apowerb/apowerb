@@ -55,11 +55,24 @@ from apowerb.core.workflow_engine import (
     error_fields,
     drive_workflow,
     leaf_message,
+    try_parse_json,
 )
 
 NodeType = Literal[
-    "trigger", "agent", "tool", "router", "classifier", "merge", "loop", "approval"
+    "trigger",
+    "agent",
+    "tool",
+    "router",
+    "classifier",
+    "merge",
+    "loop",
+    "approval",
+    "output",
+    "convert",
 ]
+CONVERT_TARGETS = ("text", "json", "number", "boolean", "list")
+_TRUE = {"true", "yes", "oui", "1", "vrai"}
+_FALSE = {"false", "no", "non", "0", "faux"}
 _ROUTED = {"router", "classifier"}
 _NOT_YET = {"approval"}
 _MAX_LOOP = 100
@@ -234,6 +247,51 @@ def _outer_refs(node: Node) -> set[str]:
     )
 
 
+def convert_value(value: Any, to: str) -> Any:
+    """``value`` sous la forme ``to`` ; ``ValueError`` si elle ne s'y lit pas."""
+    if to == "text":
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)
+    if to == "json":
+        if not isinstance(value, str):
+            return value
+        parsed = try_parse_json(value)
+        if isinstance(parsed, str):
+            raise ValueError("not JSON")
+        return parsed
+    if to == "number":
+        if isinstance(value, bool):
+            raise ValueError("a boolean is not a number")
+        if isinstance(value, (int, float)):
+            return value
+        number = float(str(value).strip().replace(",", "."))
+        return int(number) if number.is_integer() else number
+    if to == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        word = str(value).strip().lower()
+        if word in _TRUE:
+            return True
+        if word in _FALSE:
+            return False
+        raise ValueError(f"{word!r} is not a boolean")
+    if to == "list":
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            parsed = try_parse_json(value)
+            if isinstance(parsed, list):
+                return parsed
+            return [line.strip() for line in value.splitlines() if line.strip()]
+        return [value]
+    raise ValueError(f"unknown conversion {to!r}")
+
+
 def validate_graph(graph: WorkflowGraph) -> None:
     if not graph.nodes:
         raise GraphError("graphe vide")
@@ -261,9 +319,18 @@ def validate_graph(graph: WorkflowGraph) -> None:
             raise GraphError(f"{n.id} : un classifieur demande au moins deux routes")
         if n.type == "loop":
             _loop_body(n)
+        if n.type == "convert" and cfg.get("to") not in CONVERT_TARGETS:
+            raise GraphError(
+                f"{n.id} : conversion inconnue {cfg.get('to')!r} "
+                f"(attendu : {', '.join(CONVERT_TARGETS)})"
+            )
 
     for e in graph.edges:
         src = by_id[e.source]
+        if src.type == "output":
+            raise GraphError(
+                f"arête {e.source} -> {e.target} : un nœud output termine le flux"
+            )
         if src.type in _ROUTED:
             if e.route not in _declared_routes(src):
                 raise GraphError(
@@ -457,6 +524,30 @@ class _Compiler:
                 return {
                     src: (node_input or {}).get(_adk_name(src)) for src in sources
                 }, None
+        elif node.type == "output":
+
+            async def body(node_input):
+                # Valeur vide = non configurée : la sortie reprend son entrée.
+                # Une sortie volontairement vide n'est donc pas exprimable.
+                if cfg.get("value") not in (None, ""):
+                    return render(cfg["value"], self.outputs), None
+                return node_input, None
+        elif node.type == "convert":
+
+            async def body(node_input):
+                value = (
+                    render(cfg["input"], self.outputs)
+                    if cfg.get("input") not in (None, "")
+                    else node_input
+                )
+                try:
+                    return convert_value(value, cfg["to"]), None
+                except (ValueError, TypeError) as exc:
+                    raise GraphError(
+                        f"{node.id} : conversion en {cfg['to']} impossible ({exc})",
+                        code="convert_failed",
+                        params={"node": node.id, "to": cfg["to"]},
+                    ) from None
         elif node.type == "loop":
             body_graph = WorkflowGraph.model_validate(cfg["body"])
 
@@ -567,6 +658,12 @@ class _Compiler:
 
 
 def _final_output(graph: WorkflowGraph, outputs: dict) -> Any:
+    # Un nœud output désigne la sortie ; à défaut, les feuilles atteintes.
+    explicit = [n.id for n in graph.nodes if n.type == "output" and n.id in outputs]
+    if len(explicit) == 1:
+        return outputs[explicit[0]]
+    if explicit:
+        return {i: outputs[i] for i in explicit}
     sources = {e.source for e in graph.edges}
     leaves = [n.id for n in graph.nodes if n.id not in sources and n.id in outputs]
     if len(leaves) == 1:
