@@ -15,6 +15,7 @@ import os
 from jose import JWTError, jwt
 
 from apowerb.core.invocation_context import set_current_invoker
+from apowerb.middleware.adk_identity import ADKLiveAuthMiddleware, foreign_user_id
 
 # load th2agent routers
 from apowerb.routers.tools import router as tools_router
@@ -333,6 +334,14 @@ class ADKAuthMiddleware(BaseHTTPMiddleware):
             # this the send falls back to the racy global AGENT_OWNER and mails
             # go out from the wrong mailbox (incident 2026-07-03).
             set_current_invoker(payload["sub"])
+            # A valid token is not enough: ADK takes the user from the request
+            # (path or body), so it must be the token's user -- same rule as
+            # the /api/adk wrapper's enforce_user_id_match.
+            if await foreign_user_id(request, payload["sub"]) is not None:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Forbidden: user_id does not match authenticated user"},
+                )
         return await call_next(request)
 
 api_host = "127.0.0.1"
@@ -511,6 +520,8 @@ from apowerb.helpers.request_id_middleware import RequestIdMiddleware
 
 # Protect Google ADK's native /run and /run_sse endpoints
 app.add_middleware(ADKAuthMiddleware)
+# /run_live is a WebSocket: BaseHTTPMiddleware above never sees it.
+app.add_middleware(ADKLiveAuthMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 # B19 — Prometheus scrape endpoint (ASGI sub-app, outside /api on purpose).
