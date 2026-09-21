@@ -51,7 +51,22 @@ _COMPOSITES = {"sequential", "parallel", "loop"}
 
 
 class WorkflowUserError(ValueError):
-    """Erreur rédigée par nous, sûre à montrer à l'utilisateur telle quelle."""
+    """Erreur rédigée par nous, sûre à montrer à l'utilisateur telle quelle.
+
+    ``code`` et ``params`` la rendent traduisible : l'interface rédige alors
+    la cause et une piste d'action ; le message reste le repli.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        code: Optional[str] = None,
+        params: Optional[dict[str, str]] = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.params = params or {}
 
 
 class UnsupportedWorkflow(WorkflowUserError):
@@ -110,7 +125,12 @@ def error_fields(exc: BaseException) -> dict[str, str]:
         fields = None
         for link in chain:
             if isinstance(link, WorkflowUserError):
-                fields = {"code": "workflow_error", "detail": str(link)}
+                fields = {
+                    "code": getattr(link, "code", None) or "workflow_error",
+                    "detail": str(link),
+                }
+                if getattr(link, "params", None):
+                    fields["params"] = dict(link.params)
             elif isinstance(link, HTTPException) and isinstance(link.detail, str):
                 fields = {"code": "http_error", "detail": link.detail}
             elif isinstance(link, AdkRunError) and link.code:
@@ -134,7 +154,7 @@ def error_fields(exc: BaseException) -> dict[str, str]:
             setattr(link, _FIELDS_ATTR, fields)
         except (AttributeError, TypeError):
             pass
-    return dict(fields)
+    return {k: dict(v) if isinstance(v, dict) else v for k, v in fields.items()}
 
 
 def client_error(exc: BaseException) -> str:
