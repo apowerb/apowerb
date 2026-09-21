@@ -527,6 +527,8 @@ class _Compiler:
         elif node.type == "output":
 
             async def body(node_input):
+                # Valeur vide = non configurée : la sortie reprend son entrée.
+                # Une sortie volontairement vide n'est donc pas exprimable.
                 if cfg.get("value") not in (None, ""):
                     return render(cfg["value"], self.outputs), None
                 return node_input, None
