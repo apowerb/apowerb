@@ -39,7 +39,11 @@ def check_agent_owner(agent_id: str, owner_email: str) -> str:
     if details.get("owner_id") != owner_email:
         # Introuvable plutôt qu'interdit : on ne confirme pas l'existence d'un
         # agent d'autrui.
-        raise GraphError(f"agent introuvable : agent{number}")
+        raise GraphError(
+            f"agent introuvable : agent{number}",
+            code="agent_not_found",
+            params={"agent": f"agent{number}"},
+        )
     return f"agent{number}"
 
 
@@ -58,29 +62,48 @@ def resolve_tool(tool_ref: str, owner_email: str):
     else:
         pairs = list(zip(names, funcs))
     if not pairs:
-        raise GraphError(f"outil introuvable : {tool_ref}")
+        raise GraphError(
+            f"outil introuvable : {tool_ref}",
+            code="tool_not_found",
+            params={"tool": tool_ref},
+        )
     if len(pairs) > 1:
         options = ", ".join(n for n, _ in pairs)
         raise GraphError(
-            f"{tool_ref} expose plusieurs fonctions ({options}) : précise ref:fonction"
+            f"{tool_ref} expose plusieurs fonctions ({options}) : précise ref:fonction",
+            code="tool_ambiguous",
+            params={"tool": tool_ref, "options": options},
         )
     return pairs[0][1]
 
 
 async def call_tool(func, args: dict) -> Any:
-    params = inspect.signature(func).parameters
+    name = getattr(func, "__name__", str(func))
+    signature = inspect.signature(func)
+    params = signature.parameters
     if (
         "tool_context" in params
         and params["tool_context"].default is inspect.Parameter.empty
     ):
         raise GraphError(
-            f"{getattr(func, '__name__', func)} dépend du contexte d'un agent : "
-            "utilise-le dans un nœud agent"
+            f"{name} dépend du contexte d'un agent : utilise-le dans un nœud agent",
+            code="tool_needs_agent_context",
+            params={"tool": name},
         )
     if isinstance(args, UpstreamArgs) and not any(
         p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
     ):
         args = {k: v for k, v in args.items() if k in params}
+    try:
+        # Lier avant d'appeler : un TypeError levé *dans* l'outil n'est pas
+        # un problème d'arguments et ne doit pas se déguiser en l'un d'eux.
+        signature.bind(**args)
+    except TypeError as exc:
+        raise GraphError(
+            f"{name} : arguments refusés ({exc})",
+            code="tool_arguments",
+            params={"tool": name, "problem": str(exc)},
+        ) from None
     if inspect.iscoroutinefunction(func):
         return await func(**args)
     # Les outils du portfolio sont synchrones et souvent bloquants (HTTP, SQL).

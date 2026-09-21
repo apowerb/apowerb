@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from apowerb.core.workflow_graph import UpstreamArgs
+from apowerb.core.workflow_graph import GraphError, UpstreamArgs
 from apowerb.core.workflow_runtime import call_tool
 
 
@@ -37,5 +37,7 @@ def test_var_keyword_tool_receives_the_whole_upstream_input():
 
 
 def test_declared_args_are_passed_verbatim():
-    with pytest.raises(TypeError):
+    # Rien n est filtré : la clé en trop est signalée, pas avalée.
+    with pytest.raises(GraphError, match="message") as info:
         asyncio.run(call_tool(get_weather, {"message": "hi"}))
+    assert info.value.code == "tool_arguments"

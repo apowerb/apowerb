@@ -424,7 +424,9 @@ class _Compiler:
                 if cfg.get("default_route"):
                     return node_input, cfg["default_route"]
                 raise GraphError(
-                    f"{node.id} : aucune règle ne correspond et pas de route par défaut"
+                    f"{node.id} : aucune règle ne correspond et pas de route par défaut",
+                    code="no_route",
+                    params={"node": node.id},
                 )
         elif node.type == "classifier":
 
@@ -436,7 +438,12 @@ class _Compiler:
                 route = _pick_route(answer, [r["route"] for r in routes])
                 if route is None:
                     raise GraphError(
-                        f"{node.id} : réponse du classifieur hors routes : {str(answer)[:80]!r}"
+                        f"{node.id} : réponse du classifieur hors routes : {str(answer)[:80]!r}",
+                        code="classifier_no_route",
+                        params={
+                            "node": node.id,
+                            "routes": ", ".join(r["route"] for r in routes),
+                        },
                     )
                 return node_input, route
         elif node.type == "merge":
@@ -466,7 +473,9 @@ class _Compiler:
             items = render(cfg["items"], self.outputs)
             if not isinstance(items, list):
                 raise GraphError(
-                    f"{node.id} : items n'est pas une liste ({type(items).__name__})"
+                    f"{node.id} : items n'est pas une liste ({type(items).__name__})",
+                    code="loop_items_not_list",
+                    params={"node": node.id, "type": type(items).__name__},
                 )
             if len(items) > cap:
                 self.emit(
