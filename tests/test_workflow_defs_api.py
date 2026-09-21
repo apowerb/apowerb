@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 from apowerb.core import workflow_graph as wg
 from apowerb.core import workflow_main as wm
 from apowerb.core import workflow_runtime as rt
+from apowerb.core import workflow_triggers as wt
 
 ALICE, BOB = "alice@acme.fr", "bob@other.fr"
 GRAPH = {
@@ -50,6 +51,11 @@ def client(monkeypatch):
 
     monkeypatch.setattr(wm.workflow_store, "engine", engine)
     wm.workflow_store.metadata.create_all(engine)
+    # workflow_main synchronise le trigger à chaque écriture réussie : même
+    # engine partagé, sinon la synchronisation tenterait de joindre le
+    # Postgres réel des réglages par défaut.
+    monkeypatch.setattr(wt.workflow_trigger_store, "engine", engine)
+    wt.workflow_trigger_store.metadata.create_all(engine)
 
     from apowerb.auth.dependencies import get_current_user
     from apowerb.routers import workflow_defs

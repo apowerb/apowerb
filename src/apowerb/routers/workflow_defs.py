@@ -97,7 +97,12 @@ async def get_workflow(
     wf = workflow_main.get_workflow(workflow_id, owner_id=current_user.email)
     if wf is None:
         raise _not_found(workflow_id)
-    return {**wf, "validation": workflow_main.check_workflow(wf["graph"])}
+    return {
+        **wf,
+        "validation": workflow_main.check_workflow(
+            wf["graph"], workflow_id=workflow_id
+        ),
+    }
 
 
 @router.put("/{workflow_id}")
