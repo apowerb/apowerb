@@ -1,15 +1,20 @@
 """Branchement de production des nœuds d'un graphe de workflow.
 
-``workflow_graph`` ne sait pas exécuter un agent ni un outil : il les reçoit
-(``run_agent``, ``run_tool``). Ce module les fournit pour un propriétaire
-donné, avec les mêmes règles que le reste du produit :
+``workflow_graph`` ne sait pas exécuter un agent, un outil ni une recherche
+RAG : il les reçoit (``run_agent``, ``run_tool``, ``run_rag``). Ce module les
+fournit pour un propriétaire donné, avec les mêmes règles que le reste du
+produit :
 
 * un nœud agent ne peut viser qu'un agent **du même propriétaire** (même
   filtre que ``get_agent``) ; il s'exécute par ``/run`` sous son jeton ;
 * un nœud outil passe par ``load_agent_tools_functions``, qui filtre déjà
   les ``tool_config{id}`` par propriétaire. Référence : ``categorie.outil``,
   ou ``tool_config{id}:nom_de_fonction`` quand la configuration en expose
-  plusieurs.
+  plusieurs ;
+* un nœud rag vise le même agent (même contrôle d'appartenance) et
+  interroge les bases de connaissances qui lui sont rattachées, lues comme
+  ``GET /rag/knowledge/{agent_id}`` (``read_knowledge_map``), via
+  ``tool_search_knowledge`` (appel bloquant, exécuté dans un thread).
 """
 
 from __future__ import annotations
@@ -77,6 +82,64 @@ def resolve_tool(tool_ref: str, owner_email: str):
     return pairs[0][1]
 
 
+def _knowledge_sources(folder: str) -> list[dict]:
+    """Sources RAG indexées (statut ``complete``) de l'agent ``folder``.
+
+    Même lecture que ``GET /rag/knowledge/{agent_id}``
+    (``apowerb.routers.rag.status``), sans notion de session : un nœud de
+    workflow n'a pas de ``session_id`` d'upload.
+    """
+    from apowerb.core.knowledge_map import read_knowledge_map
+
+    kmap = read_knowledge_map(folder)
+    return [
+        s
+        for s in kmap.get("sources", [])
+        if s.get("status") == "complete" and s.get("knowledge_id")
+    ]
+
+
+def _search_rag(folder: str, agent_id: str, query: str, top_k: int) -> dict:
+    """Interroge jusqu'à ``top_k`` bases de connaissances de l'agent (bloquant).
+
+    ``tool_search_knowledge`` est une recherche conversationnelle (une
+    question, une réponse), pas un moteur de passages notés : chaque base
+    interrogée avec succès fournit un seul passage, sa réponse complète, sans
+    score (le service n'en renvoie pas).
+    """
+    from apowerb.tools_store.portfolio.rag import tool_search_knowledge
+
+    sources = _knowledge_sources(folder)
+    if not sources:
+        raise GraphError(
+            f"agent {agent_id} : aucune base de connaissances disponible",
+            code="rag_no_knowledge",
+            params={"agent": agent_id},
+        )
+    passages = []
+    for source in sources[:top_k]:
+        kid = str(source["knowledge_id"])
+        try:
+            result = tool_search_knowledge(kid, query)
+        except Exception:  # noqa: BLE001 - le service RAG est hors de notre contrôle
+            result = {"status": "error"}
+        if result.get("status") == "success":
+            passages.append(
+                {
+                    "text": str(result.get("answer") or ""),
+                    "source": source.get("name") or kid,
+                    "score": None,
+                }
+            )
+    if not passages:
+        raise GraphError(
+            "le service RAG a échoué pour toutes les bases interrogées",
+            code="rag_failed",
+            params={},
+        )
+    return {"query": query, "passages": passages}
+
+
 async def call_tool(func, args: dict) -> Any:
     name = getattr(func, "__name__", str(func))
     signature = inspect.signature(func)
@@ -111,7 +174,7 @@ async def call_tool(func, args: dict) -> Any:
 
 
 def bindings_for(owner_email: str, plan: Optional[str]):
-    """(run_agent, run_tool) pour exécuter un graphe au nom de ``owner_email``."""
+    """(run_agent, run_tool, run_rag) pour exécuter un graphe au nom de ``owner_email``."""
     token_factory = access_token_factory(owner_email)
 
     async def run_agent(agent_id: str, message: str) -> Any:
@@ -127,4 +190,8 @@ def bindings_for(owner_email: str, plan: Optional[str]):
     async def run_tool(tool_ref: str, args: dict) -> Any:
         return await call_tool(resolve_tool(tool_ref, owner_email), args or {})
 
-    return run_agent, run_tool
+    async def run_rag(agent_id: str, query: str, top_k: int) -> dict:
+        folder = check_agent_owner(agent_id, owner_email)
+        return await asyncio.to_thread(_search_rag, folder, agent_id, query, top_k)
+
+    return run_agent, run_tool, run_rag
