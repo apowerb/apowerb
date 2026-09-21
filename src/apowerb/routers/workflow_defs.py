@@ -97,7 +97,12 @@ async def get_workflow(
     wf = workflow_main.get_workflow(workflow_id, owner_id=current_user.email)
     if wf is None:
         raise _not_found(workflow_id)
-    return {**wf, "validation": workflow_main.check_workflow(wf["graph"])}
+    return {
+        **wf,
+        "validation": workflow_main.check_workflow(
+            wf["graph"], workflow_id=workflow_id
+        ),
+    }
 
 
 @router.put("/{workflow_id}")
@@ -166,13 +171,19 @@ async def run_workflow(
     wf = workflow_main.get_workflow(workflow_id, owner_id=owner)
     if wf is None:
         raise _not_found(workflow_id)
-    report = workflow_main.check_workflow(wf["graph"])
+    report = workflow_main.check_workflow(wf["graph"], workflow_id=workflow_id)
     if not report["valid"]:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, report["errors"][0])
     graph = workflow_main.parse_graph(wf["graph"])
     run_agent, run_tool = workflow_runtime.bindings_for(
         owner, await resolve_owner_plan(owner)
     )
+    # Sous-workflows : callback owner-scopé (même contrôle d'accès que pour
+    # lancer ce workflow directement, cf. get_workflow ci-dessus) — un
+    # subworkflow exécute la MÊME version « courante » que ce endpoint
+    # (workflow_main.get_workflow n'est pas filtré par statut : brouillon ou
+    # publié, c'est ce qui est enregistré maintenant).
+    run_subworkflow = workflow_runtime.resolve_workflow_for(owner)
 
     run_id = nanoid_generate(size=21)
     try:
@@ -197,6 +208,8 @@ async def run_workflow(
             payload=body.payload,
             run_agent=run_agent,
             run_tool=run_tool,
+            run_subworkflow=run_subworkflow,
+            workflow_id=workflow_id,
             cancel_event=cancel_event,
         )
 
