@@ -206,3 +206,26 @@ def test_concurrent_writer_between_read_and_update_is_a_conflict(monkeypatch):
     # Notre écriture n a pas eu lieu. (L écrivain simulé partage notre
     # transaction, annulée avec le conflit ; un vrai onglet aurait la sienne.)
     assert wm.get_workflow(wid, owner_id=ALICE)["name"] != "moi"
+
+
+def test_each_revision_says_which_change_replaced_it():
+    """The history labels come from the server: an edit, a publication, a
+    return to draft, a restore -- never a vague "update" the interface cannot
+    name."""
+    wid = _create()["workflow_id"]
+    wm.update_workflow(wid, owner_id=ALICE, expected_version=1, name="edited")
+    wm.update_workflow(wid, owner_id=ALICE, expected_version=2, status="published")
+    wm.update_workflow(wid, owner_id=ALICE, expected_version=3, status="draft")
+    first = wm.list_revisions(wid, owner_id=ALICE)[-1]
+    wm.restore_revision(wid, first["revision_id"], owner_id=ALICE)
+    reasons = [r["reason"] for r in wm.list_revisions(wid, owner_id=ALICE)]
+    assert reasons == ["restore", "unpublish", "publish", "edit"]
+
+
+def test_revisions_archived_before_the_labels_read_as_edits(store):
+    """Rows written by 0.2.29 carry ``update``: they were edits."""
+    wid = _create()["workflow_id"]
+    wm.update_workflow(wid, owner_id=ALICE, expected_version=1, name="edited")
+    with store.engine.begin() as conn:
+        conn.execute(store.revision_table.update().values(reason="update"))
+    assert [r["reason"] for r in wm.list_revisions(wid, owner_id=ALICE)] == ["edit"]

@@ -145,6 +145,20 @@ def _archive(conn, row, reason: str) -> None:
     )
 
 
+def _update_reason(previous_status: str, changes: dict) -> str:
+    """Why the archived state was replaced: shown as is in the history."""
+    status = changes.get("status")
+    if status == "published" and previous_status != "published":
+        return "publish"
+    if status is not None and status != "published" and previous_status == "published":
+        return "unpublish"
+    return "edit"
+
+
+# Rows archived by 0.2.29 carry this reason; they were all edits.
+_LEGACY_REASONS = {"update": "edit"}
+
+
 def update_workflow(
     workflow_id: str,
     *,
@@ -184,7 +198,7 @@ def update_workflow(
                     )
             changes["status"] = status
         if changes:
-            _archive(conn, row, "update")
+            _archive(conn, row, _update_reason(current["status"], changes))
             _write_if_unchanged(conn, workflow_id, owner_id, expected_version, changes)
     return get_workflow(workflow_id, owner_id=owner_id)
 
@@ -237,7 +251,12 @@ def list_revisions(workflow_id: str, *, owner_id: str) -> list[dict]:
             .where(r.c.workflow_id == workflow_id, r.c.owner_id == owner_id)
             .order_by(r.c.revision_id.desc())
         ).fetchall()
-    return [{k: v for k, v in dict(x._mapping).items() if k != "graph"} for x in rows]
+    out = []
+    for x in rows:
+        d = {k: v for k, v in dict(x._mapping).items() if k != "graph"}
+        d["reason"] = _LEGACY_REASONS.get(d.get("reason"), d.get("reason"))
+        out.append(d)
+    return out
 
 
 def restore_revision(workflow_id: str, revision_id: int, *, owner_id: str) -> dict:

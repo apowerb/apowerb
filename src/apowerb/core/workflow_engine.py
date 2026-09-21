@@ -74,27 +74,72 @@ DetailsFn = Callable[[str], AgentSpec]
 TokenFactory = Callable[[], str]
 
 
-def client_error(exc: BaseException) -> str:
-    """Le message d'erreur montrable au client.
+_FIELDS_ATTR = "_apowerb_error_fields"
 
-    Une exception de bibliothèque ou d'outil peut porter une URL avec clé, un
-    hôte de base ou un chemin : elle est journalisée ici avec une référence,
-    et le client ne reçoit que cette référence. Seules nos erreurs rédigées
-    (``WorkflowUserError``) et les refus HTTP (quota) passent telles quelles.
-    ADK enveloppe l'exception d'un nœud : on remonte la chaîne des causes.
+
+def error_fields(exc: BaseException) -> dict[str, str]:
+    """What an error event tells the client: ``code``, ``detail``, maybe ``ref``.
+
+    ``code`` is stable and translated by the interface; ``detail`` is an
+    English fallback. A library or tool exception can carry a URL with a key,
+    a host or a path: it is logged under a ``ref`` and only the ``ref`` goes
+    out. Our own written errors (``WorkflowUserError``) and HTTP refusals
+    (quota) are shown as they are.
+
+    One failure is one reference: ADK wraps a node's exception again when the
+    whole workflow fails, so the fields are stored on the exception and found
+    again along its causes -- the node event and the run event share the
+    ``ref``, and the exception is logged once.
     """
     from fastapi import HTTPException
 
-    seen = exc
-    while seen is not None:
-        if isinstance(seen, WorkflowUserError):
-            return str(seen)
-        if isinstance(seen, HTTPException) and isinstance(seen.detail, str):
-            return seen.detail
+    from apowerb.core.adk_runner import AdkRunError
+
+    chain: list[BaseException] = []
+    seen: Optional[BaseException] = exc
+    while seen is not None and seen not in chain:
+        chain.append(seen)
         seen = seen.__cause__ or seen.__context__
-    ref = uuid.uuid4().hex[:8]
-    logger.error("[workflow] erreur interne ref=%s : %r", ref, exc, exc_info=exc)
-    return f"Erreur interne pendant l'exécution (réf. {ref})."
+
+    for link in chain:
+        cached = getattr(link, _FIELDS_ATTR, None)
+        if cached is not None:
+            fields = cached
+            break
+    else:
+        fields = None
+        for link in chain:
+            if isinstance(link, WorkflowUserError):
+                fields = {"code": "workflow_error", "detail": str(link)}
+            elif isinstance(link, HTTPException) and isinstance(link.detail, str):
+                fields = {"code": "http_error", "detail": link.detail}
+            elif isinstance(link, AdkRunError) and link.code:
+                fields = {"code": link.code, "detail": link.detail or str(link)}
+                if link.ref:
+                    fields["ref"] = link.ref
+            if fields is not None:
+                break
+        if fields is None:
+            ref = uuid.uuid4().hex[:8]
+            logger.error(
+                "[workflow] internal error ref=%s : %r", ref, exc, exc_info=exc
+            )
+            fields = {
+                "code": "internal",
+                "detail": f"Internal error during the run (ref. {ref}).",
+                "ref": ref,
+            }
+    for link in chain:
+        try:
+            setattr(link, _FIELDS_ATTR, fields)
+        except (AttributeError, TypeError):
+            pass
+    return dict(fields)
+
+
+def client_error(exc: BaseException) -> str:
+    """The message of :func:`error_fields`, for callers that only show text."""
+    return error_fields(exc)["detail"]
 
 
 LeafFn = Callable[[AgentSpec, Any], Awaitable[Any]]
@@ -240,7 +285,7 @@ class _Compiler:
                     {
                         "event": "step_error",
                         "agent_id": spec.agent_id,
-                        "detail": client_error(exc),
+                        **error_fields(exc),
                     }
                 )
                 raise
@@ -381,10 +426,14 @@ async def run_canvas(
     if cancel_event.is_set() or isinstance(exc, WorkflowCancelled):
         yield _sse({"event": "cancelled"})
     elif exc is not None:
-        yield _sse({"event": "error", "detail": client_error(exc)})
+        yield _sse({"event": "error", **error_fields(exc)})
     elif not final:
         yield _sse(
-            {"event": "error", "detail": "le workflow s'est terminé sans sortie"}
+            {
+                "event": "error",
+                "code": "no_output",
+                "detail": "The workflow finished without an output.",
+            }
         )
     else:
         yield _sse({"event": "done", "output": final[-1]})

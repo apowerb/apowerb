@@ -478,6 +478,47 @@ async def stream_adk_agent(
         await asyncio.sleep((retry_delay or _CHAT_RATE_LIMIT_DEFAULT_DELAY) + 1.0)
 
 
+class AdkRunError(aiohttp.ClientError):
+    """``/run`` answered with an error.
+
+    Keeps what the server said -- the HTTP status and, when the server named
+    the cause (see ``core/provider_errors.py``), its ``code`` and log ``ref``
+    -- so a caller can tell a revoked model key from a crash. Still an
+    ``aiohttp.ClientError`` for the callers that catch that.
+    """
+
+    def __init__(
+        self,
+        status: int,
+        *,
+        code: Optional[str] = None,
+        detail: str = "",
+        ref: Optional[str] = None,
+    ) -> None:
+        super().__init__(f"Failed to run ADK agent: {status}")
+        self.status = status
+        self.code = code
+        self.detail = detail
+        self.ref = ref
+
+
+async def _raise_run_error(response) -> None:  # noqa: ANN001
+    body: Any = None
+    try:
+        body = json.loads(await response.text())
+    except (ValueError, aiohttp.ClientError):
+        pass
+    if not isinstance(body, dict):
+        body = {}
+    detail = body.get("detail")
+    raise AdkRunError(
+        response.status,
+        code=body.get("code") if isinstance(body.get("code"), str) else None,
+        detail=detail if isinstance(detail, str) else "",
+        ref=body.get("ref") if isinstance(body.get("ref"), str) else None,
+    )
+
+
 async def run_adk_agent(
     agent_name: str,
     user_id: str,
@@ -532,7 +573,8 @@ async def run_adk_agent(
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             async with session.post(url, headers=headers, json=payload) as response:
-                response.raise_for_status()
+                if response.status >= 400:
+                    await _raise_run_error(response)
 
                 content_type = response.headers.get("Content-Type", "")
 
@@ -542,6 +584,8 @@ async def run_adk_agent(
 
                 # Handle regular JSON response
                 return await response.json()
+        except AdkRunError:
+            raise
         except aiohttp.ClientError as e:
             raise aiohttp.ClientError(f"Failed to run ADK agent: {e}")
         except json.JSONDecodeError as e:
