@@ -53,6 +53,7 @@ from apowerb.routers.share import router as share_router
 from apowerb.routers.skills import router as skills_router
 from apowerb.routers.audio_stream import router as audio_stream_router
 from apowerb.routers.workflows import router as workflows_router
+from apowerb.routers.workflow_defs import router as workflow_defs_router
 from apowerb.routers.health import router as health_router
 from apowerb.routers.bug_reports import router as bug_reports_router
 from apowerb.helpers.integrations_migration import ensure_integrations_table
@@ -566,6 +567,7 @@ api_router.include_router(share_router, prefix="/api")
 api_router.include_router(skills_router, prefix="/api")
 api_router.include_router(models_router, prefix="/api")
 api_router.include_router(audio_stream_router, prefix="/api")
+api_router.include_router(workflow_defs_router, prefix="/api")
 api_router.include_router(workflows_router, prefix="/api")
 
 # `/api/admin`: users, groups, organisations, permissions. Every route is
