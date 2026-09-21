@@ -133,3 +133,30 @@ class TestLocalTime:
         monkeypatch.setenv("TH2_LOG_TZ", "Mars/Olympus_Mons")
         out = _emit(io.StringIO(), fmt="text")
         assert "+00:00" in out.splitlines()[-1]
+
+
+class TestProcessIdIsNotARequestId:
+    """Le 21/09, « run 7a5d2b4a » a été lu comme l identifiant d une exécution
+    de workflow, alors qu il désigne le démarrage du processus et revient
+    donc sur toutes les requêtes. Le libellé dit ce qu il est, et la ligne
+    porte l identifiant de la requête quand il y en a un."""
+
+    def test_text_label_names_the_process_start(self):
+        out = _emit(io.StringIO(), fmt="text")
+        line = out.splitlines()[-1]
+        assert f"boot {th2logger.current_run_id()}" in line
+        assert f"run {th2logger.current_run_id()}" not in line
+
+    def test_text_lines_carry_the_request_id(self):
+        from apowerb.helpers.request_id_middleware import set_request_id
+
+        set_request_id("req-42")
+        try:
+            out = _emit(io.StringIO(), fmt="text")
+        finally:
+            set_request_id(None)
+        assert "req req-42" in out.splitlines()[-1]
+
+    def test_no_request_label_outside_a_request(self):
+        out = _emit(io.StringIO(), fmt="text")
+        assert "| req " not in out.splitlines()[-1]

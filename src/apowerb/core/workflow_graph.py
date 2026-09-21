@@ -71,6 +71,16 @@ RunAgent = Callable[[str, str], Awaitable[Any]]
 RunTool = Callable[[str, dict], Awaitable[Any]]
 
 
+class UpstreamArgs(dict):
+    """Entrée amont passée à un outil faute d arguments déclarés.
+
+    Le runtime n en garde que les paramètres que l outil accepte : le
+    payload d un trigger n a aucune raison de coïncider avec la signature
+    de l outil. Des arguments déclarés restent un ``dict`` et passent tels
+    quels, pour qu une faute de frappe de l utilisateur se voie.
+    """
+
+
 class GraphError(WorkflowUserError):
     """Le graphe est invalide ; rien n'a été exécuté."""
 
@@ -401,7 +411,9 @@ class _Compiler:
                 if cfg.get("args") is not None:
                     args = render(cfg["args"], self.outputs)
                 else:
-                    args = node_input if isinstance(node_input, dict) else {}
+                    args = UpstreamArgs(
+                        node_input if isinstance(node_input, dict) else {}
+                    )
                 return await self.run_tool(cfg["tool"], args), None
         elif node.type == "router":
 
