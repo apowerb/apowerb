@@ -19,7 +19,7 @@ import inspect
 from typing import Any, Optional
 
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
-from apowerb.core.workflow_graph import GraphError
+from apowerb.core.workflow_graph import GraphError, UpstreamArgs
 
 
 def _agent_number(agent_id: str) -> int:
@@ -77,6 +77,10 @@ async def call_tool(func, args: dict) -> Any:
             f"{getattr(func, '__name__', func)} dépend du contexte d'un agent : "
             "utilise-le dans un nœud agent"
         )
+    if isinstance(args, UpstreamArgs) and not any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    ):
+        args = {k: v for k, v in args.items() if k in params}
     if inspect.iscoroutinefunction(func):
         return await func(**args)
     # Les outils du portfolio sont synchrones et souvent bloquants (HTTP, SQL).

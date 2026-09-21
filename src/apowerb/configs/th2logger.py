@@ -192,6 +192,11 @@ def _serialize(value: Any) -> Any:
     return str(value)
 
 
+def _request_label() -> str:
+    request_id = _current_request_id()
+    return f" req {request_id} |" if request_id else ""
+
+
 class LocalTimeFormatter(logging.Formatter):
     """Human-readable lines, stamped in the display zone and tagged by run.
 
@@ -201,7 +206,10 @@ class LocalTimeFormatter(logging.Formatter):
     property of the host.
     """
 
-    _TEMPLATE = "%s | run %s | %-8s | %s:%d | %s"
+    # ``boot`` et non ``run`` : l identifiant est celui du démarrage du
+    # processus, identique pour toutes ses requêtes -- lu le 21/09 comme
+    # celui d une exécution de workflow. ``req`` distingue les requêtes.
+    _TEMPLATE = "%s | boot %s |%s %-8s | %s:%d | %s"
 
     def __init__(self, tz: Optional[tzinfo] = None, run_id: Optional[str] = None):
         super().__init__()
@@ -212,6 +220,7 @@ class LocalTimeFormatter(logging.Formatter):
         line = self._TEMPLATE % (
             _local_isoformat(record.created, self._tz),
             self._run_id,
+            _request_label(),
             record.levelname,
             record.name,
             record.lineno,

@@ -477,3 +477,27 @@ def test_foreach_on_a_non_list_is_a_clear_error():
     )
     events = _run(g, env, payload={"rows": "pas une liste"})
     assert events[-1]["event"] == "error" and "liste" in events[-1]["detail"]
+
+
+# --- Outil sans arguments déclarés (21/09) ---------------------------------
+
+
+def test_tool_without_declared_args_marks_upstream_input_as_implicit():
+    env = _Env()
+    g = _graph(
+        [
+            {"id": "t", "type": "trigger"},
+            {"id": "x", "type": "tool", "config": {"tool": "t.echo"}},
+        ],
+        [{"source": "t", "target": "x"}],
+    )
+    _done(_run(g, env, payload={"order_id": "B7", "note": "hello"}))
+    args = env.calls[0][2]
+    assert args == {"order_id": "B7", "note": "hello"}
+    assert isinstance(args, wg.UpstreamArgs)
+
+
+def test_declared_args_are_explicit():
+    env = _order_env()
+    _run(_graph(ORDER, ORDER_EDGES), env, payload={"order_id": "B7"})
+    assert not isinstance(env.calls[0][2], wg.UpstreamArgs)
