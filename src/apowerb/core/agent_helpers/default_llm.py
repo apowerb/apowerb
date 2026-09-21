@@ -36,7 +36,9 @@ DEFAULT_LLM_MODEL_ID = f"{DEFAULT_LLM_PROVIDER}/default"
 # valeur (cf ``unmask_model_api_key``).
 MASKED_API_KEY = "__unchanged__"
 
-_SECRET_PARAM_KEYS = ("model_api_key", "model_api_base")
+# api_version voyage avec l'endpoint : pour le modele mutualise, il vient
+# de l'environnement comme le reste, jamais de l'agent.
+_SECRET_PARAM_KEYS = ("model_api_key", "model_api_base", "model_api_version", "api_version")
 
 
 def _as_dict(params) -> dict:
