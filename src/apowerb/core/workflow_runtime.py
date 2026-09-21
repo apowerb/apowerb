@@ -9,13 +9,28 @@ donné, avec les mêmes règles que le reste du produit :
 * un nœud outil passe par ``load_agent_tools_functions``, qui filtre déjà
   les ``tool_config{id}`` par propriétaire. Référence : ``categorie.outil``,
   ou ``tool_config{id}:nom_de_fonction`` quand la configuration en expose
-  plusieurs.
+  plusieurs ;
+* un nœud notification (canal ``app``) écrit dans les notifications du
+  **propriétaire du run**, jamais celles d'un tiers ; ``workflow_graph`` ne
+  connaît pas non plus l'identité de ce propriétaire, d'où l'injection ;
+* un nœud notification (canal ``teams``) poste sur le webhook Teams entrant
+  du propriétaire, résolu et déchiffré depuis son intégration
+  (``Integration``, provider ``teams_webhook`` — voir
+  ``apowerb.integrations.teams``) : l'URL n'est jamais écrite dans le
+  graphe, ni renvoyée dans un événement ou une erreur.
+
+``workflow_graph`` ne sait pas non plus faire de requête HTTP sortante : ce
+nœud (``http``) n'a en revanche besoin d'aucune ressource par propriétaire
+(pas d'authentification branchée pour l'instant, voir son message de
+validation), il reste donc exécuté directement par ``workflow_graph``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import time
 from typing import Any, Optional
 
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
@@ -110,8 +125,221 @@ async def call_tool(func, args: dict) -> Any:
     return await asyncio.to_thread(func, **args)
 
 
+# --- Nœud notification -------------------------------------------------------
+#
+# Débit : 30 envois / heure par propriétaire, fenêtre glissante tenue en
+# mémoire du PROCESS courant (un dict module-level). Ce n'est PAS un compteur
+# partagé entre workers ou instances : un déploiement multi-process laisse
+# chaque process appliquer sa propre limite. Documenté ici plutôt que corrigé,
+# une limite exacte demanderait un compteur externe (Redis) hors périmètre de
+# ce lot.
+_SEND_WINDOW_S = 3600.0
+_SEND_LIMIT = 30
+_send_history: dict[str, list[float]] = {}
+
+
+def _reserve_sends(owner_email: str, node_id: str, count: int) -> None:
+    """Réserve ``count`` envois pour ``owner_email`` ou refuse tout le lot.
+
+    Tout ou rien : un nœud qui enverrait 5 emails ne doit pas en envoyer 3
+    puis échouer sur le 4e, ce qui rendrait ``sent`` menteur.
+    """
+    now = time.monotonic()
+    history = _send_history.setdefault(owner_email, [])
+    history[:] = [t for t in history if now - t < _SEND_WINDOW_S]
+    if len(history) + count > _SEND_LIMIT:
+        raise GraphError(
+            f"{node_id} : limite de {_SEND_LIMIT} envois par heure dépassée",
+            code="notification_rate_limited",
+            params={"node": node_id, "limit": str(_SEND_LIMIT)},
+        )
+    history.extend([now] * count)
+
+
+def _checked_email(node_id: str, address: str) -> str:
+    """``address`` si c'est une adresse plausible, sinon lève le code produit."""
+    from pydantic import EmailStr, TypeAdapter
+    from pydantic import ValidationError as _PydanticValidationError
+
+    try:
+        return TypeAdapter(EmailStr).validate_python(address)
+    except _PydanticValidationError:
+        raise GraphError(
+            f"{node_id} : destinataire invalide ({address!r})",
+            code="notification_bad_recipient",
+            params={"node": node_id, "recipient": str(address)},
+        ) from None
+
+
+async def _notify_owner_in_app(owner_email: str, title: str, message: str) -> None:
+    """Notification en base + poussée SSE, même schéma que
+    ``webhook_handlers._common.create_webhook_notification`` et
+    ``bug_reports.tracking._notify_in_app`` : on réutilise le modèle et le bus
+    existants, on n'invente pas un second mécanisme de notification."""
+    from apowerb.helpers.database import sessionmanager
+    from apowerb.helpers.notification_bus import notify as push_notification
+    from apowerb.models import Notification
+    from apowerb.users.service import get_user_by_email
+
+    async with sessionmanager.session() as db:
+        user = await get_user_by_email(owner_email, db)
+        notification = Notification(
+            user_id=user.user_id,
+            title=title[:255],
+            message=message,
+            type="workflow",
+            link=None,
+            metadata_json=json.dumps({"source": "workflow"}),
+            is_read=False,
+        )
+        db.add(notification)
+        await db.commit()
+        await db.refresh(notification)
+        await push_notification(
+            user.user_id,
+            {
+                "id": notification.id,
+                "title": notification.title,
+                "message": notification.message,
+                "type": notification.type,
+                "link": notification.link,
+                "is_read": False,
+                "created_at": (
+                    notification.created_at.isoformat()
+                    if notification.created_at
+                    else None
+                ),
+            },
+        )
+
+
+def _teams_card(subject: str, body: str) -> dict:
+    """Corps POST au format Workflows (Power Automate) : une Adaptive Card
+    minimale, titre + texte, aucune mise en forme superflue."""
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "text": subject,
+                            "weight": "Bolder",
+                            "size": "Medium",
+                            "wrap": True,
+                        },
+                        {"type": "TextBlock", "text": body, "wrap": True},
+                    ],
+                },
+            }
+        ],
+    }
+
+
+async def _teams_webhook_url(owner_email: str):
+    """URL déchiffrée (jamais loguée) du webhook Teams du propriétaire, ou
+    ``None`` si l'intégration n'est pas configurée. Fonction à part pour que
+    les tests substituent la résolution sans monter de session DB."""
+    from apowerb.integrations.teams import get_teams_webhook_url_for_owner
+
+    return await get_teams_webhook_url_for_owner(owner_email)
+
+
+async def _notify_teams(
+    owner_email: str, node_id: str, subject: str, body: str
+) -> None:
+    """POST la carte sur le webhook Teams du propriétaire.
+
+    Revalide l'URL à l'envoi (même liste blanche qu'à l'enregistrement, voir
+    ``apowerb.integrations.teams.validate_teams_webhook_url``) : une
+    intégration enregistrée avant un durcissement de la liste, ou dont la
+    résolution DNS a changé depuis, ne doit pas rester utilisable
+    silencieusement. httpx, 10 s, aucune redirection suivie : un webhook
+    Teams ne redirige jamais légitimement, un saut serait un signe de
+    détournement plutôt qu'un cas à servir.
+    """
+    import httpx
+
+    from apowerb.integrations.teams import (
+        TeamsWebhookRefused,
+        validate_teams_webhook_url,
+    )
+
+    url = await _teams_webhook_url(owner_email)
+    if not url:
+        raise GraphError(
+            f"{node_id} : aucun webhook Teams configuré",
+            code="teams_not_configured",
+            params={"node": node_id},
+        )
+    try:
+        url = validate_teams_webhook_url(url)
+    except TeamsWebhookRefused:
+        raise GraphError(
+            f"{node_id} : webhook Teams refusé",
+            code="teams_failed",
+            params={"node": node_id, "status": None},
+        ) from None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            resp = await client.post(url, json=_teams_card(subject, body))
+    except httpx.TimeoutException:
+        raise GraphError(
+            f"{node_id} : délai Teams dépassé",
+            code="teams_failed",
+            params={"node": node_id, "status": None},
+        ) from None
+    except httpx.HTTPError:
+        # Erreur réseau : jamais le message brut (peut porter l'hôte visé).
+        raise GraphError(
+            f"{node_id} : échec réseau Teams",
+            code="teams_failed",
+            params={"node": node_id, "status": None},
+        ) from None
+    if not (200 <= resp.status_code < 300):
+        raise GraphError(
+            f"{node_id} : Teams a refusé l'envoi",
+            code="teams_failed",
+            params={"node": node_id, "status": resp.status_code},
+        ) from None
+
+
+def _notify_for(owner_email: str):
+    """Le callback ``run_notify`` injecté dans le compilateur pour ce propriétaire."""
+
+    async def run_notify(
+        node_id: str, channel: str, to: list, subject: str, body: str
+    ) -> int:
+        from apowerb.helpers.email_sender import send_email
+
+        if channel == "app":
+            _reserve_sends(owner_email, node_id, 1)
+            await _notify_owner_in_app(owner_email, subject, body)
+            return 1
+
+        if channel == "teams":
+            _reserve_sends(owner_email, node_id, 1)
+            await _notify_teams(owner_email, node_id, subject, body)
+            return 1
+
+        addresses = [_checked_email(node_id, addr) for addr in to]
+        _reserve_sends(owner_email, node_id, len(addresses))
+        for addr in addresses:
+            await send_email(to=addr, subject=subject, body=body)
+        return len(addresses)
+
+    return run_notify
+
+
 def bindings_for(owner_email: str, plan: Optional[str]):
-    """(run_agent, run_tool) pour exécuter un graphe au nom de ``owner_email``."""
+    """(run_agent, run_tool, run_notify) pour exécuter un graphe au nom de
+    ``owner_email``."""
     token_factory = access_token_factory(owner_email)
 
     async def run_agent(agent_id: str, message: str) -> Any:
@@ -127,4 +355,4 @@ def bindings_for(owner_email: str, plan: Optional[str]):
     async def run_tool(tool_ref: str, args: dict) -> Any:
         return await call_tool(resolve_tool(tool_ref, owner_email), args or {})
 
-    return run_agent, run_tool
+    return run_agent, run_tool, _notify_for(owner_email)
