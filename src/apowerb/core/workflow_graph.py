@@ -52,7 +52,7 @@ from apowerb.core.workflow_engine import (
     WorkflowCancelled,
     WorkflowUserError,
     _sse,
-    client_error,
+    error_fields,
     drive_workflow,
     leaf_message,
 )
@@ -355,7 +355,7 @@ class _Compiler:
                     {
                         "event": "node_error",
                         "node_id": node.id,
-                        "detail": client_error(exc),
+                        **error_fields(exc),
                     }
                 )
                 raise
@@ -575,7 +575,7 @@ async def run_graph(
     try:
         validate_graph(graph)
     except GraphError as exc:
-        yield _sse({"event": "error", "detail": str(exc)})
+        yield _sse({"event": "error", "code": "invalid_graph", "detail": str(exc)})
         return
     queue: asyncio.Queue = asyncio.Queue()
     compiler = _Compiler(
@@ -591,6 +591,6 @@ async def run_graph(
     if cancel_event.is_set() or isinstance(exc, WorkflowCancelled):
         yield _sse({"event": "cancelled"})
     elif exc is not None:
-        yield _sse({"event": "error", "detail": client_error(exc)})
+        yield _sse({"event": "error", **error_fields(exc)})
     else:
         yield _sse({"event": "done", "output": _final_output(graph, compiler.outputs)})

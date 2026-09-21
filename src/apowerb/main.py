@@ -478,6 +478,12 @@ from apowerb.core.extensions.loader import load_overlay  # noqa: E402
 load_overlay()
 register_exception_handlers(app)
 
+# A model provider that refuses a call (revoked key, quota) answers /run with
+# its category instead of an anonymous 500 -- see core/provider_errors.py.
+from apowerb.core.provider_errors import register_provider_error_handlers  # noqa: E402
+
+register_provider_error_handlers(app)
+
 
 # A path that resolved outside its base directory is a bad request, not a
 # server fault. Without this handler `contained_path` would surface as a 500

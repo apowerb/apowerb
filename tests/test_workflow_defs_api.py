@@ -294,7 +294,11 @@ def test_a_run_that_fails_midway_is_recorded_as_an_error(client, monkeypatch):
         for line in r.text.split("\n\n")
         if line.startswith("data: ")
     ]
-    assert events[-1] == {"event": "error", "detail": "quota dépassé"}
+    assert events[-1] == {
+        "event": "error",
+        "code": "workflow_error",
+        "detail": "quota dépassé",
+    }
     assert finished == [("error", "quota dépassé")]
 
 
