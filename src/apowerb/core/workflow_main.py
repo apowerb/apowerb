@@ -1,0 +1,285 @@
+"""Service des workflows persistés : CRUD, verrou optimiste, historique.
+
+Isolation : tout accès est filtré par ``owner_id``, comme ``get_agent``. Un
+workflow d'autrui est « introuvable », jamais « interdit » — on ne confirme pas
+son existence.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from nanoid import generate as nanoid_generate
+from pydantic import ValidationError
+
+from apowerb.agent_store.workflow_store import WorkflowStore
+from apowerb.core.workflow_graph import GraphError, WorkflowGraph, validate_graph
+from apowerb.helpers.emails import get_domain_from_email
+
+workflow_store = WorkflowStore()
+
+STATUSES = ("draft", "published")
+_LIST_FIELDS = (
+    "workflow_id",
+    "name",
+    "description",
+    "status",
+    "version",
+    "created_at",
+    "updated_at",
+)
+
+
+class WorkflowNotFound(LookupError):
+    pass
+
+
+class InvalidWorkflow(ValueError):
+    pass
+
+
+class VersionConflict(RuntimeError):
+    def __init__(self, current_version: int):
+        super().__init__(f"version courante : {current_version}")
+        self.current_version = current_version
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def parse_graph(graph: Any) -> WorkflowGraph:
+    """Structure du graphe (types, identifiants) ; lève ``InvalidWorkflow``."""
+    try:
+        return WorkflowGraph.model_validate(graph)
+    except ValidationError as exc:
+        raise InvalidWorkflow(str(exc)) from exc
+
+
+def check_workflow(graph: Any) -> dict:
+    """Validation complète, pour l'éditeur : jamais d'exception."""
+    try:
+        validate_graph(parse_graph(graph))
+    except (InvalidWorkflow, GraphError) as exc:
+        return {"valid": False, "errors": [str(exc)]}
+    return {"valid": True, "errors": []}
+
+
+def _dump(graph: WorkflowGraph) -> str:
+    return json.dumps(graph.model_dump(exclude_none=True), ensure_ascii=False)
+
+
+def _row(row, with_graph: bool = True) -> dict:
+    d = dict(row._mapping)
+    graph = json.loads(d.pop("graph"))
+    if with_graph:
+        d["graph"] = graph
+    else:
+        d = {k: d[k] for k in _LIST_FIELDS}
+        d["node_count"] = len(graph.get("nodes") or [])
+    return d
+
+
+def _fetch(conn, workflow_id: str, owner_id: str):
+    t = workflow_store.workflow_table
+    return conn.execute(
+        t.select().where(t.c.workflow_id == workflow_id, t.c.owner_id == owner_id)
+    ).fetchone()
+
+
+def create_workflow(
+    *, owner_id: str, name: str, graph: Any, description: Optional[str] = None
+) -> dict:
+    parsed = parse_graph(graph)
+    if not (name or "").strip():
+        raise InvalidWorkflow("nom manquant")
+    now = _now()
+    values = dict(
+        workflow_id=nanoid_generate(size=16),
+        name=name.strip(),
+        description=description,
+        owner_id=owner_id,
+        organization_id=get_domain_from_email(owner_id),
+        graph=_dump(parsed),
+        status="draft",
+        version=1,
+        created_at=now,
+        updated_at=now,
+    )
+    with workflow_store.engine.begin() as conn:
+        conn.execute(workflow_store.workflow_table.insert().values(**values))
+    return get_workflow(values["workflow_id"], owner_id=owner_id)
+
+
+def get_workflow(workflow_id: str, *, owner_id: str) -> Optional[dict]:
+    with workflow_store.engine.begin() as conn:
+        row = _fetch(conn, workflow_id, owner_id)
+    return _row(row) if row else None
+
+
+def list_workflows(*, owner_id: str) -> list[dict]:
+    t = workflow_store.workflow_table
+    with workflow_store.engine.begin() as conn:
+        rows = conn.execute(
+            t.select().where(t.c.owner_id == owner_id).order_by(t.c.updated_at.desc())
+        ).fetchall()
+    return [_row(r, with_graph=False) for r in rows]
+
+
+def _archive(conn, row, reason: str) -> None:
+    d = dict(row._mapping)
+    conn.execute(
+        workflow_store.revision_table.insert().values(
+            workflow_id=d["workflow_id"],
+            version=d["version"],
+            name=d["name"],
+            description=d["description"],
+            graph=d["graph"],
+            status=d["status"],
+            owner_id=d["owner_id"],
+            saved_at=_now(),
+            reason=reason,
+        )
+    )
+
+
+def update_workflow(
+    workflow_id: str,
+    *,
+    owner_id: str,
+    expected_version: int,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    graph: Any = None,
+    status: Optional[str] = None,
+) -> dict:
+    with workflow_store.engine.begin() as conn:
+        row = _fetch(conn, workflow_id, owner_id)
+        if row is None:
+            raise WorkflowNotFound(workflow_id)
+        current = row._mapping
+        if current["version"] != expected_version:
+            raise VersionConflict(current["version"])
+        changes: dict[str, Any] = {}
+        if name is not None:
+            if not name.strip():
+                raise InvalidWorkflow("nom manquant")
+            changes["name"] = name.strip()
+        if description is not None:
+            changes["description"] = description
+        if graph is not None:
+            changes["graph"] = _dump(parse_graph(graph))
+        if status is not None:
+            if status not in STATUSES:
+                raise InvalidWorkflow(f"statut inconnu : {status}")
+            if status == "published":
+                report = check_workflow(
+                    json.loads(changes.get("graph", current["graph"]))
+                )
+                if not report["valid"]:
+                    raise InvalidWorkflow(
+                        "publication refusée : " + report["errors"][0]
+                    )
+            changes["status"] = status
+        if changes:
+            _archive(conn, row, "update")
+            _write_if_unchanged(conn, workflow_id, owner_id, expected_version, changes)
+    return get_workflow(workflow_id, owner_id=owner_id)
+
+
+def _write_if_unchanged(
+    conn, workflow_id: str, owner_id: str, version: int, changes: dict
+) -> None:
+    """Écrit seulement si la version en base est toujours ``version``.
+
+    Le contrôle sur la lecture ne suffit pas : un écrivain concurrent peut
+    passer entre la lecture et l'écriture. L'``UPDATE`` porte donc la
+    condition lui-même ; zéro ligne touchée = conflit (la transaction, et
+    l'archive qu'elle contenait, sont annulées).
+    """
+    t = workflow_store.workflow_table
+    result = conn.execute(
+        t.update()
+        .where(
+            t.c.workflow_id == workflow_id,
+            t.c.owner_id == owner_id,
+            t.c.version == version,
+        )
+        .values(**changes, version=version + 1, updated_at=_now())
+    )
+    if result.rowcount != 1:
+        now = _fetch(conn, workflow_id, owner_id)
+        raise VersionConflict(now._mapping["version"] if now is not None else version)
+
+
+def delete_workflow(workflow_id: str, *, owner_id: str) -> None:
+    t, r = workflow_store.workflow_table, workflow_store.revision_table
+    with workflow_store.engine.begin() as conn:
+        if _fetch(conn, workflow_id, owner_id) is None:
+            raise WorkflowNotFound(workflow_id)
+        conn.execute(
+            r.delete().where(r.c.workflow_id == workflow_id, r.c.owner_id == owner_id)
+        )
+        conn.execute(
+            t.delete().where(t.c.workflow_id == workflow_id, t.c.owner_id == owner_id)
+        )
+
+
+def list_revisions(workflow_id: str, *, owner_id: str) -> list[dict]:
+    r = workflow_store.revision_table
+    with workflow_store.engine.begin() as conn:
+        if _fetch(conn, workflow_id, owner_id) is None:
+            raise WorkflowNotFound(workflow_id)
+        rows = conn.execute(
+            r.select()
+            .where(r.c.workflow_id == workflow_id, r.c.owner_id == owner_id)
+            .order_by(r.c.revision_id.desc())
+        ).fetchall()
+    return [{k: v for k, v in dict(x._mapping).items() if k != "graph"} for x in rows]
+
+
+def restore_revision(workflow_id: str, revision_id: int, *, owner_id: str) -> dict:
+    """Restaure une révision ; l'état remplacé est archivé, rien n'est perdu."""
+    r = workflow_store.revision_table
+    with workflow_store.engine.begin() as conn:
+        row = _fetch(conn, workflow_id, owner_id)
+        if row is None:
+            raise WorkflowNotFound(workflow_id)
+        rev = conn.execute(
+            r.select().where(
+                r.c.revision_id == revision_id,
+                r.c.workflow_id == workflow_id,
+                r.c.owner_id == owner_id,
+            )
+        ).fetchone()
+        if rev is None:
+            raise WorkflowNotFound(f"révision {revision_id}")
+        _archive(conn, row, "restore")
+        rv = rev._mapping
+        _write_if_unchanged(
+            conn,
+            workflow_id,
+            owner_id,
+            row._mapping["version"],
+            dict(
+                name=rv["name"],
+                description=rv["description"],
+                graph=rv["graph"],
+                status="draft",
+            ),
+        )
+    return get_workflow(workflow_id, owner_id=owner_id)
+
+
+def duplicate_workflow(workflow_id: str, *, owner_id: str) -> dict:
+    src = get_workflow(workflow_id, owner_id=owner_id)
+    if src is None:
+        raise WorkflowNotFound(workflow_id)
+    return create_workflow(
+        owner_id=owner_id,
+        name=f"{src['name']} (copie)",
+        graph=src["graph"],
+        description=src["description"],
+    )

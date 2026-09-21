@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from logging import getLogger
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
@@ -101,11 +102,47 @@ async def _default_workflow_runner(
     yield f"data: {json.dumps({'event': 'done'})}\n\n"
 
 
+async def _server_workflow_runner(
+    wid: str,
+    cancel_event: asyncio.Event,
+    canvas_agent_ids: List[str],
+    file_bytes: Optional[bytes],
+) -> AsyncGenerator[str, None]:
+    """Runner réel : exécute le canvas dans le cœur (roadmap#55, étape 1).
+
+    Activé par ``APOWERB_WORKFLOW_ENGINE=server``. Tant que le front exécute
+    lui-même le canvas, l'activer sans changer le front ferait tourner chaque
+    agent deux fois : le défaut reste le bouchon.
+    """
+    from apowerb.core import workflow_engine
+    from apowerb.core.run_gate import resolve_owner_plan
+
+    owner = (_runs.get(wid) or {}).get("owner") or ""
+    run_leaf = workflow_engine.make_http_leaf_runner(
+        owner_email=owner,
+        plan=await resolve_owner_plan(owner),
+        token_factory=workflow_engine.access_token_factory(owner),
+    )
+    async for chunk in workflow_engine.run_canvas(
+        [str(a) for a in canvas_agent_ids],
+        details_of=workflow_engine.owner_scoped_specs(owner),
+        run_leaf=run_leaf,
+        cancel_event=cancel_event,
+    ):
+        yield chunk
+
+
+def _select_runner():
+    if os.environ.get("APOWERB_WORKFLOW_ENGINE", "").strip().lower() == "server":
+        return _server_workflow_runner
+    return _default_workflow_runner
+
+
 # Swappable hook (tests override this).
 _workflow_runner: Callable[
     [str, asyncio.Event, List[str], Optional[bytes]],
     AsyncGenerator[str, None],
-] = _default_workflow_runner
+] = _select_runner()
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +150,36 @@ _workflow_runner: Callable[
 # ---------------------------------------------------------------------------
 
 
+def _terminal_event(chunk: Any) -> Optional[dict]:
+    """L'événement ``error`` ou ``cancelled`` qu'un runner émet pour finir.
+
+    Les moteurs du cœur (``run_canvas``, ``run_graph``) ne lèvent pas : ils
+    concluent le flux par un de ces événements. Sans cette lecture, un run
+    échoué était consigné ``success``.
+    """
+    text = chunk.decode() if isinstance(chunk, bytes) else chunk
+    if not isinstance(text, str) or not text.startswith("data: "):
+        return None
+    try:
+        payload = json.loads(text[len("data: "):])
+    except ValueError:
+        return None
+    if isinstance(payload, dict) and payload.get("event") in ("error", "cancelled"):
+        return payload
+    return None
+
+
 def _streaming_run(
     run_id: str,
     agent_ids: List[str],
     file_bytes: Optional[bytes],
     owner: str,
+    runner: Optional[Callable[[asyncio.Event], AsyncGenerator[str, None]]] = None,
 ) -> StreamingResponse:
     """Drive one run and stream it, recording how it ends.
+
+    ``runner`` remplace l'exécution du canvas (les runs de graphe passent par
+    ici pour hériter du suivi, de l'annulation et de la trace en base).
 
     Factorisé entre le démarrage et le rejeu : les deux exécutent la même
     chose, la seule différence étant d'où vient l'entrée. L'issue est écrite
@@ -142,10 +202,19 @@ def _streaming_run(
             # raccrocher — y compris après un rejeu, où il diffère du wid
             # qu'il avait envoyé.
             yield f"data: {json.dumps({'event': 'run_started', 'wid': run_id})}\n\n".encode()
-            async for chunk in _workflow_runner(
-                run_id, cancel_event, agent_ids, file_bytes
-            ):
+            stream = (
+                runner(cancel_event)
+                if runner is not None
+                else _workflow_runner(run_id, cancel_event, agent_ids, file_bytes)
+            )
+            async for chunk in stream:
                 yield chunk.encode() if isinstance(chunk, str) else chunk
+                terminal = _terminal_event(chunk)
+                if terminal is not None and terminal["event"] == "error":
+                    outcome = run_main.STATUS_ERROR
+                    error_message = str(terminal.get("detail") or "")
+                elif terminal is not None:
+                    outcome = run_main.STATUS_CANCELLED
                 if cancel_event.is_set():
                     # Drain one more iteration if the runner hasn't noticed.
                     continue
