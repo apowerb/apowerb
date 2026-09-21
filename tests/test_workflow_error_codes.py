@@ -74,14 +74,16 @@ def test_error_raised_inside_a_tool_is_not_mistaken_for_bad_arguments():
     def broken(city: str):
         raise TypeError("secret internal detail")
 
-    assert asyncio.run(_raises(broken, {"city": "x"})) == "internal"
+    fields = asyncio.run(_raises(broken, {"city": "x"}))
+    assert fields["code"] == "internal"
+    assert "secret internal detail" not in repr(fields)
 
 
 async def _raises(func, args):
     try:
         await call_tool(func, args)
     except Exception as exc:  # noqa: BLE001
-        return error_fields(exc)["code"]
+        return error_fields(exc)
     return None
 
 
