@@ -15,11 +15,23 @@ donné, avec les mêmes règles que le reste du produit :
 from __future__ import annotations
 
 import asyncio
+import enum
 import inspect
-from typing import Any, Optional
+import re
+import types
+from typing import Any, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
 from apowerb.core.workflow_graph import GraphError, UpstreamArgs
+
+# Paramètres injectés par le runtime, jamais demandés à l'utilisateur.
+_INJECTED_PARAMS = frozenset({"tool_context"})
+
+# ``Optional[X]``/``Union[X, None]`` et, depuis 3.10, ``X | None`` partagent
+# la même lecture : un seul type utile une fois ``None`` écarté.
+_UNION_ORIGINS = {Union}
+if hasattr(types, "UnionType"):
+    _UNION_ORIGINS.add(types.UnionType)
 
 
 def _agent_number(agent_id: str) -> int:
@@ -77,14 +89,26 @@ def resolve_tool(tool_ref: str, owner_email: str):
     return pairs[0][1]
 
 
+def _tool_context_required(params: Any) -> bool:
+    """Vrai si ``tool_context`` est un paramètre sans défaut (donc obligatoire).
+
+    Optionnel (``tool_context: ToolContext = None``), l'outil se passe très
+    bien d'un agent ; obligatoire, il ne peut s'exécuter que dans un nœud
+    agent. Partagé par ``call_tool`` (qui refuse l'appel) et
+    ``tool_arg_schema`` (qui le signale au studio via ``needs_agent_context``)
+    pour que les deux ne divergent jamais.
+    """
+    return (
+        "tool_context" in params
+        and params["tool_context"].default is inspect.Parameter.empty
+    )
+
+
 async def call_tool(func, args: dict) -> Any:
     name = getattr(func, "__name__", str(func))
     signature = inspect.signature(func)
     params = signature.parameters
-    if (
-        "tool_context" in params
-        and params["tool_context"].default is inspect.Parameter.empty
-    ):
+    if _tool_context_required(params):
         raise GraphError(
             f"{name} dépend du contexte d'un agent : utilise-le dans un nœud agent",
             code="tool_needs_agent_context",
@@ -108,6 +132,181 @@ async def call_tool(func, args: dict) -> Any:
         return await func(**args)
     # Les outils du portfolio sont synchrones et souvent bloquants (HTTP, SQL).
     return await asyncio.to_thread(func, **args)
+
+
+_SECTION_HEADER = re.compile(
+    r"^(args?|arguments|returns?|raises?|yields?|examples?|note|notes|attributes):\s*$",
+    re.IGNORECASE,
+)
+_ARG_LINE = re.compile(r"^(\w+)\s*(?:\([^)]*\))?\s*:\s*(.*)$")
+
+
+def _tool_description(doc: str) -> Optional[str]:
+    """Premier paragraphe de la docstring, avant une éventuelle section Args."""
+    if not doc:
+        return None
+    before_args = re.split(
+        r"\n[ \t]*Args:[ \t]*\n", doc, maxsplit=1, flags=re.IGNORECASE
+    )[0]
+    paragraph = before_args.strip().split("\n\n", 1)[0].strip()
+    return paragraph or None
+
+
+def _parse_google_args(doc: str) -> dict[str, str]:
+    """Description de chaque paramètre depuis la section ``Args:`` (style Google)."""
+    lines = doc.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*Args:\s*$", line, re.IGNORECASE):
+            start = i + 1
+            break
+    if start is None:
+        return {}
+
+    result: dict[str, str] = {}
+    current: Optional[str] = None
+    item_indent: Optional[int] = None
+    for line in lines[start:]:
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if indent == 0 and _SECTION_HEADER.match(stripped):
+            break
+        if item_indent is None:
+            item_indent = indent
+        match = _ARG_LINE.match(stripped) if indent <= item_indent else None
+        if match:
+            current = match.group(1)
+            result[current] = match.group(2).strip()
+        elif current is not None:
+            result[current] = (result[current] + " " + stripped).strip()
+    return result
+
+
+def _json_type(annotation: Any) -> tuple[str, Optional[list]]:
+    """Type JSON (« string », « integer »...) et énumération éventuelle.
+
+    Couvre les cas demandés par le studio : types simples, ``Optional``/
+    ``Union`` avec ``None``, ``list[...]``/``dict[...]``, ``Literal[...]``
+    (→ enum) et les ``Enum``. Tout le reste (types custom, ``ToolContext``
+    laissé par erreur, etc.) retombe sur « any » plutôt que d'échouer.
+    """
+    if annotation is inspect.Parameter.empty or annotation is None:
+        return "any", None
+    if annotation is type(None):
+        return "any", None
+
+    origin = get_origin(annotation)
+
+    if origin in _UNION_ORIGINS:
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return _json_type(args[0])
+        return "any", None
+
+    if origin is Literal:
+        values = list(get_args(annotation))
+        if values and all(isinstance(v, bool) for v in values):
+            base = "boolean"
+        elif values and all(
+            isinstance(v, int) and not isinstance(v, bool) for v in values
+        ):
+            base = "integer"
+        else:
+            base = "string"
+        return base, values
+
+    if inspect.isclass(annotation) and issubclass(annotation, enum.Enum):
+        return "string", [member.value for member in annotation]
+
+    if origin in (list, tuple, set) or annotation in (list, tuple, set):
+        return "array", None
+    if origin is dict or annotation is dict:
+        return "object", None
+    if annotation is bool:
+        return "boolean", None
+    if annotation is int:
+        return "integer", None
+    if annotation is float:
+        return "number", None
+    if annotation is str:
+        return "string", None
+    return "any", None
+
+
+def _jsonable(value: Any) -> Any:
+    """Une valeur par défaut sous une forme sérialisable en JSON."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    return str(value)
+
+
+def tool_arg_schema(func) -> dict:
+    """Schéma des arguments d'un outil, pour que le studio de workflows
+    demande automatiquement les bons champs selon l'outil choisi.
+
+    Introspection pure — ne modifie ni n'appelle ``func`` — et cohérente
+    avec ``call_tool`` : les mêmes paramètres injectés (``tool_context``) en
+    sont exclus, et ``needs_agent_context`` reflète exactement la condition
+    qui ferait échouer un appel réel avec ``tool_needs_agent_context``.
+
+    Retourne ``{"description", "params", "accepts_kwargs",
+    "needs_agent_context"}`` ; c'est à l'appelant (la route) d'ajouter
+    ``"tool"``, qui n'est pas une propriété de la fonction elle-même.
+    """
+    doc = inspect.getdoc(func) or ""
+    description = _tool_description(doc)
+    arg_docs = _parse_google_args(doc)
+
+    signature = inspect.signature(func)
+    try:
+        hints = get_type_hints(func)
+    except Exception:
+        # Annotation non résolvable (forward ref exotique, dépendance
+        # absente...) : on retombe sur les annotations brutes plutôt que de
+        # faire échouer tout le schéma pour un seul paramètre.
+        hints = {}
+
+    params: list[dict] = []
+    accepts_kwargs = False
+    needs_agent_context = _tool_context_required(signature.parameters)
+
+    for name, param in signature.parameters.items():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            accepts_kwargs = True
+            continue
+        if param.kind is inspect.Parameter.VAR_POSITIONAL:
+            continue
+        if name in _INJECTED_PARAMS:
+            continue
+
+        annotation = hints.get(name, param.annotation)
+        type_str, enum_values = _json_type(annotation)
+        required = param.default is inspect.Parameter.empty
+        params.append(
+            {
+                "name": name,
+                "type": type_str,
+                "required": required,
+                "default": None if required else _jsonable(param.default),
+                "description": arg_docs.get(name),
+                "enum": enum_values,
+            }
+        )
+
+    return {
+        "description": description,
+        "params": params,
+        "accepts_kwargs": accepts_kwargs,
+        "needs_agent_context": needs_agent_context,
+    }
 
 
 def bindings_for(owner_email: str, plan: Optional[str]):
