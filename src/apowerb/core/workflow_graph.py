@@ -1675,10 +1675,16 @@ class _Compiler:
                     "duration_ms": round((time.monotonic() - t0) * 1000),
                 }
             )
-            if route is None:
-                return result
-            self.emit({"event": "route", "node_id": node.id, "route": route})
-            return Event(output=result, route=route)
+            if route is not None:
+                self.emit({"event": "route", "node_id": node.id, "route": route})
+            if node.id in self._terminal_ids:
+                # Feuille du graphe : sa valeur est déjà dans self.outputs,
+                # d'où _final_output compose la sortie du run. La remonter à
+                # ADK ferait échouer tout run qui atteint plusieurs feuilles
+                # (« multiple terminal nodes produced output », ADK 2.9) :
+                # un fan-out sans merge, ou plusieurs nœuds output.
+                return None
+            return result if route is None else Event(output=result, route=route)
 
         return FunctionNode(func=_fn, name=_adk_name(node.id))
 
@@ -2105,6 +2111,8 @@ class _Compiler:
         )
 
     def build(self) -> Workflow:
+        sources = {e.source for e in self.g.edges}
+        self._terminal_ids = {n.id for n in self.g.nodes if n.id not in sources}
         entry: dict[str, Any] = {}
         exit_: dict[str, Any] = {}
         for n in self.g.nodes:
