@@ -125,6 +125,10 @@ MAX_CSV_ROWS = 10_000
 _MAX_EXTRACT_FIELDS = 30
 _MIN_RAG_TOP_K, _MAX_RAG_TOP_K = 1, 20
 _DEFAULT_RAG_TOP_K = 5
+# Sortie d'un nœud bornée comme la réponse http : sans plafond, une boucle
+# dont le corps re-sérialise ``previous`` double de taille à chaque tour
+# (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
+MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
 _ITERATION = "iteration"
 _ATTEMPT = "attempt"
 _TEMPLATE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_-]*)((?:\.[A-Za-z0-9_-]+)*)\s*\}\}")
@@ -1197,6 +1201,18 @@ class _Compiler:
                     }
                 )
                 raise
+            size = len(json.dumps(result, ensure_ascii=False, default=str).encode())
+            if size > MAX_NODE_OUTPUT_BYTES:
+                exc = GraphError(
+                    f"{node.id} : sortie trop grande ({size} octets, "
+                    f"max {MAX_NODE_OUTPUT_BYTES})",
+                    code="node_output_too_large",
+                    params={"node": node.id, "max": str(MAX_NODE_OUTPUT_BYTES)},
+                )
+                self.emit(
+                    {"event": "node_error", "node_id": node.id, **error_fields(exc)}
+                )
+                raise exc
             self.outputs[node.id] = result
             self.emit(
                 {
