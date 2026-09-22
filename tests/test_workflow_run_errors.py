@@ -36,6 +36,9 @@ def _run(graph, run_agent):
     async def run_tool(tool, args):
         return {}
 
+    async def run_rag(agent_id, query, top_k):
+        return {"query": query, "passages": []}
+
     async def _go():
         out = []
         async for chunk in wg.run_graph(
@@ -43,6 +46,7 @@ def _run(graph, run_agent):
             payload=None,
             run_agent=run_agent,
             run_tool=run_tool,
+            run_rag=run_rag,
             cancel_event=asyncio.Event(),
         ):
             out.append(json.loads(chunk[len("data: ") :]))

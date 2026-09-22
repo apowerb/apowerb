@@ -37,6 +37,10 @@ class _Env:
         out = self.tools.get(tool, {"tool": tool})
         return out(args) if callable(out) else out
 
+    async def run_rag(self, agent_id, query, top_k):
+        self.calls.append(("rag", agent_id, query, top_k))
+        return {"query": query, "passages": []}
+
 
 def _run(graph, env, payload=None, cancel=None):
     async def _go():
@@ -46,6 +50,7 @@ def _run(graph, env, payload=None, cancel=None):
             payload=payload,
             run_agent=env.run_agent,
             run_tool=env.run_tool,
+            run_rag=env.run_rag,
             cancel_event=cancel or asyncio.Event(),
         ):
             out.append(json.loads(chunk[len("data: ") :]))

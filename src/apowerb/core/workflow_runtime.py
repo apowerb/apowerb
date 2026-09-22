@@ -1,25 +1,67 @@
 """Branchement de production des nœuds d'un graphe de workflow.
 
-``workflow_graph`` ne sait pas exécuter un agent ni un outil : il les reçoit
-(``run_agent``, ``run_tool``). Ce module les fournit pour un propriétaire
-donné, avec les mêmes règles que le reste du produit :
+``workflow_graph`` ne sait pas exécuter un agent, un outil, une recherche
+RAG ni un sous-workflow : il les reçoit (``run_agent``, ``run_tool``,
+``run_rag``, ``run_subworkflow``). Ce module les
+fournit pour un propriétaire donné, avec les mêmes règles que le reste du
+produit :
 
 * un nœud agent ne peut viser qu'un agent **du même propriétaire** (même
   filtre que ``get_agent``) ; il s'exécute par ``/run`` sous son jeton ;
 * un nœud outil passe par ``load_agent_tools_functions``, qui filtre déjà
   les ``tool_config{id}`` par propriétaire. Référence : ``categorie.outil``,
   ou ``tool_config{id}:nom_de_fonction`` quand la configuration en expose
-  plusieurs.
+  plusieurs ;
+* un nœud rag vise le même agent (même contrôle d'appartenance) et
+  interroge les bases de connaissances qui lui sont rattachées, lues comme
+  ``GET /rag/knowledge/{agent_id}`` (``read_knowledge_map``), via
+  ``tool_search_knowledge`` (appel bloquant, exécuté dans un thread).
+* un nœud subworkflow ne peut viser qu'un workflow **du même propriétaire**
+  (même filtre que ``workflow_main.get_workflow``, donc le même contrôle
+  d'accès que pour lancer ce workflow directement via ``POST .../run``) —
+  voir ``resolve_workflow_for``.
+* un nœud notification (canal ``app``) écrit dans les notifications du
+  **propriétaire du run**, jamais celles d'un tiers ; ``workflow_graph`` ne
+  connaît pas non plus l'identité de ce propriétaire, d'où l'injection ;
+* un nœud notification (canal ``teams``) poste sur le webhook Teams entrant
+  du propriétaire, résolu et déchiffré depuis son intégration
+  (``Integration``, provider ``teams_webhook`` — voir
+  ``apowerb.integrations.teams``) : l'URL n'est jamais écrite dans le
+  graphe, ni renvoyée dans un événement ou une erreur.
+
+``workflow_graph`` ne sait pas non plus faire de requête HTTP sortante : ce
+nœud (``http``) n'a en revanche besoin d'aucune ressource par propriétaire
+(pas d'authentification branchée pour l'instant, voir son message de
+validation), il reste donc exécuté directement par ``workflow_graph``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import enum
 import inspect
-from typing import Any, Optional
+import json
+import re
+import time
+import types
+from typing import Any, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
-from apowerb.core.workflow_graph import GraphError, UpstreamArgs
+from apowerb.core.workflow_graph import (
+    GraphError,
+    ResolveWorkflow,
+    UpstreamArgs,
+    WorkflowGraph,
+)
+
+# Paramètres injectés par le runtime, jamais demandés à l'utilisateur.
+_INJECTED_PARAMS = frozenset({"tool_context"})
+
+# ``Optional[X]``/``Union[X, None]`` et, depuis 3.10, ``X | None`` partagent
+# la même lecture : un seul type utile une fois ``None`` écarté.
+_UNION_ORIGINS = {Union}
+if hasattr(types, "UnionType"):
+    _UNION_ORIGINS.add(types.UnionType)
 
 
 def _agent_number(agent_id: str) -> int:
@@ -77,14 +119,84 @@ def resolve_tool(tool_ref: str, owner_email: str):
     return pairs[0][1]
 
 
+def _tool_context_required(params: Any) -> bool:
+    """Vrai si ``tool_context`` est un paramètre sans défaut (donc obligatoire).
+
+    Optionnel (``tool_context: ToolContext = None``), l'outil se passe très
+    bien d'un agent ; obligatoire, il ne peut s'exécuter que dans un nœud
+    agent. Partagé par ``call_tool`` (qui refuse l'appel) et
+    ``tool_arg_schema`` (qui le signale au studio via ``needs_agent_context``)
+    pour que les deux ne divergent jamais.
+    """
+    return (
+        "tool_context" in params
+        and params["tool_context"].default is inspect.Parameter.empty
+    )
+
+
+def _knowledge_sources(folder: str) -> list[dict]:
+    """Sources RAG indexées (statut ``complete``) de l'agent ``folder``.
+
+    Même lecture que ``GET /rag/knowledge/{agent_id}``
+    (``apowerb.routers.rag.status``), sans notion de session : un nœud de
+    workflow n'a pas de ``session_id`` d'upload.
+    """
+    from apowerb.core.knowledge_map import read_knowledge_map
+
+    kmap = read_knowledge_map(folder)
+    return [
+        s
+        for s in kmap.get("sources", [])
+        if s.get("status") == "complete" and s.get("knowledge_id")
+    ]
+
+
+def _search_rag(folder: str, agent_id: str, query: str, top_k: int) -> dict:
+    """Interroge jusqu'à ``top_k`` bases de connaissances de l'agent (bloquant).
+
+    ``tool_search_knowledge`` est une recherche conversationnelle (une
+    question, une réponse), pas un moteur de passages notés : chaque base
+    interrogée avec succès fournit un seul passage, sa réponse complète, sans
+    score (le service n'en renvoie pas).
+    """
+    from apowerb.tools_store.portfolio.rag import tool_search_knowledge
+
+    sources = _knowledge_sources(folder)
+    if not sources:
+        raise GraphError(
+            f"agent {agent_id} : aucune base de connaissances disponible",
+            code="rag_no_knowledge",
+            params={"agent": agent_id},
+        )
+    passages = []
+    for source in sources[:top_k]:
+        kid = str(source["knowledge_id"])
+        try:
+            result = tool_search_knowledge(kid, query)
+        except Exception:  # noqa: BLE001 - le service RAG est hors de notre contrôle
+            result = {"status": "error"}
+        if result.get("status") == "success":
+            passages.append(
+                {
+                    "text": str(result.get("answer") or ""),
+                    "source": source.get("name") or kid,
+                    "score": None,
+                }
+            )
+    if not passages:
+        raise GraphError(
+            "le service RAG a échoué pour toutes les bases interrogées",
+            code="rag_failed",
+            params={},
+        )
+    return {"query": query, "passages": passages}
+
+
 async def call_tool(func, args: dict) -> Any:
     name = getattr(func, "__name__", str(func))
     signature = inspect.signature(func)
     params = signature.parameters
-    if (
-        "tool_context" in params
-        and params["tool_context"].default is inspect.Parameter.empty
-    ):
+    if _tool_context_required(params):
         raise GraphError(
             f"{name} dépend du contexte d'un agent : utilise-le dans un nœud agent",
             code="tool_needs_agent_context",
@@ -110,8 +222,396 @@ async def call_tool(func, args: dict) -> Any:
     return await asyncio.to_thread(func, **args)
 
 
+# --- Nœud notification -------------------------------------------------------
+#
+# Débit : 30 envois / heure par propriétaire, fenêtre glissante tenue en
+# mémoire du PROCESS courant (un dict module-level). Ce n'est PAS un compteur
+# partagé entre workers ou instances : un déploiement multi-process laisse
+# chaque process appliquer sa propre limite. Documenté ici plutôt que corrigé,
+# une limite exacte demanderait un compteur externe (Redis) hors périmètre de
+# ce lot.
+_SEND_WINDOW_S = 3600.0
+_SEND_LIMIT = 30
+_send_history: dict[str, list[float]] = {}
+
+
+def _reserve_sends(owner_email: str, node_id: str, count: int) -> None:
+    """Réserve ``count`` envois pour ``owner_email`` ou refuse tout le lot.
+
+    Tout ou rien : un nœud qui enverrait 5 emails ne doit pas en envoyer 3
+    puis échouer sur le 4e, ce qui rendrait ``sent`` menteur.
+    """
+    now = time.monotonic()
+    history = _send_history.setdefault(owner_email, [])
+    history[:] = [t for t in history if now - t < _SEND_WINDOW_S]
+    if len(history) + count > _SEND_LIMIT:
+        raise GraphError(
+            f"{node_id} : limite de {_SEND_LIMIT} envois par heure dépassée",
+            code="notification_rate_limited",
+            params={"node": node_id, "limit": str(_SEND_LIMIT)},
+        )
+    history.extend([now] * count)
+
+
+def _checked_email(node_id: str, address: str) -> str:
+    """``address`` si c'est une adresse plausible, sinon lève le code produit."""
+    from pydantic import EmailStr, TypeAdapter
+    from pydantic import ValidationError as _PydanticValidationError
+
+    try:
+        return TypeAdapter(EmailStr).validate_python(address)
+    except _PydanticValidationError:
+        raise GraphError(
+            f"{node_id} : destinataire invalide ({address!r})",
+            code="notification_bad_recipient",
+            params={"node": node_id, "recipient": str(address)},
+        ) from None
+
+
+async def _notify_owner_in_app(owner_email: str, title: str, message: str) -> None:
+    """Notification en base + poussée SSE, même schéma que
+    ``webhook_handlers._common.create_webhook_notification`` et
+    ``bug_reports.tracking._notify_in_app`` : on réutilise le modèle et le bus
+    existants, on n'invente pas un second mécanisme de notification."""
+    from apowerb.helpers.database import sessionmanager
+    from apowerb.helpers.notification_bus import notify as push_notification
+    from apowerb.models import Notification
+    from apowerb.users.service import get_user_by_email
+
+    async with sessionmanager.session() as db:
+        user = await get_user_by_email(owner_email, db)
+        notification = Notification(
+            user_id=user.user_id,
+            title=title[:255],
+            message=message,
+            type="workflow",
+            link=None,
+            metadata_json=json.dumps({"source": "workflow"}),
+            is_read=False,
+        )
+        db.add(notification)
+        await db.commit()
+        await db.refresh(notification)
+        await push_notification(
+            user.user_id,
+            {
+                "id": notification.id,
+                "title": notification.title,
+                "message": notification.message,
+                "type": notification.type,
+                "link": notification.link,
+                "is_read": False,
+                "created_at": (
+                    notification.created_at.isoformat()
+                    if notification.created_at
+                    else None
+                ),
+            },
+        )
+
+
+def _teams_card(subject: str, body: str) -> dict:
+    """Corps POST au format Workflows (Power Automate) : une Adaptive Card
+    minimale, titre + texte, aucune mise en forme superflue."""
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "version": "1.4",
+                    "body": [
+                        {
+                            "type": "TextBlock",
+                            "text": subject,
+                            "weight": "Bolder",
+                            "size": "Medium",
+                            "wrap": True,
+                        },
+                        {"type": "TextBlock", "text": body, "wrap": True},
+                    ],
+                },
+            }
+        ],
+    }
+
+
+async def _teams_webhook_url(owner_email: str):
+    """URL déchiffrée (jamais loguée) du webhook Teams du propriétaire, ou
+    ``None`` si l'intégration n'est pas configurée. Fonction à part pour que
+    les tests substituent la résolution sans monter de session DB."""
+    from apowerb.integrations.teams import get_teams_webhook_url_for_owner
+
+    return await get_teams_webhook_url_for_owner(owner_email)
+
+
+async def _notify_teams(
+    owner_email: str, node_id: str, subject: str, body: str
+) -> None:
+    """POST la carte sur le webhook Teams du propriétaire.
+
+    Revalide l'URL à l'envoi (même liste blanche qu'à l'enregistrement, voir
+    ``apowerb.integrations.teams.validate_teams_webhook_url``) : une
+    intégration enregistrée avant un durcissement de la liste, ou dont la
+    résolution DNS a changé depuis, ne doit pas rester utilisable
+    silencieusement. httpx, 10 s, aucune redirection suivie : un webhook
+    Teams ne redirige jamais légitimement, un saut serait un signe de
+    détournement plutôt qu'un cas à servir.
+    """
+    import httpx
+
+    from apowerb.integrations.teams import (
+        TeamsWebhookRefused,
+        validate_teams_webhook_url,
+    )
+
+    url = await _teams_webhook_url(owner_email)
+    if not url:
+        raise GraphError(
+            f"{node_id} : aucun webhook Teams configuré",
+            code="teams_not_configured",
+            params={"node": node_id},
+        )
+    try:
+        url = validate_teams_webhook_url(url)
+    except TeamsWebhookRefused:
+        raise GraphError(
+            f"{node_id} : webhook Teams refusé",
+            code="teams_failed",
+            params={"node": node_id, "status": None},
+        ) from None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            resp = await client.post(url, json=_teams_card(subject, body))
+    except httpx.TimeoutException:
+        raise GraphError(
+            f"{node_id} : délai Teams dépassé",
+            code="teams_failed",
+            params={"node": node_id, "status": None},
+        ) from None
+    except httpx.HTTPError:
+        # Erreur réseau : jamais le message brut (peut porter l'hôte visé).
+        raise GraphError(
+            f"{node_id} : échec réseau Teams",
+            code="teams_failed",
+            params={"node": node_id, "status": None},
+        ) from None
+    if not (200 <= resp.status_code < 300):
+        raise GraphError(
+            f"{node_id} : Teams a refusé l'envoi",
+            code="teams_failed",
+            params={"node": node_id, "status": resp.status_code},
+        ) from None
+
+
+def _notify_for(owner_email: str):
+    """Le callback ``run_notify`` injecté dans le compilateur pour ce propriétaire."""
+
+    async def run_notify(
+        node_id: str, channel: str, to: list, subject: str, body: str
+    ) -> int:
+        from apowerb.helpers.email_sender import send_email
+
+        if channel == "app":
+            _reserve_sends(owner_email, node_id, 1)
+            await _notify_owner_in_app(owner_email, subject, body)
+            return 1
+
+        if channel == "teams":
+            _reserve_sends(owner_email, node_id, 1)
+            await _notify_teams(owner_email, node_id, subject, body)
+            return 1
+
+        addresses = [_checked_email(node_id, addr) for addr in to]
+        _reserve_sends(owner_email, node_id, len(addresses))
+        for addr in addresses:
+            await send_email(to=addr, subject=subject, body=body)
+        return len(addresses)
+
+    return run_notify
+
+
+_SECTION_HEADER = re.compile(
+    r"^(args?|arguments|returns?|raises?|yields?|examples?|note|notes|attributes):\s*$",
+    re.IGNORECASE,
+)
+_ARG_LINE = re.compile(r"^(\w+)\s*(?:\([^)]*\))?\s*:\s*(.*)$")
+
+
+def _tool_description(doc: str) -> Optional[str]:
+    """Premier paragraphe de la docstring, avant une éventuelle section Args."""
+    if not doc:
+        return None
+    before_args = re.split(
+        r"\n[ \t]*Args:[ \t]*\n", doc, maxsplit=1, flags=re.IGNORECASE
+    )[0]
+    paragraph = before_args.strip().split("\n\n", 1)[0].strip()
+    return paragraph or None
+
+
+def _parse_google_args(doc: str) -> dict[str, str]:
+    """Description de chaque paramètre depuis la section ``Args:`` (style Google)."""
+    lines = doc.splitlines()
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*Args:\s*$", line, re.IGNORECASE):
+            start = i + 1
+            break
+    if start is None:
+        return {}
+
+    result: dict[str, str] = {}
+    current: Optional[str] = None
+    item_indent: Optional[int] = None
+    for line in lines[start:]:
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if indent == 0 and _SECTION_HEADER.match(stripped):
+            break
+        if item_indent is None:
+            item_indent = indent
+        match = _ARG_LINE.match(stripped) if indent <= item_indent else None
+        if match:
+            current = match.group(1)
+            result[current] = match.group(2).strip()
+        elif current is not None:
+            result[current] = (result[current] + " " + stripped).strip()
+    return result
+
+
+def _json_type(annotation: Any) -> tuple[str, Optional[list]]:
+    """Type JSON (« string », « integer »...) et énumération éventuelle.
+
+    Couvre les cas demandés par le studio : types simples, ``Optional``/
+    ``Union`` avec ``None``, ``list[...]``/``dict[...]``, ``Literal[...]``
+    (→ enum) et les ``Enum``. Tout le reste (types custom, ``ToolContext``
+    laissé par erreur, etc.) retombe sur « any » plutôt que d'échouer.
+    """
+    if annotation is inspect.Parameter.empty or annotation is None:
+        return "any", None
+    if annotation is type(None):
+        return "any", None
+
+    origin = get_origin(annotation)
+
+    if origin in _UNION_ORIGINS:
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return _json_type(args[0])
+        return "any", None
+
+    if origin is Literal:
+        values = list(get_args(annotation))
+        if values and all(isinstance(v, bool) for v in values):
+            base = "boolean"
+        elif values and all(
+            isinstance(v, int) and not isinstance(v, bool) for v in values
+        ):
+            base = "integer"
+        else:
+            base = "string"
+        return base, values
+
+    if inspect.isclass(annotation) and issubclass(annotation, enum.Enum):
+        return "string", [member.value for member in annotation]
+
+    if origin in (list, tuple, set) or annotation in (list, tuple, set):
+        return "array", None
+    if origin is dict or annotation is dict:
+        return "object", None
+    if annotation is bool:
+        return "boolean", None
+    if annotation is int:
+        return "integer", None
+    if annotation is float:
+        return "number", None
+    if annotation is str:
+        return "string", None
+    return "any", None
+
+
+def _jsonable(value: Any) -> Any:
+    """Une valeur par défaut sous une forme sérialisable en JSON."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    return str(value)
+
+
+def tool_arg_schema(func) -> dict:
+    """Schéma des arguments d'un outil, pour que le studio de workflows
+    demande automatiquement les bons champs selon l'outil choisi.
+
+    Introspection pure — ne modifie ni n'appelle ``func`` — et cohérente
+    avec ``call_tool`` : les mêmes paramètres injectés (``tool_context``) en
+    sont exclus, et ``needs_agent_context`` reflète exactement la condition
+    qui ferait échouer un appel réel avec ``tool_needs_agent_context``.
+
+    Retourne ``{"description", "params", "accepts_kwargs",
+    "needs_agent_context"}`` ; c'est à l'appelant (la route) d'ajouter
+    ``"tool"``, qui n'est pas une propriété de la fonction elle-même.
+    """
+    doc = inspect.getdoc(func) or ""
+    description = _tool_description(doc)
+    arg_docs = _parse_google_args(doc)
+
+    signature = inspect.signature(func)
+    try:
+        hints = get_type_hints(func)
+    except Exception:
+        # Annotation non résolvable (forward ref exotique, dépendance
+        # absente...) : on retombe sur les annotations brutes plutôt que de
+        # faire échouer tout le schéma pour un seul paramètre.
+        hints = {}
+
+    params: list[dict] = []
+    accepts_kwargs = False
+    needs_agent_context = _tool_context_required(signature.parameters)
+
+    for name, param in signature.parameters.items():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            accepts_kwargs = True
+            continue
+        if param.kind is inspect.Parameter.VAR_POSITIONAL:
+            continue
+        if name in _INJECTED_PARAMS:
+            continue
+
+        annotation = hints.get(name, param.annotation)
+        type_str, enum_values = _json_type(annotation)
+        required = param.default is inspect.Parameter.empty
+        params.append(
+            {
+                "name": name,
+                "type": type_str,
+                "required": required,
+                "default": None if required else _jsonable(param.default),
+                "description": arg_docs.get(name),
+                "enum": enum_values,
+            }
+        )
+
+    return {
+        "description": description,
+        "params": params,
+        "accepts_kwargs": accepts_kwargs,
+        "needs_agent_context": needs_agent_context,
+    }
+
+
 def bindings_for(owner_email: str, plan: Optional[str]):
-    """(run_agent, run_tool) pour exécuter un graphe au nom de ``owner_email``."""
+    """(run_agent, run_tool, run_rag, run_notify) pour exécuter un graphe au nom
+    de ``owner_email``."""
     token_factory = access_token_factory(owner_email)
 
     async def run_agent(agent_id: str, message: str) -> Any:
@@ -127,4 +627,32 @@ def bindings_for(owner_email: str, plan: Optional[str]):
     async def run_tool(tool_ref: str, args: dict) -> Any:
         return await call_tool(resolve_tool(tool_ref, owner_email), args or {})
 
-    return run_agent, run_tool
+    async def run_rag(agent_id: str, query: str, top_k: int) -> dict:
+        folder = check_agent_owner(agent_id, owner_email)
+        return await asyncio.to_thread(_search_rag, folder, agent_id, query, top_k)
+
+    return run_agent, run_tool, run_rag, _notify_for(owner_email)
+
+
+def resolve_workflow_for(owner_email: str) -> ResolveWorkflow:
+    """``run_subworkflow`` de production : même filtre propriétaire que ``/run``.
+
+    ``workflow_main.get_workflow`` ne renvoie rien pour un workflow d'autrui
+    (même filtre que ``get_agent``, ``check_agent_owner``) : un identifiant
+    inaccessible se comporte donc comme un identifiant inconnu — le graphe ne
+    confirme jamais l'existence d'un workflow d'autrui. Bloquant (moteur de
+    stockage synchrone) : déporté dans un thread pour ne pas geler la boucle
+    d'événements pendant un run.
+    """
+
+    async def _resolve(workflow_id: str) -> Optional[WorkflowGraph]:
+        from apowerb.core import workflow_main
+
+        wf = await asyncio.to_thread(
+            workflow_main.get_workflow, workflow_id, owner_id=owner_email
+        )
+        if wf is None:
+            return None
+        return WorkflowGraph.model_validate(wf["graph"])
+
+    return _resolve

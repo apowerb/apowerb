@@ -640,3 +640,84 @@ def test_router_rule_with_a_field_still_uses_that_field():
     env = _Env()
     _run(_router_on("{{t.kind}}"), env, payload={"kind": "doc"})
     assert [c[1] for c in env.calls] == ["agent1"]
+
+
+# --- Formes de sortie des nœuds des lots 1 à 4 (merge 22/09) ----------------
+
+
+def _ref_graph(node, ref):
+    return (
+        [
+            T,
+            node,
+            {"id": "o", "type": "output", "config": {"value": ref}},
+        ],
+        [{"source": "t", "target": node["id"]}, {"source": node["id"], "target": "o"}],
+    )
+
+
+_KNOWN = [
+    (
+        {"id": "s", "type": "set", "config": {"fields": [{"key": "a", "value": "x"}]}},
+        "a",
+    ),
+    (
+        {
+            "id": "s",
+            "type": "extract",
+            "config": {
+                "agent_id": "a1",
+                "fields": [{"name": "montant", "type": "number"}],
+            },
+        },
+        "montant",
+    ),
+    (
+        {"id": "s", "type": "rag", "config": {"agent_id": "a1", "query": "q"}},
+        "passages",
+    ),
+    (
+        {"id": "s", "type": "http", "config": {"method": "GET", "url": "https://x.fr"}},
+        "body",
+    ),
+    ({"id": "s", "type": "notification", "config": {"channel": "app"}}, "sent"),
+]
+
+
+@pytest.mark.parametrize("node,field", _KNOWN)
+def test_known_output_fields_are_allowed(node, field):
+    _valid(*_ref_graph(node, f"{{{{s.{field}}}}}"))
+
+
+@pytest.mark.parametrize("node,field", _KNOWN)
+def test_unknown_output_fields_are_refused(node, field):
+    fields = _invalid(*_ref_graph(node, "{{s.output}}"))
+    assert fields["code"] == "template_ref_invalid"
+
+
+def test_a_date_convert_is_a_scalar():
+    node = {"id": "s", "type": "convert", "config": {"to": "date"}}
+    fields = _invalid(*_ref_graph(node, "{{s.year}}"))
+    assert fields["code"] == "template_ref_invalid"
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {
+            "id": "s",
+            "type": "condition",
+            "config": {"rules": [{"field": "", "op": "exists"}], "match": "all"},
+        },
+    ],
+)
+def test_route_on_a_condition_is_refused(node):
+    g = (
+        [T, node, {"id": "o", "type": "output", "config": {"value": "{{s.route}}"}}],
+        [
+            {"source": "t", "target": "s"},
+            {"source": "s", "target": "o", "route": "true"},
+        ],
+    )
+    fields = _invalid(*g)
+    assert fields["code"] == "template_ref_invalid"
