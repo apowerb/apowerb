@@ -16,6 +16,10 @@ Types de nœuds :
 * ``loop`` — exécute un sous-graphe (``body``) pour chaque élément d'une liste
   (``foreach``) ou jusqu'à une condition (``until``), jamais plus de
   ``max_iterations`` fois (plafond obligatoire, au plus 100) ;
+* ``extract`` — un agent lit un objet JSON typé (``fields``) hors de son
+  entrée, validé champ par champ ;
+* ``rag`` — interroge les bases de connaissances rattachées à un agent
+  (``run_rag``), sortie normalisée en passages.
 * ``try`` — exécute un sous-graphe (``body``) comme le corps d'un ``loop`` ;
   succès -> route ``ok`` (sortie du corps), échec après ``retries`` tentatives
   -> route ``error`` (sortie lisible ``code``/``detail``/``params``/``node``,
@@ -84,8 +88,11 @@ NodeType = Literal[
     "convert",
     "set",
     "condition",
+    "extract",
+    "rag",
 ]
 CONVERT_TARGETS = ("text", "json", "number", "boolean", "list", "csv", "date")
+EXTRACT_FIELD_TYPES = ("string", "number", "boolean", "list", "object")
 _TRUE = {"true", "yes", "oui", "1", "vrai"}
 _FALSE = {"false", "no", "non", "0", "faux"}
 _ROUTED = {"router", "classifier", "condition", "try"}
@@ -100,13 +107,18 @@ _MAX_SUBWORKFLOW_DEPTH = 3
 # vient d'un agent, d'un outil ou d'un payload, donc d'une source non sûre.
 MAX_CSV_BYTES = 1 * 1024 * 1024
 MAX_CSV_ROWS = 10_000
+_MAX_EXTRACT_FIELDS = 30
+_MIN_RAG_TOP_K, _MAX_RAG_TOP_K = 1, 20
+_DEFAULT_RAG_TOP_K = 5
 _ITERATION = "iteration"
 _ATTEMPT = "attempt"
 _TEMPLATE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_-]*)((?:\.[A-Za-z0-9_-]+)*)\s*\}\}")
+_FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ROOT = "workflow"
 
 RunAgent = Callable[[str, str], Awaitable[Any]]
 RunTool = Callable[[str, dict], Awaitable[Any]]
+RunRag = Callable[[str, str, int], Awaitable[dict]]
 # Résolu côté routeur (mêmes droits que pour lancer ce workflow directement) ;
 # ``None`` si l'appelant ne trouve pas — ou ne peut pas voir — ce workflow_id.
 ResolveWorkflow = Callable[[str], Awaitable[Optional["WorkflowGraph"]]]
@@ -310,6 +322,27 @@ def _try_config(node: Node, *, workflow_id: Optional[str] = None) -> WorkflowGra
     return body
 
 
+def _validate_extract_fields(node: Node) -> None:
+    fields = node.config.get("fields")
+    if not isinstance(fields, list) or not 1 <= len(fields) <= _MAX_EXTRACT_FIELDS:
+        raise GraphError(
+            f"{node.id} : fields doit compter de 1 à {_MAX_EXTRACT_FIELDS} champs"
+        )
+    names: set[str] = set()
+    for f in fields:
+        name = f.get("name") if isinstance(f, dict) else None
+        if not isinstance(name, str) or not _FIELD_NAME.match(name):
+            raise GraphError(f"{node.id} : nom de champ invalide : {name!r}")
+        if name in names:
+            raise GraphError(f"{node.id} : champ dupliqué : {name}")
+        names.add(name)
+        if f.get("type") not in EXTRACT_FIELD_TYPES:
+            raise GraphError(
+                f"{node.id} : type de champ inconnu {f.get('type')!r} pour {name} "
+                f"(attendu : {', '.join(EXTRACT_FIELD_TYPES)})"
+            )
+
+
 def _outer_refs(node: Node) -> set[str]:
     """Les nœuds du graphe englobant qu'une configuration référence."""
     if node.type == "loop":
@@ -471,7 +504,9 @@ def validate_graph(graph: WorkflowGraph, *, workflow_id: Optional[str] = None) -
         cfg = n.config
         if n.type in _NOT_YET:
             raise GraphError(f"{n.id} : le type {n.type} n'est pas encore exécutable")
-        if n.type in ("agent", "classifier") and not cfg.get("agent_id"):
+        if n.type in ("agent", "classifier", "extract", "rag") and not cfg.get(
+            "agent_id"
+        ):
             raise GraphError(f"{n.id} : agent_id manquant")
         if n.type == "tool" and not cfg.get("tool"):
             raise GraphError(f"{n.id} : outil manquant")
@@ -517,6 +552,21 @@ def validate_graph(graph: WorkflowGraph, *, workflow_id: Optional[str] = None) -
             match = cfg.get("match", "all")
             if match not in ("all", "any"):
                 raise GraphError(f"{n.id} : match inconnu {match!r} (all ou any)")
+        if n.type == "extract":
+            _validate_extract_fields(n)
+        if n.type == "rag":
+            if not cfg.get("query"):
+                raise GraphError(f"{n.id} : query manquant")
+            top_k = cfg.get("top_k", _DEFAULT_RAG_TOP_K)
+            if (
+                isinstance(top_k, bool)
+                or not isinstance(top_k, int)
+                or not _MIN_RAG_TOP_K <= top_k <= _MAX_RAG_TOP_K
+            ):
+                raise GraphError(
+                    f"{n.id} : top_k doit être un entier de {_MIN_RAG_TOP_K} à "
+                    f"{_MAX_RAG_TOP_K}"
+                )
 
     for e in graph.edges:
         src = by_id[e.source]
@@ -609,6 +659,72 @@ def _pick_route(answer: Any, routes: list[str]) -> Optional[str]:
     return hits[0] if len(hits) == 1 else None
 
 
+def _extract_prompt(fields: list[dict], text: str) -> str:
+    lines = [
+        "Reply with ONLY a JSON object with exactly these fields, nothing else.",
+        "",
+    ]
+    for f in fields:
+        req = "required" if f.get("required") else "optional"
+        desc = f.get("description")
+        lines.append(
+            f"- {f['name']} ({f['type']}, {req})" + (f": {desc}" if desc else "")
+        )
+    lines += ["", "<<< INPUT >>>", text, "<<< END INPUT >>>"]
+    return "\n".join(lines)
+
+
+def _matches_extract_type(value: Any, type_: str) -> bool:
+    if type_ == "string":
+        return isinstance(value, str)
+    if type_ == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if type_ == "boolean":
+        return isinstance(value, bool)
+    if type_ == "list":
+        return isinstance(value, list)
+    if type_ == "object":
+        return isinstance(value, dict)
+    return False  # pragma: no cover - refusé par validate_graph
+
+
+def _extract_result(node_id: str, fields: list[dict], answer: Any) -> dict:
+    """La réponse d'un agent, relue comme JSON puis validée champ par champ.
+
+    Le texte brut de la réponse n'apparaît jamais dans l'erreur : seuls le
+    nom du champ fautif (``None`` si la réponse n'est pas du JSON) et la
+    nature du problème sont exposés.
+    """
+    parsed = try_parse_json(answer)
+    if not isinstance(parsed, dict):
+        raise GraphError(
+            f"{node_id} : réponse d'extraction inexploitable (pas un objet JSON)",
+            code="extract_failed",
+            params={"node": node_id, "field": None, "problem": "not_json"},
+        )
+    result: dict[str, Any] = {}
+    for f in fields:
+        name, type_ = f["name"], f["type"]
+        value = parsed.get(name)
+        if name not in parsed or value is None:
+            if f.get("required"):
+                raise GraphError(
+                    f"{node_id} : champ requis manquant : {name}",
+                    code="extract_failed",
+                    params={"node": node_id, "field": name, "problem": "missing"},
+                )
+            result[name] = None
+            continue
+        if not _matches_extract_type(value, type_):
+            raise GraphError(
+                f"{node_id} : {name} n'est pas du type {type_}",
+                code="extract_failed",
+                params={"node": node_id, "field": name, "problem": "type"},
+            )
+        result[name] = value
+    return result
+
+
 class _Compiler:
     def __init__(
         self,
@@ -619,6 +735,7 @@ class _Compiler:
         emit,
         cancel_event,
         *,
+        run_rag: Optional[RunRag] = None,
         run_subworkflow: Optional["ResolveWorkflow"] = None,
         workflow_stack: tuple[str, ...] = (),
         depth: int = 1,
@@ -627,6 +744,7 @@ class _Compiler:
         self.payload = payload
         self.run_agent = run_agent
         self.run_tool = run_tool
+        self.run_rag = run_rag
         self.emit = emit
         self.cancel = cancel_event
         # Sous-workflows : callback de résolution (owner-scopé, côté routeur),
@@ -795,6 +913,52 @@ class _Compiler:
                     all(outcomes) if cfg.get("match", "all") == "all" else any(outcomes)
                 )
                 return node_input, "true" if matched else "false"
+        elif node.type == "extract":
+
+            async def body(node_input):
+                value = (
+                    render(cfg["input"], self.outputs)
+                    if cfg.get("input") not in (None, "")
+                    else node_input
+                )
+                text = (
+                    value
+                    if isinstance(value, str)
+                    else json.dumps(value, ensure_ascii=False)
+                )
+                answer = await self.run_agent(
+                    cfg["agent_id"], _extract_prompt(cfg["fields"], text)
+                )
+                return _extract_result(node.id, cfg["fields"], answer), None
+        elif node.type == "rag":
+
+            async def body(node_input):
+                query = render(cfg["query"], self.outputs)
+                query = (
+                    query
+                    if isinstance(query, str)
+                    else json.dumps(query, ensure_ascii=False)
+                )
+                top_k = cfg.get("top_k", _DEFAULT_RAG_TOP_K)
+                if self.run_rag is None:
+                    raise GraphError(
+                        f"{node.id} : recherche RAG indisponible",
+                        code="rag_failed",
+                        params={"node": node.id},
+                    )
+                try:
+                    return await self.run_rag(cfg["agent_id"], query, top_k), None
+                except GraphError as exc:
+                    # agent_not_found (mauvais propriétaire / agent inconnu) se
+                    # propage tel quel, comme pour le nœud agent : seules les
+                    # erreurs propres au RAG portent le nœud fautif.
+                    if exc.code in ("rag_no_knowledge", "rag_failed"):
+                        raise GraphError(
+                            str(exc),
+                            code=exc.code,
+                            params={**exc.params, "node": node.id},
+                        ) from None
+                    raise
         elif node.type == "loop":
             body_graph = WorkflowGraph.model_validate(cfg["body"])
 
@@ -908,6 +1072,7 @@ class _Compiler:
             self.run_tool,
             queue.put_nowait,
             self.cancel,
+            run_rag=self.run_rag,
             run_subworkflow=self.run_subworkflow,
             workflow_stack=self.workflow_stack
             if workflow_stack is None
@@ -1062,6 +1227,7 @@ async def run_graph(
     payload: Any,
     run_agent: RunAgent,
     run_tool: RunTool,
+    run_rag: Optional[RunRag] = None,
     cancel_event: asyncio.Event,
     run_subworkflow: Optional[ResolveWorkflow] = None,
     workflow_id: Optional[str] = None,
@@ -1098,6 +1264,7 @@ async def run_graph(
         run_tool,
         queue.put_nowait,
         cancel_event,
+        run_rag=run_rag,
         run_subworkflow=run_subworkflow,
         workflow_stack=(workflow_id,) if workflow_id else (),
     )
