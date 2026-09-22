@@ -26,6 +26,7 @@ n'est PAS exercée par la suite de tests — voir
 from __future__ import annotations
 
 import json
+from email.utils import parseaddr
 from logging import getLogger
 
 from apowerb.core import workflow_triggers as wt
@@ -33,12 +34,32 @@ from apowerb.core import workflow_triggers as wt
 logger = getLogger(__name__)
 
 
+def _sender_matches(from_filter: str, from_addr: str) -> bool:
+    """Filtre expéditeur ANCRÉ, insensible à la casse.
+
+    ``x@y.fr`` : adresse exacte. ``@y.fr`` ou ``y.fr`` : ce domaine ou l'un de
+    ses sous-domaines. Jamais une sous-chaîne : ``boss@company.com`` ne doit
+    pas correspondre à ``boss@company.com.evil.com``. L'en-tête ``From`` peut
+    porter un nom (``Jean <jean@y.fr>``) : seule l'adresse est comparée.
+    """
+    address = parseaddr(from_addr or "")[1].strip().lower()
+    if address.count("@") != 1:
+        return False
+    flt = from_filter.strip().lower()
+    if "@" in flt and not flt.startswith("@"):
+        return address == flt
+    domain = flt.lstrip("@")
+    sender_domain = address.split("@", 1)[1]
+    return sender_domain == domain or sender_domain.endswith("." + domain)
+
+
 def matches_email_trigger(cfg: dict, *, from_addr: str, subject: str) -> bool:
-    """``True`` si les filtres (sous-chaîne, insensibles à la casse) du
-    trigger correspondent à cet e-mail. Un filtre absent (``None``/vide)
-    correspond toujours."""
+    """``True`` si les filtres du trigger correspondent à cet e-mail :
+    expéditeur ancré (voir ``_sender_matches``), objet en sous-chaîne, tous
+    deux insensibles à la casse. Un filtre absent (``None``/vide) correspond
+    toujours."""
     from_filter = cfg.get("from_filter")
-    if from_filter and from_filter.lower() not in (from_addr or "").lower():
+    if from_filter and not _sender_matches(from_filter, from_addr):
         return False
     subject_filter = cfg.get("subject_filter")
     if subject_filter and subject_filter.lower() not in (subject or "").lower():

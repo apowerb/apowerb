@@ -97,6 +97,11 @@ TRIGGER_KINDS = (
     "workflow_done",
 )
 _EMAIL_PROVIDERS = ("outlook", "gmail")
+# Filtre expéditeur : adresse exacte ou domaine (``@y.fr`` / ``y.fr``),
+# jamais un mot libre qui serait comparé en sous-chaîne.
+_EMAIL_FROM_FILTER = re.compile(
+    r"(?:[^@\s]+@|@)?(?:[a-z0-9-]+\.)+[a-z0-9-]+", re.IGNORECASE
+)
 _FILE_PROVIDERS = ("onedrive", "google_drive")
 _FORM_FIELD_TYPES = ("text", "textarea", "number", "boolean", "select", "date")
 _FORM_ACCESS = ("authenticated", "public")
@@ -515,6 +520,14 @@ def validate_trigger_config(
                     code="invalid_field",
                     params={"field": field},
                 )
+        from_filter = (cfg.get("from_filter") or "").strip()
+        if from_filter and not _EMAIL_FROM_FILTER.fullmatch(from_filter):
+            raise GraphError(
+                f"{node_id} : from_filter doit être une adresse (x@y.fr) ou un "
+                "domaine (@y.fr ou y.fr)",
+                code="invalid_field",
+                params={"field": "from_filter"},
+            )
         return
     if kind == "agent_tool":
         tool_name = cfg.get("tool_name")

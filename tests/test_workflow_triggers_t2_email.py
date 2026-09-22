@@ -47,12 +47,32 @@ def test_no_filters_always_matches():
     assert wet.matches_email_trigger(cfg, from_addr="x@y.fr", subject="hello") is True
 
 
-def test_from_filter_is_case_insensitive_substring():
-    cfg = {"from_filter": "ACME", "subject_filter": None}
-    assert wet.matches_email_trigger(cfg, from_addr="jean@acme.fr", subject="s") is True
-    assert (
-        wet.matches_email_trigger(cfg, from_addr="jean@other.fr", subject="s") is False
+def _from(flt, addr):
+    return wet.matches_email_trigger(
+        {"from_filter": flt, "subject_filter": None}, from_addr=addr, subject="s"
     )
+
+
+def test_from_filter_address_is_an_exact_case_insensitive_match():
+    assert _from("Boss@Company.com", "boss@company.com") is True
+    assert _from("boss@company.com", "Boss Name <BOSS@company.com>") is True
+    # Revue 22/09 : une sous-chaîne non ancrée laissait passer ces adresses.
+    assert _from("boss@company.com", "boss@company.com.evil.com") is False
+    assert _from("boss@company.com", "xboss@company.com") is False
+
+
+def test_from_filter_domain_matches_the_domain_and_its_subdomains_only():
+    for flt in ("@acme.fr", "ACME.fr"):
+        assert _from(flt, "jean@acme.fr") is True
+        assert _from(flt, "Jean <jean@eu.acme.fr>") is True
+        assert _from(flt, "jean@acme.fr.evil.com") is False
+        assert _from(flt, "jean@notacme.fr") is False
+        assert _from(flt, "jean@other.fr") is False
+
+
+def test_from_filter_never_matches_an_unparsable_sender():
+    assert _from("@acme.fr", "") is False
+    assert _from("@acme.fr", "not an address") is False
 
 
 def test_subject_filter_is_case_insensitive_substring():
@@ -65,7 +85,7 @@ def test_subject_filter_is_case_insensitive_substring():
 
 
 def test_both_filters_must_match():
-    cfg = {"from_filter": "acme", "subject_filter": "invoice"}
+    cfg = {"from_filter": "acme.fr", "subject_filter": "invoice"}
     assert (
         wet.matches_email_trigger(cfg, from_addr="a@acme.fr", subject="invoice") is True
     )
