@@ -236,3 +236,76 @@ def test_revisions_archived_before_the_labels_read_as_edits(store):
     with store.engine.begin() as conn:
         conn.execute(store.revision_table.update().values(reason="update"))
     assert [r["reason"] for r in wm.list_revisions(wid, owner_id=ALICE)] == ["edit"]
+
+
+# --- Cas de test enregistrés dans le graphe -----------------------------------
+
+CASE = {
+    "id": "t_1",
+    "name": "haute",
+    "payload": {"priority": "high"},
+    "expect": {"status": "done", "routes": {"a": "x"}},
+}
+
+
+def _with_tests(graph, tests):
+    g = json.loads(json.dumps(graph))
+    g["tests"] = tests
+    return g
+
+
+def test_graph_without_tests_is_stored_unchanged():
+    wf = _create()
+    assert "tests" not in wm.get_workflow(wf["workflow_id"], owner_id=ALICE)["graph"]
+
+
+def test_create_keeps_test_cases():
+    wf = _create(graph=_with_tests(GRAPH, [CASE]))
+    got = wm.get_workflow(wf["workflow_id"], owner_id=ALICE)
+    assert got["graph"]["tests"] == [CASE]
+
+
+def test_update_keeps_test_cases():
+    wid = _create()["workflow_id"]
+    wm.update_workflow(
+        wid, owner_id=ALICE, expected_version=1, graph=_with_tests(CANON, [CASE])
+    )
+    assert wm.get_workflow(wid, owner_id=ALICE)["graph"]["tests"] == [CASE]
+
+
+def test_duplicate_test_ids_are_refused_on_save():
+    wid = _create()["workflow_id"]
+    with pytest.raises(wm.InvalidWorkflow):
+        wm.update_workflow(
+            wid,
+            owner_id=ALICE,
+            expected_version=1,
+            graph=_with_tests(CANON, [CASE, CASE]),
+        )
+
+
+def test_restore_brings_back_the_tests_of_the_revision():
+    wid = _create(graph=_with_tests(GRAPH, [CASE]))["workflow_id"]
+    wm.update_workflow(wid, owner_id=ALICE, expected_version=1, graph=CANON)
+    assert "tests" not in wm.get_workflow(wid, owner_id=ALICE)["graph"]
+    rev = wm.list_revisions(wid, owner_id=ALICE)[0]
+    wm.restore_revision(wid, rev["revision_id"], owner_id=ALICE)
+    assert wm.get_workflow(wid, owner_id=ALICE)["graph"]["tests"] == [CASE]
+
+
+def test_duplicate_copies_the_tests():
+    wid = _create(graph=_with_tests(GRAPH, [CASE]))["workflow_id"]
+    copy = wm.duplicate_workflow(wid, owner_id=ALICE)
+    got = wm.get_workflow(copy["workflow_id"], owner_id=ALICE)
+    assert got["graph"]["tests"] == [CASE]
+
+
+def test_adding_a_test_to_a_published_workflow_keeps_it_published():
+    wid = _create()["workflow_id"]
+    wm.update_workflow(wid, owner_id=ALICE, expected_version=1, status="published")
+    stale = dict(CASE, expect={"status": "done", "routes": {"router9": "x"}})
+    wm.update_workflow(
+        wid, owner_id=ALICE, expected_version=2, graph=_with_tests(CANON, [stale])
+    )
+    got = wm.get_workflow(wid, owner_id=ALICE)
+    assert got["status"] == "published" and got["graph"]["tests"] == [stale]
