@@ -186,6 +186,117 @@ def test_run_refuses_an_invalid_graph_before_anything(client, monkeypatch):
     assert r.status_code == 422
 
 
+def _no_run_gate(monkeypatch):
+    from apowerb.core import run_main
+    import apowerb.core.run_gate as gate
+
+    finished = []
+    monkeypatch.setattr(run_main, "start_run", lambda **kw: kw["run_id"])
+    monkeypatch.setattr(
+        run_main,
+        "finish_run",
+        lambda run_id, status, error_message=None: finished.append(status),
+    )
+
+    async def _plan(owner):
+        return None
+
+    monkeypatch.setattr(gate, "resolve_owner_plan", _plan)
+    return finished
+
+
+def test_run_executes_a_real_subworkflow_via_the_router_wired_callback(
+    client, monkeypatch
+):
+    """Le callback réel est câblé dans ``routers/workflow_defs.py::run_workflow``
+
+    (``workflow_runtime.resolve_workflow_for(owner)``, non bouchonné ici) :
+    un run appelle vraiment ``workflow_main.get_workflow`` pour la version
+    COURANTE du workflow ciblé (brouillon ou publié — la même que ce endpoint
+    exécute pour lui-même), avec le même filtre propriétaire que ``/run``.
+    """
+    finished = _no_run_gate(monkeypatch)
+
+    callee_graph = {
+        "version": 1,
+        "nodes": [
+            {"id": "t", "type": "trigger"},
+            {"id": "o", "type": "output", "config": {"value": "{{t.n}}"}},
+        ],
+        "edges": [{"source": "t", "target": "o"}],
+    }
+    callee_id = client.post(
+        "/api/workflows/defs", json={"name": "callee", "graph": callee_graph}
+    ).json()["workflow_id"]
+
+    caller_graph = {
+        "version": 1,
+        "nodes": [
+            {"id": "t", "type": "trigger"},
+            {
+                "id": "sw",
+                "type": "subworkflow",
+                "config": {"workflow_id": callee_id, "input": {"n": "{{t.value}}"}},
+            },
+        ],
+        "edges": [{"source": "t", "target": "sw"}],
+    }
+    caller_id = client.post(
+        "/api/workflows/defs", json={"name": "caller", "graph": caller_graph}
+    ).json()["workflow_id"]
+
+    r = client.post(
+        f"/api/workflows/defs/{caller_id}/run", json={"payload": {"value": 7}}
+    )
+    assert r.status_code == 200
+    events = [
+        json.loads(line[6:])
+        for line in r.text.split("\n\n")
+        if line.startswith("data: ")
+    ]
+    assert events[-1] == {"event": "done", "output": 7}
+    inner = [e for e in events if e.get("node_id", "").startswith("sw.")]
+    assert any(e["event"] == "node_complete" and e["node_id"] == "sw.o" for e in inner)
+    assert finished == ["success"]
+
+
+def test_run_treats_another_owners_workflow_as_not_found_for_subworkflow(
+    client, monkeypatch
+):
+    """Même filtre propriétaire que ``/run`` direct : jamais un 403 distinctif."""
+    _no_run_gate(monkeypatch)
+
+    client.who["email"] = BOB
+    bob_graph = {"version": 1, "nodes": [{"id": "t", "type": "trigger"}], "edges": []}
+    bob_wid = client.post(
+        "/api/workflows/defs", json={"name": "bob-only", "graph": bob_graph}
+    ).json()["workflow_id"]
+    client.who["email"] = ALICE
+
+    caller_graph = {
+        "version": 1,
+        "nodes": [
+            {"id": "t", "type": "trigger"},
+            {"id": "sw", "type": "subworkflow", "config": {"workflow_id": bob_wid}},
+        ],
+        "edges": [{"source": "t", "target": "sw"}],
+    }
+    caller_id = client.post(
+        "/api/workflows/defs", json={"name": "caller", "graph": caller_graph}
+    ).json()["workflow_id"]
+
+    r = client.post(f"/api/workflows/defs/{caller_id}/run", json={})
+    assert r.status_code == 200
+    events = [
+        json.loads(line[6:])
+        for line in r.text.split("\n\n")
+        if line.startswith("data: ")
+    ]
+    err = next(e for e in events if e["event"] == "node_error")
+    assert err["code"] == "subworkflow_not_found"
+    assert err["params"] == {"node": "sw", "workflow": bob_wid}
+
+
 # --- Branchement de production -----------------------------------------------
 
 

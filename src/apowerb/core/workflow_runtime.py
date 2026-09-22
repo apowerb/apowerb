@@ -1,7 +1,8 @@
 """Branchement de production des nœuds d'un graphe de workflow.
 
-``workflow_graph`` ne sait pas exécuter un agent, un outil ni une recherche
-RAG : il les reçoit (``run_agent``, ``run_tool``, ``run_rag``). Ce module les
+``workflow_graph`` ne sait pas exécuter un agent, un outil, une recherche
+RAG ni un sous-workflow : il les reçoit (``run_agent``, ``run_tool``,
+``run_rag``, ``run_subworkflow``). Ce module les
 fournit pour un propriétaire donné, avec les mêmes règles que le reste du
 produit :
 
@@ -15,6 +16,10 @@ produit :
   interroge les bases de connaissances qui lui sont rattachées, lues comme
   ``GET /rag/knowledge/{agent_id}`` (``read_knowledge_map``), via
   ``tool_search_knowledge`` (appel bloquant, exécuté dans un thread).
+* un nœud subworkflow ne peut viser qu'un workflow **du même propriétaire**
+  (même filtre que ``workflow_main.get_workflow``, donc le même contrôle
+  d'accès que pour lancer ce workflow directement via ``POST .../run``) —
+  voir ``resolve_workflow_for``.
 """
 
 from __future__ import annotations
@@ -24,7 +29,12 @@ import inspect
 from typing import Any, Optional
 
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
-from apowerb.core.workflow_graph import GraphError, UpstreamArgs
+from apowerb.core.workflow_graph import (
+    GraphError,
+    ResolveWorkflow,
+    UpstreamArgs,
+    WorkflowGraph,
+)
 
 
 def _agent_number(agent_id: str) -> int:
@@ -195,3 +205,27 @@ def bindings_for(owner_email: str, plan: Optional[str]):
         return await asyncio.to_thread(_search_rag, folder, agent_id, query, top_k)
 
     return run_agent, run_tool, run_rag
+
+
+def resolve_workflow_for(owner_email: str) -> ResolveWorkflow:
+    """``run_subworkflow`` de production : même filtre propriétaire que ``/run``.
+
+    ``workflow_main.get_workflow`` ne renvoie rien pour un workflow d'autrui
+    (même filtre que ``get_agent``, ``check_agent_owner``) : un identifiant
+    inaccessible se comporte donc comme un identifiant inconnu — le graphe ne
+    confirme jamais l'existence d'un workflow d'autrui. Bloquant (moteur de
+    stockage synchrone) : déporté dans un thread pour ne pas geler la boucle
+    d'événements pendant un run.
+    """
+
+    async def _resolve(workflow_id: str) -> Optional[WorkflowGraph]:
+        from apowerb.core import workflow_main
+
+        wf = await asyncio.to_thread(
+            workflow_main.get_workflow, workflow_id, owner_id=owner_email
+        )
+        if wf is None:
+            return None
+        return WorkflowGraph.model_validate(wf["graph"])
+
+    return _resolve

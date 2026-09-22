@@ -28,7 +28,9 @@ def _run(nodes, edges, payload=None, agents=None):
     async def go():
         out = []
         async for chunk in wg.run_graph(
-            wg.WorkflowGraph.model_validate({"version": 1, "nodes": nodes, "edges": edges}),
+            wg.WorkflowGraph.model_validate(
+                {"version": 1, "nodes": nodes, "edges": edges}
+            ),
             payload=payload,
             run_agent=run_agent,
             run_tool=run_tool,
@@ -49,17 +51,28 @@ def test_output_node_shapes_the_workflow_output_from_any_upstream_node():
         [
             T,
             {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}},
-            {"id": "out", "type": "output", "config": {"value": {"answer": "{{a}}", "order": "{{t.id}}"}}},
+            {
+                "id": "out",
+                "type": "output",
+                "config": {"value": {"answer": "{{a}}", "order": "{{t.id}}"}},
+            },
         ],
         [{"source": "t", "target": "a"}, {"source": "a", "target": "out"}],
         payload={"id": "B7"},
     )
-    assert events[-1] == {"event": "done", "output": {"answer": "out:agent1", "order": "B7"}}
+    assert events[-1] == {
+        "event": "done",
+        "output": {"answer": "out:agent1", "order": "B7"},
+    }
 
 
 def test_output_without_value_passes_its_input_through():
     events = _run(
-        [T, {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}}, {"id": "out", "type": "output"}],
+        [
+            T,
+            {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}},
+            {"id": "out", "type": "output"},
+        ],
         [{"source": "t", "target": "a"}, {"source": "a", "target": "out"}],
     )
     assert events[-1]["output"] == "out:agent1"
@@ -67,7 +80,11 @@ def test_output_without_value_passes_its_input_through():
 
 def test_output_with_an_empty_value_passes_its_input_through():
     events = _run(
-        [T, {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}}, {"id": "out", "type": "output", "config": {"value": ""}}],
+        [
+            T,
+            {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}},
+            {"id": "out", "type": "output", "config": {"value": ""}},
+        ],
         [{"source": "t", "target": "a"}, {"source": "a", "target": "out"}],
     )
     assert events[-1]["output"] == "out:agent1"
@@ -79,8 +96,15 @@ def test_output_node_cannot_have_successors():
             wg.WorkflowGraph.model_validate(
                 {
                     "version": 1,
-                    "nodes": [T, {"id": "out", "type": "output"}, {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}}],
-                    "edges": [{"source": "t", "target": "out"}, {"source": "out", "target": "a"}],
+                    "nodes": [
+                        T,
+                        {"id": "out", "type": "output"},
+                        {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}},
+                    ],
+                    "edges": [
+                        {"source": "t", "target": "out"},
+                        {"source": "out", "target": "a"},
+                    ],
                 }
             )
         )
@@ -102,6 +126,11 @@ def test_output_node_cannot_have_successors():
         ('["x", 2]', "list", ["x", 2]),
         ({"k": 1}, "list", [{"k": 1}]),
         (None, "list", []),
+        ("2024-01-15", "date", "2024-01-15"),
+        ("2024-01-15T10:30:00", "date", "2024-01-15T10:30:00"),
+        ("2024-01-15T10:30:00Z", "date", "2024-01-15T10:30:00"),
+        ("15/01/2024", "date", "2024-01-15"),
+        (0, "date", "1970-01-01T00:00:00"),
     ],
 )
 def test_convert_value(value, to, expected):
@@ -110,16 +139,58 @@ def test_convert_value(value, to, expected):
 
 @pytest.mark.parametrize(
     "value,to",
-    [("not json", "json"), ("abc", "number"), (True, "number"), ("maybe", "boolean")],
+    [
+        ("not json", "json"),
+        ("abc", "number"),
+        (True, "number"),
+        ("maybe", "boolean"),
+        ("not a date", "date"),
+        (True, "date"),
+        ("31/02/2024", "date"),
+        ({"a": 1}, "csv"),
+        ([1, 2, 3], "csv"),
+    ],
 )
 def test_convert_value_refuses_what_it_cannot_read(value, to):
     with pytest.raises(ValueError):
         wg.convert_value(value, to)
 
 
+def test_convert_value_csv_list_of_dicts_to_text_quotes_commas_and_quotes():
+    rows = [{"name": "O'Brien, Jr.", "note": 'say "hi"'}, {"name": "Ana"}]
+    text = wg.convert_value(rows, "csv")
+    # En-tête = union des clés dans l'ordre de première apparition ; ligne = \n.
+    assert text.splitlines(keepends=True) == [
+        "name,note\n",
+        '"O\'Brien, Jr.","say ""hi"""\n',
+        "Ana,\n",
+    ]
+
+
+def test_convert_value_csv_text_round_trips_with_comma_separator():
+    rows = [{"a": "1", "b": "2"}, {"a": "3", "b": "4"}]
+    text = wg.convert_value(rows, "csv")
+    assert wg.convert_value(text, "csv") == rows
+
+
+def test_convert_value_csv_text_detects_the_semicolon_separator():
+    text = 'name;city\nAlice;Paris\n"Bob;Smith";Lyon\n'
+    assert wg.convert_value(text, "csv") == [
+        {"name": "Alice", "city": "Paris"},
+        {"name": "Bob;Smith", "city": "Lyon"},
+    ]
+
+
 def test_convert_node_uses_its_input_template_and_reports_failures_with_a_code():
     ok = _run(
-        [T, {"id": "c", "type": "convert", "config": {"to": "number", "input": "{{t.amount}}"}}],
+        [
+            T,
+            {
+                "id": "c",
+                "type": "convert",
+                "config": {"to": "number", "input": "{{t.amount}}"},
+            },
+        ],
         [{"source": "t", "target": "c"}],
         payload={"amount": "1200"},
     )
@@ -139,6 +210,45 @@ def test_convert_node_needs_a_known_target():
     with pytest.raises(wg.GraphError, match="conversion"):
         wg.validate_graph(
             wg.WorkflowGraph.model_validate(
-                {"version": 1, "nodes": [T, {"id": "c", "type": "convert", "config": {"to": "xml"}}], "edges": [{"source": "t", "target": "c"}]}
+                {
+                    "version": 1,
+                    "nodes": [
+                        T,
+                        {"id": "c", "type": "convert", "config": {"to": "xml"}},
+                    ],
+                    "edges": [{"source": "t", "target": "c"}],
+                }
             )
         )
+
+
+# --- Revue 22/09 : CSV borné comme la réponse http (1 Mio) --------------------
+
+
+def test_convert_value_csv_text_over_the_size_cap_is_refused():
+    text = "a\n" + "x" * (wg.MAX_CSV_BYTES + 1)
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value(text, "csv")
+
+
+def test_convert_value_csv_text_over_the_row_cap_is_refused():
+    text = "a\n" + "1\n" * (wg.MAX_CSV_ROWS + 1)
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value(text, "csv")
+
+
+def test_convert_value_csv_rows_over_the_row_cap_are_refused():
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value([{"a": 1}] * (wg.MAX_CSV_ROWS + 1), "csv")
+
+
+def test_convert_value_csv_rows_rendering_over_the_size_cap_are_refused():
+    rows = [{"a": "x" * 1024}] * 1100
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value(rows, "csv")
+
+
+def test_convert_value_csv_at_the_row_cap_still_converts():
+    rows = [{"a": "1"}] * wg.MAX_CSV_ROWS
+    text = wg.convert_value(rows, "csv")
+    assert wg.convert_value(text, "csv") == rows
