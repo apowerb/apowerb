@@ -258,7 +258,7 @@ async def send_verification_email(email: str, db: AsyncSession) -> None:
     if user is None or user.email_verified:
         return
     token = generate_verify_token(user.email)
-    verify_url = f"{settings.app_public_url.rstrip("/")}/auth/verify-email?token={token}"
+    verify_url = f"{settings.app_public_url.rstrip('/')}/auth/verify-email?token={token}"
     hours = settings.email_verify_token_expire_hours
     html = system_mailer.render_branded_email(
         heading="Confirme ton adresse e-mail",
