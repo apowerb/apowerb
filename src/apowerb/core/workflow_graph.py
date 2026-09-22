@@ -76,6 +76,10 @@ _FALSE = {"false", "no", "non", "0", "faux"}
 _ROUTED = {"router", "classifier"}
 _NOT_YET = {"approval"}
 _MAX_LOOP = 100
+# Sortie d'un nœud bornée comme la réponse http : sans plafond, une boucle
+# dont le corps re-sérialise ``previous`` double de taille à chaque tour
+# (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
+MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
 _ITERATION = "iteration"
 _TEMPLATE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_-]*)((?:\.[A-Za-z0-9_-]+)*)\s*\}\}")
 _ROOT = "workflow"
@@ -436,6 +440,18 @@ class _Compiler:
                     }
                 )
                 raise
+            size = len(json.dumps(result, ensure_ascii=False, default=str).encode())
+            if size > MAX_NODE_OUTPUT_BYTES:
+                exc = GraphError(
+                    f"{node.id} : sortie trop grande ({size} octets, "
+                    f"max {MAX_NODE_OUTPUT_BYTES})",
+                    code="node_output_too_large",
+                    params={"node": node.id, "max": str(MAX_NODE_OUTPUT_BYTES)},
+                )
+                self.emit(
+                    {"event": "node_error", "node_id": node.id, **error_fields(exc)}
+                )
+                raise exc
             self.outputs[node.id] = result
             self.emit(
                 {
