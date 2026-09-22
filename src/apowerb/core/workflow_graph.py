@@ -1236,6 +1236,14 @@ def validate_graph(
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     if dupes:
         raise GraphError(f"identifiant de nœud dupliqué : {', '.join(dupes)}")
+    # Un seul déclencheur : trigger_spec n'arme que le premier, mais chacun
+    # émettrait le payload à l'exécution. Aucun reste permis (lancement manuel).
+    triggers = [n.id for n in graph.nodes if n.type == "trigger"]
+    if len(triggers) > 1:
+        raise GraphError(
+            f"un seul déclencheur par workflow ({', '.join(triggers)}) ; "
+            "supprimez les autres"
+        )
     by_id = {n.id: n for n in graph.nodes}
     for e in graph.edges:
         for end in (e.source, e.target):

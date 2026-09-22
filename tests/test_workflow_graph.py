@@ -296,6 +296,17 @@ def test_fan_out_then_merge_keys_outputs_by_node_id():
         ),
         ([{"id": "l", "type": "approval", "config": {}}], [], "approval"),
         ([], [], "vide"),
+        # Deux déclencheurs : un seul serait armé (trigger_spec prend le
+        # premier) mais chacun émettrait le payload à l'exécution.
+        (
+            [
+                {"id": "t1", "type": "trigger", "config": {"kind": "manual"}},
+                {"id": "t2", "type": "trigger", "config": {"kind": "manual"}},
+                {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}},
+            ],
+            [{"source": "t1", "target": "a"}, {"source": "t2", "target": "a"}],
+            "un seul déclencheur",
+        ),
     ],
 )
 def test_invalid_graphs_are_refused_before_anything_runs(nodes, edges, needle):
