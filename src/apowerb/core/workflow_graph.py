@@ -677,8 +677,15 @@ class _Compiler:
         elif node.type == "condition":
 
             async def body(node_input):
+                # Champ vide = l'entrée du nœud : rendu, il donnerait "" et la
+                # condition sortirait toujours false, sans erreur.
                 outcomes = [
-                    evaluate_rule(rule, render(rule.get("field"), self.outputs))
+                    evaluate_rule(
+                        rule,
+                        render(rule["field"], self.outputs)
+                        if (rule.get("field") or "").strip()
+                        else node_input,
+                    )
                     for rule in cfg["rules"]
                 ]
                 matched = (

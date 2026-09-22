@@ -296,3 +296,15 @@ def test_condition_allows_at_most_one_edge_per_route():
                 {"version": 1, "nodes": nodes, "edges": edges}
             )
         )
+
+
+@pytest.mark.parametrize("field", ["", "  ", None])
+def test_condition_rule_with_an_empty_field_tests_the_node_input(field):
+    """Comme le routeur (e2e agent-dev 22/09) : un champ vide rendait ``""``
+    et la condition sortait toujours ``false``, sans erreur."""
+    nodes, edges = _condition_graph(
+        [{"field": field, "op": "eq", "value": "doc"}], "all"
+    )
+    events = _run(nodes, edges, payload="doc")
+    route = next(e for e in events if e["event"] == "route")
+    assert route["route"] == "true"
