@@ -1277,7 +1277,9 @@ def validate_graph(
     if len(triggers) > 1:
         raise GraphError(
             f"un seul déclencheur par workflow ({', '.join(triggers)}) ; "
-            "supprimez les autres"
+            "supprimez les autres",
+            code="single_trigger",
+            params={"triggers": ", ".join(triggers)},
         )
     by_id = {n.id: n for n in graph.nodes}
     for e in graph.edges:

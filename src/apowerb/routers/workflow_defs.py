@@ -173,7 +173,13 @@ async def run_workflow(
         raise _not_found(workflow_id)
     report = workflow_main.check_workflow(wf["graph"], workflow_id=workflow_id)
     if not report["valid"]:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, report["errors"][0])
+        codes = report.get("codes")
+        detail = (
+            {**codes[0], "message": report["errors"][0]}
+            if codes
+            else report["errors"][0]
+        )
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail)
     graph = workflow_main.parse_graph(wf["graph"])
     run_agent, run_tool, run_rag, run_notify = workflow_runtime.bindings_for(
         owner, await resolve_owner_plan(owner)
