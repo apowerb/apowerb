@@ -216,3 +216,35 @@ def test_convert_node_needs_a_known_target():
                 }
             )
         )
+
+
+# --- Revue 22/09 : CSV borné comme la réponse http (1 Mio) --------------------
+
+
+def test_convert_value_csv_text_over_the_size_cap_is_refused():
+    text = "a\n" + "x" * (wg.MAX_CSV_BYTES + 1)
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value(text, "csv")
+
+
+def test_convert_value_csv_text_over_the_row_cap_is_refused():
+    text = "a\n" + "1\n" * (wg.MAX_CSV_ROWS + 1)
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value(text, "csv")
+
+
+def test_convert_value_csv_rows_over_the_row_cap_are_refused():
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value([{"a": 1}] * (wg.MAX_CSV_ROWS + 1), "csv")
+
+
+def test_convert_value_csv_rows_rendering_over_the_size_cap_are_refused():
+    rows = [{"a": "x" * 1024}] * 1100
+    with pytest.raises(ValueError, match="csv"):
+        wg.convert_value(rows, "csv")
+
+
+def test_convert_value_csv_at_the_row_cap_still_converts():
+    rows = [{"a": "1"}] * wg.MAX_CSV_ROWS
+    text = wg.convert_value(rows, "csv")
+    assert wg.convert_value(text, "csv") == rows

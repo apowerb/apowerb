@@ -83,6 +83,10 @@ _CSV_DELIMITERS = ",;\t"
 _DATE_FORMATS = ("%d/%m/%Y",)
 _NOT_YET = {"approval"}
 _MAX_LOOP = 100
+# Conversion csv bornée comme la réponse du nœud http (1 Mio) : le texte
+# vient d'un agent, d'un outil ou d'un payload, donc d'une source non sûre.
+MAX_CSV_BYTES = 1 * 1024 * 1024
+MAX_CSV_ROWS = 10_000
 _ITERATION = "iteration"
 _TEMPLATE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_-]*)((?:\.[A-Za-z0-9_-]+)*)\s*\}\}")
 _ROOT = "workflow"
@@ -311,6 +315,8 @@ def convert_value(value: Any, to: str) -> Any:
 
 def _rows_to_csv(rows: list[dict]) -> str:
     """Liste de dicts -> texte CSV, en-tête = clés en ordre de 1re apparition."""
+    if len(rows) > MAX_CSV_ROWS:
+        raise ValueError(f"csv over {MAX_CSV_ROWS} rows")
     fieldnames: list[str] = []
     seen: set[str] = set()
     for row in rows:
@@ -322,18 +328,28 @@ def _rows_to_csv(rows: list[dict]) -> str:
     writer = csv.DictWriter(buf, fieldnames=fieldnames, lineterminator="\n")
     writer.writeheader()
     writer.writerows(rows)
-    return buf.getvalue()
+    text = buf.getvalue()
+    if len(text.encode("utf-8")) > MAX_CSV_BYTES:
+        raise ValueError(f"csv over {MAX_CSV_BYTES} bytes")
+    return text
 
 
 def _csv_to_rows(text: str) -> list[dict]:
     """Texte CSV -> liste de dicts ; séparateur détecté, repli ``,``."""
+    if len(text.encode("utf-8")) > MAX_CSV_BYTES:
+        raise ValueError(f"csv over {MAX_CSV_BYTES} bytes")
     try:
         delimiter = (
             csv.Sniffer().sniff(text[:4096], delimiters=_CSV_DELIMITERS).delimiter
         )
     except csv.Error:
         delimiter = ","
-    return [dict(row) for row in csv.DictReader(io.StringIO(text), delimiter=delimiter)]
+    rows = []
+    for row in csv.DictReader(io.StringIO(text), delimiter=delimiter):
+        if len(rows) == MAX_CSV_ROWS:
+            raise ValueError(f"csv over {MAX_CSV_ROWS} rows")
+        rows.append(dict(row))
+    return rows
 
 
 def _parse_date(value: Any):
