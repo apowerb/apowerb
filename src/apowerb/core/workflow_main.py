@@ -58,10 +58,15 @@ def parse_graph(graph: Any) -> WorkflowGraph:
         raise InvalidWorkflow(str(exc)) from exc
 
 
-def check_workflow(graph: Any) -> dict:
-    """Validation complète, pour l'éditeur : jamais d'exception."""
+def check_workflow(graph: Any, *, workflow_id: Optional[str] = None) -> dict:
+    """Validation complète, pour l'éditeur : jamais d'exception.
+
+    ``workflow_id`` — l'identifiant du workflow validé, quand il est déjà
+    enregistré : un ``subworkflow`` qui se cible lui-même est alors refusé
+    (voir ``workflow_graph.validate_graph``).
+    """
     try:
-        validate_graph(parse_graph(graph))
+        validate_graph(parse_graph(graph), workflow_id=workflow_id)
     except (InvalidWorkflow, GraphError) as exc:
         return {"valid": False, "errors": [str(exc)]}
     return {"valid": True, "errors": []}
@@ -190,7 +195,8 @@ def update_workflow(
                 raise InvalidWorkflow(f"statut inconnu : {status}")
             if status == "published":
                 report = check_workflow(
-                    json.loads(changes.get("graph", current["graph"]))
+                    json.loads(changes.get("graph", current["graph"])),
+                    workflow_id=workflow_id,
                 )
                 if not report["valid"]:
                     raise InvalidWorkflow(

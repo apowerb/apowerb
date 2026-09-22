@@ -37,6 +37,10 @@ class _Env:
         out = self.tools.get(tool, {"tool": tool})
         return out(args) if callable(out) else out
 
+    async def run_rag(self, agent_id, query, top_k):
+        self.calls.append(("rag", agent_id, query, top_k))
+        return {"query": query, "passages": []}
+
 
 def _run(graph, env, payload=None, cancel=None):
     async def _go():
@@ -46,6 +50,7 @@ def _run(graph, env, payload=None, cancel=None):
             payload=payload,
             run_agent=env.run_agent,
             run_tool=env.run_tool,
+            run_rag=env.run_rag,
             cancel_event=cancel or asyncio.Event(),
         ):
             out.append(json.loads(chunk[len("data: ") :]))
@@ -501,3 +506,27 @@ def test_declared_args_are_explicit():
     env = _order_env()
     _run(_graph(ORDER, ORDER_EDGES), env, payload={"order_id": "B7"})
     assert not isinstance(env.calls[0][2], wg.UpstreamArgs)
+
+
+def test_until_with_an_empty_field_tests_the_iteration_output():
+    """Champ vide = sortie de l'itération, comme un routeur teste son entrée."""
+    body = {
+        "version": 1,
+        "nodes": [
+            {"id": "it", "type": "trigger"},
+            {"id": "w", "type": "agent", "config": {"agent_id": "agent9"}},
+        ],
+        "edges": [{"source": "it", "target": "w"}],
+    }
+    replies = iter(["go", "stop", "go", "go"])
+    env = _Env(agents={"agent9": lambda m: next(replies, "go")})
+    g = _loop_graph(
+        {
+            "mode": "until",
+            "max_iterations": 4,
+            "body": body,
+            "until": {"field": "", "op": "eq", "value": "stop"},
+        }
+    )
+    _done(_run(g, env, payload={}))
+    assert len([c for c in env.calls if c[1] == "agent9"]) == 2
