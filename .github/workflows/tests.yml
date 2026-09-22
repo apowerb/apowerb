@@ -36,6 +36,14 @@ jobs:
         with:
           enable-cache: true
 
+      # requires-python promises 3.10, but CI only runs 3.13, where a 3.12-only
+      # syntax (a quote reused inside an f-string) still parses. It shipped in
+      # auth/service.py and made the package unimportable on 3.10 and 3.11.
+      # Ruff checks syntax against requires-python; E9 keeps this step to
+      # syntax errors only, so the existing lint debt does not block it.
+      - name: Syntax valid on the lowest supported Python
+        run: uvx ruff@0.16.8 check --select E9 src tests
+
       - name: Set up the environment
         run: uv venv --python 3.13 && uv pip install -e . pytest pytest-asyncio anyio httpx
 

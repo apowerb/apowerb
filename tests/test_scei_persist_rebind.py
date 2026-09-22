@@ -231,7 +231,7 @@ class TestRebindSceiPersist:
                 rebind_scei_persist("agent12", [], tools_funcs, owner_id="owner1")
 
         assert captured_params, "make_persist_tool was not called"
-        assert captured_params[0]["DB_NAME"] == "SuiviAR",             f"Expected SuiviAR (id=15) but got {captured_params[0]["DB_NAME"]!r}"
+        assert captured_params[0]["DB_NAME"] == "SuiviAR",             f"Expected SuiviAR (id=15) but got {captured_params[0]['DB_NAME']!r}"
 
     def test_no_write_config_fallback_no_rebind(self):
         from th2customers.scei.tools.scei_ar_persist import rebind_scei_persist
