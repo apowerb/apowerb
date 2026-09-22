@@ -44,17 +44,26 @@ _RATE_WINDOW_SECONDS = 60.0
 # serait nécessaire pour une limite exacte en déploiement multi-worker ; hors
 # périmètre T1.
 _calls: dict[str, deque] = defaultdict(deque)
+# Signatures HMAC refusées, comptées à part : qui connaît le jeton sans le
+# secret ne doit pas pouvoir épuiser le débit de l'intégrateur légitime.
+_failed_calls: dict[str, deque] = defaultdict(deque)
 
 
-def _rate_limited(workflow_id: str) -> bool:
+def _rate_limited(workflow_id: str, buckets: dict[str, deque] = _calls) -> bool:
     now = time.monotonic()
-    calls = _calls[workflow_id]
+    calls = buckets[workflow_id]
     while calls and now - calls[0] > _RATE_WINDOW_SECONDS:
         calls.popleft()
     if len(calls) >= RATE_LIMIT_PER_MINUTE:
         return True
     calls.append(now)
     return False
+
+
+def _too_many() -> HTTPException:
+    return HTTPException(
+        status.HTTP_429_TOO_MANY_REQUESTS, "Trop d'appels, réessaie plus tard."
+    )
 
 
 def _opaque_404() -> HTTPException:
@@ -93,14 +102,15 @@ async def workflow_webhook(token: str, request: Request):
         raise _opaque_404()
 
     workflow_id = trigger["workflow_id"]
-    if _rate_limited(workflow_id):
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS, "Trop d'appels, réessaie plus tard."
-        )
+    hmac_enabled = bool(trigger.get("hmac_enabled"))
+    # Sans HMAC, le jeton est le seul secret : on compte avant de lire le
+    # corps. Avec HMAC, seul un appel correctement signé consomme le débit.
+    if not hmac_enabled and _rate_limited(workflow_id):
+        raise _too_many()
 
     raw_body = await _read_capped(request, MAX_BODY_BYTES)
 
-    if trigger.get("hmac_enabled"):
+    if hmac_enabled:
         signature = request.headers.get("X-Apowerb-Signature", "")
         secret = (
             decrypt_value(trigger["hmac_secret_encrypted"])
@@ -115,9 +125,13 @@ async def workflow_webhook(token: str, request: Request):
             logger.warning(
                 "[hooks] signature HMAC refusée pour workflow=%s", workflow_id
             )
+            if _rate_limited(workflow_id, _failed_calls):
+                raise _too_many()
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED, "Signature manquante ou invalide."
             )
+        if _rate_limited(workflow_id):
+            raise _too_many()
 
     try:
         parsed = json.loads(raw_body) if raw_body else {}

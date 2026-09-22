@@ -227,3 +227,66 @@ def test_hmac_enabled_provisions_an_encrypted_secret_never_returned_by_sync():
     assert row["hmac_secret_encrypted"]  # provisionné...
     # ... mais create_workflow() ne le rend jamais en clair à l'appelant.
     assert "hmac_secret" not in wf
+
+
+# --- Revue 22/09 : un PUT graphe seul sur un workflow publié est validé -------
+
+
+def test_graph_only_edit_of_a_published_workflow_is_validated():
+    """Publier un schedule valide puis PUT du graphe seul avec un cron sous le
+    plancher de 5 min : refusé, et le trigger garde l'ancienne config."""
+    wf = wm.create_workflow(
+        owner_id=ALICE, name="W", graph=_schedule_graph("0 9 * * *")
+    )
+    wid = wf["workflow_id"]
+    published = wm.update_workflow(
+        wid, owner_id=ALICE, expected_version=wf["version"], status="published"
+    )
+    before = _row(wid)
+
+    with pytest.raises(wm.InvalidWorkflow):
+        wm.update_workflow(
+            wid,
+            owner_id=ALICE,
+            expected_version=published["version"],
+            graph=_schedule_graph("* * * * *"),
+        )
+
+    after = _row(wid)
+    assert after["active"] is True
+    assert after["config"] == before["config"]
+    assert after["next_run_at"] == before["next_run_at"]
+    assert wm.get_workflow(wid, owner_id=ALICE)["version"] == published["version"]
+
+
+def test_graph_only_edit_of_a_draft_is_not_blocked_by_publish_rules():
+    wf = wm.create_workflow(
+        owner_id=ALICE, name="W", graph=_schedule_graph("0 9 * * *")
+    )
+    updated = wm.update_workflow(
+        wf["workflow_id"],
+        owner_id=ALICE,
+        expected_version=wf["version"],
+        graph=_schedule_graph("* * * * *"),
+    )
+    assert updated["status"] == "draft"
+    assert _row(wf["workflow_id"])["active"] is False
+
+
+def test_valid_graph_only_edit_of_a_published_workflow_rearms_the_trigger():
+    wf = wm.create_workflow(
+        owner_id=ALICE, name="W", graph=_schedule_graph("0 9 * * *")
+    )
+    wid = wf["workflow_id"]
+    published = wm.update_workflow(
+        wid, owner_id=ALICE, expected_version=wf["version"], status="published"
+    )
+    wm.update_workflow(
+        wid,
+        owner_id=ALICE,
+        expected_version=published["version"],
+        graph=_schedule_graph("*/10 * * * *"),
+    )
+    row = _row(wid)
+    assert row["active"] is True
+    assert "*/10 * * * *" in row["config"]
