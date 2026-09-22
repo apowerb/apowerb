@@ -541,3 +541,91 @@ def test_until_with_an_empty_field_tests_the_iteration_output():
     )
     _done(_run(g, env, payload={}))
     assert len([c for c in env.calls if c[1] == "agent9"]) == 2
+
+
+# --- Cas de test enregistrés (graph.tests) -----------------------------------
+
+REF_NODES = [
+    {"id": "trigger1", "type": "trigger"},
+    {"id": "router1", "type": "router", "config": {}},
+]
+
+
+def _with_cases(cases):
+    return wg.WorkflowGraph.model_validate(
+        {"version": 1, "nodes": REF_NODES, "edges": [], "tests": cases}
+    )
+
+
+def test_graph_without_tests_keeps_tests_none():
+    g = _graph(REF_NODES, [])
+    assert g.tests is None
+    assert "tests" not in g.model_dump(exclude_none=True)
+
+
+def test_graph_accepts_a_test_case_and_round_trips_it():
+    case = {
+        "id": "t_1",
+        "name": "Priorité haute → urgent",
+        "payload": {"subject": "Serveur en panne", "priority": "high"},
+        "expect": {
+            "status": "done",
+            "routes": {"router1": "urgent"},
+            "output": {"mode": "equals", "value": "URGENT: Serveur en panne"},
+        },
+    }
+    assert _with_cases([case]).model_dump(exclude_none=True)["tests"] == [case]
+
+
+def test_test_case_payload_may_be_any_json_and_expect_parts_are_optional():
+    g = _with_cases(
+        [
+            {
+                "id": "a",
+                "name": "liste",
+                "payload": [1, "x"],
+                "expect": {"status": "error"},
+            },
+            {"id": "b", "name": "vide", "expect": {"status": "done"}},
+        ]
+    )
+    assert g.tests[0].payload == [1, "x"]
+    assert g.tests[1].payload is None and g.tests[1].expect.output is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {
+            "id": "t",
+            "name": "n",
+            "expect": {"status": "done", "output": {"mode": "regex", "value": "x"}},
+        },
+        {"id": "t", "name": "n", "expect": {"status": "running"}},
+        {"id": "", "name": "n", "expect": {"status": "done"}},
+        {"id": "t", "name": "n"},
+    ],
+)
+def test_invalid_test_case_is_refused(bad):
+    with pytest.raises(ValueError):
+        _with_cases([bad])
+
+
+def test_duplicate_test_ids_are_refused():
+    case = {"id": "t", "name": "n", "expect": {"status": "done"}}
+    with pytest.raises(ValueError, match="en double"):
+        _with_cases([case, dict(case)])
+
+
+def test_expectation_on_a_missing_node_is_not_a_structure_error():
+    # L'UI signale l'attendu obsolète à l'exécution ; le graphe reste enregistrable.
+    g = _with_cases(
+        [
+            {
+                "id": "t",
+                "name": "n",
+                "expect": {"status": "done", "routes": {"router9": "x"}},
+            }
+        ]
+    )
+    assert g.tests[0].expect.routes == {"router9": "x"}

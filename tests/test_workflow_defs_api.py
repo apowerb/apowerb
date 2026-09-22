@@ -446,3 +446,33 @@ def test_a_run_cancelled_by_the_engine_is_recorded_as_cancelled(monkeypatch):
 
     asyncio.run(_go())
     assert finished == [("cancelled", None)]
+
+
+def test_api_round_trips_graph_tests(client):
+    case = {"id": "t_1", "name": "n", "payload": {"x": 1}, "expect": {"status": "done"}}
+    wf = client.post("/api/workflows/defs", json={"name": "T", "graph": GRAPH}).json()
+    graph = dict(wf["graph"], tests=[case])
+    r = client.put(
+        f"/api/workflows/defs/{wf['workflow_id']}",
+        json={"expected_version": wf["version"], "graph": graph},
+    )
+    assert r.status_code == 200, r.text
+    got = client.get(f"/api/workflows/defs/{wf['workflow_id']}").json()
+    assert got["graph"]["tests"] == [case]
+
+
+def test_api_refuses_an_unknown_output_mode_with_422(client):
+    wf = client.post("/api/workflows/defs", json={"name": "T", "graph": GRAPH}).json()
+    bad = {
+        "id": "t",
+        "name": "n",
+        "expect": {"status": "done", "output": {"mode": "regex"}},
+    }
+    r = client.put(
+        f"/api/workflows/defs/{wf['workflow_id']}",
+        json={
+            "expected_version": wf["version"],
+            "graph": dict(wf["graph"], tests=[bad]),
+        },
+    )
+    assert r.status_code == 422
