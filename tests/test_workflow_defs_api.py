@@ -196,6 +196,46 @@ def test_run_refuses_an_invalid_graph_before_anything(client, monkeypatch):
     assert r.status_code == 422
 
 
+def test_run_refuses_two_triggers_with_a_translatable_code(client, monkeypatch):
+    """Deux triggers : le 422 porte un code et ses params, pour que l'interface
+    rédige le message dans la langue de l'utilisateur ; le texte reste le repli."""
+    two = {
+        "version": 1,
+        "nodes": [
+            {"id": "t1", "type": "trigger"},
+            {"id": "t2", "type": "trigger"},
+            {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}},
+        ],
+        "edges": [{"source": "t1", "target": "a"}, {"source": "t2", "target": "a"}],
+    }
+    wid = client.post("/api/workflows/defs", json={"name": "x", "graph": two}).json()[
+        "workflow_id"
+    ]
+    monkeypatch.setattr(
+        rt, "bindings_for", lambda *a: pytest.fail("ne doit pas être appelé")
+    )
+    r = client.post(f"/api/workflows/defs/{wid}/run", json={})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "single_trigger"
+    assert detail["params"] == {"triggers": "t1, t2"}
+    assert "t1, t2" in detail["message"]
+    report = client.post("/api/workflows/defs/validate", json={"graph": two}).json()
+    assert report["valid"] is False and "t1, t2" in report["errors"][0]
+    assert report["codes"] == [
+        {"code": "single_trigger", "params": {"triggers": "t1, t2"}}
+    ]
+
+
+def test_run_keeps_a_plain_text_detail_for_an_uncoded_error(client, monkeypatch):
+    bad = {"version": 1, "nodes": [{"id": "a", "type": "agent"}], "edges": []}
+    wid = client.post("/api/workflows/defs", json={"name": "x", "graph": bad}).json()[
+        "workflow_id"
+    ]
+    r = client.post(f"/api/workflows/defs/{wid}/run", json={})
+    assert r.status_code == 422 and isinstance(r.json()["detail"], str)
+
+
 def _no_run_gate(monkeypatch):
     from apowerb.core import run_main
     import apowerb.core.run_gate as gate

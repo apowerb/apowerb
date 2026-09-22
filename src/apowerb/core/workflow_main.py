@@ -74,7 +74,12 @@ def check_workflow(
     try:
         validate_graph(parse_graph(graph), workflow_id=workflow_id, owner_id=owner_id)
     except (InvalidWorkflow, GraphError) as exc:
-        return {"valid": False, "errors": [str(exc)]}
+        report = {"valid": False, "errors": [str(exc)]}
+        # Un code rend l'erreur traduisible par l'interface ; le texte reste
+        # le repli pour les erreurs qui n'en ont pas encore.
+        if getattr(exc, "code", None):
+            report["codes"] = [{"code": exc.code, "params": exc.params}]
+        return report
     return {"valid": True, "errors": []}
 
 
