@@ -74,7 +74,7 @@ from google.adk.events import Event
 from google.adk.workflow import Edge as AdkEdge
 from google.adk.workflow import FunctionNode, JoinNode, Workflow
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from apowerb.core.workflow_engine import (
     _Finished,
@@ -242,10 +242,45 @@ class GraphEdge(BaseModel):
     route: Optional[str] = None
 
 
+class TestOutputExpectation(BaseModel):
+    """Sortie finale attendue : égalité profonde, inclusion de texte, ou ignorée."""
+
+    mode: Literal["equals", "contains", "ignore"]
+    value: Any = None
+
+
+class TestExpectation(BaseModel):
+    status: Literal["done", "error"]
+    # id de nœud routeur → route attendue ; un nœud absent n'est pas une
+    # erreur de structure : l'UI le signale comme attendu obsolète.
+    routes: Optional[dict[str, str]] = None
+    output: Optional[TestOutputExpectation] = None
+
+
+class WorkflowTestCase(BaseModel):
+    """Cas de test rejouable depuis le Studio ; ignoré par le moteur."""
+
+    id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=200)
+    payload: Any = None
+    expect: TestExpectation
+
+
 class WorkflowGraph(BaseModel):
     version: Literal[1] = 1
     nodes: list[Node] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
+    # None (et non []) : avec exclude_none, un graphe sans tests reste stocké
+    # à l'identique.
+    tests: Optional[list[WorkflowTestCase]] = None
+
+    @model_validator(mode="after")
+    def _unique_test_ids(self):
+        ids = [t.id for t in self.tests or []]
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            raise ValueError(f"identifiants de test en double : {', '.join(dup)}")
+        return self
 
 
 # --- Gabarits et règles -----------------------------------------------------
