@@ -24,6 +24,7 @@ def ensure_store_tables() -> None:
     from apowerb.core.api_key_main import api_key_store
     from apowerb.core.hub_main import hub_store
     from apowerb.core.run_main import run_store
+    from apowerb.core.workflow_file_triggers import seen_file_store
     from apowerb.core.workflow_main import workflow_store
     from apowerb.core.workflow_triggers import workflow_trigger_store
     from apowerb.skills_store.skill_manager import skill_store
@@ -38,6 +39,7 @@ def ensure_store_tables() -> None:
         run_store,
         workflow_store,
         workflow_trigger_store,
+        seen_file_store,
     ):
         try:
             store.create_table()

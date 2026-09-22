@@ -87,7 +87,7 @@ async def create_workflow(
 async def validate_graph(
     body: GraphBody, current_user: user_schemas.User = Depends(get_current_user)
 ):
-    return workflow_main.check_workflow(body.graph)
+    return workflow_main.check_workflow(body.graph, owner_id=current_user.email)
 
 
 @router.get("/{workflow_id}")
@@ -100,7 +100,7 @@ async def get_workflow(
     return {
         **wf,
         "validation": workflow_main.check_workflow(
-            wf["graph"], workflow_id=workflow_id
+            wf["graph"], workflow_id=workflow_id, owner_id=current_user.email
         ),
     }
 

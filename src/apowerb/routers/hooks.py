@@ -20,11 +20,15 @@ import json
 import time
 from collections import defaultdict, deque
 from logging import getLogger
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from apowerb.auth.dependencies import get_optional_user
+from apowerb.core import workflow_form_triggers as wft
 from apowerb.core import workflow_triggers as wt
 from apowerb.helpers.encryptor import decrypt_value
+from apowerb.users import schemas as user_schemas
 
 logger = getLogger(__name__)
 
@@ -33,6 +37,8 @@ router = APIRouter(prefix="/hooks", tags=["hooks"])
 MAX_BODY_BYTES = 256 * 1024
 RATE_LIMIT_PER_MINUTE = 60
 _RATE_WINDOW_SECONDS = 60.0
+
+FORM_RATE_LIMIT_PER_MINUTE = 10
 
 # Fenêtre glissante EN MÉMOIRE, par workflow_id. Limite assumée : ce compteur
 # est PAR PROCESSUS (contrairement au tick ``schedule``, dont le lancement
@@ -45,6 +51,11 @@ _RATE_WINDOW_SECONDS = 60.0
 # périmètre T1.
 _calls: dict[str, deque] = defaultdict(deque)
 
+# Même limite EN MÉMOIRE, PAR PROCESSUS (voir la note ci-dessus) — mais clé
+# par (token, IP) et non par workflow_id : le contrat borne un formulaire
+# ``public`` à 10 soumissions par minute et par IP, pas par formulaire.
+_form_calls: dict[tuple[str, str], deque] = defaultdict(deque)
+
 
 def _rate_limited(workflow_id: str) -> bool:
     now = time.monotonic()
@@ -52,6 +63,18 @@ def _rate_limited(workflow_id: str) -> bool:
     while calls and now - calls[0] > _RATE_WINDOW_SECONDS:
         calls.popleft()
     if len(calls) >= RATE_LIMIT_PER_MINUTE:
+        return True
+    calls.append(now)
+    return False
+
+
+def _form_rate_limited(token: str, client_ip: str) -> bool:
+    now = time.monotonic()
+    key = (token, client_ip)
+    calls = _form_calls[key]
+    while calls and now - calls[0] > _RATE_WINDOW_SECONDS:
+        calls.popleft()
+    if len(calls) >= FORM_RATE_LIMIT_PER_MINUTE:
         return True
     calls.append(now)
     return False
@@ -138,6 +161,78 @@ async def workflow_webhook(token: str, request: Request):
     except wt.TriggerNotActive as exc:
         # Dépublié entre la lecture du trigger (ci-dessus) et l'exécution :
         # même 404 opaque que "jamais publié", jamais un 500.
+        raise _opaque_404() from exc
+
+    return {"run_id": run_id}
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+@router.get("/forms/{token}")
+async def get_form_definition(token: str):
+    """Définition publique du formulaire — aucune donnée interne (jeton,
+    identifiants, propriétaire) n'y figure."""
+    trigger = wft.find_active_form_trigger(token)
+    if trigger is None:
+        raise _opaque_404()
+    cfg = json.loads(trigger["config"] or "{}")
+    return {
+        "title": cfg.get("title"),
+        "description": cfg.get("description"),
+        "fields": cfg.get("fields") or [],
+        "access": cfg.get("access"),
+    }
+
+
+@router.post("/forms/{token}", status_code=status.HTTP_202_ACCEPTED)
+async def submit_form(
+    token: str,
+    request: Request,
+    current_user: Optional[user_schemas.User] = Depends(get_optional_user),
+):
+    """Valide la soumission SERVEUR (types, requis, options) puis lance un run."""
+    trigger = wft.find_active_form_trigger(token)
+    if trigger is None:
+        raise _opaque_404()
+
+    cfg = json.loads(trigger["config"] or "{}")
+    if cfg.get("access") == "authenticated" and current_user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentification requise.")
+    if cfg.get("access") != "authenticated":
+        if _form_rate_limited(token, _client_ip(request)):
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "Trop de soumissions, réessaie plus tard.",
+            )
+
+    raw_body = await _read_capped(request, MAX_BODY_BYTES)
+    try:
+        parsed = json.loads(raw_body) if raw_body else {}
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"Corps JSON invalide : {exc}"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Corps JSON doit être un objet."
+        )
+
+    valid, error, cleaned = wft.validate_form_values(cfg.get("fields") or [], parsed)
+    if not valid:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, error)
+
+    workflow_id = trigger["workflow_id"]
+    try:
+        run_id, _task = await wt.launch_triggered_run(
+            workflow_id=workflow_id,
+            owner_id=trigger["owner_id"],
+            kind="form",
+            detail={},
+            payload=cleaned,
+        )
+    except wt.TriggerNotActive as exc:
         raise _opaque_404() from exc
 
     return {"run_id": run_id}
