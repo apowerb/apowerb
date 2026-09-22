@@ -569,7 +569,12 @@ def test_graph_accepts_a_test_case_and_round_trips_it():
 def test_test_case_payload_may_be_any_json_and_expect_parts_are_optional():
     g = _with_cases(
         [
-            {"id": "a", "name": "liste", "payload": [1, "x"], "expect": {"status": "error"}},
+            {
+                "id": "a",
+                "name": "liste",
+                "payload": [1, "x"],
+                "expect": {"status": "error"},
+            },
             {"id": "b", "name": "vide", "expect": {"status": "done"}},
         ]
     )
@@ -604,6 +609,12 @@ def test_duplicate_test_ids_are_refused():
 def test_expectation_on_a_missing_node_is_not_a_structure_error():
     # L'UI signale l'attendu obsolète à l'exécution ; le graphe reste enregistrable.
     g = _with_cases(
-        [{"id": "t", "name": "n", "expect": {"status": "done", "routes": {"router9": "x"}}}]
+        [
+            {
+                "id": "t",
+                "name": "n",
+                "expect": {"status": "done", "routes": {"router9": "x"}},
+            }
+        ]
     )
     assert g.tests[0].expect.routes == {"router9": "x"}
