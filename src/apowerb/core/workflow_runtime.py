@@ -1,15 +1,25 @@
 """Branchement de production des nœuds d'un graphe de workflow.
 
-``workflow_graph`` ne sait pas exécuter un agent ni un outil : il les reçoit
-(``run_agent``, ``run_tool``). Ce module les fournit pour un propriétaire
-donné, avec les mêmes règles que le reste du produit :
+``workflow_graph`` ne sait pas exécuter un agent, un outil, une recherche
+RAG ni un sous-workflow : il les reçoit (``run_agent``, ``run_tool``,
+``run_rag``, ``run_subworkflow``). Ce module les
+fournit pour un propriétaire donné, avec les mêmes règles que le reste du
+produit :
 
 * un nœud agent ne peut viser qu'un agent **du même propriétaire** (même
   filtre que ``get_agent``) ; il s'exécute par ``/run`` sous son jeton ;
 * un nœud outil passe par ``load_agent_tools_functions``, qui filtre déjà
   les ``tool_config{id}`` par propriétaire. Référence : ``categorie.outil``,
   ou ``tool_config{id}:nom_de_fonction`` quand la configuration en expose
-  plusieurs.
+  plusieurs ;
+* un nœud rag vise le même agent (même contrôle d'appartenance) et
+  interroge les bases de connaissances qui lui sont rattachées, lues comme
+  ``GET /rag/knowledge/{agent_id}`` (``read_knowledge_map``), via
+  ``tool_search_knowledge`` (appel bloquant, exécuté dans un thread).
+* un nœud subworkflow ne peut viser qu'un workflow **du même propriétaire**
+  (même filtre que ``workflow_main.get_workflow``, donc le même contrôle
+  d'accès que pour lancer ce workflow directement via ``POST .../run``) —
+  voir ``resolve_workflow_for``.
 """
 
 from __future__ import annotations
@@ -22,7 +32,12 @@ import types
 from typing import Any, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
-from apowerb.core.workflow_graph import GraphError, UpstreamArgs
+from apowerb.core.workflow_graph import (
+    GraphError,
+    ResolveWorkflow,
+    UpstreamArgs,
+    WorkflowGraph,
+)
 
 # Paramètres injectés par le runtime, jamais demandés à l'utilisateur.
 _INJECTED_PARAMS = frozenset({"tool_context"})
@@ -102,6 +117,64 @@ def _tool_context_required(params: Any) -> bool:
         "tool_context" in params
         and params["tool_context"].default is inspect.Parameter.empty
     )
+
+
+def _knowledge_sources(folder: str) -> list[dict]:
+    """Sources RAG indexées (statut ``complete``) de l'agent ``folder``.
+
+    Même lecture que ``GET /rag/knowledge/{agent_id}``
+    (``apowerb.routers.rag.status``), sans notion de session : un nœud de
+    workflow n'a pas de ``session_id`` d'upload.
+    """
+    from apowerb.core.knowledge_map import read_knowledge_map
+
+    kmap = read_knowledge_map(folder)
+    return [
+        s
+        for s in kmap.get("sources", [])
+        if s.get("status") == "complete" and s.get("knowledge_id")
+    ]
+
+
+def _search_rag(folder: str, agent_id: str, query: str, top_k: int) -> dict:
+    """Interroge jusqu'à ``top_k`` bases de connaissances de l'agent (bloquant).
+
+    ``tool_search_knowledge`` est une recherche conversationnelle (une
+    question, une réponse), pas un moteur de passages notés : chaque base
+    interrogée avec succès fournit un seul passage, sa réponse complète, sans
+    score (le service n'en renvoie pas).
+    """
+    from apowerb.tools_store.portfolio.rag import tool_search_knowledge
+
+    sources = _knowledge_sources(folder)
+    if not sources:
+        raise GraphError(
+            f"agent {agent_id} : aucune base de connaissances disponible",
+            code="rag_no_knowledge",
+            params={"agent": agent_id},
+        )
+    passages = []
+    for source in sources[:top_k]:
+        kid = str(source["knowledge_id"])
+        try:
+            result = tool_search_knowledge(kid, query)
+        except Exception:  # noqa: BLE001 - le service RAG est hors de notre contrôle
+            result = {"status": "error"}
+        if result.get("status") == "success":
+            passages.append(
+                {
+                    "text": str(result.get("answer") or ""),
+                    "source": source.get("name") or kid,
+                    "score": None,
+                }
+            )
+    if not passages:
+        raise GraphError(
+            "le service RAG a échoué pour toutes les bases interrogées",
+            code="rag_failed",
+            params={},
+        )
+    return {"query": query, "passages": passages}
 
 
 async def call_tool(func, args: dict) -> Any:
@@ -310,7 +383,7 @@ def tool_arg_schema(func) -> dict:
 
 
 def bindings_for(owner_email: str, plan: Optional[str]):
-    """(run_agent, run_tool) pour exécuter un graphe au nom de ``owner_email``."""
+    """(run_agent, run_tool, run_rag) pour exécuter un graphe au nom de ``owner_email``."""
     token_factory = access_token_factory(owner_email)
 
     async def run_agent(agent_id: str, message: str) -> Any:
@@ -326,4 +399,32 @@ def bindings_for(owner_email: str, plan: Optional[str]):
     async def run_tool(tool_ref: str, args: dict) -> Any:
         return await call_tool(resolve_tool(tool_ref, owner_email), args or {})
 
-    return run_agent, run_tool
+    async def run_rag(agent_id: str, query: str, top_k: int) -> dict:
+        folder = check_agent_owner(agent_id, owner_email)
+        return await asyncio.to_thread(_search_rag, folder, agent_id, query, top_k)
+
+    return run_agent, run_tool, run_rag
+
+
+def resolve_workflow_for(owner_email: str) -> ResolveWorkflow:
+    """``run_subworkflow`` de production : même filtre propriétaire que ``/run``.
+
+    ``workflow_main.get_workflow`` ne renvoie rien pour un workflow d'autrui
+    (même filtre que ``get_agent``, ``check_agent_owner``) : un identifiant
+    inaccessible se comporte donc comme un identifiant inconnu — le graphe ne
+    confirme jamais l'existence d'un workflow d'autrui. Bloquant (moteur de
+    stockage synchrone) : déporté dans un thread pour ne pas geler la boucle
+    d'événements pendant un run.
+    """
+
+    async def _resolve(workflow_id: str) -> Optional[WorkflowGraph]:
+        from apowerb.core import workflow_main
+
+        wf = await asyncio.to_thread(
+            workflow_main.get_workflow, workflow_id, owner_id=owner_email
+        )
+        if wf is None:
+            return None
+        return WorkflowGraph.model_validate(wf["graph"])
+
+    return _resolve
