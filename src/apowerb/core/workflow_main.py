@@ -219,17 +219,25 @@ def update_workflow(
         if status is not None:
             if status not in STATUSES:
                 raise InvalidWorkflow(f"statut inconnu : {status}")
-            if status == "published":
-                report = check_workflow(
-                    json.loads(changes.get("graph", current["graph"])),
-                    workflow_id=workflow_id,
-                    owner_id=owner_id,
-                )
-                if not report["valid"]:
-                    raise InvalidWorkflow(
-                        "publication refusée : " + report["errors"][0]
-                    )
             changes["status"] = status
+        # Valider dès que l'état FINAL est publié et que cet appel publie ou
+        # change le graphe : sinon un PUT du graphe seul sur un workflow déjà
+        # publié réarmerait son trigger sans aucun contrôle (cron sous le
+        # plancher, config invalide...).
+        final_status = changes.get("status", current["status"])
+        if final_status == "published" and ("graph" in changes or status is not None):
+            report = check_workflow(
+                json.loads(changes.get("graph", current["graph"])),
+                workflow_id=workflow_id,
+                owner_id=owner_id,
+            )
+            if not report["valid"]:
+                prefix = (
+                    "publication refusée : "
+                    if status == "published"
+                    else "modification refusée (workflow publié) : "
+                )
+                raise InvalidWorkflow(prefix + report["errors"][0])
         if changes:
             _archive(conn, row, _update_reason(current["status"], changes))
             _write_if_unchanged(conn, workflow_id, owner_id, expected_version, changes)

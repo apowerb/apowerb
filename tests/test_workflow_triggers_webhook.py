@@ -254,3 +254,51 @@ def test_no_plaintext_token_ever_stored_in_the_trigger_row(app_and_trigger):
     assert (
         decrypt_value(d["token_encrypted"]) == token
     )  # mais réversible pour GET .../triggers
+
+
+# --- Revue 22/09 : les signatures invalides n'épuisent pas le débit légitime --
+
+
+def _signed(secret, body):
+    return "sha256=" + hmac_mod.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def test_bad_signatures_do_not_consume_the_legitimate_rate_limit(
+    app_and_trigger, recorder
+):
+    client, make = app_and_trigger
+    _, token, secret = make(hmac=True)
+    body = json.dumps({"x": 1}).encode()
+    bad = {"X-Apowerb-Signature": "sha256=" + "0" * 64}
+
+    codes = {
+        client.post(
+            f"/api/hooks/workflows/{token}", content=body, headers=bad
+        ).status_code
+        for _ in range(hooks_module.RATE_LIMIT_PER_MINUTE + 5)
+    }
+    assert codes <= {401, 429}
+
+    r = client.post(
+        f"/api/hooks/workflows/{token}",
+        content=body,
+        headers={
+            "X-Apowerb-Signature": _signed(secret, body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert r.status_code == 202
+    assert len(recorder.calls) == 1
+
+
+def test_valid_signed_calls_are_still_rate_limited(app_and_trigger, recorder):
+    client, make = app_and_trigger
+    _, token, secret = make(hmac=True)
+    body = json.dumps({"x": 1}).encode()
+    headers = {"X-Apowerb-Signature": _signed(secret, body)}
+
+    for _ in range(hooks_module.RATE_LIMIT_PER_MINUTE):
+        r = client.post(f"/api/hooks/workflows/{token}", content=body, headers=headers)
+        assert r.status_code == 202
+    r = client.post(f"/api/hooks/workflows/{token}", content=body, headers=headers)
+    assert r.status_code == 429
