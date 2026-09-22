@@ -18,6 +18,10 @@ runs a workflow with an attached file:
 * ``POST /api/workflows/runs/{run_id}/replay`` — re-runs one from the input it
   kept, as a new run that cites the original.
 
+* ``GET /api/workflows/tools/schema?tool=<tool_ref>`` — the argument schema
+  of one tool (types, required, defaults, per-arg description), so the
+  studio's node inspector can build its form without hardcoding it per tool.
+
 Two pieces of state, deliberately: the **run record** is persisted in
 ``agent_runs`` (it must survive a restart, a crash and the end of the stream),
 while the in-memory dict keeps only what cannot be serialised — the
@@ -252,6 +256,41 @@ def _streaming_run(
             "X-Workflow-Id": run_id,
         },
     )
+
+
+@router.get("/tools/schema")
+async def get_tool_schema(
+    tool: str,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Schéma des arguments d'un outil, pour qu'un nœud tool du studio
+    demande automatiquement les bons champs selon l'outil choisi.
+
+    ``tool`` est la même référence que ``config.tool`` d'un nœud tool
+    (``categorie.outil`` ou ``tool_config{id}[:fonction]``), résolue avec
+    ``resolve_tool`` pour l'utilisateur courant : les outils qu'il a
+    configurés (MCP, base de données...) fonctionnent donc aussi, pas
+    seulement ceux du portfolio.
+    """
+    from apowerb.core.workflow_graph import GraphError
+    from apowerb.core.workflow_runtime import resolve_tool, tool_arg_schema
+
+    try:
+        func = resolve_tool(tool, current_user.email)
+    except GraphError as exc:
+        # Même code, mêmes params que la résolution faite au run (resolve_tool) :
+        # l'UI n'a qu'une seule forme d'erreur à traiter, qu'elle vienne
+        # d'ici ou d'un run qui a échoué sur le même nœud.
+        http_status = (
+            status.HTTP_409_CONFLICT
+            if exc.code == "tool_ambiguous"
+            else status.HTTP_404_NOT_FOUND
+        )
+        raise HTTPException(
+            status_code=http_status,
+            detail={"code": exc.code, "params": exc.params},
+        )
+    return {"tool": tool, **tool_arg_schema(func)}
 
 
 @router.get("/runs")
