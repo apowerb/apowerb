@@ -298,6 +298,33 @@ def test_forbidden_auth_headers_are_refused_at_validation(header_key):
         wg.validate_graph(graph)
 
 
+@pytest.mark.parametrize("header_key", ["Host", "host", " HOST "])
+def test_host_header_is_refused_at_validation_like_at_run(header_key):
+    # L'exécution refuse Host (le moteur le fixe lui-même contre le DNS
+    # rebinding) : la validation doit le refuser aussi, sinon un workflow
+    # publié n'échoue qu'au premier déclenchement.
+    graph = wg.WorkflowGraph.model_validate(
+        {
+            "version": 1,
+            "nodes": [
+                T,
+                {
+                    "id": "h",
+                    "type": "http",
+                    "config": {
+                        "method": "GET",
+                        "url": "https://api.example.com/x",
+                        "headers": [{"key": header_key, "value": "evil.example"}],
+                    },
+                },
+            ],
+            "edges": [{"source": "t", "target": "h"}],
+        }
+    )
+    with pytest.raises(wg.GraphError, match="Host"):
+        wg.validate_graph(graph)
+
+
 def test_http_auth_field_is_not_yet_supported():
     graph = wg.WorkflowGraph.model_validate(
         {
