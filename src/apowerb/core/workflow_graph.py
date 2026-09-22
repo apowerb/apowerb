@@ -1329,6 +1329,13 @@ def validate_graph(
                         "clair dans le graphe (secret potentiel) ; l'authentification "
                         "HTTP passera par auth.integration_id"
                     )
+                if key == "host":
+                    # Refusé aussi à l'exécution : le moteur fixe Host lui-même
+                    # (IP résolue et vérifiée, protection contre le DNS rebinding).
+                    raise GraphError(
+                        f"{n.id} : l'en-tête Host est fixé par le moteur d'après "
+                        "l'URL ; retirez-le"
+                    )
             timeout = cfg.get("timeout_s", DEFAULT_HTTP_TIMEOUT)
             if (
                 isinstance(timeout, bool)
