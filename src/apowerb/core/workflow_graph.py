@@ -43,6 +43,17 @@ Aucun code utilisateur n'est exécuté : routes et gabarits sont évalués par c
 module. Un gabarit ``{{noeud.chemin.vers.valeur}}`` lit la sortie d'un nœud
 amont ; seul, il garde le type de la valeur, inclus dans du texte il est
 converti en texte.
+
+Un chemin n'est autorisé statiquement que vers un champ garanti par le
+moteur (les clés d'un ``merge``, ``iteration.output``/``iteration.index``
+dans un ``until``). Un nœud à sortie simple connue d'avance (``convert``
+vers texte, nombre ou booléen) refuse tout chemin, et ``router``/
+``classifier`` refusent ``.route`` : aucun des deux n'est jamais stocké.
+``agent`` renvoie du texte ou du JSON relu (voir ``run_agent_message``) —
+sa forme n'est connue qu'à l'exécution : un chemin y est donc accepté à la
+validation, mais échoue à l'exécution (``template_ref_invalid``) s'il
+traverse une valeur scalaire. Seule la référence nue ``{{id}}`` est
+toujours fiable pour lire la sortie entière d'un nœud.
 """
 
 from __future__ import annotations
@@ -193,32 +204,47 @@ class WorkflowGraph(BaseModel):
 # --- Gabarits et règles -----------------------------------------------------
 
 
-def _lookup(outputs: dict, node_id: str, path: str) -> Any:
-    value = outputs.get(node_id)
+def _lookup(outputs: dict, ref: str, path: str, node_id: Optional[str] = None) -> Any:
+    if ref not in outputs:
+        return None
+    value = outputs[ref]
     for key in [k for k in path.split(".") if k]:
         if isinstance(value, dict):
             value = value.get(key)
         elif isinstance(value, list) and key.isdigit() and int(key) < len(value):
             value = value[int(key)]
+        elif isinstance(value, (str, int, float, bool)):
+            full = f"{ref}{path}"
+            raise GraphError(
+                f"{node_id} : {{{{{full}}}}} invalide à l'exécution — la "
+                f"sortie de {ref} est une valeur simple, utilisez {{{{{ref}}}}}",
+                code="template_ref_invalid",
+                params={"node": node_id or "", "ref": full},
+            )
         else:
             return None
     return value
 
 
-def render(template: Any, outputs: dict) -> Any:
-    """Résout les gabarits ``{{noeud.chemin}}`` d'une valeur (récursivement)."""
+def render(template: Any, outputs: dict, node_id: Optional[str] = None) -> Any:
+    """Résout les gabarits ``{{noeud.chemin}}`` d'une valeur (récursivement).
+
+    ``node_id`` est le nœud dont la configuration est rendue : il n'accuse
+    personne d'autre si le chemin traverse un scalaire (``template_ref_invalid``,
+    voir ``_lookup``).
+    """
     if isinstance(template, dict):
-        return {k: render(v, outputs) for k, v in template.items()}
+        return {k: render(v, outputs, node_id) for k, v in template.items()}
     if isinstance(template, list):
-        return [render(v, outputs) for v in template]
+        return [render(v, outputs, node_id) for v in template]
     if not isinstance(template, str):
         return template
     whole = _TEMPLATE.fullmatch(template.strip())
     if whole:
-        return _lookup(outputs, whole.group(1), whole.group(2))
+        return _lookup(outputs, whole.group(1), whole.group(2), node_id)
 
     def _text(m: re.Match) -> str:
-        v = _lookup(outputs, m.group(1), m.group(2))
+        v = _lookup(outputs, m.group(1), m.group(2), node_id)
         if v is None:
             return ""
         return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
@@ -238,6 +264,17 @@ def _refs(value: Any) -> set[str]:
     )
 
 
+def _ref_paths(value: Any) -> set[tuple[str, str]]:
+    """Comme ``_refs``, mais garde le chemin : ``{{id.a.b}}`` -> ``(id, '.a.b')``."""
+    if isinstance(value, dict):
+        return set().union(*(_ref_paths(v) for v in value.values())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(_ref_paths(v) for v in value)) if value else set()
+    if not isinstance(value, str):
+        return set()
+    return {(m.group(1), m.group(2)) for m in _TEMPLATE.finditer(value)}
+
+
 def _num(v: Any) -> Optional[float]:
     if isinstance(v, bool):
         return None
@@ -245,6 +282,19 @@ def _num(v: Any) -> Optional[float]:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _rule_subject(rule: dict, scope: dict, node_id: str, default: Any) -> Any:
+    """La valeur qu'une règle teste : son ``field`` rendu, ou ``default``
+    (l'entrée du routeur, la sortie de l'itération) quand il est vide.
+
+    Rendre un champ vide donnait ``""`` : la règle comparait une chaîne vide
+    et la route par défaut était prise à chaque run, sans aucune erreur.
+    """
+    field = rule.get("field")
+    if field is None or (isinstance(field, str) and not field.strip()):
+        return default
+    return render(field, scope, node_id)
 
 
 def evaluate_rule(rule: dict, value: Any) -> bool:
@@ -387,6 +437,22 @@ def _outer_refs(node: Node) -> set[str]:
     return _refs(node.config)
 
 
+def _template_paths(node: Node) -> tuple[set[tuple[str, str]], set[str]]:
+    """(nœud, chemin) référencés par un nœud ; le pseudo-nœud ``iteration``
+    (condition ``until`` d'une boucle) est séparé, il n'a pas d'ancêtre.
+    """
+    if node.type == "try":
+        return set(), set()  # le corps est isolé, comme dans _outer_refs
+    if node.type != "loop":
+        return _ref_paths(node.config), set()
+    until_paths = _ref_paths(node.config.get("until"))
+    outer = _ref_paths(node.config.get("items")) | {
+        (rid, path) for rid, path in until_paths if rid != _ITERATION
+    }
+    iteration = {path for rid, path in until_paths if rid == _ITERATION}
+    return outer, iteration
+
+
 def convert_value(value: Any, to: str) -> Any:
     """``value`` sous la forme ``to`` ; ``ValueError`` si elle ne s'y lit pas."""
     if to == "text":
@@ -438,6 +504,81 @@ def convert_value(value: Any, to: str) -> Any:
     if to == "date":
         return _parse_date(value).isoformat()
     raise ValueError(f"unknown conversion {to!r}")
+
+
+_SCALAR = "scalar"
+_KNOWN_DICT = "dict"
+_UNKNOWN = "unknown"
+_SCALAR_CONVERT_TARGETS = {"text", "number", "boolean", "date"}
+# Sorties à clés fixes, telles que construites par le moteur.
+_FIXED_OUTPUT_KEYS = {
+    "rag": {"query", "passages"},
+    "http": {"status", "headers", "body"},
+    "notification": {"channel", "sent"},
+}
+
+
+def _first_segment(path: str) -> Optional[str]:
+    parts = [p for p in path.split(".") if p]
+    return parts[0] if parts else None
+
+
+def _output_form(node: Node, graph: WorkflowGraph) -> tuple[str, Optional[set[str]]]:
+    """La forme de sortie d'un nœud connue statiquement (avant exécution).
+
+    ``merge`` est le seul nœud à clés connues : ce sont les identifiants (du
+    graphe) de ses entrées. ``convert`` vers texte/nombre/booléen est un
+    scalaire garanti. ``agent`` ne l'est PAS : ``run_agent_message`` relit sa
+    réponse en JSON quand elle y ressemble (``try_parse_json``), donc un
+    chemin dessus n'est jamais refusé ici — seule l'exécution, qui voit la
+    vraie valeur, peut le faire (voir ``_lookup``). Le reste (``trigger``,
+    ``tool``, passthrough d'un ``router``/``classifier``, ``convert`` vers
+    json/list, ``loop``) garde aussi une forme non garantie.
+    """
+    if node.type == "convert" and node.config.get("to") in _SCALAR_CONVERT_TARGETS:
+        return _SCALAR, None
+    if node.type == "merge":
+        sources = {e.source for e in graph.edges if e.target == node.id}
+        return _KNOWN_DICT, sources
+    if node.type in ("set", "extract"):
+        name = "key" if node.type == "set" else "name"
+        fields = node.config.get("fields") or []
+        return _KNOWN_DICT, {f.get(name) for f in fields if isinstance(f, dict)}
+    if node.type in _FIXED_OUTPUT_KEYS:
+        return _KNOWN_DICT, _FIXED_OUTPUT_KEYS[node.type]
+    return _UNKNOWN, None
+
+
+def _check_template_path(
+    node_id: str, ref: str, path: str, target: Node, graph: WorkflowGraph
+) -> None:
+    seg = _first_segment(path)
+    if seg is None:
+        return
+    full = f"{ref}{path}"
+    if target.type in _ROUTED and seg == "route":
+        raise GraphError(
+            f"{node_id} : {{{{{full}}}}} invalide — {ref} ne stocke jamais sa "
+            f"route, utilisez {{{{{ref}}}}} pour sa sortie",
+            code="template_ref_invalid",
+            params={"node": node_id, "ref": full},
+        )
+    form, keys = _output_form(target, graph)
+    if form == _SCALAR:
+        raise GraphError(
+            f"{node_id} : {{{{{full}}}}} invalide — la sortie de {ref} est une "
+            f"valeur simple, utilisez {{{{{ref}}}}}",
+            code="template_ref_invalid",
+            params={"node": node_id, "ref": full},
+        )
+    if form == _KNOWN_DICT and seg not in keys:
+        raise GraphError(
+            f"{node_id} : {{{{{full}}}}} invalide — {ref} n'a pas de champ "
+            f"{seg!r}, utilisez {{{{{ref}}}}} ou l'un de : "
+            f"{', '.join(sorted(keys))}",
+            code="template_ref_invalid",
+            params={"node": node_id, "ref": full},
+        )
 
 
 def _parse_http_body(text: str) -> Any:
@@ -893,6 +1034,19 @@ def validate_graph(graph: WorkflowGraph, *, workflow_id: Optional[str] = None) -
                 raise GraphError(
                     f"{n.id} : {ref} n'est pas en amont, sa sortie n'existe pas encore"
                 )
+        outer_paths, iteration_paths = _template_paths(n)
+        for ref, path in outer_paths:
+            _check_template_path(n.id, ref, path, by_id[ref], graph)
+        for path in iteration_paths:
+            seg = _first_segment(path)
+            if seg is not None and seg not in ("output", "index"):
+                raise GraphError(
+                    f"{n.id} : {{{{iteration{path}}}}} invalide — iteration n'a "
+                    "que output et index, utilisez {{iteration.output}} ou "
+                    "{{iteration.index}}",
+                    code="template_ref_invalid",
+                    params={"node": n.id, "ref": f"iteration{path}"},
+                )
 
 
 # --- Compilation ------------------------------------------------------------
@@ -1070,7 +1224,7 @@ class _Compiler:
 
             async def body(node_input):
                 if cfg.get("input") is not None:
-                    msg = render(cfg["input"], self.outputs)
+                    msg = render(cfg["input"], self.outputs, node.id)
                     msg = (
                         msg
                         if isinstance(msg, str)
@@ -1083,7 +1237,7 @@ class _Compiler:
 
             async def body(node_input):
                 if cfg.get("args") is not None:
-                    args = render(cfg["args"], self.outputs)
+                    args = render(cfg["args"], self.outputs, node.id)
                 else:
                     args = UpstreamArgs(
                         node_input if isinstance(node_input, dict) else {}
@@ -1093,7 +1247,9 @@ class _Compiler:
 
             async def body(node_input):
                 for rule in cfg["rules"]:
-                    if evaluate_rule(rule, render(rule.get("field"), self.outputs)):
+                    if evaluate_rule(
+                        rule, _rule_subject(rule, self.outputs, node.id, node_input)
+                    ):
                         return node_input, rule["route"]
                 if cfg.get("default_route"):
                     return node_input, cfg["default_route"]
@@ -1137,13 +1293,13 @@ class _Compiler:
                 # Valeur vide = non configurée : la sortie reprend son entrée.
                 # Une sortie volontairement vide n'est donc pas exprimable.
                 if cfg.get("value") not in (None, ""):
-                    return render(cfg["value"], self.outputs), None
+                    return render(cfg["value"], self.outputs, node.id), None
                 return node_input, None
         elif node.type == "convert":
 
             async def body(node_input):
                 value = (
-                    render(cfg["input"], self.outputs)
+                    render(cfg["input"], self.outputs, node.id)
                     if cfg.get("input") not in (None, "")
                     else node_input
                 )
@@ -1281,7 +1437,7 @@ class _Compiler:
         cfg = node.config
         cap = cfg["max_iterations"]
         if cfg["mode"] == "foreach":
-            items = render(cfg["items"], self.outputs)
+            items = render(cfg["items"], self.outputs, node.id)
             if not isinstance(items, list):
                 raise GraphError(
                     f"{node.id} : items n'est pas une liste ({type(items).__name__})",
@@ -1310,7 +1466,9 @@ class _Compiler:
                 node, body, i, {"item": None, "index": i, "previous": previous}
             )
             scope = {**self.outputs, _ITERATION: {"output": previous, "index": i}}
-            if evaluate_rule(cfg["until"], render(cfg["until"].get("field"), scope)):
+            if evaluate_rule(
+                cfg["until"], _rule_subject(cfg["until"], scope, node.id, previous)
+            ):
                 return previous
         self.emit(
             {

@@ -506,3 +506,27 @@ def test_declared_args_are_explicit():
     env = _order_env()
     _run(_graph(ORDER, ORDER_EDGES), env, payload={"order_id": "B7"})
     assert not isinstance(env.calls[0][2], wg.UpstreamArgs)
+
+
+def test_until_with_an_empty_field_tests_the_iteration_output():
+    """Champ vide = sortie de l'itération, comme un routeur teste son entrée."""
+    body = {
+        "version": 1,
+        "nodes": [
+            {"id": "it", "type": "trigger"},
+            {"id": "w", "type": "agent", "config": {"agent_id": "agent9"}},
+        ],
+        "edges": [{"source": "it", "target": "w"}],
+    }
+    replies = iter(["go", "stop", "go", "go"])
+    env = _Env(agents={"agent9": lambda m: next(replies, "go")})
+    g = _loop_graph(
+        {
+            "mode": "until",
+            "max_iterations": 4,
+            "body": body,
+            "until": {"field": "", "op": "eq", "value": "stop"},
+        }
+    )
+    _done(_run(g, env, payload={}))
+    assert len([c for c in env.calls if c[1] == "agent9"]) == 2
