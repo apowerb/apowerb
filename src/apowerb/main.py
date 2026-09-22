@@ -54,6 +54,8 @@ from apowerb.routers.skills import router as skills_router
 from apowerb.routers.audio_stream import router as audio_stream_router
 from apowerb.routers.workflows import router as workflows_router
 from apowerb.routers.workflow_defs import router as workflow_defs_router
+from apowerb.routers.workflow_triggers import router as workflow_triggers_router
+from apowerb.routers.hooks import router as hooks_router
 from apowerb.routers.health import router as health_router
 from apowerb.routers.bug_reports import router as bug_reports_router
 from apowerb.helpers.integrations_migration import ensure_integrations_table
@@ -575,6 +577,10 @@ api_router.include_router(models_router, prefix="/api")
 api_router.include_router(audio_stream_router, prefix="/api")
 api_router.include_router(workflow_defs_router, prefix="/api")
 api_router.include_router(workflows_router, prefix="/api")
+api_router.include_router(workflow_triggers_router, prefix="/api")
+# hooks_router : PUBLIC (aucun Depends(get_current_user) sur ses routes),
+# comme webhooks_router / rag_router ci-dessus — voir routers/hooks.py.
+api_router.include_router(hooks_router, prefix="/api")
 
 # `/api/admin`: users, groups, organisations, permissions. Every route is
 # admin-only, through the core's own `is_admin`, which normalises the role's
@@ -697,6 +703,15 @@ async def _start_webhook_renewal():
         print("[STARTUP HOOK] ensure_seed_agents ok", flush=True)
     except Exception as e:
         print(f"[WARNING] Seed agent import failed (non-fatal): {e}", flush=True)
+
+    try:
+        # Triggers "schedule" : boucle de tick locale (pas d'orchestrateur
+        # externe propre à réutiliser ici — voir core/flow_scheduler.py).
+        from apowerb.core import flow_scheduler
+        flow_scheduler.start()
+        print("[STARTUP HOOK] flow_scheduler.start() scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] flow_scheduler.start() raised: {e!r}", flush=True)
 
     print("[STARTUP HOOK] _start_webhook_renewal done", flush=True)
 

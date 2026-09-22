@@ -63,13 +63,30 @@ def check_workflow(graph: Any, *, workflow_id: Optional[str] = None) -> dict:
 
     ``workflow_id`` — l'identifiant du workflow validé, quand il est déjà
     enregistré : un ``subworkflow`` qui se cible lui-même est alors refusé
-    (voir ``workflow_graph.validate_graph``).
+    (voir ``workflow_graph.validate_graph``), de même qu'un trigger
+    ``workflow_done`` qui s'écouterait lui-même.
     """
     try:
         validate_graph(parse_graph(graph), workflow_id=workflow_id)
     except (InvalidWorkflow, GraphError) as exc:
         return {"valid": False, "errors": [str(exc)]}
     return {"valid": True, "errors": []}
+
+
+def _sync_trigger(workflow_id: str, owner_id: str, graph: dict, status: str) -> None:
+    """Fait suivre l'état du trigger (kind du nœud ``trigger``) au store dédié.
+
+    Import différé : ``workflow_triggers`` a besoin de ``workflow_main`` pour
+    lancer un run déclenché (``launch_triggered_run``), donc l'import au
+    niveau module créerait un cycle. Cet appel n'est PAS enveloppé dans un
+    ``try/except`` : une écriture de workflow qui réussit mais dont le
+    trigger ne se synchronise pas doit être visible, pas avalée en silence.
+    """
+    from apowerb.core import workflow_triggers
+
+    workflow_triggers.sync_trigger_for_workflow(
+        workflow_id=workflow_id, owner_id=owner_id, graph=graph, status=status
+    )
 
 
 def _dump(graph: WorkflowGraph) -> str:
@@ -115,6 +132,12 @@ def create_workflow(
     )
     with workflow_store.engine.begin() as conn:
         conn.execute(workflow_store.workflow_table.insert().values(**values))
+    # Provisionne le trigger dès la création (jeton webhook inclus) : un
+    # brouillon reste inactif (``status="draft"``), mais l'utilisateur peut
+    # copier son URL avant même de publier.
+    _sync_trigger(
+        values["workflow_id"], owner_id, parsed.model_dump(exclude_none=True), "draft"
+    )
     return get_workflow(values["workflow_id"], owner_id=owner_id)
 
 
@@ -193,19 +216,37 @@ def update_workflow(
         if status is not None:
             if status not in STATUSES:
                 raise InvalidWorkflow(f"statut inconnu : {status}")
-            if status == "published":
-                report = check_workflow(
-                    json.loads(changes.get("graph", current["graph"])),
-                    workflow_id=workflow_id,
-                )
-                if not report["valid"]:
-                    raise InvalidWorkflow(
-                        "publication refusée : " + report["errors"][0]
-                    )
             changes["status"] = status
+        # Valider dès que l'état FINAL est publié et que cet appel publie ou
+        # change le graphe : sinon un PUT du graphe seul sur un workflow déjà
+        # publié réarmerait son trigger sans aucun contrôle (cron sous le
+        # plancher, config invalide...).
+        final_status = changes.get("status", current["status"])
+        if final_status == "published" and ("graph" in changes or status is not None):
+            report = check_workflow(
+                json.loads(changes.get("graph", current["graph"])),
+                workflow_id=workflow_id,
+            )
+            if not report["valid"]:
+                prefix = (
+                    "publication refusée : "
+                    if status == "published"
+                    else "modification refusée (workflow publié) : "
+                )
+                raise InvalidWorkflow(prefix + report["errors"][0])
         if changes:
             _archive(conn, row, _update_reason(current["status"], changes))
             _write_if_unchanged(conn, workflow_id, owner_id, expected_version, changes)
+    if changes:
+        # Synchronisé sur l'état FINAL (graphe et statut retenus, modifiés ou
+        # non par cet appel) : la publication comme la dépublication passent
+        # ici, ainsi qu'une simple édition de graphe qui change le kind.
+        _sync_trigger(
+            workflow_id,
+            owner_id,
+            json.loads(changes.get("graph", current["graph"])),
+            changes.get("status", current["status"]),
+        )
     return get_workflow(workflow_id, owner_id=owner_id)
 
 
@@ -245,6 +286,9 @@ def delete_workflow(workflow_id: str, *, owner_id: str) -> None:
         conn.execute(
             t.delete().where(t.c.workflow_id == workflow_id, t.c.owner_id == owner_id)
         )
+    from apowerb.core import workflow_triggers
+
+    workflow_triggers.remove_trigger_for_workflow(workflow_id)
 
 
 def list_revisions(workflow_id: str, *, owner_id: str) -> list[dict]:
@@ -295,6 +339,9 @@ def restore_revision(workflow_id: str, revision_id: int, *, owner_id: str) -> di
                 status="draft",
             ),
         )
+    # Une restauration repasse toujours en "draft" (voir ci-dessus) : le
+    # trigger, s'il était actif, se désarme comme à une dépublication.
+    _sync_trigger(workflow_id, owner_id, json.loads(rv["graph"]), "draft")
     return get_workflow(workflow_id, owner_id=owner_id)
 
 

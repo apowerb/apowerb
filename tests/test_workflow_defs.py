@@ -11,6 +11,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.pool import StaticPool
 
 from apowerb.core import workflow_main as wm
+from apowerb.core import workflow_triggers as wt
 
 ALICE, BOB = "alice@acme.fr", "bob@other.fr"
 
@@ -50,6 +51,12 @@ def store(monkeypatch):
     engine = _sqlite_engine()
     monkeypatch.setattr(wm.workflow_store, "engine", engine)
     wm.workflow_store.metadata.create_all(engine)
+    # workflow_main synchronise le trigger (workflow_triggers) à chaque
+    # écriture réussie (création, édition, publication...) : même engine
+    # partagé, sinon la synchronisation tenterait de joindre le Postgres
+    # réel des réglages par défaut.
+    monkeypatch.setattr(wt.workflow_trigger_store, "engine", engine)
+    wt.workflow_trigger_store.metadata.create_all(engine)
     return wm.workflow_store
 
 

@@ -68,6 +68,7 @@ import socket
 import time
 from datetime import date, datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google.adk.events import Event
 from google.adk.workflow import Edge as AdkEdge
@@ -129,6 +130,43 @@ _DEFAULT_RAG_TOP_K = 5
 # dont le corps re-sérialise ``previous`` double de taille à chaque tour
 # (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
 MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
+
+# --- Triggers (T1 : socle + validation des 8 kinds) -------------------------
+#
+# Un trigger automatique n'exécute que la version PUBLIÉE d'un workflow, au
+# nom de son propriétaire (voir apowerb.core.workflow_triggers). Ici on ne
+# valide que la FORME de ``config`` du nœud ``trigger`` — c'est l'API de
+# gestion qui répond ``active:false, reason:"not_available"`` pour un kind
+# pas encore branché (email, agent_tool, form, file, workflow_done : T2).
+TRIGGER_KINDS = (
+    "manual",
+    "webhook",
+    "schedule",
+    "email",
+    "agent_tool",
+    "form",
+    "file",
+    "workflow_done",
+)
+_EMAIL_PROVIDERS = ("outlook", "gmail")
+_FILE_PROVIDERS = ("onedrive", "google_drive")
+_FORM_FIELD_TYPES = ("text", "textarea", "number", "boolean", "select", "date")
+_FORM_ACCESS = ("authenticated", "public")
+_TOOL_ARG_TYPES = ("string", "number", "boolean", "array", "object")
+_TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
+_WORKFLOW_DONE_ON = ("success", "error", "any")
+_DEFAULT_TRIGGER_TIMEZONE = "Europe/Paris"
+_MIN_CRON_INTERVAL_MINUTES = 5
+_MIN_FILE_INTERVAL_MINUTES = 5
+_MAX_FILE_INTERVAL_MINUTES = 1440
+# ``weekday`` va jusqu'à 7 : 0 et 7 valent tous deux dimanche, comme cron.
+_CRON_FIELD_BOUNDS = (
+    ("minute", 0, 59),
+    ("hour", 0, 23),
+    ("day", 1, 31),
+    ("month", 1, 12),
+    ("weekday", 0, 7),
+)
 _ITERATION = "iteration"
 _ATTEMPT = "attempt"
 _TEMPLATE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_-]*)((?:\.[A-Za-z0-9_-]+)*)\s*\}\}")
@@ -510,6 +548,314 @@ def convert_value(value: Any, to: str) -> Any:
     raise ValueError(f"unknown conversion {to!r}")
 
 
+def _parse_cron_field(part_group: str, lo: int, hi: int) -> set[int]:
+    values: set[int] = set()
+    for part in part_group.split(","):
+        rng, step = part, 1
+        if "/" in part:
+            rng, step_s = part.split("/", 1)
+            if not step_s.isdigit() or int(step_s) < 1:
+                raise ValueError(f"pas invalide : {part!r}")
+            step = int(step_s)
+        if rng == "*":
+            start, end = lo, hi
+        elif "-" in rng:
+            a, b = rng.split("-", 1)
+            if not (a.isdigit() and b.isdigit()):
+                raise ValueError(f"plage invalide : {part!r}")
+            start, end = int(a), int(b)
+        elif rng.isdigit():
+            start = end = int(rng)
+        else:
+            raise ValueError(f"champ invalide : {part!r}")
+        if not (lo <= start <= hi and lo <= end <= hi and start <= end):
+            raise ValueError(f"hors bornes [{lo}-{hi}] : {part!r}")
+        values.update(range(start, end + 1, step))
+    return values
+
+
+def parse_cron(cron: str) -> dict[str, set[int]]:
+    """5 champs (minute heure jour mois jour_semaine) -> ensembles de valeurs.
+
+    Supporte ``*``, ``A``, ``A-B``, ``A,B,C`` et ``.../N`` (pas), combinables.
+    ``jour_semaine`` accepte 0-7 (0 et 7 valent dimanche) ; 7 est ramené à 0.
+    """
+    parts = (cron or "").split()
+    if len(parts) != 5:
+        raise GraphError(
+            f"cron invalide (5 champs attendus, {len(parts)} reçus) : {cron!r}",
+            code="invalid_cron",
+        )
+    parsed: dict[str, set[int]] = {}
+    for (name, lo, hi), part in zip(_CRON_FIELD_BOUNDS, parts):
+        try:
+            parsed[name] = _parse_cron_field(part, lo, hi)
+        except ValueError as exc:
+            raise GraphError(
+                f"cron invalide (champ {name}) : {exc}",
+                code="invalid_cron",
+                params={"field": name},
+            ) from None
+    if 7 in parsed["weekday"]:
+        parsed["weekday"].discard(7)
+        parsed["weekday"].add(0)
+    return parsed
+
+
+def _check_cron_min_interval(cron: str) -> None:
+    """Refuse un cron qui peut se déclencher à moins de 5 minutes d'intervalle.
+
+    Ne modélise que le pire cas des champs jour/mois/jour_semaine (ignorés :
+    un cron qui ne correspond qu'à un jour par mois est de toute façon bien
+    au-delà de l'intervalle minimal). Seuls minute et heure comptent : c'est
+    la seule paire qui peut faire tomber deux déclenchements dans la même
+    fenêtre de 5 minutes.
+    """
+    fields = parse_cron(cron)
+    minutes = sorted(fields["minute"])
+    if not minutes:
+        raise GraphError(
+            "cron invalide : aucune minute ne correspond", code="invalid_cron"
+        )
+    gaps = [b - a for a, b in zip(minutes, minutes[1:])]
+    if len(fields["hour"]) > 1:
+        # Plus d'une heure retenue : la minute la plus haute d'une heure peut
+        # être suivie de la plus basse de l'heure d'après.
+        gaps.append(60 - minutes[-1] + minutes[0])
+    if gaps and min(gaps) < _MIN_CRON_INTERVAL_MINUTES:
+        raise GraphError(
+            f"cron trop fréquent : intervalle minimal {_MIN_CRON_INTERVAL_MINUTES} minutes",
+            code="cron_too_frequent",
+        )
+
+
+def _check_timezone(tz_name: str) -> None:
+    try:
+        ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, ValueError, KeyError):
+        raise GraphError(
+            f"fuseau horaire inconnu : {tz_name!r}", code="unknown_timezone"
+        ) from None
+
+
+def _check_at_not_past(at: str, tz_name: str) -> None:
+    try:
+        when = datetime.fromisoformat(at)
+    except ValueError:
+        raise GraphError(f"date/heure invalide : {at!r}", code="invalid_at") from None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=ZoneInfo(tz_name))
+    if when.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+        raise GraphError(f"{at!r} est déjà passé", code="at_in_past")
+
+
+def _require_trigger_str(cfg: dict, field: str, *, code: str) -> str:
+    value = cfg.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise GraphError(
+            f"champ requis manquant : {field}", code=code, params={"field": field}
+        )
+    return value
+
+
+def validate_trigger_config(
+    cfg: dict, *, node_id: str = "trigger", workflow_id: Optional[str] = None
+) -> None:
+    """Valide ``config`` d'un nœud ``trigger`` pour l'un des 8 kinds du contrat.
+
+    Validation de FORME uniquement. Un kind pas encore exécuté par le moteur
+    (T2 : email, agent_tool, form, file, workflow_done) est accepté ici s'il
+    est bien formé — c'est l'API de gestion qui répond ``active:false,
+    reason:"not_available"`` pour ces kinds tant qu'ils ne sont pas branchés.
+
+    ``workflow_id``, quand connu (édition d'un workflow existant), permet le
+    refus d'un ``workflow_done`` qui s'écouterait lui-même.
+    """
+    kind = cfg.get("kind", "manual")
+    if kind not in TRIGGER_KINDS:
+        raise GraphError(
+            f"{node_id} : kind de trigger inconnu {kind!r} "
+            f"(attendu : {', '.join(TRIGGER_KINDS)})",
+            code="unknown_trigger_kind",
+            params={"node": node_id, "kind": str(kind)},
+        )
+    if kind == "manual":
+        return
+    if kind == "webhook":
+        hmac_flag = cfg.get("hmac", False)
+        if not isinstance(hmac_flag, bool):
+            raise GraphError(
+                f"{node_id} : hmac doit être un booléen",
+                code="invalid_field",
+                params={"field": "hmac"},
+            )
+        return
+    if kind == "schedule":
+        cron, at = cfg.get("cron"), cfg.get("at")
+        if bool(cron) == bool(at):
+            raise GraphError(
+                f"{node_id} : exactement un de cron ou at est requis",
+                code="schedule_needs_one_of_cron_or_at",
+            )
+        tz_name = cfg.get("timezone") or _DEFAULT_TRIGGER_TIMEZONE
+        _check_timezone(tz_name)
+        if cron:
+            _check_cron_min_interval(cron)
+        else:
+            _check_at_not_past(at, tz_name)
+        return
+    if kind == "email":
+        provider = cfg.get("provider")
+        if provider not in _EMAIL_PROVIDERS:
+            raise GraphError(
+                f"{node_id} : provider email inconnu {provider!r} "
+                f"(attendu : {', '.join(_EMAIL_PROVIDERS)})",
+                code="unknown_email_provider",
+            )
+        for field in ("from_filter", "subject_filter"):
+            value = cfg.get(field)
+            if value is not None and not isinstance(value, str):
+                raise GraphError(
+                    f"{node_id} : {field} doit être une chaîne ou null",
+                    code="invalid_field",
+                    params={"field": field},
+                )
+        return
+    if kind == "agent_tool":
+        tool_name = cfg.get("tool_name")
+        if not isinstance(tool_name, str) or not _TOOL_NAME_RE.match(tool_name):
+            raise GraphError(
+                f"{node_id} : tool_name invalide {tool_name!r} "
+                "(attendu : ^[a-z][a-z0-9_]{2,40}$)",
+                code="invalid_tool_name",
+            )
+        _require_trigger_str(cfg, "description", code="tool_description_required")
+        schema = cfg.get("input_schema")
+        if not isinstance(schema, list):
+            raise GraphError(
+                f"{node_id} : input_schema doit être une liste",
+                code="invalid_input_schema",
+            )
+        names: set[str] = set()
+        for field in schema:
+            if not isinstance(field, dict) or not field.get("name"):
+                raise GraphError(
+                    f"{node_id} : champ input_schema sans nom",
+                    code="invalid_input_schema",
+                )
+            if field["name"] in names:
+                raise GraphError(
+                    f"{node_id} : champ dupliqué dans input_schema : {field['name']}",
+                    code="duplicate_tool_field",
+                )
+            names.add(field["name"])
+            if field.get("type") not in _TOOL_ARG_TYPES:
+                raise GraphError(
+                    f"{node_id} : type de champ inconnu {field.get('type')!r} "
+                    f"pour {field['name']}",
+                    code="invalid_input_schema_type",
+                )
+        return
+    if kind == "form":
+        _require_trigger_str(cfg, "title", code="form_title_required")
+        if cfg.get("description") is not None and not isinstance(
+            cfg.get("description"), str
+        ):
+            raise GraphError(
+                f"{node_id} : description doit être une chaîne ou null",
+                code="invalid_field",
+                params={"field": "description"},
+            )
+        fields = cfg.get("fields")
+        if not isinstance(fields, list) or not fields:
+            raise GraphError(
+                f"{node_id} : au moins un champ de formulaire est requis",
+                code="form_fields_required",
+            )
+        names = set()
+        for field in fields:
+            if (
+                not isinstance(field, dict)
+                or not field.get("name")
+                or not field.get("label")
+            ):
+                raise GraphError(
+                    f"{node_id} : champ de formulaire invalide",
+                    code="invalid_form_field",
+                )
+            if field["name"] in names:
+                raise GraphError(
+                    f"{node_id} : champ de formulaire dupliqué : {field['name']}",
+                    code="duplicate_form_field",
+                )
+            names.add(field["name"])
+            if field.get("type") not in _FORM_FIELD_TYPES:
+                raise GraphError(
+                    f"{node_id} : type de champ de formulaire inconnu {field.get('type')!r}",
+                    code="invalid_form_field",
+                )
+        if cfg.get("access") not in _FORM_ACCESS:
+            raise GraphError(
+                f"{node_id} : access inconnu {cfg.get('access')!r} "
+                f"(attendu : {', '.join(_FORM_ACCESS)})",
+                code="invalid_form_access",
+            )
+        return
+    if kind == "file":
+        provider = cfg.get("provider")
+        if provider not in _FILE_PROVIDERS:
+            raise GraphError(
+                f"{node_id} : provider fichier inconnu {provider!r} "
+                f"(attendu : {', '.join(_FILE_PROVIDERS)})",
+                code="unknown_file_provider",
+            )
+        _require_trigger_str(cfg, "folder_id", code="folder_id_required")
+        _require_trigger_str(cfg, "folder_label", code="folder_label_required")
+        interval = cfg.get("interval_min", 15)
+        if (
+            isinstance(interval, bool)
+            or not isinstance(interval, int)
+            or not (
+                _MIN_FILE_INTERVAL_MINUTES <= interval <= _MAX_FILE_INTERVAL_MINUTES
+            )
+        ):
+            raise GraphError(
+                f"{node_id} : interval_min doit être un entier entre "
+                f"{_MIN_FILE_INTERVAL_MINUTES} et {_MAX_FILE_INTERVAL_MINUTES}",
+                code="invalid_file_interval",
+            )
+        return
+    if kind == "workflow_done":
+        source_id = _require_trigger_str(
+            cfg, "workflow_id", code="workflow_done_workflow_id_required"
+        )
+        if cfg.get("on") not in _WORKFLOW_DONE_ON:
+            raise GraphError(
+                f"{node_id} : on inconnu {cfg.get('on')!r} "
+                f"(attendu : {', '.join(_WORKFLOW_DONE_ON)})",
+                code="invalid_workflow_done_on",
+            )
+        if workflow_id is not None and source_id == workflow_id:
+            raise GraphError(
+                f"{node_id} : un workflow ne peut pas s'écouter lui-même",
+                code="workflow_done_self_listen",
+            )
+        return
+
+
+def trigger_spec(graph: WorkflowGraph) -> dict:
+    """``config`` du nœud ``trigger`` de tête, ``{"kind": "manual"}`` à défaut.
+
+    Ne regarde que les nœuds de premier niveau : le déclencheur du corps
+    d'une boucle (``_loop_body``) vit dans un sous-graphe séparé et n'est pas
+    le trigger automatique du workflow.
+    """
+    for node in graph.nodes:
+        if node.type == "trigger":
+            return {"kind": "manual", **node.config}
+    return {"kind": "manual"}
+
+
 _SCALAR = "scalar"
 _KNOWN_DICT = "dict"
 _UNKNOWN = "unknown"
@@ -878,6 +1224,8 @@ def validate_graph(graph: WorkflowGraph, *, workflow_id: Optional[str] = None) -
                 f"{n.id} : conversion inconnue {cfg.get('to')!r} "
                 f"(attendu : {', '.join(CONVERT_TARGETS)})"
             )
+        if n.type == "trigger":
+            validate_trigger_config(cfg, node_id=n.id, workflow_id=workflow_id)
         if n.type == "set":
             fields = cfg.get("fields") or []
             if not fields:
