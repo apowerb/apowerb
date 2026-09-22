@@ -36,8 +36,10 @@ converti en texte.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import re
+import socket
 import time
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal, Optional
 
@@ -364,17 +366,52 @@ async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
     import httpx
     from fastapi import HTTPException as _HTTPException
 
-    from apowerb.routers.rag.validators import _validate_url_not_internal
+    from apowerb.routers.rag.validators import (
+        _is_disallowed_ip,
+        _validate_url_not_internal,
+    )
+
+    def _refused(reason: str) -> GraphError:
+        return GraphError(
+            f"{node_id} : url refusée ({reason})",
+            code="http_url_refused",
+            params={"node": node_id, "reason": reason},
+        )
 
     def _safe_url(url: str) -> str:
         try:
             return _validate_url_not_internal(url)
         except _HTTPException as exc:
-            raise GraphError(
-                f"{node_id} : url refusée ({exc.detail})",
-                code="http_url_refused",
-                params={"node": node_id, "reason": str(exc.detail)},
-            ) from None
+            raise _refused(str(exc.detail)) from None
+
+    async def _pinned(url: str) -> tuple[str, str, dict]:
+        """Résout l'hôte UNE fois, valide chaque adresse, et renvoie l'URL
+        réécrite sur l'IP retenue, l'en-tête Host et l'extension SNI.
+
+        Sans cela httpx re-résout le nom à la connexion : un DNS à TTL court
+        répond une IP publique à la garde puis 169.254.169.254 au connect.
+        """
+        parsed = httpx.URL(url)
+        host = parsed.host
+        default_port = 443 if parsed.scheme == "https" else 80
+        port = parsed.port or default_port
+        host_header = host if port == default_port else f"{host}:{port}"
+        try:
+            ipaddress.ip_address(host)
+            return url, host_header, {}
+        except ValueError:
+            pass
+        try:
+            infos = await asyncio.to_thread(
+                socket.getaddrinfo, host, port, type=socket.SOCK_STREAM
+            )
+            ips = [ipaddress.ip_address(info[4][0]) for info in infos]
+        except (OSError, ValueError):
+            raise _refused("Could not resolve URL hostname") from None
+        if not ips or any(_is_disallowed_ip(ip) for ip in ips):
+            raise _refused("URLs pointing to private networks are not allowed")
+        extensions = {"sni_hostname": host} if parsed.scheme == "https" else {}
+        return str(parsed.copy_with(host=str(ips[0]))), host_header, extensions
 
     method = cfg["method"]
     url = render(cfg["url"], outputs)
@@ -388,6 +425,15 @@ async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
         value = (
             value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
         )
+        # validate_graph ne voit que la clé brute : ``{{a}}`` qui rend
+        # "Authorization" doit être refusé ici, sur la clé réellement envoyée.
+        sent_key = key.strip().lower()
+        if sent_key in _FORBIDDEN_HTTP_HEADERS or sent_key == "host":
+            raise GraphError(
+                f"{node_id} : en-tête {sent_key!r} interdit",
+                code="http_header_forbidden",
+                params={"node": node_id, "header": sent_key},
+            )
         headers[key] = value
 
     raw_body = cfg.get("body")
@@ -407,12 +453,14 @@ async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             for _ in range(MAX_HTTP_REDIRECTS + 1):
+                pinned_url, host_header, extensions = await _pinned(current_url)
                 async with client.stream(
                     method,
-                    current_url,
-                    headers=headers,
+                    pinned_url,
+                    headers={**headers, "Host": host_header},
                     json=json_body,
                     content=content_body,
+                    extensions=extensions,
                 ) as resp:
                     if resp.is_redirect:
                         location = resp.headers.get("location")

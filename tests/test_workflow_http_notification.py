@@ -139,7 +139,7 @@ def test_redirect_to_a_private_ip_is_revalidated_and_refused(monkeypatch, no_rea
     no_real_dns["public.example.com"] = "93.184.216.34"
 
     def handler(request):
-        if request.url.host == "public.example.com":
+        if request.headers["host"] == "public.example.com":
             return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
         raise AssertionError(
             f"la redirection n'aurait pas dû être suivie : {request.url}"
@@ -492,3 +492,94 @@ def test_bad_recipient_after_render_is_refused_with_its_value(monkeypatch):
         asyncio.run(run_notify("n1", "email", ["not-an-email"], "s", "b"))
     assert info.value.code == "notification_bad_recipient"
     assert info.value.params["recipient"] == "not-an-email"
+
+
+# --- Revue 22/09 : en-tête interdit après rendu, DNS épinglé ------------------
+
+
+@pytest.mark.parametrize("rendered", ["Authorization", " cookie ", "X-API-KEY"])
+def test_forbidden_header_built_by_a_template_is_refused_at_run(monkeypatch, rendered):
+    """La validation ne voit que ``{{s}}`` ; la clé réellement envoyée est
+    recontrôlée après rendu, avant toute requête."""
+
+    def handler(request):  # pragma: no cover - ne doit jamais être atteint
+        raise AssertionError(f"requête non attendue : {dict(request.headers)}")
+
+    _patch_transport(monkeypatch, handler)
+    nodes = [
+        T,
+        {"id": "s", "type": "agent", "config": {"agent_id": "a"}},
+        {
+            "id": "h",
+            "type": "http",
+            "config": {
+                "method": "GET",
+                "url": "https://api.example.com/x",
+                "headers": [{"key": "{{s}}", "value": "secret"}],
+            },
+        },
+    ]
+    edges = [{"source": "t", "target": "s"}, {"source": "s", "target": "h"}]
+
+    async def run_agent(agent_id, message):
+        return rendered
+
+    async def go():
+        out = []
+        async for chunk in wg.run_graph(
+            wg.WorkflowGraph.model_validate(
+                {"version": 1, "nodes": nodes, "edges": edges}
+            ),
+            payload=None,
+            run_agent=run_agent,
+            run_tool=AsyncMock(),
+            cancel_event=asyncio.Event(),
+        ):
+            out.append(json.loads(chunk[len("data: ") :]))
+        return out
+
+    events = asyncio.run(go())
+    assert events[-1]["event"] == "error"
+    assert events[-1]["code"] == "http_header_forbidden"
+    assert events[-1]["params"] == {"node": "h", "header": rendered.strip().lower()}
+    assert "secret" not in json.dumps(events)
+
+
+def test_dns_rebinding_between_check_and_connect_is_refused(monkeypatch):
+    """1re résolution publique (garde), 2e privée : la connexion ne part pas
+    vers une adresse jamais validée."""
+    answers = iter(["93.184.216.34", "169.254.169.254"])
+
+    def _rebinding(host, *_a, **_kw):
+        ip = next(answers, "169.254.169.254")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+    monkeypatch.setattr(rag_validators.socket, "getaddrinfo", _rebinding)
+    final = _refused(monkeypatch, "http://rebind.example.com/latest/meta-data/")
+    assert final["event"] == "error"
+    assert final["code"] == "http_url_refused"
+
+
+def test_request_goes_to_the_validated_ip_with_host_and_sni(monkeypatch, no_real_dns):
+    no_real_dns["api.example.com"] = "93.184.216.34"
+    seen = {}
+
+    def handler(request):
+        seen["host"] = request.url.host
+        seen["port"] = request.url.port
+        seen["host_header"] = request.headers["host"]
+        seen["sni"] = request.extensions.get("sni_hostname")
+        return httpx.Response(200, content=b"{}")
+
+    _patch_transport(monkeypatch, handler)
+    nodes, edges = _http_graph(
+        {"method": "GET", "url": "https://api.example.com:8443/ok"}
+    )
+    events = _run(nodes, edges)
+    assert events[-1]["event"] == "done"
+    assert seen == {
+        "host": "93.184.216.34",
+        "port": 8443,
+        "host_header": "api.example.com:8443",
+        "sni": "api.example.com",
+    }
