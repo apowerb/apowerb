@@ -597,3 +597,46 @@ def test_end_to_end_dotted_reference_resolves_a_real_json_field():
     events = asyncio.run(_go())
     assert events[-1]["event"] == "done"
     assert events[-1]["output"] == 42
+
+
+# --- Règle au champ vide = entrée du nœud (e2e agent-dev 22/09) --------------
+
+
+def _router_on(field):
+    return _graph(
+        [
+            T,
+            {
+                "id": "r",
+                "type": "router",
+                "config": {
+                    "rules": [
+                        {"route": "a", "field": field, "op": "eq", "value": "doc"}
+                    ],
+                    "default_route": "b",
+                },
+            },
+            {"id": "agent1", "type": "agent", "config": {"agent_id": "agent1"}},
+            {"id": "agent2", "type": "agent", "config": {"agent_id": "agent2"}},
+        ],
+        [
+            {"source": "t", "target": "r"},
+            {"source": "r", "target": "agent1", "route": "a"},
+            {"source": "r", "target": "agent2", "route": "b"},
+        ],
+    )
+
+
+@pytest.mark.parametrize("field", ["", "   ", None])
+def test_router_rule_with_an_empty_field_tests_the_router_input(field):
+    """Mesuré sur agent-dev : ``field: ""`` comparait ``""`` à la valeur, donc
+    la route par défaut était TOUJOURS prise, sans erreur."""
+    env = _Env()
+    _run(_router_on(field), env, payload="doc")
+    assert [c[1] for c in env.calls] == ["agent1"]
+
+
+def test_router_rule_with_a_field_still_uses_that_field():
+    env = _Env()
+    _run(_router_on("{{t.kind}}"), env, payload={"kind": "doc"})
+    assert [c[1] for c in env.calls] == ["agent1"]

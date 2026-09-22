@@ -213,6 +213,19 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
+def _rule_subject(rule: dict, scope: dict, node_id: str, default: Any) -> Any:
+    """La valeur qu'une règle teste : son ``field`` rendu, ou ``default``
+    (l'entrée du routeur, la sortie de l'itération) quand il est vide.
+
+    Rendre un champ vide donnait ``""`` : la règle comparait une chaîne vide
+    et la route par défaut était prise à chaque run, sans aucune erreur.
+    """
+    field = rule.get("field")
+    if field is None or (isinstance(field, str) and not field.strip()):
+        return default
+    return render(field, scope, node_id)
+
+
 def evaluate_rule(rule: dict, value: Any) -> bool:
     op, expected = rule.get("op", "eq"), rule.get("value")
     if op == "exists":
@@ -614,7 +627,7 @@ class _Compiler:
             async def body(node_input):
                 for rule in cfg["rules"]:
                     if evaluate_rule(
-                        rule, render(rule.get("field"), self.outputs, node.id)
+                        rule, _rule_subject(rule, self.outputs, node.id, node_input)
                     ):
                         return node_input, rule["route"]
                 if cfg.get("default_route"):
@@ -720,7 +733,7 @@ class _Compiler:
             )
             scope = {**self.outputs, _ITERATION: {"output": previous, "index": i}}
             if evaluate_rule(
-                cfg["until"], render(cfg["until"].get("field"), scope, node.id)
+                cfg["until"], _rule_subject(cfg["until"], scope, node.id, previous)
             ):
                 return previous
         self.emit(
