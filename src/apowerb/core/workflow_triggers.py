@@ -520,7 +520,9 @@ async def launch_triggered_run(
     graph = workflow_main.parse_graph(wf["graph"])
 
     plan = await resolve_owner_plan(owner_id)
-    run_agent, run_tool = rt.bindings_for(owner_id, plan)
+    run_agent, run_tool, run_rag, run_notify = rt.bindings_for(owner_id, plan)
+    # Même branchement que POST /defs/{id}/run (routers.workflow_defs).
+    run_subworkflow = rt.resolve_workflow_for(owner_id)
 
     run_id = run_main.start_run(
         trigger=json.dumps({"kind": kind, "detail": detail}, ensure_ascii=False),
@@ -539,7 +541,11 @@ async def launch_triggered_run(
             payload=payload,
             run_agent=run_agent,
             run_tool=run_tool,
+            run_rag=run_rag,
+            run_subworkflow=run_subworkflow,
+            workflow_id=workflow_id,
             cancel_event=cancel_event,
+            run_notify=run_notify,
         )
 
     response = _streaming_run(
