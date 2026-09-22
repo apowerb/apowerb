@@ -1,4 +1,4 @@
-"""Boucle de tick pour les triggers ``schedule``.
+"""Boucle de tick pour les triggers ``schedule`` et ``file``.
 
 Ce fichier était laissé vide pour ce lot (triggers de workflow, T1). Deux
 ordonnanceurs existent déjà dans ce dépôt, et ni l'un ni l'autre ne convient
@@ -36,10 +36,12 @@ le même créneau n'est donc plus possible, sans verrou distribué dédié
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Optional
 
+from apowerb.core import workflow_file_triggers as wft
 from apowerb.core import workflow_triggers as wt
 
 logger = getLogger(__name__)
@@ -52,11 +54,31 @@ _lock = asyncio.Lock()
 _task: Optional[asyncio.Task] = None
 
 
+async def _tick_file_trigger(row: dict, *, moment: datetime) -> int:
+    """Réserve CE sondage (CAS sur ``next_run_at``) puis sonde si gagné.
+
+    Même principe que ``fire_schedule_trigger`` : la réservation avant
+    l'action rend le double sondage inter-réplica impossible sans verrou
+    distribué dédié (voir le docstring de module).
+    """
+    cfg = json.loads(row["config"] or "{}")
+    interval = int(cfg.get("interval_min") or 15)
+    next_run_at = (moment + timedelta(minutes=interval)).isoformat()
+    reserved = wt.reserve_next_poll(
+        row["workflow_id"],
+        prior_next_run_at=row["next_run_at"],
+        next_run_at=next_run_at,
+    )
+    if not reserved:
+        return 0
+    return await wft.poll_file_trigger(row, list_files=wft.list_files_for_trigger)
+
+
 async def tick_once(*, now: Optional[datetime] = None) -> int:
-    """Un passage : lance les triggers ``schedule`` échus. Renvoie combien ont
-    effectivement démarré un run (pas le nombre de lignes échues examinées —
-    un tick sauté pour chevauchement, ou un trigger désarmé en cours de
-    route, ne compte pas).
+    """Un passage : lance les triggers ``schedule`` échus et sonde les
+    triggers ``file`` échus. Renvoie combien de runs ont effectivement
+    démarré (pas le nombre de lignes échues examinées — un tick sauté pour
+    chevauchement, ou un trigger désarmé en cours de route, ne compte pas).
 
     Si un tick précédent tourne encore (verrou déjà pris), celui-ci se
     retire immédiatement plutôt que d'attendre — le prochain passage
@@ -66,15 +88,22 @@ async def tick_once(*, now: Optional[datetime] = None) -> int:
         return 0
     async with _lock:
         moment = now or datetime.now(timezone.utc)
-        due = wt.due_schedule_triggers(moment)
         fired = 0
-        for row in due:
+        for row in wt.due_schedule_triggers(moment):
             try:
                 if await wt.fire_schedule_trigger(row, now=moment):
                     fired += 1
             except Exception:  # noqa: BLE001 - un trigger en panne ne doit pas arrêter la boucle
                 logger.exception(
                     "[flow_scheduler] échec du déclenchement schedule pour workflow=%s",
+                    row.get("workflow_id"),
+                )
+        for row in wt.due_file_triggers(moment):
+            try:
+                fired += await _tick_file_trigger(row, moment=moment)
+            except Exception:  # noqa: BLE001 - un trigger en panne ne doit pas arrêter la boucle
+                logger.exception(
+                    "[flow_scheduler] échec du sondage file pour workflow=%s",
                     row.get("workflow_id"),
                 )
         return fired

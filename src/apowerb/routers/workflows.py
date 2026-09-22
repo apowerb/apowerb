@@ -173,6 +173,26 @@ def _terminal_event(chunk: Any) -> Optional[dict]:
     return None
 
 
+def _done_output(chunk: Any) -> tuple[bool, Any]:
+    """``(True, output)`` si ``chunk`` est l'événement terminal ``done``.
+
+    Seul ``core.workflow_graph.run_graph`` émet ``done`` (le canvas legacy ne
+    le fait pas) — c'est la sortie que ``workflow_triggers`` (T2,
+    ``workflow_done``/``agent_tool``) doit pouvoir lire sans reparser le SSE
+    ailleurs.
+    """
+    text = chunk.decode() if isinstance(chunk, bytes) else chunk
+    if not isinstance(text, str) or not text.startswith("data: "):
+        return False, None
+    try:
+        payload = json.loads(text[len("data: ") :])
+    except ValueError:
+        return False, None
+    if isinstance(payload, dict) and payload.get("event") == "done":
+        return True, payload.get("output")
+    return False, None
+
+
 def _streaming_run(
     run_id: str,
     agent_ids: List[str],
@@ -201,6 +221,7 @@ def _streaming_run(
     async def _event_generator() -> AsyncGenerator[bytes, None]:
         outcome = run_main.STATUS_SUCCESS
         error_message: Optional[str] = None
+        final_output: Any = None
         try:
             # ``run_id`` est émis d'emblée pour que le client puisse se
             # raccrocher — y compris après un rejeu, où il diffère du wid
@@ -219,6 +240,10 @@ def _streaming_run(
                     error_message = str(terminal.get("detail") or "")
                 elif terminal is not None:
                     outcome = run_main.STATUS_CANCELLED
+                else:
+                    is_done, done_output = _done_output(chunk)
+                    if is_done:
+                        final_output = done_output
                 if cancel_event.is_set():
                     # Drain one more iteration if the runner hasn't noticed.
                     continue
@@ -244,6 +269,27 @@ def _streaming_run(
             except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
                 logger.exception(
                     "[workflows] issue du run_id=%s non consignee", run_id
+                )
+            # T2 — un run de graphe (persisté, ``config.workflow_id`` connu)
+            # peut avoir des workflows en écoute (``workflow_done``). Import
+            # différé : ``workflow_triggers`` importe ce module pour
+            # ``launch_triggered_run`` — un import de niveau module créerait
+            # un cycle. Best-effort : un échec de notification ne doit
+            # jamais retirer au client le flux qu'il vient de recevoir.
+            try:
+                from apowerb.core import workflow_triggers as _wt
+
+                await _wt.notify_run_finished(
+                    run_id=run_id,
+                    owner_id=owner,
+                    status=outcome,
+                    output=final_output,
+                    error_message=error_message,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "[workflows] notification workflow_done non envoyee (run_id=%s)",
+                    run_id,
                 )
 
     return StreamingResponse(

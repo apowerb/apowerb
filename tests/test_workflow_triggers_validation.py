@@ -337,3 +337,15 @@ def test_trigger_spec_reads_the_head_trigger_node_kind():
         "kind": "webhook",
         "hmac": True,
     }
+
+
+@pytest.mark.parametrize("flt", ["acme", "boss@", "@", "a b@c.fr", "@acme"])
+def test_email_from_filter_must_be_an_address_or_a_domain(flt):
+    with pytest.raises(wg.GraphError) as exc:
+        wg.validate_trigger_config(_cfg("email", provider="gmail", from_filter=flt))
+    assert exc.value.code == "invalid_field"
+
+
+@pytest.mark.parametrize("flt", ["boss@corp.com", "@corp.com", "corp.com", ""])
+def test_email_from_filter_accepts_an_address_or_a_domain(flt):
+    wg.validate_trigger_config(_cfg("email", provider="gmail", from_filter=flt))

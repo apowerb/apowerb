@@ -8,11 +8,9 @@ du propriétaire par le MÊME chemin que ``POST /api/workflows/defs/{id}/run``
 (``workflow_runtime.bindings_for``, ``run_gate`` — quotas et gardes — via
 ``routers.workflows._streaming_run``), sans le dupliquer.
 
-Kinds exécutés en T1 : ``webhook`` et ``schedule`` (``AUTOMATABLE_KINDS``).
-Les 5 autres (email, agent_tool, form, file, workflow_done) sont déjà
-validés en forme par ``workflow_graph.validate_trigger_config`` mais
-répondent ``active:false, reason:"not_available"`` tant qu'ils ne sont pas
-branchés ici (T2).
+Kinds exécutés : les 7 de ``AUTOMATABLE_KINDS`` (``webhook``, ``schedule`` —
+T1 — puis ``email``, ``agent_tool``, ``form``, ``file``, ``workflow_done`` —
+T2). ``manual`` reste le seul jamais armé.
 
 Le jeton webhook/formulaire est stocké DEUX fois, pour deux usages
 différents :
@@ -49,6 +47,8 @@ from logging import getLogger
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import Column, Integer, MetaData, String, Table, select
+
 from apowerb.agent_store.workflow_trigger_store import WorkflowTriggerStore
 from apowerb.configs.settings import get_settings
 from apowerb.core.workflow_graph import parse_cron, trigger_spec
@@ -60,11 +60,70 @@ logger = getLogger(__name__)
 # importer ce module ne doit pas toucher la base.
 workflow_trigger_store = WorkflowTriggerStore()
 
-# Kinds pour lesquels un trigger PEUT être armé (``active=True``) en T1. Les
-# 5 autres du contrat existent déjà (validation, colonnes) mais un workflow
-# qui les choisit ne s'exécute pas tout seul avant T2.
-AUTOMATABLE_KINDS = frozenset({"webhook", "schedule"})
+# Kinds pour lesquels un trigger PEUT être armé (``active=True``). Les 5
+# kinds T2 (email, agent_tool, form, file, workflow_done) sont désormais
+# exécutés par ce module.
+AUTOMATABLE_KINDS = frozenset(
+    {"webhook", "schedule", "email", "agent_tool", "form", "file", "workflow_done"}
+)
 _TOKEN_BYTES = 32
+
+# Longueur maximale de la chaîne de déclenchement (``run.trigger.detail.chain``)
+# — ``agent_tool`` (un workflow qui s'appelle via son propre outil) et
+# ``workflow_done`` (A termine -> déclenche B -> déclenche C -> ...) partagent
+# la même borne anti-boucle : voir ``next_trigger_chain``.
+MAX_TRIGGER_CHAIN = 5
+
+# provider du nœud trigger -> provider stocké sur ``integrations.provider``.
+EMAIL_INTEGRATION_PROVIDER = {"outlook": "microsoft_outlook", "gmail": "google_gmail"}
+FILE_INTEGRATION_PROVIDER = {
+    "onedrive": "microsoft_onedrive",
+    "google_drive": "google_drive",
+}
+
+# Table Core minimale pour vérifier la présence d'une intégration, SANS
+# passer par l'ORM async (``apowerb.models``) — ce module tourne entièrement
+# sur le moteur SYNC de ``workflow_trigger_store`` (même base, même schéma).
+# Jamais ``create_all`` sur ces deux tables : elles existent déjà (migrations
+# ORM), on ne fait que les LIRE.
+_ext_metadata = MetaData(schema=workflow_trigger_store.db_schema or None)
+_user_table = Table(
+    "user",
+    _ext_metadata,
+    Column("user_id", Integer, primary_key=True),
+    Column("email", String),
+)
+_integration_table = Table(
+    "integrations",
+    _ext_metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer),
+    Column("provider", String),
+)
+
+
+def integration_present(owner_id: str, provider: Optional[str]) -> bool:
+    """``True`` si ``owner_id`` (email) a une intégration active de ``provider``.
+
+    ``provider`` est déjà la valeur ``integrations.provider`` (résolue par
+    l'appelant via ``EMAIL_INTEGRATION_PROVIDER``/``FILE_INTEGRATION_PROVIDER``).
+    """
+    if not provider:
+        return True
+    with workflow_trigger_store.engine.begin() as conn:
+        row = conn.execute(
+            select(_integration_table.c.id)
+            .select_from(
+                _integration_table.join(
+                    _user_table, _user_table.c.user_id == _integration_table.c.user_id
+                )
+            )
+            .where(
+                _user_table.c.email == owner_id,
+                _integration_table.c.provider == provider,
+            )
+        ).fetchone()
+    return row is not None
 
 
 class TriggerNotActive(LookupError):
@@ -115,14 +174,33 @@ def _build_token_url(kind: str, token: str) -> str:
     return f"{settings.app_public_url.rstrip('/')}/forms/{token}"
 
 
-def compute_active(kind: str, workflow_status: str) -> tuple[bool, Optional[str]]:
-    """(``active``, ``reason``) pour l'API de gestion — dérivé, jamais stocké."""
+def compute_active(
+    cfg: dict, workflow_status: str, *, owner_id: Optional[str] = None
+) -> tuple[bool, Optional[str]]:
+    """(``active``, ``reason``) pour l'API de gestion — dérivé, jamais stocké.
+
+    ``email``/``file`` ont besoin de la base (l'intégration du propriétaire) :
+    ``owner_id`` doit être fourni pour que ces deux kinds puissent répondre
+    ``reason:"integration_missing"`` plutôt que ``active:True`` sur une
+    intégration absente/révoquée. Sans ``owner_id``, ces deux kinds sont
+    traités comme n'importe quel autre kind branché (intégration supposée
+    présente) — utilisé uniquement par le code qui n'a pas encore ce contexte.
+    """
+    kind = cfg.get("kind", "manual")
     if kind == "manual":
         return False, None
     if kind not in AUTOMATABLE_KINDS:
         return False, "not_available"
     if workflow_status != "published":
         return False, "unpublished"
+    if owner_id is not None:
+        provider = None
+        if kind == "email":
+            provider = EMAIL_INTEGRATION_PROVIDER.get(cfg.get("provider"))
+        elif kind == "file":
+            provider = FILE_INTEGRATION_PROVIDER.get(cfg.get("provider"))
+        if provider is not None and not integration_present(owner_id, provider):
+            return False, "integration_missing"
     return True, None
 
 
@@ -204,7 +282,7 @@ def sync_trigger_for_workflow(
 
     spec = trigger_spec(WorkflowGraph.model_validate(graph))
     kind = spec.get("kind", "manual")
-    active, _ = compute_active(kind, status)
+    active, _ = compute_active(spec, status, owner_id=owner_id)
     now = _now_iso()
     t = workflow_trigger_store.trigger_table
 
@@ -222,19 +300,26 @@ def sync_trigger_for_workflow(
             updated_at=now,
         )
 
-        keeps_webhook_identity = (
+        # webhook ET form portent un jeton (même mécanisme, T2 réutilise T1
+        # tel quel) ; seul webhook porte un secret HMAC.
+        keeps_token_identity = (
             existing_d is not None
-            and existing_d.get("kind") == "webhook"
+            and existing_d.get("kind") == kind
             and existing_d.get("token_hash")
         )
-        if kind == "webhook":
-            if keeps_webhook_identity:
+        if kind in ("webhook", "form"):
+            if keeps_token_identity:
                 values["token_hash"] = existing_d["token_hash"]
                 values["token_encrypted"] = existing_d["token_encrypted"]
             else:
                 token = _generate_secret()
                 values["token_hash"] = hash_token(token)
                 values["token_encrypted"] = encrypt_value(token)
+        else:
+            values["token_hash"] = None
+            values["token_encrypted"] = None
+
+        if kind == "webhook":
             hmac_wanted = bool(spec.get("hmac"))
             values["hmac_enabled"] = hmac_wanted
             if (
@@ -254,14 +339,20 @@ def sync_trigger_for_workflow(
             else:
                 values["hmac_secret_encrypted"] = None
         else:
-            values["token_hash"] = None
-            values["token_encrypted"] = None
             values["hmac_enabled"] = False
             values["hmac_secret_encrypted"] = None
 
         if kind == "schedule" and active:
             next_at = compute_next_run(spec, after=datetime.now(timezone.utc))
             values["next_run_at"] = _iso_or_none(next_at)
+        elif kind == "file" and active:
+            # ``next_run_at`` porte ici la prochaine ÉCHÉANCE DE SONDAGE (pas
+            # un instant de déclenchement unique comme pour "schedule") —
+            # voir ``flow_scheduler.tick_once`` / ``poll_file_trigger``.
+            interval = int(spec.get("interval_min") or 15)
+            values["next_run_at"] = _iso_or_none(
+                datetime.now(timezone.utc) + timedelta(minutes=interval)
+            )
         else:
             values["next_run_at"] = None
 
@@ -302,7 +393,8 @@ def get_trigger_status(
         ).fetchone()
     d = dict(row._mapping) if row is not None else {}
     kind = d.get("kind", "manual")
-    active, reason = compute_active(kind, workflow_status)
+    cfg = json.loads(d["config"]) if d.get("config") else {"kind": kind}
+    active, reason = compute_active(cfg, workflow_status, owner_id=owner_id)
 
     webhook_url = form_url = None
     if kind == "webhook" and d.get("token_encrypted"):
@@ -460,9 +552,31 @@ async def launch_triggered_run(
         run_id=run_id, agent_ids=[], file_bytes=None, owner=owner_id, runner=_runner
     )
 
-    async def _drain() -> None:
-        async for _ in response.body_iterator:
-            pass
+    async def _drain() -> dict:
+        """Consomme le flux SSE et renvoie son événement terminal.
+
+        Webhook/schedule (T1) ignorent le résultat de la tâche (fire-and-
+        forget). ``agent_tool`` (T2) l'attend (``await task``, borné) pour
+        obtenir la sortie du run déclenché ; ``notify_run_finished`` (appelé
+        depuis ``_streaming_run`` lui-même, pas ici) couvre ``workflow_done``
+        pour TOUT run de graphe, y compris celui-ci.
+        """
+        terminal: dict = {"event": "error", "detail": "aucun événement terminal reçu"}
+        async for chunk in response.body_iterator:
+            text = chunk.decode() if isinstance(chunk, bytes) else chunk
+            if not isinstance(text, str) or not text.startswith("data: "):
+                continue
+            try:
+                payload = json.loads(text[len("data: ") :])
+            except ValueError:
+                continue
+            if isinstance(payload, dict) and payload.get("event") in (
+                "done",
+                "error",
+                "cancelled",
+            ):
+                terminal = payload
+        return terminal
 
     task = asyncio.create_task(_drain())
     return run_id, task
@@ -484,6 +598,41 @@ def due_schedule_triggers(now: datetime) -> list[dict]:
             )
         ).fetchall()
     return [dict(r._mapping) for r in rows]
+
+
+def due_file_triggers(now: datetime) -> list[dict]:
+    """Triggers ``file`` actifs dont la prochaine échéance de SONDAGE est
+    passée. ``next_run_at`` porte ici une échéance de sondage périodique
+    (voir ``sync_trigger_for_workflow``), pas un instant de déclenchement
+    unique — symétrique de ``due_schedule_triggers``."""
+    t = workflow_trigger_store.trigger_table
+    with workflow_trigger_store.engine.begin() as conn:
+        rows = conn.execute(
+            t.select().where(
+                t.c.kind == "file",
+                t.c.active.is_(True),
+                t.c.next_run_at.isnot(None),
+                t.c.next_run_at <= now.isoformat(),
+            )
+        ).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def reserve_next_poll(workflow_id: str, *, prior_next_run_at, next_run_at: str) -> bool:
+    """CAS sur ``next_run_at`` : réserve CE sondage avant de le lancer.
+
+    Même mécanisme que ``fire_schedule_trigger`` (voir son docstring) :
+    ``UPDATE ... WHERE next_run_at=<valeur lue>`` — un seul appelant gagne la
+    comparaison-et-échange, sûr multi-réplica sans verrou distribué dédié.
+    """
+    t = workflow_trigger_store.trigger_table
+    with workflow_trigger_store.engine.begin() as conn:
+        result = conn.execute(
+            t.update()
+            .where(t.c.workflow_id == workflow_id, t.c.next_run_at == prior_next_run_at)
+            .values(next_run_at=next_run_at, updated_at=_now_iso())
+        )
+    return result.rowcount == 1
 
 
 def _update_trigger_row(workflow_id: str, **values: Any) -> None:
@@ -581,3 +730,239 @@ async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
 
     task.add_done_callback(_on_done)
     return True
+
+
+# --- T2 : partagé agent_tool / workflow_done --------------------------------
+
+
+def tool_name_taken(
+    tool_name: str, *, owner_id: str, exclude_workflow_id: Optional[str] = None
+) -> bool:
+    """``True`` si un AUTRE workflow du même propriétaire porte déjà ce
+    ``tool_name`` (kind ``agent_tool``), publié ou non — un brouillon réserve
+    aussi le nom pour éviter une collision surprise à la publication."""
+    t = workflow_trigger_store.trigger_table
+    with workflow_trigger_store.engine.begin() as conn:
+        rows = conn.execute(
+            t.select().where(t.c.kind == "agent_tool", t.c.owner_id == owner_id)
+        ).fetchall()
+    for r in rows:
+        d = dict(r._mapping)
+        if exclude_workflow_id is not None and d["workflow_id"] == exclude_workflow_id:
+            continue
+        cfg = json.loads(d["config"] or "{}")
+        if cfg.get("tool_name") == tool_name:
+            return True
+    return False
+
+
+def list_active_triggers(kind: str, *, owner_id: Optional[str] = None) -> list[dict]:
+    """Lignes actives d'un ``kind`` donné, éventuellement filtrées par propriétaire."""
+    t = workflow_trigger_store.trigger_table
+    conds = [t.c.kind == kind, t.c.active.is_(True)]
+    if owner_id is not None:
+        conds.append(t.c.owner_id == owner_id)
+    with workflow_trigger_store.engine.begin() as conn:
+        rows = conn.execute(t.select().where(*conds)).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def next_trigger_chain(prior_chain: list[str], workflow_id: str) -> Optional[list[str]]:
+    """``None`` si ajouter ``workflow_id`` créerait un cycle ou dépasserait
+    ``MAX_TRIGGER_CHAIN`` ; sinon la chaîne étendue.
+
+    Pure et testable sans base : ``agent_tool`` (un workflow qui s'appelle
+    via son propre outil) et ``workflow_done`` (A -> B -> C -> ...) partagent
+    cette même garde, portée par ``run.trigger.detail.chain``.
+    """
+    chain = list(prior_chain or [])
+    if workflow_id in chain:
+        logger.warning(
+            "[triggers] cycle de déclenchement bloqué : %s -> %s", chain, workflow_id
+        )
+        return None
+    if len(chain) >= MAX_TRIGGER_CHAIN:
+        logger.warning(
+            "[triggers] chaîne de déclenchement plafonnée à %d : %s",
+            MAX_TRIGGER_CHAIN,
+            chain,
+        )
+        return None
+    return chain + [workflow_id]
+
+
+# --- T2 : workflow_done ------------------------------------------------------
+
+
+def _error_detail(status: str, error_message: Optional[str]) -> Optional[dict]:
+    if status != "error" or not error_message:
+        return None
+    return {"code": "run_failed", "detail": error_message}
+
+
+async def notify_run_finished(
+    *,
+    run_id: str,
+    owner_id: str,
+    status: str,
+    output: Any,
+    error_message: Optional[str],
+) -> None:
+    """Déclenche les triggers ``workflow_done`` en écoute sur CE run.
+
+    Appelé depuis ``routers.workflows._streaming_run`` pour TOUT run de
+    graphe persisté qui se termine — interactif, rejeu ou déclenché (webhook,
+    schedule, email, file, agent_tool, un autre workflow_done) — un seul
+    point d'accroche couvre donc toutes les origines. Un run sans
+    ``config.workflow_id`` (canvas legacy) est ignoré : ce n'est pas un
+    workflow persisté, rien ne peut l'écouter par ce kind.
+    """
+    from apowerb.core import run_main
+
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        row = conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()
+    if row is None:
+        return
+    d = dict(row._mapping)
+    try:
+        config = json.loads(d.get("config") or "{}")
+    except json.JSONDecodeError:
+        config = {}
+    source_workflow_id = config.get("workflow_id")
+    if not source_workflow_id:
+        return
+
+    prior_chain: list[str] = []
+    try:
+        own_trigger = json.loads(d.get("trigger") or "{}")
+    except json.JSONDecodeError:
+        own_trigger = {}
+    if isinstance(own_trigger, dict):
+        prior_chain = list((own_trigger.get("detail") or {}).get("chain") or [])
+
+    await fire_workflow_done_triggers(
+        source_workflow_id=source_workflow_id,
+        source_owner_id=owner_id,
+        source_run_id=run_id,
+        status=status,
+        output=output,
+        error=_error_detail(status, error_message),
+        prior_chain=prior_chain,
+    )
+
+
+async def fire_workflow_done_triggers(
+    *,
+    source_workflow_id: str,
+    source_owner_id: str,
+    source_run_id: str,
+    status: str,
+    output: Any,
+    error: Optional[dict],
+    prior_chain: list[str],
+) -> list[str]:
+    """Lance un run pour chaque trigger ``workflow_done`` en écoute sur
+    ``source_workflow_id``. Renvoie les ``run_id`` effectivement lancés.
+
+    Filtré par ``owner_id`` ET ``config.workflow_id == source_workflow_id`` :
+    la validation (T2, ``workflow_graph.validate_trigger_config``) refuse déjà
+    un ``workflow_id`` source d'un autre propriétaire — ce filtre est une
+    défense en profondeur, pas la seule protection.
+    """
+    started: list[str] = []
+    for row in list_active_triggers("workflow_done", owner_id=source_owner_id):
+        cfg = json.loads(row["config"] or "{}")
+        if cfg.get("workflow_id") != source_workflow_id:
+            continue
+        on = cfg.get("on", "any")
+        if on not in ("any", status):
+            continue
+        chain = next_trigger_chain(prior_chain, source_workflow_id)
+        if chain is None:
+            continue
+        dest_workflow_id = row["workflow_id"]
+        try:
+            run_id, _task = await launch_triggered_run(
+                workflow_id=dest_workflow_id,
+                owner_id=source_owner_id,
+                kind="workflow_done",
+                detail={
+                    "workflow_id": source_workflow_id,
+                    "on": status,
+                    "chain": chain,
+                },
+                payload={
+                    "workflow_id": source_workflow_id,
+                    "run_id": source_run_id,
+                    "status": status,
+                    "output": output,
+                    "error": error,
+                },
+            )
+        except TriggerNotActive:
+            logger.info(
+                "[triggers] workflow_done cible %s non publié — ignoré",
+                dest_workflow_id,
+            )
+            continue
+        started.append(run_id)
+    return started
+
+
+# --- T2 : agent_tool ----------------------------------------------------------
+
+AGENT_TOOL_TIMEOUT_SECONDS = 120
+
+
+async def call_agent_tool(
+    *,
+    workflow_id: str,
+    owner_id: str,
+    tool_name: str,
+    arguments: dict,
+    prior_chain: list[str],
+) -> dict:
+    """Exécution SYNCHRONE (bornée à ``AGENT_TOOL_TIMEOUT_SECONDS``) d'un
+    workflow choisi comme outil d'agent (``workflow:<tool_name>``).
+
+    Renvoie toujours un dict, jamais une exception : un outil d'agent qui
+    lève casse le tour de function-calling de l'appelant — la garde
+    anti-récursion, l'expiration et l'échec du run sont donc des CLÉS du
+    retour (``error``), pas des levées.
+    """
+    chain = next_trigger_chain(prior_chain, workflow_id)
+    if chain is None:
+        return {
+            "error": "recursion_blocked",
+            "detail": (
+                f"chaîne de déclenchement de {tool_name!r} bloquée "
+                f"(cycle ou profondeur > {MAX_TRIGGER_CHAIN})"
+            ),
+        }
+    try:
+        run_id, task = await launch_triggered_run(
+            workflow_id=workflow_id,
+            owner_id=owner_id,
+            kind="agent_tool",
+            detail={"tool_name": tool_name, "chain": chain},
+            payload=arguments,
+        )
+    except TriggerNotActive:
+        return {"error": "not_active", "detail": "ce workflow n'est plus publié"}
+
+    try:
+        terminal = await asyncio.wait_for(task, timeout=AGENT_TOOL_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return {
+            "error": "timeout",
+            "run_id": run_id,
+            "detail": f"pas de réponse en {AGENT_TOOL_TIMEOUT_SECONDS}s",
+        }
+
+    event = terminal.get("event")
+    if event == "done":
+        return {"run_id": run_id, "output": terminal.get("output")}
+    if event == "cancelled":
+        return {"error": "cancelled", "run_id": run_id}
+    return {"error": "run_failed", "run_id": run_id, "detail": terminal.get("detail")}

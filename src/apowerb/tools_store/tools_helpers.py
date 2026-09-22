@@ -429,6 +429,20 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
         if tool.startswith("tool_config"):
             raw_tool_name, tool_params = load_tool_config_params(tool, owner_id=owner_id)
             resolved_names = _resolve_tool_names(raw_tool_name)
+        elif tool.startswith("workflow:"):
+            # T2 — un workflow publié (kind agent_tool) choisi comme outil.
+            # Résolu séparément (pas via le catalogue portfolio ci-dessous) :
+            # voir apowerb.core.workflow_agent_tools.
+            if tool in tools_names:
+                continue
+            from apowerb.core.workflow_agent_tools import resolve_single_workflow_tool
+
+            _wf_tool = resolve_single_workflow_tool(tool, owner_id=owner_id)
+            if _wf_tool is None:
+                continue
+            tool_funcs.append(_wf_tool)
+            tools_names.append(tool)
+            continue
         elif "." in tool:
             resolved_names = [tool]
             tool_params = {}

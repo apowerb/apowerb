@@ -149,6 +149,11 @@ TRIGGER_KINDS = (
     "workflow_done",
 )
 _EMAIL_PROVIDERS = ("outlook", "gmail")
+# Filtre expéditeur : adresse exacte ou domaine (``@y.fr`` / ``y.fr``),
+# jamais un mot libre qui serait comparé en sous-chaîne.
+_EMAIL_FROM_FILTER = re.compile(
+    r"(?:[^@\s]+@|@)?(?:[a-z0-9-]+\.)+[a-z0-9-]+", re.IGNORECASE
+)
 _FILE_PROVIDERS = ("onedrive", "google_drive")
 _FORM_FIELD_TYPES = ("text", "textarea", "number", "boolean", "select", "date")
 _FORM_ACCESS = ("authenticated", "public")
@@ -659,17 +664,29 @@ def _require_trigger_str(cfg: dict, field: str, *, code: str) -> str:
 
 
 def validate_trigger_config(
-    cfg: dict, *, node_id: str = "trigger", workflow_id: Optional[str] = None
+    cfg: dict,
+    *,
+    node_id: str = "trigger",
+    workflow_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
 ) -> None:
     """Valide ``config`` d'un nœud ``trigger`` pour l'un des 8 kinds du contrat.
 
-    Validation de FORME uniquement. Un kind pas encore exécuté par le moteur
-    (T2 : email, agent_tool, form, file, workflow_done) est accepté ici s'il
-    est bien formé — c'est l'API de gestion qui répond ``active:false,
-    reason:"not_available"`` pour ces kinds tant qu'ils ne sont pas branchés.
+    Validation de FORME uniquement (plus, depuis T2, deux vérifications
+    d'appartenance quand ``owner_id`` est connu — voir plus bas). Les 5 kinds
+    T2 (email, agent_tool, form, file, workflow_done) sont désormais exécutés
+    par le moteur (``core.workflow_triggers``) ; cette fonction ne fait
+    toujours que la forme.
 
     ``workflow_id``, quand connu (édition d'un workflow existant), permet le
     refus d'un ``workflow_done`` qui s'écouterait lui-même.
+
+    ``owner_id``, quand connu (appel depuis ``workflow_main``, où le
+    propriétaire est toujours disponible), active deux contrôles qui ont
+    besoin de la base : un ``agent_tool.tool_name`` déjà pris par un AUTRE
+    workflow du même propriétaire, et un ``workflow_done.workflow_id`` qui ne
+    lui appartient pas. Import différé (``workflow_triggers``/``workflow_main``
+    dépendent tous deux de ce module) pour éviter un cycle au chargement.
     """
     kind = cfg.get("kind", "manual")
     if kind not in TRIGGER_KINDS:
@@ -720,6 +737,14 @@ def validate_trigger_config(
                     code="invalid_field",
                     params={"field": field},
                 )
+        from_filter = (cfg.get("from_filter") or "").strip()
+        if from_filter and not _EMAIL_FROM_FILTER.fullmatch(from_filter):
+            raise GraphError(
+                f"{node_id} : from_filter doit être une adresse (x@y.fr) ou un "
+                "domaine (@y.fr ou y.fr)",
+                code="invalid_field",
+                params={"field": "from_filter"},
+            )
         return
     if kind == "agent_tool":
         tool_name = cfg.get("tool_name")
@@ -754,6 +779,18 @@ def validate_trigger_config(
                     f"{node_id} : type de champ inconnu {field.get('type')!r} "
                     f"pour {field['name']}",
                     code="invalid_input_schema_type",
+                )
+        if owner_id is not None:
+            from apowerb.core.workflow_triggers import tool_name_taken
+
+            if tool_name_taken(
+                tool_name, owner_id=owner_id, exclude_workflow_id=workflow_id
+            ):
+                raise GraphError(
+                    f"{node_id} : tool_name {tool_name!r} déjà pris par un "
+                    "autre workflow",
+                    code="tool_name_taken",
+                    params={"tool_name": tool_name},
                 )
         return
     if kind == "form":
@@ -840,6 +877,15 @@ def validate_trigger_config(
                 f"{node_id} : un workflow ne peut pas s'écouter lui-même",
                 code="workflow_done_self_listen",
             )
+        if owner_id is not None:
+            from apowerb.core.workflow_main import get_workflow
+
+            if get_workflow(source_id, owner_id=owner_id) is None:
+                raise GraphError(
+                    f"{node_id} : workflow source introuvable {source_id!r}",
+                    code="workflow_done_unknown_source",
+                    params={"workflow_id": source_id},
+                )
         return
 
 
@@ -1170,7 +1216,12 @@ def _parse_date(value: Any):
     raise ValueError(f"{value!r} is not a recognizable date")
 
 
-def validate_graph(graph: WorkflowGraph, *, workflow_id: Optional[str] = None) -> None:
+def validate_graph(
+    graph: WorkflowGraph,
+    *,
+    workflow_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
+) -> None:
     """Valide ``graph``.
 
     ``workflow_id`` — l'identifiant du workflow en cours de validation, s'il
@@ -1225,7 +1276,9 @@ def validate_graph(graph: WorkflowGraph, *, workflow_id: Optional[str] = None) -
                 f"(attendu : {', '.join(CONVERT_TARGETS)})"
             )
         if n.type == "trigger":
-            validate_trigger_config(cfg, node_id=n.id, workflow_id=workflow_id)
+            validate_trigger_config(
+                cfg, node_id=n.id, workflow_id=workflow_id, owner_id=owner_id
+            )
         if n.type == "set":
             fields = cfg.get("fields") or []
             if not fields:

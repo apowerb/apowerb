@@ -30,8 +30,9 @@ from apowerb.storage.webhook_attachments import (
     resolve_attachment_path,
     store_webhook_attachment,
 )
+from apowerb.core import workflow_email_triggers
 from apowerb.integrations.outlook_webhook import OutlookWebhookService
-from apowerb.models import WebhookLog, WebhookSubscription
+from apowerb.models import User, WebhookLog, WebhookSubscription
 from apowerb.schema.webhook_schema import MicrosoftGraphNotificationPayload
 
 from ._common import (
@@ -662,6 +663,51 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                     "email_subject": email_subject[:500] or None,
                 }
                 await db.commit()
+
+                # T2 — workflow triggers, kind "email" (provider "outlook").
+                # Best-effort, comme les autres hooks post-capture de ce
+                # pipeline (_emit_run_outcome, _augment_agent_response) : un
+                # échec ici ne doit JAMAIS empêcher l'agent branché sur CE
+                # webhook (le mécanisme historique) de tourner. Volontairement
+                # sur la branche LIVE FETCH uniquement (pas le rejeu, ~L.860
+                # plus bas) : un replay retraite un événement déjà survenu, le
+                # refaire déclencherait deux fois les workflows en écoute.
+                # NON EXERCÉ par la suite : la réception réelle d'une
+                # notification Microsoft Graph (nécessite un abonnement live) —
+                # voir tests/test_workflow_triggers_t2_email.py pour ce qui
+                # EST couvert (filtrage, déclenchement).
+                try:
+                    owner_row = await db.get(User, user_id)
+                    if owner_row and owner_row.email:
+                        to_addrs = ", ".join(
+                            r.get("emailAddress", {}).get("address", "")
+                            for r in (email_data.get("toRecipients") or [])
+                            if r.get("emailAddress", {}).get("address")
+                        )
+                        await workflow_email_triggers.dispatch_email_triggers(
+                            provider="outlook",
+                            owner_id=owner_row.email,
+                            envelope={
+                                "from": sender_str,
+                                "to": to_addrs,
+                                "subject": email_subject,
+                                "body": body_text_val or "",
+                                "received_at": email_data.get("receivedDateTime"),
+                                "attachments": [
+                                    {
+                                        "name": a.get("filename"),
+                                        "size": a.get("size"),
+                                        "content_type": a.get("content_type"),
+                                    }
+                                    for a in stored_attachments
+                                ],
+                            },
+                        )
+                except Exception:  # noqa: BLE001 -- best-effort, cf. commentaire ci-dessus
+                    logger.warning(
+                        "[OUTLOOK WEBHOOK BG] log_id=%s dispatch workflow email "
+                        "triggers failed", log_id, exc_info=True,
+                    )
 
                 # Fan-out: if the email has >= 2 PDF attachments, create one
                 # child webhook_logs row per PDF so each is processed by the

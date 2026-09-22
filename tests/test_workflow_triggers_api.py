@@ -1,8 +1,10 @@
 """API de gestion : GET /api/workflows/{wid}/triggers, POST .../rotate.
 
-Propriétaire seulement (404 pour un autre utilisateur, jamais 403) ; un kind
-pas encore branché répond ``active:false, reason:"not_available"`` ; le
+Propriétaire seulement (404 pour un autre utilisateur, jamais 403) ; le
 secret HMAC n'est montré qu'à la génération (``rotate``), jamais par ``GET``.
+Les 7 kinds de ``AUTOMATABLE_KINDS`` sont branchés (T1 : webhook, schedule ;
+T2 : email, agent_tool, form, file, workflow_done) — seul ``manual`` répond
+``active:false`` sans raison.
 """
 
 from unittest.mock import MagicMock
@@ -52,7 +54,7 @@ def _schedule_graph():
 
 
 def _agent_tool_graph():
-    # Kind T2 : validé en forme, mais pas encore exécuté -> "not_available".
+    # Kind T2 : branché (core.workflow_agent_tools) -> actif une fois publié.
     return {
         "version": 1,
         "nodes": [
@@ -143,15 +145,26 @@ def test_get_triggers_published_webhook_is_active(client):
     assert "/api/hooks/workflows/" in body["webhook_url"]
 
 
-def test_get_triggers_not_yet_branched_kind_reports_not_available(client):
+def test_get_triggers_agent_tool_is_active_once_published(client):
+    # T2 : agent_tool est branché — plus de "not_available" une fois publié.
     wf = _create(client, _agent_tool_graph())
     _publish(client, wf["workflow_id"], wf["version"])
 
     r = client.get(f"/api/workflows/{wf['workflow_id']}/triggers")
     body = r.json()
     assert body["kind"] == "agent_tool"
-    assert body["active"] is False
-    assert body["reason"] == "not_available"
+    assert body["active"] is True
+    assert body["reason"] is None
+
+
+def test_get_triggers_unknown_kind_still_reports_not_available(client, monkeypatch):
+    # La garde "not_available" reste vraie pour un kind hors contrat — on ne
+    # supprime pas la branche, on la rend juste inatteignable par les 8 kinds
+    # connus (test via un monkeypatch de TRIGGER_KINDS/AUTOMATABLE_KINDS
+    # serait fragile ; on vérifie directement compute_active).
+    active, reason = wt.compute_active({"kind": "unknown_kind"}, "published")
+    assert active is False
+    assert reason == "not_available"
 
 
 def test_get_triggers_schedule_exposes_next_run_at(client):

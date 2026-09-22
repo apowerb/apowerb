@@ -15,10 +15,11 @@ from fastapi import BackgroundTasks, Request, Response
 from sqlalchemy import select
 
 from apowerb.configs.settings import get_settings
+from apowerb.core import workflow_email_triggers
 from apowerb.helpers.database import sessionmanager
 from apowerb.helpers.google_oidc import verify_gmail_push_jwt
 from apowerb.integrations.gmail_webhook import GmailWebhookService
-from apowerb.models import Integration, WebhookLog, WebhookSubscription
+from apowerb.models import Integration, User, WebhookLog, WebhookSubscription
 from apowerb.schema.webhook_schema import GmailPubSubNotification
 
 from ._common import (
@@ -267,6 +268,36 @@ async def _process_gmail_notification(
                         log_row.email_subject = email_subject[:500] if email_subject else None  # type: ignore[assignment]
                         log_row.email_sender = sender_str[:500] if sender_str else None  # type: ignore[assignment]
                         await db.commit()
+
+                    # T2 — workflow triggers, kind "email" (provider "gmail").
+                    # Best-effort : cf. la même note dans outlook.py. Pas de
+                    # pièces jointes ici -- ce pipeline Gmail ne les capture
+                    # pas à ce stade (contrairement à Outlook) ; limite
+                    # documentée, non couverte par la suite (nécessite un
+                    # abonnement Pub/Sub live).
+                    try:
+                        owner_row = await db.get(User, user_id)
+                        if owner_row and owner_row.email:
+                            to_header = _get_header(headers, "To")
+                            await workflow_email_triggers.dispatch_email_triggers(
+                                provider="gmail",
+                                owner_id=owner_row.email,
+                                envelope={
+                                    "from": sender_str,
+                                    "to": to_header,
+                                    "subject": email_subject,
+                                    "body": _extract_body(email_data),
+                                    "received_at": email_data.get("internalDate"),
+                                    "attachments": [],
+                                },
+                            )
+                    except Exception:  # noqa: BLE001 -- best-effort
+                        logger.warning(
+                            "[GMAIL WEBHOOK BG] msg=%s dispatch workflow email "
+                            "triggers failed",
+                            msg_id,
+                            exc_info=True,
+                        )
 
                     # Run agent – reuse the single session for all messages
                     agent_response_text = await run_agent_for_webhook(

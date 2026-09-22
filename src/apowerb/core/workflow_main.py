@@ -58,16 +58,21 @@ def parse_graph(graph: Any) -> WorkflowGraph:
         raise InvalidWorkflow(str(exc)) from exc
 
 
-def check_workflow(graph: Any, *, workflow_id: Optional[str] = None) -> dict:
+def check_workflow(
+    graph: Any, *, workflow_id: Optional[str] = None, owner_id: Optional[str] = None
+) -> dict:
     """Validation complète, pour l'éditeur : jamais d'exception.
 
     ``workflow_id`` — l'identifiant du workflow validé, quand il est déjà
     enregistré : un ``subworkflow`` qui se cible lui-même est alors refusé
     (voir ``workflow_graph.validate_graph``), de même qu'un trigger
     ``workflow_done`` qui s'écouterait lui-même.
+    ``owner_id``, quand connu, active les deux contrôles T2 qui ont besoin de
+    la base (unicité de ``agent_tool.tool_name``, appartenance du
+    ``workflow_done.workflow_id`` source).
     """
     try:
-        validate_graph(parse_graph(graph), workflow_id=workflow_id)
+        validate_graph(parse_graph(graph), workflow_id=workflow_id, owner_id=owner_id)
     except (InvalidWorkflow, GraphError) as exc:
         return {"valid": False, "errors": [str(exc)]}
     return {"valid": True, "errors": []}
@@ -226,6 +231,7 @@ def update_workflow(
             report = check_workflow(
                 json.loads(changes.get("graph", current["graph"])),
                 workflow_id=workflow_id,
+                owner_id=owner_id,
             )
             if not report["valid"]:
                 prefix = (
