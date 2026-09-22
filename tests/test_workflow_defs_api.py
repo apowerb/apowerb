@@ -143,11 +143,15 @@ def test_run_streams_graph_events_through_the_shared_run_machinery(client, monke
             calls.append(("tool", owner, tool, args))
             return {"row": args["id"]}
 
+        async def run_notify(node_id, channel, to, subject, body):
+            calls.append(("notify", owner, channel, to, subject, body))
+            return len(to) or 1
+
         async def run_rag(agent_id, query, top_k):
             calls.append(("rag", owner, agent_id, query, top_k))
             return {"query": query, "passages": []}
 
-        return run_agent, run_tool, run_rag
+        return run_agent, run_tool, run_rag, run_notify
 
     monkeypatch.setattr(rt, "bindings_for", _bindings)
     wid = client.post(
@@ -397,10 +401,13 @@ def test_a_run_that_fails_midway_is_recorded_as_an_error(client, monkeypatch):
         async def run_tool(tool, args):
             return {"row": 1}
 
+        async def run_notify(node_id, channel, to, subject, body):
+            return 0
+
         async def run_rag(agent_id, query, top_k):
             return {"query": query, "passages": []}
 
-        return run_agent, run_tool, run_rag
+        return run_agent, run_tool, run_rag, run_notify
 
     monkeypatch.setattr(rt, "bindings_for", _bindings)
     wid = client.post(

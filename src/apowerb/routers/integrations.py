@@ -19,6 +19,7 @@ from apowerb.integrations.microsoft import (
 )
 from apowerb.integrations.google import GoogleIntegrationService, GOOGLE_SERVICES
 from apowerb.integrations import odoo as odoo_integration
+from apowerb.integrations import teams as teams_integration
 
 logger = getLogger(__name__)
 
@@ -196,6 +197,12 @@ class OdooConnectRequest(BaseModel):
     database: str
     login:    str
     api_key:  str
+
+
+class TeamsWebhookRequest(BaseModel):
+    """Payload the frontend PUTs to register a Teams incoming webhook."""
+
+    url: str
 
 
 # ---------------------------------------------------------------------------
@@ -809,6 +816,60 @@ async def odoo_connect(
         "uid":      uid,
         "meta":     integration.meta,
     }
+
+
+# ---------------------------------------------------------------------------
+# Microsoft Teams — webhook entrant (non-OAuth : une URL, chiffrée au repos)
+#
+# Placé AVANT la route générique ``DELETE /{provider}`` plus bas : Starlette
+# matche les routes dans l'ordre d'ajout, et ``/teams-webhook`` doit gagner
+# sur le paramètre de chemin ``{provider}`` qui l'engloutirait sinon.
+# ---------------------------------------------------------------------------
+
+
+@router.put("/teams-webhook")
+async def put_teams_webhook(
+    payload: TeamsWebhookRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Enregistre (ou remplace) le webhook Teams de l'utilisateur courant.
+
+    L'URL est validée (https, hôte en liste blanche, pas de cible interne)
+    puis chiffrée avant stockage ; jamais renvoyée par cette route ni par
+    aucune autre — voir GET ci-dessous.
+    """
+    try:
+        await teams_integration.save_teams_webhook(
+            db, current_user.user_id, payload.url
+        )
+    except teams_integration.TeamsWebhookRefused as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from None
+    return {"configured": True}
+
+
+@router.get("/teams-webhook")
+async def get_teams_webhook(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Indique si un webhook Teams est configuré, sans jamais renvoyer l'URL."""
+    configured = await teams_integration.is_teams_webhook_configured(
+        db, current_user.user_id
+    )
+    return {"configured": configured}
+
+
+@router.delete("/teams-webhook")
+async def delete_teams_webhook_route(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Supprime le webhook Teams de l'utilisateur courant (idempotent)."""
+    await teams_integration.delete_teams_webhook(db, current_user.user_id)
+    return {"configured": False}
 
 
 # ---------------------------------------------------------------------------

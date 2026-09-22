@@ -381,7 +381,7 @@ def test_run_rag_normalizes_the_service_answer_and_bounds_by_top_k(monkeypatch):
 
     monkeypatch.setattr(rag_mod, "tool_search_knowledge", _search)
 
-    _, _, run_rag = rt.bindings_for(ALICE, None)
+    _, _, run_rag, _ = rt.bindings_for(ALICE, None)
     result = asyncio.run(run_rag("agent1", "où livrez-vous ?", 1))
 
     assert calls == [
@@ -401,7 +401,7 @@ def test_run_rag_refuses_when_the_agent_has_no_complete_knowledge_base(monkeypat
         kmap_mod, "read_knowledge_map", lambda agent_id, **_: {"sources": []}
     )
 
-    _, _, run_rag = rt.bindings_for(ALICE, None)
+    _, _, run_rag, _ = rt.bindings_for(ALICE, None)
     with pytest.raises(wg.GraphError) as info:
         asyncio.run(run_rag("agent1", "x", 5))
     assert info.value.code == "rag_no_knowledge"
@@ -426,7 +426,7 @@ def test_run_rag_fails_without_leaking_the_services_error_message(monkeypatch):
 
     monkeypatch.setattr(rag_mod, "tool_search_knowledge", _search)
 
-    _, _, run_rag = rt.bindings_for(ALICE, None)
+    _, _, run_rag, _ = rt.bindings_for(ALICE, None)
     with pytest.raises(wg.GraphError) as info:
         asyncio.run(run_rag("agent1", "x", 5))
     assert info.value.code == "rag_failed"
@@ -452,7 +452,7 @@ def test_run_rag_fails_without_leaking_a_raised_exception(monkeypatch):
 
     monkeypatch.setattr(rag_mod, "tool_search_knowledge", _search)
 
-    _, _, run_rag = rt.bindings_for(ALICE, None)
+    _, _, run_rag, _ = rt.bindings_for(ALICE, None)
     with pytest.raises(wg.GraphError) as info:
         asyncio.run(run_rag("agent1", "x", 5))
     assert info.value.code == "rag_failed"
@@ -462,7 +462,7 @@ def test_run_rag_fails_without_leaking_a_raised_exception(monkeypatch):
 def test_run_rag_of_another_owners_agent_is_not_found(monkeypatch):
     _owned(monkeypatch, owner=BOB)
 
-    _, _, run_rag = rt.bindings_for(ALICE, None)
+    _, _, run_rag, _ = rt.bindings_for(ALICE, None)
     with pytest.raises(wg.GraphError) as info:
         asyncio.run(run_rag("agent1", "x", 5))
     assert info.value.code == "agent_not_found"

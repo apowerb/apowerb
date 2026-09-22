@@ -50,8 +50,10 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import ipaddress
 import json
 import re
+import socket
 import time
 from datetime import date, datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal, Optional
@@ -90,6 +92,8 @@ NodeType = Literal[
     "condition",
     "extract",
     "rag",
+    "http",
+    "notification",
 ]
 CONVERT_TARGETS = ("text", "json", "number", "boolean", "list", "csv", "date")
 EXTRACT_FIELD_TYPES = ("string", "number", "boolean", "list", "object")
@@ -116,8 +120,35 @@ _TEMPLATE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_-]*)((?:\.[A-Za-z0-9_-]+)*)\
 _FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ROOT = "workflow"
 
+# --- Nœud http ---------------------------------------------------------------
+# En-têtes qui ne doivent jamais être écrits en clair dans un graphe : c'est
+# exactement ce qu'on demande de faire passer par ``auth.integration_id`` (pas
+# encore disponible, voir validate_graph) plutôt que par un secret recopié
+# dans la configuration, visible de quiconque lit ou exporte le workflow.
+_FORBIDDEN_HTTP_HEADERS = {
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "x-api-key",
+}
+_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+MIN_HTTP_TIMEOUT, MAX_HTTP_TIMEOUT, DEFAULT_HTTP_TIMEOUT = 1, 30, 15
+MAX_HTTP_RESPONSE_BYTES = 1 * 1024 * 1024
+MAX_HTTP_REDIRECTS = 5
+
+# --- Nœud notification --------------------------------------------------------
+_NOTIF_CHANNELS = {"email", "app", "teams"}
+MAX_NOTIFICATION_RECIPIENTS = 10
+
 RunAgent = Callable[[str, str], Awaitable[Any]]
 RunTool = Callable[[str, dict], Awaitable[Any]]
+# (node_id, channel, destinataires rendus, sujet rendu, corps rendu) -> nombre
+# d'envois effectués. Construit dans workflow_runtime.bindings_for, comme
+# run_tool : les notifications "app" et "teams" doivent connaître le
+# propriétaire du run pour savoir QUI notifier (app) ou quel webhook viser
+# (teams, résolu depuis son intégration chiffrée), ce que ce module ignore
+# volontairement.
+RunNotify = Callable[[str, str, list, str, str], Awaitable[int]]
 RunRag = Callable[[str, str, int], Awaitable[dict]]
 # Résolu côté routeur (mêmes droits que pour lancer ce workflow directement) ;
 # ``None`` si l'appelant ne trouve pas — ou ne peut pas voir — ce workflow_id.
@@ -409,6 +440,175 @@ def convert_value(value: Any, to: str) -> Any:
     raise ValueError(f"unknown conversion {to!r}")
 
 
+def _parse_http_body(text: str) -> Any:
+    """JSON si ``text`` s'y lit, texte brut sinon (peu importe le content-type
+    déclaré : un serveur qui ment sur son content-type ne doit pas nous faire
+    planter, et un JSON sans content-type correct doit quand même être lu)."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+async def _read_capped_response(resp, node_id: str) -> dict:
+    """Lit ``resp`` en flux, coupe au-delà de ``MAX_HTTP_RESPONSE_BYTES``."""
+    chunks = bytearray()
+    async for chunk in resp.aiter_bytes():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_HTTP_RESPONSE_BYTES:
+            raise GraphError(
+                f"{node_id} : réponse trop grande",
+                code="http_response_too_large",
+                params={"node": node_id, "max": str(MAX_HTTP_RESPONSE_BYTES)},
+            )
+    text = bytes(chunks).decode(resp.encoding or "utf-8", errors="replace")
+    return {
+        "status": resp.status_code,
+        "headers": dict(resp.headers),
+        "body": _parse_http_body(text),
+    }
+
+
+async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
+    """Requête HTTP bornée et protégée SSRF pour le nœud ``http``.
+
+    Réutilise la garde SSRF de ``routers/rag/validators`` (résolution DNS,
+    IP privées/loopback/link-local/réservées/multicast, forme d'URL) au lieu
+    de la dupliquer : c'est elle qui décide ce qui est interne, ici on ne fait
+    que traduire son refus en ``GraphError`` lisible côté workflow. Les
+    redirections sont suivies à la main, chaque saut revalidé (même piège que
+    ``index_url.py`` : httpx ``follow_redirects=True`` ne revalide pas la
+    ``Location`` qu'il suit).
+    """
+    import httpx
+    from fastapi import HTTPException as _HTTPException
+
+    from apowerb.routers.rag.validators import (
+        _is_disallowed_ip,
+        _validate_url_not_internal,
+    )
+
+    def _refused(reason: str) -> GraphError:
+        return GraphError(
+            f"{node_id} : url refusée ({reason})",
+            code="http_url_refused",
+            params={"node": node_id, "reason": reason},
+        )
+
+    def _safe_url(url: str) -> str:
+        try:
+            return _validate_url_not_internal(url)
+        except _HTTPException as exc:
+            raise _refused(str(exc.detail)) from None
+
+    async def _pinned(url: str) -> tuple[str, str, dict]:
+        """Résout l'hôte UNE fois, valide chaque adresse, et renvoie l'URL
+        réécrite sur l'IP retenue, l'en-tête Host et l'extension SNI.
+
+        Sans cela httpx re-résout le nom à la connexion : un DNS à TTL court
+        répond une IP publique à la garde puis 169.254.169.254 au connect.
+        """
+        parsed = httpx.URL(url)
+        host = parsed.host
+        default_port = 443 if parsed.scheme == "https" else 80
+        port = parsed.port or default_port
+        host_header = host if port == default_port else f"{host}:{port}"
+        try:
+            ipaddress.ip_address(host)
+            return url, host_header, {}
+        except ValueError:
+            pass
+        try:
+            infos = await asyncio.to_thread(
+                socket.getaddrinfo, host, port, type=socket.SOCK_STREAM
+            )
+            ips = [ipaddress.ip_address(info[4][0]) for info in infos]
+        except (OSError, ValueError):
+            raise _refused("Could not resolve URL hostname") from None
+        if not ips or any(_is_disallowed_ip(ip) for ip in ips):
+            raise _refused("URLs pointing to private networks are not allowed")
+        extensions = {"sni_hostname": host} if parsed.scheme == "https" else {}
+        return str(parsed.copy_with(host=str(ips[0]))), host_header, extensions
+
+    method = cfg["method"]
+    url = render(cfg["url"], outputs)
+    url = url if isinstance(url, str) else json.dumps(url, ensure_ascii=False)
+
+    headers: dict[str, str] = {}
+    for h in cfg.get("headers") or []:
+        key = render(h.get("key", ""), outputs)
+        value = render(h.get("value", ""), outputs)
+        key = key if isinstance(key, str) else json.dumps(key, ensure_ascii=False)
+        value = (
+            value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        )
+        # validate_graph ne voit que la clé brute : ``{{a}}`` qui rend
+        # "Authorization" doit être refusé ici, sur la clé réellement envoyée.
+        sent_key = key.strip().lower()
+        if sent_key in _FORBIDDEN_HTTP_HEADERS or sent_key == "host":
+            raise GraphError(
+                f"{node_id} : en-tête {sent_key!r} interdit",
+                code="http_header_forbidden",
+                params={"node": node_id, "header": sent_key},
+            )
+        headers[key] = value
+
+    raw_body = cfg.get("body")
+    raw_body = render(raw_body, outputs) if raw_body is not None else None
+    json_body = raw_body if isinstance(raw_body, (dict, list)) else None
+    content_body = None
+    if json_body is None and raw_body is not None:
+        content_body = (
+            raw_body
+            if isinstance(raw_body, str)
+            else json.dumps(raw_body, ensure_ascii=False)
+        )
+
+    timeout = cfg.get("timeout_s", DEFAULT_HTTP_TIMEOUT)
+    current_url = _safe_url(url)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            for _ in range(MAX_HTTP_REDIRECTS + 1):
+                pinned_url, host_header, extensions = await _pinned(current_url)
+                async with client.stream(
+                    method,
+                    pinned_url,
+                    headers={**headers, "Host": host_header},
+                    json=json_body,
+                    content=content_body,
+                    extensions=extensions,
+                ) as resp:
+                    if resp.is_redirect:
+                        location = resp.headers.get("location")
+                        if not location:
+                            return await _read_capped_response(resp, node_id)
+                        current_url = _safe_url(
+                            str(httpx.URL(current_url).join(location))
+                        )
+                        continue
+                    return await _read_capped_response(resp, node_id)
+    except httpx.TimeoutException:
+        raise GraphError(
+            f"{node_id} : délai dépassé",
+            code="http_timeout",
+            params={"node": node_id, "seconds": str(timeout)},
+        ) from None
+    except httpx.HTTPError:
+        # Erreur réseau (DNS, connexion, protocole...) : jamais le message
+        # brut de la librairie, qui peut porter l'hôte ou le chemin visés.
+        raise GraphError(
+            f"{node_id} : échec réseau",
+            code="http_failed",
+            params={"node": node_id},
+        ) from None
+    raise GraphError(
+        f"{node_id} : trop de redirections",
+        code="http_failed",
+        params={"node": node_id},
+    )
+
+
 def _rows_to_csv(rows: list[dict]) -> str:
     """Liste de dicts -> texte CSV, en-tête = clés en ordre de 1re apparition."""
     if len(rows) > MAX_CSV_ROWS:
@@ -567,6 +767,71 @@ def validate_graph(graph: WorkflowGraph, *, workflow_id: Optional[str] = None) -
                     f"{n.id} : top_k doit être un entier de {_MIN_RAG_TOP_K} à "
                     f"{_MAX_RAG_TOP_K}"
                 )
+        if n.type == "http":
+            if cfg.get("method") not in _HTTP_METHODS:
+                raise GraphError(
+                    f"{n.id} : méthode HTTP inconnue {cfg.get('method')!r} "
+                    f"(attendu : {', '.join(_HTTP_METHODS)})"
+                )
+            if not cfg.get("url"):
+                raise GraphError(f"{n.id} : url manquante")
+            for h in cfg.get("headers") or []:
+                key = str(h.get("key", "")).strip().lower()
+                if key in _FORBIDDEN_HTTP_HEADERS:
+                    raise GraphError(
+                        f"{n.id} : l'en-tête {h.get('key')!r} ne peut pas être écrit en "
+                        "clair dans le graphe (secret potentiel) ; l'authentification "
+                        "HTTP passera par auth.integration_id"
+                    )
+            timeout = cfg.get("timeout_s", DEFAULT_HTTP_TIMEOUT)
+            if (
+                isinstance(timeout, bool)
+                or not isinstance(timeout, int)
+                or not MIN_HTTP_TIMEOUT <= timeout <= MAX_HTTP_TIMEOUT
+            ):
+                raise GraphError(
+                    f"{n.id} : timeout_s doit être un entier de {MIN_HTTP_TIMEOUT} à "
+                    f"{MAX_HTTP_TIMEOUT}"
+                )
+            if cfg.get("auth") is not None:
+                # Pas de stockage de secret encore branché pour ce nœud : voir le
+                # docstring du module et le rapport du lot. auth doit rester null
+                # tant que ça n'existe pas, plutôt que d'inventer une résolution.
+                raise GraphError(
+                    f"{n.id} : authentification HTTP pas encore disponible"
+                )
+        if n.type == "notification":
+            channel = cfg.get("channel")
+            if channel not in _NOTIF_CHANNELS:
+                raise GraphError(
+                    f"{n.id} : canal de notification inconnu {channel!r} "
+                    f"(attendu : {', '.join(sorted(_NOTIF_CHANNELS))})"
+                )
+            to = cfg.get("to") or []
+            if channel == "email":
+                if (
+                    not isinstance(to, list)
+                    or not 1 <= len(to) <= MAX_NOTIFICATION_RECIPIENTS
+                ):
+                    raise GraphError(
+                        f"{n.id} : de 1 à {MAX_NOTIFICATION_RECIPIENTS} destinataires "
+                        "(to) requis pour l'email"
+                    )
+                if not cfg.get("subject"):
+                    raise GraphError(f"{n.id} : subject manquant")
+            elif channel == "app" and to:
+                raise GraphError(
+                    f"{n.id} : to doit être vide pour une notification app "
+                    "(le destinataire est le propriétaire du workflow)"
+                )
+            elif channel == "teams":
+                if to:
+                    raise GraphError(
+                        f"{n.id} : to doit être vide pour une notification teams "
+                        "(le destinataire est le webhook Teams du propriétaire)"
+                    )
+                if not cfg.get("subject"):
+                    raise GraphError(f"{n.id} : subject manquant")
 
     for e in graph.edges:
         src = by_id[e.source]
@@ -736,6 +1001,7 @@ class _Compiler:
         cancel_event,
         *,
         run_rag: Optional[RunRag] = None,
+        run_notify: Optional[RunNotify] = None,
         run_subworkflow: Optional["ResolveWorkflow"] = None,
         workflow_stack: tuple[str, ...] = (),
         depth: int = 1,
@@ -745,6 +1011,7 @@ class _Compiler:
         self.run_agent = run_agent
         self.run_tool = run_tool
         self.run_rag = run_rag
+        self.run_notify = run_notify
         self.emit = emit
         self.cancel = cancel_event
         # Sous-workflows : callback de résolution (owner-scopé, côté routeur),
@@ -959,6 +1226,39 @@ class _Compiler:
                             params={**exc.params, "node": node.id},
                         ) from None
                     raise
+        elif node.type == "http":
+
+            async def body(node_input):
+                return await _http_call(node.id, cfg, self.outputs), None
+        elif node.type == "notification":
+
+            async def body(node_input):
+                channel = cfg["channel"]
+                to = [render(t, self.outputs) for t in cfg.get("to") or []]
+                to = [
+                    t if isinstance(t, str) else json.dumps(t, ensure_ascii=False)
+                    for t in to
+                ]
+                subject = render(cfg.get("subject", ""), self.outputs)
+                subject = (
+                    subject
+                    if isinstance(subject, str)
+                    else json.dumps(subject, ensure_ascii=False)
+                )
+                message = render(cfg.get("body", ""), self.outputs)
+                message = (
+                    message
+                    if isinstance(message, str)
+                    else json.dumps(message, ensure_ascii=False)
+                )
+                if self.run_notify is None:
+                    raise GraphError(
+                        f"{node.id} : notifications indisponibles dans ce contexte d'exécution",
+                        code="notification_unavailable",
+                        params={"node": node.id},
+                    )
+                sent = await self.run_notify(node.id, channel, to, subject, message)
+                return {"channel": channel, "sent": sent}, None
         elif node.type == "loop":
             body_graph = WorkflowGraph.model_validate(cfg["body"])
 
@@ -1073,6 +1373,7 @@ class _Compiler:
             queue.put_nowait,
             self.cancel,
             run_rag=self.run_rag,
+            run_notify=self.run_notify,
             run_subworkflow=self.run_subworkflow,
             workflow_stack=self.workflow_stack
             if workflow_stack is None
@@ -1231,6 +1532,7 @@ async def run_graph(
     cancel_event: asyncio.Event,
     run_subworkflow: Optional[ResolveWorkflow] = None,
     workflow_id: Optional[str] = None,
+    run_notify: Optional[RunNotify] = None,
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
 
@@ -1265,6 +1567,7 @@ async def run_graph(
         queue.put_nowait,
         cancel_event,
         run_rag=run_rag,
+        run_notify=run_notify,
         run_subworkflow=run_subworkflow,
         workflow_stack=(workflow_id,) if workflow_id else (),
     )

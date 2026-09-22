@@ -175,7 +175,7 @@ async def run_workflow(
     if not report["valid"]:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, report["errors"][0])
     graph = workflow_main.parse_graph(wf["graph"])
-    run_agent, run_tool, run_rag = workflow_runtime.bindings_for(
+    run_agent, run_tool, run_rag, run_notify = workflow_runtime.bindings_for(
         owner, await resolve_owner_plan(owner)
     )
     # Sous-workflows : callback owner-scopé (même contrôle d'accès que pour
@@ -212,6 +212,7 @@ async def run_workflow(
             run_subworkflow=run_subworkflow,
             workflow_id=workflow_id,
             cancel_event=cancel_event,
+            run_notify=run_notify,
         )
 
     return _streaming_run(
