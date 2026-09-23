@@ -239,6 +239,75 @@ def test_fan_out_then_merge_keys_outputs_by_node_id():
     assert json.loads(z_msg) == {"a": "out:agent1", "b": "out:agent2"}
 
 
+# Plusieurs feuilles atteintes : ADK 2.9 refuse qu un Workflow ait plus d une
+# sortie terminale (« multiple terminal nodes produced output ») et le run
+# tombait en ``internal``. La sortie du run est calculée par _final_output
+# (un objet indexé par nœud), jamais par ADK.
+
+
+def test_fan_out_to_two_leaves_returns_them_by_node_id():
+    g = _graph(
+        [
+            {"id": "t", "type": "trigger"},
+            {"id": "a", "type": "agent", "config": {"agent_id": "agent1"}},
+            {"id": "b", "type": "agent", "config": {"agent_id": "agent2"}},
+        ],
+        [{"source": "t", "target": "a"}, {"source": "t", "target": "b"}],
+    )
+    assert _done(_run(g, _Env())) == {"a": "out:agent1", "b": "out:agent2"}
+
+
+def test_two_output_nodes_reached_are_gathered_by_id():
+    g = _graph(
+        [
+            {"id": "t", "type": "trigger"},
+            {"id": "o1", "type": "output", "config": {"value": "x"}},
+            {"id": "o2", "type": "output", "config": {"value": "y"}},
+        ],
+        [{"source": "t", "target": "o1"}, {"source": "t", "target": "o2"}],
+    )
+    assert _done(_run(g, _Env())) == {"o1": "x", "o2": "y"}
+
+
+def test_loop_body_with_two_leaves_collects_both():
+    body = {
+        "nodes": [
+            {"id": "it", "type": "trigger"},
+            {
+                "id": "a",
+                "type": "set",
+                "config": {"fields": [{"key": "v", "value": "{{it.item}}"}]},
+            },
+            {
+                "id": "b",
+                "type": "set",
+                "config": {"fields": [{"key": "i", "value": "{{it.index}}"}]},
+            },
+        ],
+        "edges": [{"source": "it", "target": "a"}, {"source": "it", "target": "b"}],
+    }
+    g = _graph(
+        [
+            {"id": "t", "type": "trigger"},
+            {
+                "id": "l",
+                "type": "loop",
+                "config": {
+                    "mode": "foreach",
+                    "items": "{{t.xs}}",
+                    "max_iterations": 5,
+                    "body": body,
+                },
+            },
+        ],
+        [{"source": "t", "target": "l"}],
+    )
+    assert _done(_run(g, _Env(), payload={"xs": ["p", "q"]})) == [
+        {"a": {"v": "p"}, "b": {"i": 0}},
+        {"a": {"v": "q"}, "b": {"i": 1}},
+    ]
+
+
 # --- Validation (refus avant exécution) ------------------------------------
 
 
