@@ -967,6 +967,24 @@ def delete_agent(agent_id: str, user_id: str) -> None:
         delete_agent_module(
             agent_name=agent_id,
         )
+        _delete_agent_schedules(agent_id)
+
+
+def _delete_agent_schedules(agent_id: str) -> None:
+    """Retire les planifications de l'agent supprimé (dont celle de run_now).
+
+    Au mieux : l'agent est déjà supprimé, un ordonnanceur injoignable ne doit
+    pas faire échouer la suppression. Il laisse alors une planification
+    orpheline, que le journal signale.
+    """
+    try:
+        from apowerb.scheduler.mage import get_orchestrator
+
+        get_orchestrator().delete_agent_schedules(agent_id)
+    except Exception:
+        logger.warning(
+            "planification(s) de l'agent %s non supprimee(s)", agent_id, exc_info=True
+        )
 
 
 def get_agent_folder_name(agent_name: str) -> str:
