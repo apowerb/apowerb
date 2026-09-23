@@ -1,0 +1,947 @@
+{
+  "agents": [
+    {
+      "agent_id": "agent1",
+      "name": "Support triage",
+      "description": "Reads a customer message and says what it is about: billing, technical issue or anything else."
+    },
+    {
+      "agent_id": "agent2",
+      "name": "Reply writer",
+      "description": "Drafts a polite answer to a customer from the facts it is given."
+    },
+    {
+      "agent_id": "agent3",
+      "name": "Invoice reader",
+      "description": "Reads supplier invoices and returns supplier, amount and due date."
+    },
+    {
+      "agent_id": "agent4",
+      "name": "Summarizer",
+      "description": "Summarises a list of records into a short digest."
+    },
+    {
+      "agent_id": "agent5",
+      "name": "Knowledge base",
+      "description": "Answers from the product documentation."
+    },
+    {
+      "agent_id": "agent6",
+      "name": "Lead qualifier",
+      "description": "Scores an inbound lead from 0 to 100 and explains the score, as JSON."
+    },
+    {
+      "agent_id": "agent7",
+      "name": "Translator",
+      "description": "Translates a text into French."
+    },
+    {
+      "agent_id": "agent8",
+      "name": "Contract reviewer",
+      "description": "Reads contracts, extracts key terms and explains risky clauses."
+    },
+    {
+      "agent_id": "agent9",
+      "name": "Order reviewer",
+      "description": "Reviews large orders and flags anything unusual."
+    }
+  ],
+  "workflows": [
+    {
+      "key": "support-triage",
+      "name": "Support inbox triage",
+      "description": "Sort incoming support messages and draft an answer for each kind.",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Support message",
+            "config": {
+              "kind": "webhook",
+              "sample_payload": {
+                "from": "",
+                "subject": "",
+                "body": ""
+              }
+            }
+          },
+          {
+            "id": "classifier1",
+            "type": "classifier",
+            "label": "What is it about",
+            "config": {
+              "agent_id": "agent1",
+              "input": "{{trigger1.body}}",
+              "routes": [
+                {
+                  "route": "billing",
+                  "description": "invoices, payments, refunds"
+                },
+                {
+                  "route": "technical",
+                  "description": "bugs, errors, how-to"
+                },
+                {
+                  "route": "other",
+                  "description": "anything else"
+                }
+              ]
+            }
+          },
+          {
+            "id": "agent1",
+            "type": "agent",
+            "label": "Billing answer",
+            "config": {
+              "agent_id": "agent2",
+              "input": "{{trigger1}}"
+            }
+          },
+          {
+            "id": "rag1",
+            "type": "rag",
+            "label": "Search the docs",
+            "config": {
+              "agent_id": "agent5",
+              "query": "{{trigger1.body}}"
+            }
+          },
+          {
+            "id": "notification1",
+            "type": "notification",
+            "label": "Tell the team",
+            "config": {
+              "channel": "app",
+              "subject": "Support message to handle",
+              "body": "{{trigger1.subject}}"
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{agent1}}"
+            }
+          },
+          {
+            "id": "agent2",
+            "type": "agent",
+            "label": "Technical answer",
+            "config": {
+              "agent_id": "agent2",
+              "input": "{{rag1}}"
+            }
+          },
+          {
+            "id": "output2",
+            "type": "output",
+            "config": {
+              "value": "{{agent2}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "classifier1"
+          },
+          {
+            "source": "classifier1",
+            "target": "agent1",
+            "route": "billing"
+          },
+          {
+            "source": "classifier1",
+            "target": "rag1",
+            "route": "technical"
+          },
+          {
+            "source": "classifier1",
+            "target": "notification1",
+            "route": "other"
+          },
+          {
+            "source": "agent1",
+            "target": "output1"
+          },
+          {
+            "source": "rag1",
+            "target": "agent2"
+          },
+          {
+            "source": "agent2",
+            "target": "output2"
+          }
+        ]
+      }
+    },
+    {
+      "key": "invoice-intake",
+      "name": "Invoice intake",
+      "description": "Read supplier invoices, check the amount and ask for approval of the large ones.",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Invoice received",
+            "config": {
+              "kind": "webhook",
+              "sample_payload": {
+                "sender": "",
+                "file_name": "",
+                "text": ""
+              }
+            }
+          },
+          {
+            "id": "extract1",
+            "type": "extract",
+            "label": "Read the invoice",
+            "config": {
+              "agent_id": "agent3",
+              "input": "{{trigger1.text}}",
+              "fields": [
+                {
+                  "name": "supplier",
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "amount",
+                  "type": "number",
+                  "required": true
+                },
+                {
+                  "name": "due_date",
+                  "type": "string",
+                  "required": false
+                }
+              ]
+            }
+          },
+          {
+            "id": "condition1",
+            "type": "condition",
+            "label": "Over 5000?",
+            "config": {
+              "rules": [
+                {
+                  "field": "{{extract1.amount}}",
+                  "op": "gt",
+                  "value": 5000
+                }
+              ]
+            }
+          },
+          {
+            "id": "notification1",
+            "type": "notification",
+            "label": "Ask for approval",
+            "config": {
+              "channel": "email",
+              "to": [
+                "finance@example.com"
+              ],
+              "subject": "Invoice to approve",
+              "body": "{{extract1}}"
+            }
+          },
+          {
+            "id": "set1",
+            "type": "set",
+            "label": "Mark approved",
+            "config": {
+              "fields": [
+                {
+                  "key": "status",
+                  "value": "auto-approved"
+                },
+                {
+                  "key": "supplier",
+                  "value": "{{extract1.supplier}}"
+                }
+              ]
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{set1}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "extract1"
+          },
+          {
+            "source": "extract1",
+            "target": "condition1"
+          },
+          {
+            "source": "condition1",
+            "target": "notification1",
+            "route": "true"
+          },
+          {
+            "source": "condition1",
+            "target": "set1",
+            "route": "false"
+          },
+          {
+            "source": "set1",
+            "target": "output1"
+          }
+        ]
+      }
+    },
+    {
+      "key": "lead-qualification",
+      "name": "Qualification des leads",
+      "description": "",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Formulaire de contact",
+            "config": {
+              "kind": "webhook",
+              "sample_payload": {
+                "company": "",
+                "email": "",
+                "message": "",
+                "budget": ""
+              }
+            }
+          },
+          {
+            "id": "agent1",
+            "type": "agent",
+            "label": "Noter le lead",
+            "config": {
+              "agent_id": "agent6",
+              "input": "{{trigger1}}"
+            }
+          },
+          {
+            "id": "convert1",
+            "type": "convert",
+            "label": "Lire la note",
+            "config": {
+              "to": "json",
+              "input": "{{agent1}}"
+            }
+          },
+          {
+            "id": "condition1",
+            "type": "condition",
+            "label": "Lead chaud ?",
+            "config": {
+              "rules": [
+                {
+                  "field": "{{convert1.score}}",
+                  "op": "gte",
+                  "value": 70
+                }
+              ]
+            }
+          },
+          {
+            "id": "notification1",
+            "type": "notification",
+            "label": "Prévenir les ventes",
+            "config": {
+              "channel": "email",
+              "to": [
+                "sales@example.com"
+              ],
+              "subject": "Lead chaud",
+              "body": "{{trigger1.company}}"
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{convert1}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "agent1"
+          },
+          {
+            "source": "agent1",
+            "target": "convert1"
+          },
+          {
+            "source": "convert1",
+            "target": "condition1"
+          },
+          {
+            "source": "condition1",
+            "target": "notification1",
+            "route": "true"
+          },
+          {
+            "source": "condition1",
+            "target": "output1",
+            "route": "false"
+          }
+        ]
+      }
+    },
+    {
+      "key": "daily-digest",
+      "name": "Daily sales digest",
+      "description": "Every morning, fetch yesterday's orders, summarise them and e-mail the team.",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Every morning",
+            "config": {
+              "kind": "schedule",
+              "cron": "0 7 * * 1-5"
+            }
+          },
+          {
+            "id": "http1",
+            "type": "http",
+            "label": "Fetch orders",
+            "config": {
+              "method": "GET",
+              "url": "https://api.example.com/orders?day=yesterday"
+            }
+          },
+          {
+            "id": "convert1",
+            "type": "convert",
+            "label": "Parse",
+            "config": {
+              "to": "json",
+              "input": "{{http1.body}}"
+            }
+          },
+          {
+            "id": "agent1",
+            "type": "agent",
+            "label": "Summarise",
+            "config": {
+              "agent_id": "agent4",
+              "input": "{{convert1}}"
+            }
+          },
+          {
+            "id": "notification1",
+            "type": "notification",
+            "label": "Mail the team",
+            "config": {
+              "channel": "email",
+              "to": [
+                "team@example.com"
+              ],
+              "subject": "Daily digest",
+              "body": "{{agent1}}"
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{agent1}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "http1"
+          },
+          {
+            "source": "http1",
+            "target": "convert1"
+          },
+          {
+            "source": "convert1",
+            "target": "agent1"
+          },
+          {
+            "source": "agent1",
+            "target": "notification1"
+          },
+          {
+            "source": "notification1",
+            "target": "output1"
+          }
+        ]
+      }
+    },
+    {
+      "key": "faq-answers",
+      "name": "Réponses FAQ",
+      "description": "Répondre aux questions des clients à partir de la base documentaire.",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Question client",
+            "config": {
+              "kind": "webhook",
+              "sample_payload": {
+                "question": "",
+                "customer_id": ""
+              }
+            }
+          },
+          {
+            "id": "rag1",
+            "type": "rag",
+            "label": "Chercher dans la doc",
+            "config": {
+              "agent_id": "agent5",
+              "query": "{{trigger1.question}}"
+            }
+          },
+          {
+            "id": "agent1",
+            "type": "agent",
+            "label": "Rédiger la réponse",
+            "config": {
+              "agent_id": "agent2",
+              "input": "{{rag1}}"
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{agent1}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "rag1"
+          },
+          {
+            "source": "rag1",
+            "target": "agent1"
+          },
+          {
+            "source": "agent1",
+            "target": "output1"
+          }
+        ]
+      }
+    },
+    {
+      "key": "contract-review",
+      "name": "Contract review",
+      "description": "Extract key terms from uploaded contracts and flag risky clauses.",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Contract uploaded",
+            "config": {
+              "kind": "manual",
+              "sample_payload": {
+                "contract_text": "",
+                "counterparty": ""
+              }
+            }
+          },
+          {
+            "id": "extract1",
+            "type": "extract",
+            "label": "Key terms",
+            "config": {
+              "agent_id": "agent8",
+              "input": "{{trigger1.contract_text}}",
+              "fields": [
+                {
+                  "name": "party",
+                  "type": "string",
+                  "required": true
+                },
+                {
+                  "name": "end_date",
+                  "type": "string",
+                  "required": false
+                },
+                {
+                  "name": "liability_cap",
+                  "type": "number",
+                  "required": false
+                },
+                {
+                  "name": "auto_renewal",
+                  "type": "boolean",
+                  "required": false
+                }
+              ]
+            }
+          },
+          {
+            "id": "router1",
+            "type": "router",
+            "label": "Risky?",
+            "config": {
+              "rules": [
+                {
+                  "route": "risky",
+                  "field": "{{extract1.auto_renewal}}",
+                  "op": "eq",
+                  "value": true
+                }
+              ],
+              "default_route": "standard"
+            }
+          },
+          {
+            "id": "agent1",
+            "type": "agent",
+            "label": "Explain the risk",
+            "config": {
+              "agent_id": "agent8",
+              "input": "{{extract1}}"
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{extract1}}"
+            }
+          },
+          {
+            "id": "notification1",
+            "type": "notification",
+            "label": "Warn legal",
+            "config": {
+              "channel": "app",
+              "subject": "Risky contract",
+              "body": "{{agent1}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "extract1"
+          },
+          {
+            "source": "extract1",
+            "target": "router1"
+          },
+          {
+            "source": "router1",
+            "target": "agent1",
+            "route": "risky"
+          },
+          {
+            "source": "router1",
+            "target": "output1",
+            "route": "standard"
+          },
+          {
+            "source": "agent1",
+            "target": "notification1"
+          }
+        ]
+      }
+    },
+    {
+      "key": "ticket-translation",
+      "name": "Traduction des tickets",
+      "description": "",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Nouveau ticket",
+            "config": {
+              "kind": "webhook",
+              "sample_payload": {
+                "ticket_id": "",
+                "text": "",
+                "language": ""
+              }
+            }
+          },
+          {
+            "id": "condition1",
+            "type": "condition",
+            "label": "Pas en français ?",
+            "config": {
+              "rules": [
+                {
+                  "field": "{{trigger1.language}}",
+                  "op": "ne",
+                  "value": "fr"
+                }
+              ]
+            }
+          },
+          {
+            "id": "agent1",
+            "type": "agent",
+            "label": "Traduire",
+            "config": {
+              "agent_id": "agent7",
+              "input": "{{trigger1.text}}"
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{trigger1.text}}"
+            }
+          },
+          {
+            "id": "output2",
+            "type": "output",
+            "config": {
+              "value": "{{agent1}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "condition1"
+          },
+          {
+            "source": "condition1",
+            "target": "agent1",
+            "route": "true"
+          },
+          {
+            "source": "condition1",
+            "target": "output1",
+            "route": "false"
+          },
+          {
+            "source": "agent1",
+            "target": "output2"
+          }
+        ]
+      }
+    },
+    {
+      "key": "customer-onboarding",
+      "name": "New customer onboarding",
+      "description": "When a customer signs up, register them in the CRM and welcome them.",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger1",
+            "type": "trigger",
+            "label": "Sign-up",
+            "config": {
+              "kind": "webhook",
+              "sample_payload": {
+                "email": "",
+                "company": "",
+                "plan": ""
+              }
+            }
+          },
+          {
+            "id": "set1",
+            "type": "set",
+            "label": "Account data",
+            "config": {
+              "fields": [
+                {
+                  "key": "company",
+                  "value": "{{trigger1.company}}"
+                },
+                {
+                  "key": "plan",
+                  "value": "{{trigger1.plan}}"
+                }
+              ]
+            }
+          },
+          {
+            "id": "http1",
+            "type": "http",
+            "label": "Create in CRM",
+            "config": {
+              "method": "POST",
+              "url": "https://crm.example.com/api/accounts",
+              "body": "{{set1}}"
+            }
+          },
+          {
+            "id": "agent1",
+            "type": "agent",
+            "label": "Welcome message",
+            "config": {
+              "agent_id": "agent2",
+              "input": "{{set1}}"
+            }
+          },
+          {
+            "id": "notification1",
+            "type": "notification",
+            "label": "Tell the team",
+            "config": {
+              "channel": "email",
+              "to": [
+                "onboarding@example.com"
+              ],
+              "subject": "New customer",
+              "body": "{{agent1}}"
+            }
+          },
+          {
+            "id": "output1",
+            "type": "output",
+            "config": {
+              "value": "{{agent1}}"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger1",
+            "target": "set1"
+          },
+          {
+            "source": "set1",
+            "target": "http1"
+          },
+          {
+            "source": "http1",
+            "target": "agent1"
+          },
+          {
+            "source": "agent1",
+            "target": "notification1"
+          },
+          {
+            "source": "notification1",
+            "target": "output1"
+          }
+        ]
+      }
+    },
+    {
+      "key": "order-review",
+      "name": "Order review",
+      "description": "A webhook receives an order; orders above 1,000 are reviewed by an agent.",
+      "source": "apowerb-docs guides/workflows.mdx, example",
+      "graph": {
+        "version": 1,
+        "nodes": [
+          {
+            "id": "trigger",
+            "type": "trigger",
+            "config": {
+              "kind": "webhook"
+            }
+          },
+          {
+            "id": "order",
+            "type": "set",
+            "config": {
+              "fields": [
+                {
+                  "key": "customer",
+                  "value": "{{trigger.customer}}"
+                },
+                {
+                  "key": "amount",
+                  "value": "{{trigger.amount}}"
+                }
+              ]
+            }
+          },
+          {
+            "id": "big",
+            "type": "condition",
+            "config": {
+              "rules": [
+                {
+                  "field": "{{order.amount}}",
+                  "op": "gt",
+                  "value": 1000
+                }
+              ]
+            }
+          },
+          {
+            "id": "review",
+            "type": "agent",
+            "config": {
+              "agent_id": "agent9",
+              "input": "Review the order from {{order.customer}} for {{order.amount}} EUR"
+            }
+          },
+          {
+            "id": "done",
+            "type": "output",
+            "config": {
+              "value": "{{review}}"
+            }
+          },
+          {
+            "id": "skip",
+            "type": "output",
+            "config": {
+              "value": "auto-approved"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "trigger",
+            "target": "order"
+          },
+          {
+            "source": "order",
+            "target": "big"
+          },
+          {
+            "source": "big",
+            "target": "review",
+            "route": "true"
+          },
+          {
+            "source": "big",
+            "target": "skip",
+            "route": "false"
+          },
+          {
+            "source": "review",
+            "target": "done"
+          }
+        ]
+      }
+    }
+  ]
+}

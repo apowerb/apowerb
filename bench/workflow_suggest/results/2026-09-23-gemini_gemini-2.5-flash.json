@@ -1,0 +1,6356 @@
+{
+ "meta": {
+  "date": "2026-09-23",
+  "model": "gemini/gemini-2.5-flash",
+  "timeout_s": 4.0,
+  "repeats": 3,
+  "rules_source": "apowerb-ui src/lib/nextNodeSuggestions.js",
+  "fx": "1 € = 1.1463 $, BCE 2026-09-22"
+ },
+ "summary": {
+  "calls": 132,
+  "cases": 44,
+  "rules_top3_pct": 63.6,
+  "merged_top3_pct": 63.6,
+  "merged_top3_by_repeat_pct": [
+   63.6,
+   63.6,
+   63.6
+  ],
+  "gain_points": 0.0,
+  "rules_top1_pct": 31.8,
+  "merged_top1_pct": 42.4,
+  "ai_hit_pct": 39.4,
+  "answered_pct": 97.7,
+  "failures": {
+   "timeout": 3
+  },
+  "ai_suggestions_avg": 0.88,
+  "route_ok_pct": 100.0,
+  "config_agent_ok_pct": 100.0,
+  "config_reads_source_pct": 50.0,
+  "latency_p50_s": 1.501,
+  "latency_p95_s": 2.779,
+  "latency_max_s": 4.039,
+  "tokens_in_avg": 650.2,
+  "tokens_out_avg": 190.8,
+  "cost_usd_per_call": 0.0006721,
+  "cost_eur_per_call": 0.0005864,
+  "go": false
+ },
+ "records": [
+  {
+   "case": "support-triage/trigger1->classifier1",
+   "repeat": 1,
+   "expected": {
+    "type": "classifier",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.142,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Triage message",
+     "config": {
+      "agent_id": "agent1",
+      "prompt": "What is this customer message about: billing, technical issue or anything else?\n\nCustomer message: {{trigger1.body}}"
+     },
+     "reason": "To sort incoming support messages, an agent can be used to understand the content of the message and determine its category."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 560,
+   "tokens_out": 281,
+   "cost_usd": 0.0008705000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "billing"
+   },
+   "status": 200,
+   "latency_s": 1.362,
+   "route": "billing",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft billing reply",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "Draft a polite answer to the customer about a billing issue. Customer message: {{trigger1.body}}"
+     },
+     "reason": "Draft a reply for billing inquiries using the Reply writer agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 618,
+   "tokens_out": 199,
+   "cost_usd": 0.0006829,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->rag1",
+   "repeat": 1,
+   "expected": {
+    "type": "rag",
+    "route": "technical"
+   },
+   "status": 200,
+   "latency_s": 1.502,
+   "route": "technical",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 667,
+   "tokens_out": 183,
+   "cost_usd": 0.0006576,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "support-triage/classifier1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": "other"
+   },
+   "status": 200,
+   "latency_s": 1.564,
+   "route": "other",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Answer other questions",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "Draft a polite answer to the customer message:\nSubject: {{trigger1.subject}}\nBody: {{trigger1.body}}"
+     },
+     "reason": "Draft an answer for 'other' questions using the reply writer agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 717,
+   "tokens_out": 221,
+   "cost_usd": 0.0007676,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.13,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Answer",
+     "config": {
+      "kind": "reply",
+      "payload_template": {
+       "to": "{{trigger1.from}}",
+       "subject": "Re: {{trigger1.subject}}",
+       "body": "{{agent1.output}}"
+      }
+     },
+     "reason": "The workflow should send the drafted answer back to the customer."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 763,
+   "tokens_out": 118,
+   "cost_usd": 0.0005239,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/rag1->agent2",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.345,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "Draft a polite answer to the customer based on the following information:\nCustomer message: {{trigger1.body}}\nRelevant documentation: {{rag1.output}}"
+     },
+     "reason": "After finding relevant documentation, an agent can draft a technical answer."
+    },
+    {
+     "type": "output",
+     "label": "Output technical answer",
+     "config": {
+      "response": "{{rag1.output}}"
+     },
+     "reason": "If no further processing is needed, the RAG output can be directly returned."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 790,
+   "tokens_out": 180,
+   "cost_usd": 0.000687,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "output"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent2->output2",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.012,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Send reply",
+     "config": {
+      "value": "{{agent2.output}}"
+     },
+     "reason": "After drafting a technical answer, the next logical step is to send it as the final output of the workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 833,
+   "tokens_out": 83,
+   "cost_usd": 0.00045740000000000006,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/trigger1->extract1",
+   "repeat": 1,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.893,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 565,
+   "tokens_out": 103,
+   "cost_usd": 0.000427,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "invoice-intake/extract1->condition1",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.56,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Invoice processed",
+     "config": {
+      "payload": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}"
+      }
+     },
+     "reason": "If no further conditions are needed, the extracted invoice data can be outputted as a final step."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 623,
+   "tokens_out": 217,
+   "cost_usd": 0.0007294000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.745,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Invoice approved",
+     "config": {
+      "payload": {
+       "status": "pending_approval",
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}"
+      }
+     },
+     "reason": "After asking for approval, the workflow should output the status."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 671,
+   "tokens_out": 253,
+   "cost_usd": 0.0008338,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->set1",
+   "repeat": 1,
+   "expected": {
+    "type": "set",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.162,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Process invoice",
+     "config": {
+      "payload": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}",
+       "status": "approved"
+      }
+     },
+     "reason": "If the invoice is not over 5000, it can be directly processed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 718,
+   "tokens_out": 125,
+   "cost_usd": 0.0005279,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/set1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.17,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Invoice processed",
+     "config": {
+      "payload": {
+       "status": "{{set1.status}}",
+       "supplier": "{{set1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}"
+      }
+     },
+     "reason": "After marking the invoice as approved, the workflow should output the processed invoice details."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 766,
+   "tokens_out": 126,
+   "cost_usd": 0.0005448,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/trigger1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.536,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualifier le lead",
+     "config": {
+      "agent_id": "agent6",
+      "prompt": "Budget: {{trigger1.budget}}\nEntreprise: {{trigger1.company}}\nEmail: {{trigger1.email}}\nMessage: {{trigger1.message}}"
+     },
+     "reason": "Utiliser l'agent de qualification de leads pour évaluer le lead entrant."
+    },
+    {
+     "type": "output",
+     "label": "Envoyer le lead",
+     "config": {
+      "fields": {
+       "budget": "{{trigger1.budget}}",
+       "company": "{{trigger1.company}}",
+       "email": "{{trigger1.email}}",
+       "message": "{{trigger1.message}}"
+      }
+     },
+     "reason": "Envoyer les informations du lead à un système externe pour traitement ultérieur."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 554,
+   "tokens_out": 231,
+   "cost_usd": 0.0007437,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "classifier"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/agent1->convert1",
+   "repeat": 1,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.545,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 599,
+   "tokens_out": 221,
+   "cost_usd": 0.0007322,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/convert1->condition1",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.441,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 640,
+   "tokens_out": 223,
+   "cost_usd": 0.0007495000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 2.079,
+   "route": "true",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 684,
+   "tokens_out": 303,
+   "cost_usd": 0.0009627,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.218,
+   "route": "false",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 732,
+   "tokens_out": 147,
+   "cost_usd": 0.0005871,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "daily-digest/trigger1->http1",
+   "repeat": 1,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.884,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "instruction": "Summarise the fetched orders into a concise daily digest, highlighting key trends or unusual activities. The summary should be suitable for an email to the sales team.",
+      "input_template": "Orders: {{trigger1}}"
+     },
+     "reason": "After fetching the orders, the next logical step is to summarise them for the daily digest."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 552,
+   "tokens_out": 247,
+   "cost_usd": 0.0007831000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/http1->convert1",
+   "repeat": 1,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.448,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "template": "Summarise the following sales orders into a concise daily digest:\n\n{{http1.body}}"
+     },
+     "reason": "The 'Summarizer' agent can create a digest from the fetched orders, which is the next step in the workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 592,
+   "tokens_out": 215,
+   "cost_usd": 0.0007151,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/convert1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.786,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{convert1}}"
+     },
+     "reason": "The workflow aims to summarise daily sales, so an agent to summarise the parsed orders is the next logical step."
+    },
+    {
+     "type": "output",
+     "label": "Email team",
+     "config": {
+      "schema": {
+       "type": "object",
+       "properties": {
+        "to": {
+         "type": "string",
+         "format": "email"
+        },
+        "subject": {
+         "type": "string"
+        },
+        "body": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "to",
+        "subject",
+        "body"
+       ]
+      },
+      "value": {
+       "to": "team@example.com",
+       "subject": "Daily Sales Digest",
+       "body": "{{convert1}}"
+      }
+     },
+     "reason": "The workflow's final goal is to email the team, so an output node to send the parsed orders is a direct next step."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 631,
+   "tokens_out": 307,
+   "cost_usd": 0.0009568000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/agent1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.244,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output sales digest",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow could output the sales digest for further use or logging."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 674,
+   "tokens_out": 155,
+   "cost_usd": 0.0005897000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/notification1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.016,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output summary",
+     "config": {
+      "value": "{{agent1.output}}"
+     },
+     "reason": "The workflow is complete, so the next step is to output the result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 715,
+   "tokens_out": 76,
+   "cost_usd": 0.0004045,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/trigger1->rag1",
+   "repeat": 1,
+   "expected": {
+    "type": "rag",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.518,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 561,
+   "tokens_out": 209,
+   "cost_usd": 0.0006908000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "faq-answers/rag1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.538,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Rédiger la réponse",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "Rédigez une réponse polie et concise à la question du client, en vous basant sur les informations suivantes :\nQuestion: {{trigger1.question}}\nInformations de la base de connaissances: {{rag1.output}}"
+     },
+     "reason": "L'agent 'Reply writer' peut rédiger une réponse à partir des informations trouvées par le RAG."
+    },
+    {
+     "type": "output",
+     "label": "Réponse FAQ",
+     "config": {
+      "response": "{{rag1.output}}"
+     },
+     "reason": "Si la réponse du RAG est suffisante, elle peut être directement renvoyée comme sortie."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 607,
+   "tokens_out": 211,
+   "cost_usd": 0.0007096000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/agent1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.2,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Réponse au client",
+     "config": {
+      "kind": "text",
+      "value": "{{agent1}}"
+     },
+     "reason": "La réponse est prête à être envoyée au client."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 653,
+   "tokens_out": 174,
+   "cost_usd": 0.0006309,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/trigger1->extract1",
+   "repeat": 1,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.195,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 558,
+   "tokens_out": 122,
+   "cost_usd": 0.00047240000000000004,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "contract-review/extract1->router1",
+   "repeat": 1,
+   "expected": {
+    "type": "router",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.734,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Review complete",
+     "config": {
+      "schema": {
+       "party": "{{extract1.party}}",
+       "end_date": "{{extract1.end_date}}",
+       "liability_cap": "{{extract1.liability_cap}}",
+       "auto_renewal": "{{extract1.auto_renewal}}"
+      }
+     },
+     "reason": "If no further analysis is needed, the extracted key terms can be immediately output as the result of the contract review."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 622,
+   "tokens_out": 260,
+   "cost_usd": 0.0008366000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "risky"
+   },
+   "status": 200,
+   "latency_s": 1.541,
+   "route": "risky",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 668,
+   "tokens_out": 218,
+   "cost_usd": 0.0007454,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "contract-review/router1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "standard"
+   },
+   "status": 200,
+   "latency_s": 1.069,
+   "route": "standard",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Standard contract",
+     "config": {
+      "payload": {
+       "status": "standard",
+       "key_terms": "{{extract1}}"
+      }
+     },
+     "reason": "If the contract is standard, the workflow can output the extracted key terms."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 718,
+   "tokens_out": 93,
+   "cost_usd": 0.0004479,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/agent1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.978,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "payload": {
+       "key_terms": "{{extract1}}",
+       "risk_explanation": "{{agent1}}"
+      }
+     },
+     "reason": "After explaining the risk, the workflow should output the results."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 750,
+   "tokens_out": 93,
+   "cost_usd": 0.0004575,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/trigger1->condition1",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.125,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input_template": "Traduisez ce texte en français : {{trigger1.text}}"
+     },
+     "reason": "Le but du workflow est la traduction des tickets, donc un agent traducteur est la première étape logique."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 553,
+   "tokens_out": 108,
+   "cost_usd": 0.0004359,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.323,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "prompt": "Traduisez le texte suivant en français : {{trigger1.text}}"
+     },
+     "reason": "Si le ticket n'est pas en français, il faut le traduire en français."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 598,
+   "tokens_out": 173,
+   "cost_usd": 0.0006119000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 0.91,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Répondre en français",
+     "config": {
+      "value": "{{trigger1.text}}"
+     },
+     "reason": "If the ticket is already in French, the original text can be directly outputted."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 648,
+   "tokens_out": 81,
+   "cost_usd": 0.0003969,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/agent1->output2",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.004,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Répondre",
+     "config": {
+      "kind": "webhook",
+      "payload": {
+       "ticket_id": "{{trigger1.ticket_id}}",
+       "translated_text": "{{agent1.output}}"
+      }
+     },
+     "reason": "Après la traduction, il faut renvoyer le texte traduit au système de tickets."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 680,
+   "tokens_out": 114,
+   "cost_usd": 0.0004890000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/trigger1->set1",
+   "repeat": 1,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.422,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualify lead",
+     "config": {
+      "agent_id": "agent6",
+      "input_template": "Company: {{trigger1.company}}\nEmail: {{trigger1.email}}\nPlan: {{trigger1.plan}}"
+     },
+     "reason": "Qualify the new customer lead using the Lead qualifier agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 564,
+   "tokens_out": 241,
+   "cost_usd": 0.0007717000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/set1->http1",
+   "repeat": 1,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.346,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualify lead",
+     "config": {
+      "agent_id": "agent6",
+      "input_template": "Company: {{set1.company}}\nPlan: {{set1.plan}}"
+     },
+     "reason": "After setting account data, it's logical to qualify the lead using an agent."
+    },
+    {
+     "type": "output",
+     "label": "Register in CRM",
+     "config": {
+      "fields": {
+       "company": "{{set1.company}}",
+       "email": "{{trigger1.email}}",
+       "plan": "{{set1.plan}}"
+      }
+     },
+     "reason": "The workflow description mentions registering the customer in the CRM, which can be represented by an output node."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 607,
+   "tokens_out": 207,
+   "cost_usd": 0.0006996000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/http1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.468,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Onboarding complete",
+     "config": {
+      "status": "success",
+      "message": "Customer {{trigger1.company}} onboarded successfully."
+     },
+     "reason": "Mark the workflow as complete after the customer has been created in the CRM and welcomed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 648,
+   "tokens_out": 225,
+   "cost_usd": 0.0007569,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/agent1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.537,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Onboarding complete",
+     "config": {
+      "payload": {
+       "status": "success",
+       "customer_email": "{{trigger1.email}}",
+       "company": "{{set1.company}}"
+      }
+     },
+     "reason": "Mark the workflow as complete and output relevant information about the onboarding process."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 691,
+   "tokens_out": 199,
+   "cost_usd": 0.0007048,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/notification1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.003,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "End workflow",
+     "config": {
+      "value": "Customer onboarding complete for {{trigger1.company}}"
+     },
+     "reason": "The workflow has completed its main tasks and can now output a final status."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 732,
+   "tokens_out": 81,
+   "cost_usd": 0.0004221,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/trigger->order",
+   "repeat": 1,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.516,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order: {{trigger.order_details}}"
+     },
+     "reason": "If the order is large, an agent needs to review it as per the workflow description."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 544,
+   "tokens_out": 199,
+   "cost_usd": 0.0006607,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/order->big",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.646,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order details: Customer: {{order.customer}}, Amount: {{order.amount}}. Flag anything unusual."
+     },
+     "reason": "An agent is needed to review orders above 1,000, as per the workflow description."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 577,
+   "tokens_out": 191,
+   "cost_usd": 0.0006506000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->review",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.413,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order: {{order}}"
+     },
+     "reason": "The workflow specifies that orders above 1,000 should be reviewed by an agent, and 'Order reviewer' is the most suitable agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 611,
+   "tokens_out": 212,
+   "cost_usd": 0.0007133,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->skip",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.568,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output order details",
+     "config": {
+      "value": "{{order}}"
+     },
+     "reason": "Output the order details for further processing or logging when it's not a 'big' order."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 650,
+   "tokens_out": 171,
+   "cost_usd": 0.0006225,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/review->done",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.027,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "value": "Order {{order.customer}} reviewed."
+     },
+     "reason": "The workflow should end after the order has been reviewed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 679,
+   "tokens_out": 74,
+   "cost_usd": 0.0003887,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/trigger1->classifier1",
+   "repeat": 2,
+   "expected": {
+    "type": "classifier",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.948,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarize message",
+     "config": {
+      "agent_id": "agent4",
+      "input": "Summarize the following support message:\nSubject: {{trigger1.subject}}\nBody: {{trigger1.body}}"
+     },
+     "reason": "A summarizer agent can provide a quick overview of the support message, which can be useful for triage."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 560,
+   "tokens_out": 282,
+   "cost_usd": 0.000873,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "billing"
+   },
+   "status": 200,
+   "latency_s": 2.155,
+   "route": "billing",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft billing reply",
+     "config": {
+      "agent_id": "agent2",
+      "instructions": "Draft a polite and helpful reply to the customer about their billing issue. Acknowledge their message and state that their request is being reviewed. Customer message: {{trigger1.body}}"
+     },
+     "reason": "To generate an initial draft response for billing inquiries, saving time for support agents."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 618,
+   "tokens_out": 259,
+   "cost_usd": 0.0008329,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->rag1",
+   "repeat": 2,
+   "expected": {
+    "type": "rag",
+    "route": "technical"
+   },
+   "status": 200,
+   "latency_s": 2.353,
+   "route": "technical",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 667,
+   "tokens_out": 203,
+   "cost_usd": 0.0007076000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "support-triage/classifier1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": "other"
+   },
+   "status": 200,
+   "latency_s": 2.508,
+   "route": "other",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Answer 'other' queries",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "The customer message is about: {{trigger1.subject}} - {{trigger1.body}}. Draft a polite answer to this customer."
+     },
+     "reason": "Draft a general answer for messages that don't fit into 'billing' or 'technical' categories."
+    },
+    {
+     "type": "output",
+     "label": "Send to human agent",
+     "config": {
+      "fields": {
+       "subject": "{{trigger1.subject}}",
+       "from": "{{trigger1.from}}",
+       "body": "{{trigger1.body}}",
+       "notes": "This message was classified as 'other' and requires human attention."
+      }
+     },
+     "reason": "If the message is 'other', it might require human intervention or a more specific workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 717,
+   "tokens_out": 240,
+   "cost_usd": 0.0008151,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.073,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Answer",
+     "config": {
+      "kind": "reply",
+      "payload_template": {
+       "to": "{{trigger1.from}}",
+       "subject": "Re: {{trigger1.subject}}",
+       "body": "{{agent1.output}}"
+      }
+     },
+     "reason": "The agent has drafted an answer, so the next logical step is to send it as a reply."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 763,
+   "tokens_out": 126,
+   "cost_usd": 0.0005438999999999999,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/rag1->agent2",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.808,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "The customer wrote: \"{{trigger1.body}}\". The documentation says: \"{{rag1.output}}\". Draft a polite answer to the customer, incorporating the information from the documentation."
+     },
+     "reason": "After searching the documentation, an agent can draft an answer using the retrieved information."
+    },
+    {
+     "type": "output",
+     "label": "Send answer",
+     "config": {
+      "response": "{{rag1.output}}"
+     },
+     "reason": "If no further processing is needed, the output of the RAG node can be sent directly as a response."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 790,
+   "tokens_out": 194,
+   "cost_usd": 0.000722,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "output"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent2->output2",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.78,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Answer",
+     "config": {
+      "value": "{{agent2.output}}"
+     },
+     "reason": "The workflow needs to output the drafted answer to the customer."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 833,
+   "tokens_out": 72,
+   "cost_usd": 0.0004299,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/trigger1->extract1",
+   "repeat": 2,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.273,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 565,
+   "tokens_out": 111,
+   "cost_usd": 0.000447,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "invoice-intake/extract1->condition1",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.885,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review invoice",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following invoice details: Supplier: {{extract1.supplier}}, Amount: {{extract1.amount}}, Due Date: {{extract1.due_date}}. Flag anything unusual."
+     },
+     "reason": "After extracting invoice details, an agent can review them for any anomalies."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 623,
+   "tokens_out": 208,
+   "cost_usd": 0.0007069000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 2.608,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Invoice for approval",
+     "config": {
+      "payload": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}",
+       "status": "pending_approval"
+      }
+     },
+     "reason": "Output the invoice details for further processing in an external system."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 671,
+   "tokens_out": 259,
+   "cost_usd": 0.0008488,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->set1",
+   "repeat": 2,
+   "expected": {
+    "type": "set",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.292,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Process invoice",
+     "config": {
+      "payload": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}",
+       "status": "approved"
+      }
+     },
+     "reason": "If the invoice is not large, it can be directly processed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 718,
+   "tokens_out": 120,
+   "cost_usd": 0.0005154000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/set1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.048,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Invoice processed",
+     "config": {
+      "payload": {
+       "status": "{{set1.status}}",
+       "supplier": "{{set1.supplier}}",
+       "amount": "{{extract1.amount}}"
+      }
+     },
+     "reason": "The workflow has processed the invoice and can now output the result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 766,
+   "tokens_out": 107,
+   "cost_usd": 0.0004973,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/trigger1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.743,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualifier le lead",
+     "config": {
+      "agent_id": "agent6",
+      "prompt": "Budget: {{trigger1.budget}}\nEntreprise: {{trigger1.company}}\nEmail: {{trigger1.email}}\nMessage: {{trigger1.message}}"
+     },
+     "reason": "Utiliser l'agent 'Lead qualifier' pour évaluer le lead à partir des informations du formulaire de contact."
+    },
+    {
+     "type": "output",
+     "label": "Envoyer le lead",
+     "config": {
+      "fields": {
+       "budget": "{{trigger1.budget}}",
+       "company": "{{trigger1.company}}",
+       "email": "{{trigger1.email}}",
+       "message": "{{trigger1.message}}"
+      }
+     },
+     "reason": "Permet de visualiser ou d'exporter les informations brutes du lead après le déclenchement."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 554,
+   "tokens_out": 243,
+   "cost_usd": 0.0007737000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "classifier"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/agent1->convert1",
+   "repeat": 2,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.97,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 599,
+   "tokens_out": 313,
+   "cost_usd": 0.0009622000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/convert1->condition1",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.533,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 640,
+   "tokens_out": 239,
+   "cost_usd": 0.0007895,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.974,
+   "route": "true",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 684,
+   "tokens_out": 299,
+   "cost_usd": 0.0009527,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.392,
+   "route": "false",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 732,
+   "tokens_out": 151,
+   "cost_usd": 0.0005971,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "daily-digest/trigger1->http1",
+   "repeat": 2,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 503,
+   "latency_s": 4.039,
+   "route": null,
+   "suggestions": [],
+   "reason": "timeout",
+   "tokens_in": 0,
+   "tokens_out": 0,
+   "cost_usd": null,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "daily-digest/http1->convert1",
+   "repeat": 2,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.779,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "instruction": "Summarise the daily sales orders into a concise digest, highlighting key figures like total sales, number of orders, and any notable trends or products.",
+      "input": "{{http1.body}}"
+     },
+     "reason": "The workflow aims to summarise the orders, and the 'Summarizer' agent is suitable for this task."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 592,
+   "tokens_out": 490,
+   "cost_usd": 0.0014026000000000002,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/convert1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.053,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "prompt": "Summarise the following orders into a short daily digest:\n{{convert1}}"
+     },
+     "reason": "The workflow aims to summarise daily sales, so an agent to summarise the parsed orders is the next logical step."
+    },
+    {
+     "type": "output",
+     "label": "Email digest",
+     "config": {
+      "schema": {
+       "type": "object",
+       "properties": {
+        "subject": {
+         "type": "string",
+         "description": "Daily Sales Digest"
+        },
+        "body": {
+         "type": "string",
+         "description": "The summarised sales information."
+        },
+        "to": {
+         "type": "string",
+         "description": "team@example.com"
+        }
+       },
+       "required": [
+        "subject",
+        "body",
+        "to"
+       ]
+      },
+      "value": {
+       "subject": "Daily Sales Digest",
+       "body": "{{convert1}}",
+       "to": "team@example.com"
+      }
+     },
+     "reason": "After parsing the orders, the workflow's goal is to email the team, so an output node for the email is appropriate."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 631,
+   "tokens_out": 345,
+   "cost_usd": 0.0010518,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/agent1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.93,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 674,
+   "tokens_out": 97,
+   "cost_usd": 0.0004447,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "daily-digest/notification1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.552,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Daily Digest Output",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "It's good practice to have an output node at the end of a workflow to capture the final result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 715,
+   "tokens_out": 82,
+   "cost_usd": 0.0004195,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/trigger1->rag1",
+   "repeat": 2,
+   "expected": {
+    "type": "rag",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.5,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Réponse directe",
+     "config": {
+      "response": "Votre question est : {{trigger1.question}}"
+     },
+     "reason": "Si la question est très simple, on pourrait vouloir y répondre directement, mais c'est moins probable pour une FAQ."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 561,
+   "tokens_out": 175,
+   "cost_usd": 0.0006058,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "output",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/rag1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 503,
+   "latency_s": 4.032,
+   "route": null,
+   "suggestions": [],
+   "reason": "timeout",
+   "tokens_in": 0,
+   "tokens_out": 0,
+   "cost_usd": null,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "faq-answers/agent1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.023,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Réponse au client",
+     "config": {
+      "payload": {
+       "customer_id": "{{trigger1.customer_id}}",
+       "answer": "{{agent1.output}}"
+      }
+     },
+     "reason": "La réponse est rédigée, il faut maintenant la renvoyer au client."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 653,
+   "tokens_out": 211,
+   "cost_usd": 0.0007234000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/trigger1->extract1",
+   "repeat": 2,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.215,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 558,
+   "tokens_out": 123,
+   "cost_usd": 0.00047490000000000005,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "contract-review/extract1->router1",
+   "repeat": 2,
+   "expected": {
+    "type": "router",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.427,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Review complete",
+     "config": {
+      "text": "Contract review complete. Key terms extracted: {{extract1.party}}, {{extract1.end_date}}, {{extract1.liability_cap}}, {{extract1.auto_renewal}}"
+     },
+     "reason": "If no further analysis is needed, the extracted key terms can be presented as the final output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 622,
+   "tokens_out": 226,
+   "cost_usd": 0.0007516000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "risky"
+   },
+   "status": 200,
+   "latency_s": 1.873,
+   "route": "risky",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 668,
+   "tokens_out": 307,
+   "cost_usd": 0.0009679,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "contract-review/router1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "standard"
+   },
+   "status": 503,
+   "latency_s": 4.035,
+   "route": null,
+   "suggestions": [],
+   "reason": "timeout",
+   "tokens_in": 0,
+   "tokens_out": 0,
+   "cost_usd": null,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": false,
+    "route_ok": false,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "contract-review/agent1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.054,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "payload": {
+       "key_terms": "{{extract1}}",
+       "risk_explanation": "{{agent1.output}}"
+      }
+     },
+     "reason": "After explaining the risk, the workflow should output the results."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 750,
+   "tokens_out": 95,
+   "cost_usd": 0.0004625,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/trigger1->condition1",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.024,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input_template": "{{trigger1.text}}"
+     },
+     "reason": "Le but du workflow est de traduire les tickets, donc la première étape logique est d'utiliser l'agent de traduction sur le texte du ticket."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 553,
+   "tokens_out": 107,
+   "cost_usd": 0.0004334,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.44,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "prompt": "Traduisez le texte suivant en français : {{trigger1.text}}"
+     },
+     "reason": "Si le ticket n'est pas en français, il doit être traduit."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 598,
+   "tokens_out": 172,
+   "cost_usd": 0.0006094000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 0.978,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Ticket en français",
+     "config": {
+      "kind": "webhook",
+      "payload": {
+       "ticket_id": "{{trigger1.ticket_id}}",
+       "language": "{{trigger1.language}}",
+       "text": "{{trigger1.text}}"
+      }
+     },
+     "reason": "If the ticket is already in French, we can output it directly without translation."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 648,
+   "tokens_out": 123,
+   "cost_usd": 0.0005019,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/agent1->output2",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.078,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Répondre au ticket",
+     "config": {
+      "kind": "reply",
+      "payload": {
+       "ticket_id": "{{trigger1.ticket_id}}",
+       "text": "{{agent1.output}}"
+      }
+     },
+     "reason": "Après la traduction, il est logique de répondre au ticket avec le texte traduit."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 680,
+   "tokens_out": 113,
+   "cost_usd": 0.00048650000000000006,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/trigger1->set1",
+   "repeat": 2,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.618,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualify lead",
+     "config": {
+      "agent_id": "agent6",
+      "input_template": "Company: {{trigger1.company}}\nEmail: {{trigger1.email}}\nPlan: {{trigger1.plan}}"
+     },
+     "reason": "Qualify the new customer lead using the Lead qualifier agent based on the sign-up details."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 564,
+   "tokens_out": 215,
+   "cost_usd": 0.0007067,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/set1->http1",
+   "repeat": 2,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.44,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualify lead",
+     "config": {
+      "agent_id": "agent6",
+      "input_template": "Company: {{set1.company}}\nPlan: {{set1.plan}}"
+     },
+     "reason": "After setting account data, it's logical to qualify the lead using an agent."
+    },
+    {
+     "type": "output",
+     "label": "Onboarding complete",
+     "config": {
+      "value": "New customer {{set1.company}} with plan {{set1.plan}} onboarded."
+     },
+     "reason": "If no further processing is needed, the workflow can conclude by outputting a confirmation."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 607,
+   "tokens_out": 185,
+   "cost_usd": 0.0006446,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/http1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.909,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 648,
+   "tokens_out": 257,
+   "cost_usd": 0.0008369,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "customer-onboarding/agent1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.211,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Onboarding complete",
+     "config": {
+      "value": "Customer {{set1.company}} onboarded successfully."
+     },
+     "reason": "Mark the end of the workflow and confirm the onboarding process is complete."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 691,
+   "tokens_out": 170,
+   "cost_usd": 0.0006323,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/notification1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.972,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "End workflow",
+     "config": {
+      "value": "Customer onboarding complete for {{trigger1.company}}."
+     },
+     "reason": "The workflow has completed its main tasks, so an output node can signal its conclusion."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 732,
+   "tokens_out": 84,
+   "cost_usd": 0.00042960000000000003,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/trigger->order",
+   "repeat": 2,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.646,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order: {{trigger.order_details}}"
+     },
+     "reason": "Directly reviews the order using the 'Order reviewer' agent if the condition is not needed or handled implicitly."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 544,
+   "tokens_out": 203,
+   "cost_usd": 0.0006707,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/order->big",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.501,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order: {{order.customer}}, amount: {{order.amount}}."
+     },
+     "reason": "An agent is needed to review orders above a certain amount, as per the workflow description."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 577,
+   "tokens_out": 180,
+   "cost_usd": 0.0006231,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->review",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 3.471,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order:\nCustomer: {{order.customer}}\nAmount: {{order.amount}}"
+     },
+     "reason": "The workflow specifies that orders above 1,000 should be reviewed by an agent, and 'Order reviewer' is the most suitable agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 611,
+   "tokens_out": 217,
+   "cost_usd": 0.0007258,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->skip",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.235,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output order details",
+     "config": {
+      "value": "{{order}}"
+     },
+     "reason": "Output the order details for further processing or logging when the order is not large."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 650,
+   "tokens_out": 167,
+   "cost_usd": 0.0006125,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/review->done",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.253,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Complete review",
+     "config": {
+      "fields": [
+       "review.output"
+      ]
+     },
+     "reason": "The workflow should have an output node to signify the completion of the review process."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 679,
+   "tokens_out": 170,
+   "cost_usd": 0.0006287,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/trigger1->classifier1",
+   "repeat": 3,
+   "expected": {
+    "type": "classifier",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.612,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 560,
+   "tokens_out": 199,
+   "cost_usd": 0.0006655,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "support-triage/classifier1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "billing"
+   },
+   "status": 200,
+   "latency_s": 1.241,
+   "route": "billing",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft billing reply",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "Draft a polite answer to the customer about a billing issue. Customer message: {{trigger1.body}}"
+     },
+     "reason": "Draft a reply for billing inquiries using the Reply writer agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 618,
+   "tokens_out": 199,
+   "cost_usd": 0.0006829,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->rag1",
+   "repeat": 3,
+   "expected": {
+    "type": "rag",
+    "route": "technical"
+   },
+   "status": 200,
+   "latency_s": 1.384,
+   "route": "technical",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 667,
+   "tokens_out": 203,
+   "cost_usd": 0.0007076000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "support-triage/classifier1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": "other"
+   },
+   "status": 200,
+   "latency_s": 1.373,
+   "route": "other",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft 'other' answer",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "The customer message is about something that is not a billing or technical issue. Draft a polite answer to the customer:\nSubject: {{trigger1.subject}}\nBody: {{trigger1.body}}"
+     },
+     "reason": "Draft a general polite answer for messages that don't fit billing or technical categories."
+    },
+    {
+     "type": "output",
+     "label": "Output 'other' message",
+     "config": {
+      "text": "The message about '{{trigger1.subject}}' was classified as 'other'. No specific action was taken."
+     },
+     "reason": "If no specific agent is needed, output the message to indicate it has been processed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 717,
+   "tokens_out": 215,
+   "cost_usd": 0.0007526,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.574,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Answer to customer",
+     "config": {
+      "kind": "reply",
+      "payload_template": {
+       "to": "{{trigger1.from}}",
+       "subject": "Re: {{trigger1.subject}}",
+       "body": "{{agent1.output}}"
+      }
+     },
+     "reason": "After drafting an answer, the next logical step is to send it back to the customer."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 763,
+   "tokens_out": 126,
+   "cost_usd": 0.0005438999999999999,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/rag1->agent2",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.435,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "prompt": "Draft a polite answer to the customer based on the following information:\nCustomer message: {{trigger1.body}}\nRelevant documentation: {{rag1.output}}"
+     },
+     "reason": "Draft an answer using the information retrieved from the documentation."
+    },
+    {
+     "type": "output",
+     "label": "Send technical answer",
+     "config": {
+      "kind": "reply",
+      "body": "{{rag1.output}}",
+      "to": "{{trigger1.from}}",
+      "subject": "Re: {{trigger1.subject}}"
+     },
+     "reason": "Send the retrieved documentation directly to the customer as an answer."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 790,
+   "tokens_out": 209,
+   "cost_usd": 0.0007595000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "output"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent2->output2",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.936,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Answer",
+     "config": {
+      "value": "{{agent2.answer}}"
+     },
+     "reason": "The 'Technical answer' agent has drafted a reply, which should now be sent as the final output of the workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 833,
+   "tokens_out": 84,
+   "cost_usd": 0.0004599,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/trigger1->extract1",
+   "repeat": 3,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.945,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 565,
+   "tokens_out": 241,
+   "cost_usd": 0.0007720000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "invoice-intake/extract1->condition1",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.374,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 623,
+   "tokens_out": 217,
+   "cost_usd": 0.0007294000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.888,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output large invoice for review",
+     "config": {
+      "schema": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}",
+       "status": "pending_approval"
+      }
+     },
+     "reason": "Outputting the details of large invoices allows for external systems to track and manage the approval process."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 671,
+   "tokens_out": 271,
+   "cost_usd": 0.0008788,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->set1",
+   "repeat": 3,
+   "expected": {
+    "type": "set",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.046,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Invoice processed",
+     "config": {
+      "payload": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}",
+       "status": "approved"
+      }
+     },
+     "reason": "The invoice is small and does not require approval, so the workflow can end here."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 718,
+   "tokens_out": 124,
+   "cost_usd": 0.0005254,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/set1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.047,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Invoice processed",
+     "config": {
+      "payload": {
+       "status": "{{set1.status}}",
+       "supplier": "{{set1.supplier}}",
+       "amount": "{{extract1.amount}}"
+      }
+     },
+     "reason": "The workflow has processed the invoice and should output the result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 766,
+   "tokens_out": 106,
+   "cost_usd": 0.0004948000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/trigger1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.588,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualifier le lead",
+     "config": {
+      "agent_id": "agent6",
+      "prompt": "Budget: {{trigger1.budget}}\nEntreprise: {{trigger1.company}}\nEmail: {{trigger1.email}}\nMessage: {{trigger1.message}}"
+     },
+     "reason": "Le workflow vise à qualifier les leads, et l'agent 'Lead qualifier' est conçu pour cela."
+    },
+    {
+     "type": "output",
+     "label": "Envoyer le lead qualifié",
+     "config": {
+      "fields": {
+       "budget": "{{trigger1.budget}}",
+       "company": "{{trigger1.company}}",
+       "email": "{{trigger1.email}}",
+       "message": "{{trigger1.message}}"
+      }
+     },
+     "reason": "Permet de visualiser ou d'envoyer les informations du lead après le déclenchement."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 554,
+   "tokens_out": 242,
+   "cost_usd": 0.0007712000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "classifier"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/agent1->convert1",
+   "repeat": 3,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.589,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 599,
+   "tokens_out": 212,
+   "cost_usd": 0.0007097000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/convert1->condition1",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.662,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 640,
+   "tokens_out": 251,
+   "cost_usd": 0.0008195,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.985,
+   "route": "true",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 684,
+   "tokens_out": 319,
+   "cost_usd": 0.0010027,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.241,
+   "route": "false",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 732,
+   "tokens_out": 151,
+   "cost_usd": 0.0005971,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "daily-digest/trigger1->http1",
+   "repeat": 3,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.561,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "instruction": "Summarise the provided list of orders into a concise daily sales digest, highlighting key figures and any notable trends."
+     },
+     "reason": "After fetching orders, the next step is to summarise them into a digest."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 552,
+   "tokens_out": 208,
+   "cost_usd": 0.0006856000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/http1->convert1",
+   "repeat": 3,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.83,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "instructions": "Summarise the daily sales from the provided order data, highlighting key figures like total sales, number of orders, and any notable trends or large orders.",
+      "input_template": "Here are yesterday's orders: {{http1}}"
+     },
+     "reason": "The 'Summarizer' agent can create a concise digest of the sales data, which is a core requirement of the workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 592,
+   "tokens_out": 288,
+   "cost_usd": 0.0008976,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/convert1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.902,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarise orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{convert1}}"
+     },
+     "reason": "The workflow aims to summarise daily sales, so an agent to summarise the parsed orders is the next logical step."
+    },
+    {
+     "type": "output",
+     "label": "Email team",
+     "config": {
+      "schema": {
+       "type": "object",
+       "properties": {
+        "to": {
+         "type": "string",
+         "format": "email"
+        },
+        "subject": {
+         "type": "string"
+        },
+        "body": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "to",
+        "subject",
+        "body"
+       ]
+      },
+      "value": {
+       "to": "team@example.com",
+       "subject": "Daily Sales Digest",
+       "body": "{{convert1}}"
+      }
+     },
+     "reason": "The final goal is to email the team, so an output node to send the email is a direct next step, even if the summary is not yet generated."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 631,
+   "tokens_out": 312,
+   "cost_usd": 0.0009693000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/agent1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.182,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output sales digest",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow could output the sales digest for further use or logging."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 674,
+   "tokens_out": 155,
+   "cost_usd": 0.0005897000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/notification1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.069,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Daily Digest",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow is complete, so the next logical step is to output the final result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 715,
+   "tokens_out": 76,
+   "cost_usd": 0.0004045,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/trigger1->rag1",
+   "repeat": 3,
+   "expected": {
+    "type": "rag",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.576,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 561,
+   "tokens_out": 204,
+   "cost_usd": 0.0006783000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "faq-answers/rag1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.847,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Rédiger la réponse",
+     "config": {
+      "agent_id": "agent2",
+      "label": "Rédiger la réponse",
+      "prompt": "Rédigez une réponse polie et concise à la question du client en utilisant les informations suivantes :\n\nQuestion du client : {{trigger1.question}}\nInformations de la base de connaissances : {{rag1.output}}"
+     },
+     "reason": "Après avoir trouvé des informations, l'étape logique est de rédiger une réponse au client."
+    },
+    {
+     "type": "output",
+     "label": "Réponse FAQ",
+     "config": {
+      "label": "Réponse FAQ",
+      "schema": {
+       "answer": {
+        "type": "string",
+        "value": "{{rag1.output}}"
+       }
+      }
+     },
+     "reason": "Si la réponse de la base de connaissances est suffisante, on peut directement la retourner comme sortie."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 607,
+   "tokens_out": 255,
+   "cost_usd": 0.0008196,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/agent1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.728,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Réponse au client",
+     "config": {
+      "kind": "json",
+      "value": {
+       "customer_id": "{{trigger1.customer_id}}",
+       "answer": "{{agent1.output}}"
+      }
+     },
+     "reason": "La réponse est rédigée, il faut la renvoyer au client."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 653,
+   "tokens_out": 257,
+   "cost_usd": 0.0008384,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/trigger1->extract1",
+   "repeat": 3,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 3.206,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Review results",
+     "config": {
+      "schema": {
+       "type": "object",
+       "properties": {
+        "contract_text": {
+         "type": "string"
+        },
+        "counterparty": {
+         "type": "string"
+        }
+       }
+      },
+      "fields": {
+       "contract_text": "{{trigger1.contract_text}}",
+       "counterparty": "{{trigger1.counterparty}}"
+      }
+     },
+     "reason": "An output node can be used to immediately display the initial contract details if no further processing is needed, or as a placeholder for future steps."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 558,
+   "tokens_out": 551,
+   "cost_usd": 0.0015449,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "output",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/extract1->router1",
+   "repeat": 3,
+   "expected": {
+    "type": "router",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.587,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Review complete",
+     "config": {
+      "schema": {
+       "party": "{{extract1.party}}",
+       "end_date": "{{extract1.end_date}}",
+       "liability_cap": "{{extract1.liability_cap}}",
+       "auto_renewal": "{{extract1.auto_renewal}}"
+      }
+     },
+     "reason": "If no further analysis is needed, the extracted key terms can be immediately output as the result of the review."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 622,
+   "tokens_out": 259,
+   "cost_usd": 0.0008341,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "risky"
+   },
+   "status": 200,
+   "latency_s": 1.559,
+   "route": "risky",
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 668,
+   "tokens_out": 224,
+   "cost_usd": 0.0007604,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "contract-review/router1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "standard"
+   },
+   "status": 200,
+   "latency_s": 0.993,
+   "route": "standard",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Standard contract",
+     "config": {
+      "payload": {
+       "status": "standard",
+       "key_terms": "{{extract1}}"
+      }
+     },
+     "reason": "If the contract is standard, the workflow can output the extracted key terms."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 718,
+   "tokens_out": 93,
+   "cost_usd": 0.0004479,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/agent1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.886,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "payload": {
+       "key_terms": "{{extract1}}",
+       "risk_explanation": "{{agent1}}"
+      }
+     },
+     "reason": "The 'Explain the risk' agent has completed its task, so the workflow can now output the results."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 750,
+   "tokens_out": 102,
+   "cost_usd": 0.00048,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/trigger1->condition1",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.63,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input_template": "Traduire le texte suivant en français: {{trigger1.text}}"
+     },
+     "reason": "Le but du workflow est de traduire les tickets, donc la première étape est d'utiliser l'agent de traduction."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 553,
+   "tokens_out": 183,
+   "cost_usd": 0.0006234000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.24,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "prompt": "Traduisez le texte suivant en français : {{trigger1.text}}"
+     },
+     "reason": "Si le ticket n'est pas en français, il faut le traduire en français."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 598,
+   "tokens_out": 173,
+   "cost_usd": 0.0006119000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.143,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Répondre en français",
+     "config": {
+      "value": "{{trigger1.text}}"
+     },
+     "reason": "Si le ticket est déjà en français, il peut être directement envoyé en sortie."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 648,
+   "tokens_out": 80,
+   "cost_usd": 0.0003944,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/agent1->output2",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.032,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Répondre",
+     "config": {
+      "kind": "webhook",
+      "payload": {
+       "ticket_id": "{{trigger1.ticket_id}}",
+       "translated_text": "{{agent1.output}}"
+      }
+     },
+     "reason": "Après la traduction, il est logique d'envoyer le texte traduit à un système externe."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 680,
+   "tokens_out": 116,
+   "cost_usd": 0.000494,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/trigger1->set1",
+   "repeat": 3,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.522,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualify lead",
+     "config": {
+      "agent_id": "agent6",
+      "input_template": "Company: {{trigger1.company}}\nEmail: {{trigger1.email}}\nPlan: {{trigger1.plan}}"
+     },
+     "reason": "Qualify the new customer lead using the Lead qualifier agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 564,
+   "tokens_out": 244,
+   "cost_usd": 0.0007792000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/set1->http1",
+   "repeat": 3,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.656,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Qualify lead",
+     "config": {
+      "agent_id": "agent6",
+      "input_template": "Company: {{set1.company}}, Plan: {{set1.plan}}"
+     },
+     "reason": "The workflow is about new customer onboarding, so qualifying the lead is a logical next step."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 607,
+   "tokens_out": 240,
+   "cost_usd": 0.0007821,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/http1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.593,
+   "route": null,
+   "suggestions": [],
+   "reason": null,
+   "tokens_in": 648,
+   "tokens_out": 245,
+   "cost_usd": 0.0008069,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "ai_types": []
+   }
+  },
+  {
+   "case": "customer-onboarding/agent1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.496,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Onboarding complete",
+     "config": {
+      "status": "success",
+      "message": "Customer onboarding completed for {{set1.company}}."
+     },
+     "reason": "An output node clearly marks the end of the workflow and provides a final status."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 691,
+   "tokens_out": 192,
+   "cost_usd": 0.0006873000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/notification1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.073,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "End workflow",
+     "config": {
+      "value": "Customer onboarding complete for {{trigger1.company}}."
+     },
+     "reason": "The workflow has completed its main tasks, so an output node can signal its conclusion."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 732,
+   "tokens_out": 84,
+   "cost_usd": 0.00042960000000000003,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/trigger->order",
+   "repeat": 3,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.47,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order: {{trigger.order_details}}"
+     },
+     "reason": "If the order amount is above 1,000, an agent should review it as per the workflow description."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 544,
+   "tokens_out": 188,
+   "cost_usd": 0.0006332,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/order->big",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.549,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order details: Customer: {{order.customer}}, Amount: {{order.amount}}. Flag anything unusual."
+     },
+     "reason": "If the order amount is above 1,000, an agent needs to review it, and 'Order reviewer' (agent9) is the most suitable agent for this task."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 577,
+   "tokens_out": 220,
+   "cost_usd": 0.0007231,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->review",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.556,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "prompt": "Review the following order:\nCustomer: {{order.customer}}\nAmount: {{order.amount}}"
+     },
+     "reason": "The workflow description states that orders above 1,000 should be reviewed by an agent, and 'big' node's 'true' branch handles these orders."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 611,
+   "tokens_out": 228,
+   "cost_usd": 0.0007533,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->skip",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.34,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output order details",
+     "config": {
+      "fields": {
+       "customer": "{{order.customer}}",
+       "amount": "{{order.amount}}",
+       "status": "processed"
+      }
+     },
+     "reason": "Output the order details for further processing in the workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 650,
+   "tokens_out": 188,
+   "cost_usd": 0.000665,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/review->done",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.74,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "value": "Order {{order.customer}} reviewed."
+     },
+     "reason": "The workflow should end after the order has been reviewed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 679,
+   "tokens_out": 74,
+   "cost_usd": 0.0003887,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  }
+ ]
+}
