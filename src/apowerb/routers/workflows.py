@@ -17,7 +17,8 @@ runs a workflow with an attached file:
 
 * ``POST /api/workflows/runs/{run_id}/replay`` — re-runs one from the input it
   kept, as a new run that cites the original. A canvas run replays its
-  canvas; an agent run (``schedule``) resends its message to the same agent.
+  canvas; an agent run (``schedule``, ``chat``) resends its message to the
+  same agent, in a fresh session.
 
 * ``GET /api/workflows/tools/schema?tool=<tool_ref>`` — the argument schema
   of one tool (types, required, defaults, per-arg description), so the

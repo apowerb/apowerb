@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import aiohttp
@@ -18,6 +19,7 @@ from apowerb.core.adk_runner import (
     create_adk_agent_session,
     delete_adk_agent_session,
 )
+from apowerb.core import run_main
 from apowerb.core.invocation_context import set_current_invoker
 from apowerb.schema.adk_runner_schema import (
     RunADKAgentRequest,
@@ -61,6 +63,20 @@ _MAX_SESSION_TITLE = 200
 def _sessions_schema() -> str:
     return get_settings().db_schema or "public"
 
+
+
+def _record_chat_run(owner: str, request: RunADKAgentRequest) -> str | None:
+    """Consigne un tour de chat dans ``agent_runs`` avec son entrée rejouable."""
+    return run_main.start_run_safely(
+        trigger="chat",
+        owner_id=owner,
+        agent_ids=[request.agent_name],
+        config={
+            "agent_name": request.agent_name,
+            "session_id": request.session_id,
+            "new_message": request.new_message,
+        },
+    )
 
 
 def _internal_token(current_user) -> str:
@@ -167,117 +183,141 @@ async def run_agent(
             ),
         )
 
-    # Quota du modele mutualise -- avant toute execution, et avant meme de
-    # creer la session : un run refuse ne doit rien laisser derriere lui.
-    from apowerb.core.run_gate import apply_run_guards
-
-    await apply_run_guards(
-        agent_name=folder_name,
-        owner_id=current_user.email,
-        plan=current_user.plan,
-    )
-
-    # Check if session exists, create if not
-    session_was_created = False
-    user_token = credentials.credentials if credentials else _internal_token(current_user)
+    # Un tour de chat est un run : consigné avant tout ce qui peut échouer,
+    # pour qu'un échec se retrouve dans la liste avec sa cause.
+    run_id = _record_chat_run(current_user.email, request)
+    tools_executed: list[str] | None = []
     try:
-        logger.info(f"[ADK RUN] Checking if session exists: {request.session_id}")
-        try:
-            await get_adk_session(
-                agent_name=folder_name,
-                user_id=request.user_id,
-                session_id=request.session_id,
-                token=user_token,
-            )
-            logger.info(f"[ADK RUN] Session {request.session_id} exists")
-            session_was_created = False
-        except Exception:
-            # Session doesn't exist, create it
-            logger.info(f"[ADK RUN] Session {request.session_id} not found, creating it")
-            await create_adk_agent_session(
-                agent_name=folder_name,
-                user_id=request.user_id,
-                session_id=request.session_id,
-                data={},
-                token=user_token,
-            )
-            logger.info(f"[ADK RUN] Successfully created session {request.session_id}")
-            session_was_created = True
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=safe_error_message(
-                e,
-                logger=logger,
-                context="adk_runner.run_agent.ensure_session",
-                client_message="Failed to create or verify the agent session. Try again in a moment.",
-            ),
-        )
+        # Quota du modele mutualise -- avant toute execution, et avant meme de
+        # creer la session : un run refuse ne doit rien laisser derriere lui.
+        from apowerb.core.run_gate import apply_run_guards
 
-    # Run the agent
-    try:
-        logger.info(f"[ADK RUN] Calling run_adk_agent for {folder_name}")
-        result = await run_adk_agent(
+        await apply_run_guards(
             agent_name=folder_name,
-            user_id=request.user_id,
-            session_id=request.session_id,
-            run_mode=request.run_mode,
-            new_message=request.new_message,
-            streaming=request.streaming,
-            token=credentials.credentials if credentials else None,
+            owner_id=current_user.email,
+            plan=current_user.plan,
         )
-        logger.info(f"[ADK RUN] Successfully completed agent run: {request.agent_name}")
+
+        # Check if session exists, create if not
+        session_was_created = False
+        user_token = credentials.credentials if credentials else _internal_token(current_user)
+        try:
+            logger.info(f"[ADK RUN] Checking if session exists: {request.session_id}")
+            try:
+                await get_adk_session(
+                    agent_name=folder_name,
+                    user_id=request.user_id,
+                    session_id=request.session_id,
+                    token=user_token,
+                )
+                logger.info(f"[ADK RUN] Session {request.session_id} exists")
+                session_was_created = False
+            except Exception:
+                # Session doesn't exist, create it
+                logger.info(f"[ADK RUN] Session {request.session_id} not found, creating it")
+                await create_adk_agent_session(
+                    agent_name=folder_name,
+                    user_id=request.user_id,
+                    session_id=request.session_id,
+                    data={},
+                    token=user_token,
+                )
+                logger.info(f"[ADK RUN] Successfully created session {request.session_id}")
+                session_was_created = True
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=safe_error_message(
+                    e,
+                    logger=logger,
+                    context="adk_runner.run_agent.ensure_session",
+                    client_message="Failed to create or verify the agent session. Try again in a moment.",
+                ),
+            )
+
+        # Run the agent
+        try:
+            logger.info(f"[ADK RUN] Calling run_adk_agent for {folder_name}")
+            try:
+                result = await run_adk_agent(
+                    agent_name=folder_name,
+                    user_id=request.user_id,
+                    session_id=request.session_id,
+                    run_mode=request.run_mode,
+                    new_message=request.new_message,
+                    streaming=request.streaming,
+                    token=credentials.credentials if credentials else None,
+                )
+            except Exception:
+                # La réponse est perdue ; la session garde les outils appelés.
+                tools_executed = await run_main.executed_tools_in_session(
+                    folder_name, request.user_id, request.session_id, user_token
+                )
+                raise
+            tools_executed = run_main.executed_tools(result)
+            logger.info(f"[ADK RUN] Successfully completed agent run: {request.agent_name}")
         
-        # Add session creation info to result
-        if isinstance(result, dict):
-            result["session_created"] = session_was_created
+            # Add session creation info to result
+            if isinstance(result, dict):
+                result["session_created"] = session_was_created
         
-        return result
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
+            run_main.settle_run(run_id, run_main.STATUS_SUCCESS, None, tools_executed)
+            return result
+        except HTTPException:
+            # Re-raise HTTP exceptions as-is
+            raise
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=safe_error_message(
+                    e,
+                    logger=logger,
+                    context="adk_runner.run_agent.run",
+                    client_message="The agent run request or the agent's response could not be validated.",
+                ),
+            )
+        except ConnectionError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=safe_error_message(
+                    e,
+                    logger=logger,
+                    context="adk_runner.run_agent.connection_error",
+                    client_message="Service temporarily unavailable. Try again in a moment.",
+                ),
+            )
+        except TimeoutError as e:
+            raise HTTPException(
+                status_code=504,
+                detail=safe_error_message(
+                    e,
+                    logger=logger,
+                    context="adk_runner.run_agent.timeout",
+                    client_message="The agent run timed out. Try again in a moment.",
+                ),
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=safe_error_message(
+                    e,
+                    logger=logger,
+                    context=f"adk_runner.run_agent.unexpected_error (agent={request.agent_name})",
+                    client_message="Internal server error while running the agent.",
+                ),
+            )
+    except BaseException as exc:
+        run_main.settle_run(
+            run_id,
+            run_main.STATUS_CANCELLED
+            if isinstance(exc, asyncio.CancelledError)
+            else run_main.STATUS_ERROR,
+            run_main.failure_cause(exc),
+            tools_executed,
+        )
         raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=safe_error_message(
-                e,
-                logger=logger,
-                context="adk_runner.run_agent.run",
-                client_message="The agent run request or the agent's response could not be validated.",
-            ),
-        )
-    except ConnectionError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=safe_error_message(
-                e,
-                logger=logger,
-                context="adk_runner.run_agent.connection_error",
-                client_message="Service temporarily unavailable. Try again in a moment.",
-            ),
-        )
-    except TimeoutError as e:
-        raise HTTPException(
-            status_code=504,
-            detail=safe_error_message(
-                e,
-                logger=logger,
-                context="adk_runner.run_agent.timeout",
-                client_message="The agent run timed out. Try again in a moment.",
-            ),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=safe_error_message(
-                e,
-                logger=logger,
-                context=f"adk_runner.run_agent.unexpected_error (agent={request.agent_name})",
-                client_message="Internal server error while running the agent.",
-            ),
-        )
 
 
 @router.post("/run_sse", tags=["adk"])
@@ -320,11 +360,16 @@ async def run_agent_sse(
     # (E402), inutile d'en ajouter un de plus.
     from apowerb.core.run_gate import apply_run_guards
 
-    await apply_run_guards(
-        agent_name=folder_name,
-        owner_id=current_user.email,
-        plan=current_user.plan,
-    )
+    run_id = _record_chat_run(current_user.email, request)
+    try:
+        await apply_run_guards(
+            agent_name=folder_name,
+            owner_id=current_user.email,
+            plan=current_user.plan,
+        )
+    except BaseException as exc:
+        run_main.settle_run(run_id, run_main.STATUS_ERROR, run_main.failure_cause(exc), [])
+        raise
 
     try:
         NewMessage(**request.new_message)
@@ -336,13 +381,16 @@ async def run_agent_sse(
             # maillon (nginx, relais Next) coupe sur son délai de silence et
             # l'exécution est annulée.
             with_sse_heartbeat(
-                stream_adk_agent(
-                    agent_name=folder_name,
-                    user_id=request.user_id,
-                    session_id=request.session_id,
-                    new_message=request.new_message,
-                    streaming=request.streaming,
-                    token=credentials.credentials if credentials else None,
+                run_main.track_agent_stream(
+                    run_id,
+                    stream_adk_agent(
+                        agent_name=folder_name,
+                        user_id=request.user_id,
+                        session_id=request.session_id,
+                        new_message=request.new_message,
+                        streaming=request.streaming,
+                        token=credentials.credentials if credentials else None,
+                    ),
                 )
             ),
             media_type="text/event-stream",
@@ -353,6 +401,7 @@ async def run_agent_sse(
             },
         )
     except Exception as e:
+        run_main.settle_run(run_id, run_main.STATUS_ERROR, run_main.failure_cause(e), [])
         raise HTTPException(
             status_code=500,
             detail=safe_error_message(

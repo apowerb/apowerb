@@ -25,50 +25,6 @@ from apowerb.helpers import notify_etl
 logger = setup_logging("apowerb.scheduler.run_agent_background")
 
 
-def _record_scheduled_run(
-    owner_id: str, agent_id: str | None, agent_name: str, new_message: Dict[str, Any]
-) -> str | None:
-    """Consigne un run planifié dans ``agent_runs``, avec son entrée rejouable.
-
-    Même politique que ``/workflows/run-sse`` : une base indisponible dégrade
-    le suivi, pas l'exécution. Le run part sans trace, et on le dit.
-    """
-    from apowerb.core import run_main
-
-    try:
-        return run_main.start_run(
-            trigger="schedule",
-            owner_id=owner_id,
-            agent_ids=[agent_id] if agent_id else [],
-            config={"agent_name": agent_name, "new_message": new_message},
-        )
-    except Exception:  # la trace ne doit pas arrêter le run
-        logger.exception(
-            "[REFRESH] run planifié non consigné (agent=%s) — il s'exécute sans "
-            "trace, donc sans rejeu possible",
-            agent_name,
-        )
-        return None
-
-
-def _settle_scheduled_run(
-    run_id: str | None,
-    status: str,
-    error_message: str | None,
-    tools_executed: list[str] | None,
-) -> None:
-    """Écrit l'issue d'un run planifié et les outils qu'il a appelés."""
-    if run_id is None:
-        return
-    from apowerb.core import run_main
-
-    try:
-        run_main.finish_run(run_id, status=status, error_message=error_message)
-        run_main.record_tools_executed(run_id, tools_executed)
-    except Exception:  # la trace ne doit pas masquer l'issue
-        logger.exception("[REFRESH] issue du run_id=%s non consignée", run_id)
-
-
 def convert_to_adk_message_format(simple_message: Dict[str, Any]) -> Dict[str, Any]:
     role = simple_message.get("role", "user")
     content = simple_message.get("content", "")
@@ -314,7 +270,12 @@ async def run_agent_from_refresh_token(
 
         # Consigné dès que le propriétaire est connu, avant tout ce qui peut
         # échouer : un run planifié raté doit se retrouver dans la liste.
-        run_id = _record_scheduled_run(user_id, agent_id, agent_name, new_message)
+        run_id = run_main.start_run_safely(
+            trigger="schedule",
+            owner_id=user_id,
+            agent_ids=[agent_id] if agent_id else [],
+            config={"agent_name": agent_name, "new_message": new_message},
+        )
 
         # Resolve agent name to folder name
         folder_name = _pkg.get_agent_folder_name(agent_name)
@@ -394,7 +355,7 @@ async def run_agent_from_refresh_token(
             )
             raise
         tools_executed = run_main.executed_tools(result)
-        _settle_scheduled_run(run_id, run_main.STATUS_SUCCESS, None, tools_executed)
+        run_main.settle_run(run_id, run_main.STATUS_SUCCESS, None, tools_executed)
 
         # Token rotation: Create new token and update Mage trigger
         token_rotated = False
@@ -468,13 +429,13 @@ async def run_agent_from_refresh_token(
 
     except ValueError as e:
         logger.error(f"[REFRESH] Validation error: {str(e)}")
-        _settle_scheduled_run(
-            run_id, run_main.STATUS_ERROR, f"{type(e).__name__}: {e}", tools_executed
+        run_main.settle_run(
+            run_id, run_main.STATUS_ERROR, run_main.failure_cause(e), tools_executed
         )
         raise
     except Exception as e:
         logger.error(f"[REFRESH] Agent execution failed: {str(e)}", exc_info=True)
-        _settle_scheduled_run(
-            run_id, run_main.STATUS_ERROR, f"{type(e).__name__}: {e}", tools_executed
+        run_main.settle_run(
+            run_id, run_main.STATUS_ERROR, run_main.failure_cause(e), tools_executed
         )
         raise
