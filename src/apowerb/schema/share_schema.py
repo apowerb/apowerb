@@ -26,3 +26,12 @@ class SharedConversationResponse(BaseModel):
     agentName: str
     messages: list[ShareMessageIn]
     createdAt: datetime | None
+
+class ShareListItem(BaseModel):
+    id: str
+    title: str
+    agentName: str | None = None
+    createdAt: datetime | None
+    expiresAt: datetime | None
+    isPublic: bool
+    url: str
