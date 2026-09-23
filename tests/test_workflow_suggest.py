@@ -416,3 +416,33 @@ def test_le_vrai_plafond_mensuel_laisse_passer_sous_la_limite(env, monkeypatch):
     r = _suggest(env)
     assert r.status_code == 200
     assert len(env.calls) == 1
+
+
+# --- Sans agent, aucun type qui en exige un (roadmap#91) ---------------------
+
+
+def _offered_types(system: str) -> set[str]:
+    return {line[2:].split(":", 1)[0] for line in system.splitlines() if line.startswith("- ")}
+
+
+def test_without_agents_the_prompt_offers_no_type_that_needs_one(env, monkeypatch):
+    """Agent-dev, 23/09 : sans agent, le modèle proposait agent, classifier et
+    extract, tous écartés faute d'agent_id ; chaque appel payait une réponse
+    vide garantie."""
+    monkeypatch.setattr(workflow_suggest, "_owner_agents", lambda owner: [])
+    _suggest(env)
+    system = env.calls[0]["messages"][0]["content"]
+    assert _offered_types(system) == set(workflow_suggest.SUGGESTIBLE_TYPES) - {
+        "agent",
+        "classifier",
+        "extract",
+        "rag",
+    }
+    assert "agent" not in system.lower()
+
+
+def test_with_an_agent_the_types_that_need_one_are_offered(env):
+    _suggest(env)
+    system = env.calls[0]["messages"][0]["content"]
+    assert _offered_types(system) == set(workflow_suggest.SUGGESTIBLE_TYPES)
+    assert {"agent", "classifier", "extract", "rag"} <= _offered_types(system)

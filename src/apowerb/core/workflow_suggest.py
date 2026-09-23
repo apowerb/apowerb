@@ -123,35 +123,53 @@ _MAX_REASON_CHARS = 200
 _MAX_LABEL_CHARS = 80
 _MAX_AGENTS = 50
 
-_SYSTEM = (
-    "You help build an automation workflow, one node at a time. Given the "
-    "workflow description, its nodes and the user's agents, propose at most "
-    f"{MAX_SUGGESTIONS} nodes to add right after the selected node. Each node "
-    "must be complete and runnable, with a config of this shape (the examples "
-    f"read the selected node, {{{{{SELECTED}}}}}; {_AGENT} stands for an agent_id "
-    "taken from the agents list):\n"
-    + "\n".join(
-        f"- {node_type}: {rule}. Example: {json.dumps(example)}"
-        for node_type, (rule, example) in CONFIG_SHAPES.items()
+
+def _system(types: tuple[str, ...]) -> str:
+    """Le prompt qui enseigne ``types`` ; sans type à agent, il ne parle pas d'agents.
+
+    Sans agent, agent/classifier/extract/rag ne peuvent pas passer
+    ``check_proposal`` : les montrer au modèle faisait payer une réponse vide
+    (roadmap#91).
+    """
+    with_agents = not _NEEDS_AGENT.isdisjoint(types)
+    return (
+        "You help build an automation workflow, one node at a time. Given the "
+        "workflow description"
+        + (", its nodes and the user's agents" if with_agents else " and its nodes")
+        + f", propose at most {MAX_SUGGESTIONS} nodes to add right after the selected node. "
+        "Each node must be complete and runnable, with a config of this shape (the examples "
+        f"read the selected node, {{{{{SELECTED}}}}}"
+        + (f"; {_AGENT} stands for an agent_id taken from the agents list" if with_agents else "")
+        + "):\n"
+        + "\n".join(
+            f"- {node_type}: {CONFIG_SHAPES[node_type][0]}. "
+            f"Example: {json.dumps(CONFIG_SHAPES[node_type][1])}"
+            for node_type in types
+        )
+        + "\nThe new node reads the selected node's output: reference it as "
+        f"{{{{{SELECTED}}}}}, or {{{{{SELECTED}.field}}}} for one of its payload_fields "
+        "or fields; another upstream node only when it is the one needed. Never "
+        "invent URLs"
+        + (", e-mail addresses or agents" if with_agents else " or e-mail addresses")
+        + ". Answer with JSON only: "
+        '{"suggestions": [{"type": "...", "label": "...", "config": {...}, '
+        '"reason": "one short sentence"}]}. Write label and reason in the '
+        "language of the workflow name."
     )
-    + "\nThe new node reads the selected node's output: reference it as "
-    f"{{{{{SELECTED}}}}}, or {{{{{SELECTED}.field}}}} for one of its payload_fields "
-    "or fields; another upstream node only when it is the one needed. Never "
-    "invent URLs, e-mail addresses or agents. Answer with JSON only: "
-    '{"suggestions": [{"type": "...", "label": "...", "config": {...}, '
-    '"reason": "one short sentence"}]}. Write label and reason in the '
-    "language of the workflow name."
-)
 
 
-def system_prompt(selected: str) -> str:
-    """``_SYSTEM`` avec l'identifiant réel du nœud sélectionné.
+_SYSTEM = _system(SUGGESTIBLE_TYPES)
+_SYSTEM_WITHOUT_AGENTS = _system(tuple(t for t in SUGGESTIBLE_TYPES if t not in _NEEDS_AGENT))
+
+
+def system_prompt(selected: str, *, with_agents: bool = True) -> str:
+    """Le prompt, avec l'identifiant réel du nœud sélectionné.
 
     Laissé en jeton ``SELECTED``, l'exemple était recopié tel quel par le
     modèle : 39 % des propositions du banc #89 lisaient ``{{SELECTED}}`` et la
     route les écartait (référence hors amont).
     """
-    return _SYSTEM.replace(SELECTED, selected)
+    return (_SYSTEM if with_agents else _SYSTEM_WITHOUT_AGENTS).replace(SELECTED, selected)
 
 
 class SuggestUnavailable(Exception):
@@ -457,7 +475,7 @@ async def suggest_next(
     )
     kwargs = _completion_kwargs(
         [
-            {"role": "system", "content": system_prompt(node_id)},
+            {"role": "system", "content": system_prompt(node_id, with_agents=bool(agents))},
             {"role": "user", "content": json.dumps(view, ensure_ascii=False)},
         ]
     )
