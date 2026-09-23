@@ -71,3 +71,36 @@ def test_toute_porte_passe_par_les_gardes():
         "appliquer les gardes, sinon le plafond de quota se contourne en "
         "changeant simplement de chemin d'appel."
     )
+
+
+def _facture_le_modele_mutualise(arbre: ast.AST) -> bool:
+    """Le module consigne des jetons ``billed_to_thaink2=True`` lui-meme."""
+    return any(
+        isinstance(n, ast.keyword)
+        and n.arg == "billed_to_thaink2"
+        and isinstance(n.value, ast.Constant)
+        and n.value.value is True
+        for n in ast.walk(arbre)
+    )
+
+
+def test_tout_appel_direct_au_modele_mutualise_passe_par_les_gardes():
+    """Un appel litellm facture a thaink2 hors d'un agent passe aussi le portier.
+
+    Les suggestions du Workflow Studio (roadmap#85) appellent le modele sans
+    passer par le runner ADK : le test du dessus ne les voit pas.
+    """
+    directs = {}
+    for source in RACINE.rglob("*.py"):
+        arbre = ast.parse(source.read_text(encoding="utf-8"))
+        appels = _appels(arbre)
+        if {"acompletion", "completion"} & appels and _facture_le_modele_mutualise(arbre):
+            directs[str(source.relative_to(RACINE))] = appels
+
+    assert "core/workflow_suggest.py" in directs, (
+        "workflow_suggest n'est plus detecte : verifier le critere du test"
+    )
+    sans_garde = sorted(m for m, appels in directs.items() if PORTIER not in appels)
+    assert not sans_garde, (
+        f"ces modules facturent le modele mutualise sans {PORTIER} : {sans_garde}"
+    )
