@@ -1,9 +1,22 @@
 name: Build and publish Docker image
 
+# Triggered by the release itself, like "Upload Python Package" next door and
+# like the UI image -- no longer by that PyPI run completing. Chaining on
+# `workflow_run` forced this workflow to check out `workflow_run.head_sha`, a
+# ref CodeQL flags as untrusted in a job holding the Docker Hub token
+# (actions/untrusted-checkout). On a release the checkout is the tag itself.
+# The image installs the wheel from PyPI, so the build still has to wait for
+# it: that is what the PyPI propagation wait below is for, and it now also
+# covers the ~40 s the upload itself takes.
 on:
-  workflow_run:
-    workflows: ["Upload Python Package"]
-    types: [completed]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (without the leading v); must already be on PyPI"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,39 +27,36 @@ env:
 jobs:
   release:
     name: Resolve the release
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release.outputs.version }}
 
     steps:
-      # Pinned to the commit the upstream "Upload Python Package" run was
-      # built from, not to whatever the default branch holds when this run
-      # starts. Without `ref`, checkout takes the branch tip: a merge landing
-      # between the two runs would build this image from a tree that never
-      # produced the wheel being installed. The Dockerfile and build context
-      # come from here, so they must match the release being published.
+      # On a release this is the tag, so the Dockerfile and build context are
+      # exactly the tree that produced the wheel being installed.
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Resolve release version from the PyPI workflow tag
+      - name: Resolve the release version
         id: release
         shell: bash
         env:
-          # Passed as an env var (not interpolated into the script body) so an
-          # attacker-controlled branch/tag name can't break out of the string
-          # and inject arbitrary shell commands into this step.
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          # Passed as env vars (not interpolated into the script body) so a
+          # crafted tag or input can't break out of the string and inject
+          # shell commands into this step.
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          VERSION="${HEAD_BRANCH#v}"
-          # `head_branch` is whatever ref started the upstream run. On a release
-          # that is the tag, but nothing guarantees it: a branch name would sail
-          # through and get published as an image tag. The UI workflow already
-          # refuses anything that is not a version; the core one did not.
+          if [ "${EVENT_NAME}" = "release" ]; then
+            REF="${GITHUB_REF_NAME}"
+          else
+            REF="${INPUT_VERSION}"
+          fi
+          VERSION="${REF#v}"
+          # Refuse anything that is not a version instead of publishing an
+          # image tagged with it.
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([abrc.dev+-][0-9A-Za-z.+-]*)?$ ]]; then
-            echo "::error::refusing to publish an image tagged '${VERSION}' -- expected a version like 1.2.3, got the upstream ref '${HEAD_BRANCH}'"
+            echo "::error::refusing to publish an image tagged '${VERSION}' -- expected a version like 1.2.3, got '${REF}'"
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -59,9 +69,9 @@ jobs:
       - name: Install uv
         run: pip install uv
 
-      # This workflow starts as soon as "Upload Python Package" reports
-      # success, but PyPI's index takes some time to propagate a freshly
-      # published release. The Docker build below installs
+      # This workflow starts with the release, alongside "Upload Python
+      # Package", and PyPI's index then takes some time to propagate the
+      # freshly published release. The Docker build below installs
       # "apowerb==${VERSION}" straight from PyPI via `uv pip install
       # --system`, so building immediately is a race. Releases 0.1.11 and
       # 0.1.12 both hit it: the build failed with "Because there is no
@@ -101,8 +111,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -127,11 +135,15 @@ jobs:
             APPOWERB_VERSION=${{ needs.release.outputs.version }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
+      # The digest reads `sha256:<hex>`; the file keeps only the hex, which
+      # the manifest step prefixes back with `@sha256:`.
       - name: Export the digest
         shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${DIGEST#sha256:}"
 
       - name: Upload the digest
         uses: actions/upload-artifact@v4
