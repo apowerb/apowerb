@@ -245,6 +245,35 @@ def test_extract_response_text_takes_the_last_text_event():
     assert we.extract_response_text(events) == "final"
 
 
+def test_extract_response_text_skips_the_reasoning_summary():
+    # Gemini 2.5 : le résumé de raisonnement précède la réponse dans le même
+    # événement, dans une part marquée ``thought``.
+    events = [
+        {
+            "content": {
+                "parts": [
+                    {"text": "Here is my thought process...", "thought": True},
+                    {"text": "Paris est la capitale de la France."},
+                ]
+            }
+        }
+    ]
+    assert we.extract_response_text(events) == "Paris est la capitale de la France."
+
+
+def test_extract_response_text_ignores_a_reasoning_only_event():
+    events = [
+        {"content": {"parts": [{"text": "Paris."}]}},
+        {"content": {"parts": [{"text": "je réfléchis", "thought": True}]}},
+    ]
+    assert we.extract_response_text(events) == "Paris."
+
+
+def test_extract_response_text_joins_the_answer_parts():
+    events = [{"content": {"parts": [{"text": "Pa"}, {"text": "ris."}]}}]
+    assert we.extract_response_text(events) == "Paris."
+
+
 # --- Branchement production ------------------------------------------------
 
 

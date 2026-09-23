@@ -196,9 +196,16 @@ def _event_text(ev: Any) -> Optional[str]:
     if not isinstance(ev, dict):
         return None
     parts = (ev.get("content") or {}).get("parts") or ev.get("parts") or []
-    if parts and isinstance(parts[0], dict) and parts[0].get("text"):
-        return parts[0]["text"]
-    return ev.get("text") or None
+    # Les parts ``thought`` portent le résumé de raisonnement (Gemini 2.5), pas
+    # la réponse : les lire rendait ce monologue comme sortie du nœud agent.
+    answer = "".join(
+        p["text"]
+        for p in parts
+        if isinstance(p, dict)
+        and isinstance(p.get("text"), str)
+        and not p.get("thought")
+    )
+    return answer or ev.get("text") or None
 
 
 def extract_response_text(response: Any) -> str:
