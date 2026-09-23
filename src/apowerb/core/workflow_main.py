@@ -157,6 +157,34 @@ def get_workflow(workflow_id: str, *, owner_id: str) -> Optional[dict]:
     return _row(row) if row else None
 
 
+def get_workflow_graph_at(
+    workflow_id: str, version: int, *, owner_id: str
+) -> dict | None:
+    """Le graphe du workflow tel qu'il était à ``version``, ou ``None``.
+
+    La version courante si elle correspond, sinon l'état archivé à cette
+    version. C'est ce qu'un rejeu doit exécuter : le graphe que le run
+    d'origine a exécuté, pas celui qui a pu être édité depuis.
+    """
+    r = workflow_store.revision_table
+    with workflow_store.engine.begin() as conn:
+        row = _fetch(conn, workflow_id, owner_id)
+        if row is None:
+            return None
+        if row._mapping["version"] == version:
+            return json.loads(row._mapping["graph"])
+        rev = conn.execute(
+            r.select()
+            .where(
+                r.c.workflow_id == workflow_id,
+                r.c.owner_id == owner_id,
+                r.c.version == version,
+            )
+            .order_by(r.c.revision_id.desc())
+        ).first()
+    return json.loads(rev._mapping["graph"]) if rev is not None else None
+
+
 def list_workflows(*, owner_id: str) -> list[dict]:
     t = workflow_store.workflow_table
     with workflow_store.engine.begin() as conn:
