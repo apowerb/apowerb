@@ -8,10 +8,16 @@ on:
 permissions:
   contents: read
 
+env:
+  IMAGE: apowerb/apowerb
+
 jobs:
-  dockerhub-publish:
+  release:
+    name: Resolve the release
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
 
     steps:
       # Pinned to the commit the upstream "Upload Python Package" run was
@@ -69,6 +75,9 @@ jobs:
       # endpoint instead (an earlier version of this fix did) would check a
       # different code path than the Simple index the resolver reads, and
       # could report "available" before the resolver agrees.
+      #
+      # It is waited for once here, before either architecture is built, so
+      # the two build jobs cannot race PyPI independently.
       - name: Wait for the release to resolve on PyPI
         shell: bash
         env:
@@ -76,10 +85,24 @@ jobs:
           PACKAGE_VERSION: ${{ steps.release.outputs.version }}
         run: .github/scripts/wait-for-pypi-release.sh
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          cache-image: false
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -90,15 +113,74 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image
+      # Each runner builds its own architecture natively and pushes an
+      # untagged image; the manifest list that carries the tags is assembled
+      # below. QEMU is gone with the emulated half of the build.
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           build-args: |
-            APPOWERB_VERSION=${{ steps.release.outputs.version }}
-          tags: |
-            apowerb/apowerb:${{ steps.release.outputs.version }}
-            apowerb/apowerb:latest
+            APPOWERB_VERSION=${{ needs.release.outputs.version }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export the digest
+        shell: bash
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v4
+        with:
+          # One artifact per platform: v4 refuses to have two jobs write the
+          # same artifact name.
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish the image to Docker Hub
+    needs: [release, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download the digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The tags only ever move once both architectures exist, so an
+      # interrupted or half-failed release cannot leave `latest` pointing at a
+      # single-arch image.
+      - name: Create the manifest list
+        shell: bash
+        working-directory: /tmp/digests
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:latest" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect the published image
+        shell: bash
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"
