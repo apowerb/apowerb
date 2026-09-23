@@ -19,6 +19,10 @@ from apowerb.configs.settings import get_settings
 from apowerb.core import run_gate, workflow_suggest
 from apowerb.core.agent_helpers import usage_recorder
 
+# Saisi avant que la fixture ``env`` ne le remplace : les tests du plafond
+# réel (roadmap#90) le remettent en place.
+_REAL_APPLY_RUN_GUARDS = run_gate.apply_run_guards
+
 ALICE = "alice@acme.fr"
 SECRET_SAMPLE = {"email": "client@secret.fr", "subject": "Devis urgent pour Dupont"}
 GRAPH = {
@@ -350,3 +354,65 @@ def test_the_examples_carry_the_real_selected_id_not_a_placeholder(env):
     system = env.calls[0]["messages"][0]["content"]
     assert workflow_suggest.SELECTED not in system
     assert '"input": "{{start}}"' in system and "{{start.field}}" in system
+
+
+def _real_monthly_quota(env, monkeypatch, *, exceeded):
+    """Le vrai portier et la vraie garde mensuelle ; seule la base est simulée.
+
+    Les autres tests remplacent ``apply_run_guards`` : c'est ce qui a caché
+    roadmap#90, où la garde ne reconnaissait pas l'appelant
+    ``workflow_suggest`` et laissait tout passer.
+    """
+    from datetime import datetime, timezone
+
+    import apowerb.core.usage_quota as usage_quota
+    import apowerb.helpers.database as database
+    from apowerb.core.agent_helpers import agent_utils
+    from apowerb.core.extensions.registry import registry
+    from apowerb.helpers import quota_guard
+
+    status = usage_quota.QuotaStatus(
+        used_tokens=1500 if exceeded else 100,
+        limit_tokens=1000,
+        remaining_tokens=0 if exceeded else 900,
+        percent_used=150.0 if exceeded else 10.0,
+        exceeded=exceeded,
+        warning=exceeded,
+        plan="free",
+        resets_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+    )
+
+    class _Session:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def fake_quota_status(db, owner_id, plan):
+        return status
+
+    def no_agent_store(**_kw):
+        raise AssertionError("une suggestion n'est pas un agent : rien à chercher")
+
+    monkeypatch.setattr(run_gate, "apply_run_guards", _REAL_APPLY_RUN_GUARDS)
+    monkeypatch.setattr(registry, "run_guards", lambda: [quota_guard.enforce_run_quota])
+    monkeypatch.setattr(registry, "default_llm_cap", lambda: usage_quota.default_llm_cap)
+    monkeypatch.setattr(usage_quota, "get_quota_status", fake_quota_status)
+    monkeypatch.setattr(database, "sessionmanager", SimpleNamespace(session=_Session))
+    monkeypatch.setattr(agent_utils, "get_agent_details", no_agent_store)
+
+
+def test_le_vrai_plafond_mensuel_refuse_la_suggestion_en_402(env, monkeypatch):
+    _real_monthly_quota(env, monkeypatch, exceeded=True)
+    r = _suggest(env)
+    assert r.status_code == 402
+    assert r.json()["detail"]["code"] == "QUOTA_EXCEEDED"
+    assert env.calls == [] and env.usage == []
+
+
+def test_le_vrai_plafond_mensuel_laisse_passer_sous_la_limite(env, monkeypatch):
+    _real_monthly_quota(env, monkeypatch, exceeded=False)
+    r = _suggest(env)
+    assert r.status_code == 200
+    assert len(env.calls) == 1

@@ -22,6 +22,11 @@ logger = getLogger(__name__)
 # wait out for a few seconds, it's a credit exhausted until next month.
 QUOTA_EXCEEDED_CODE = "QUOTA_EXCEEDED"
 
+# Callers that are not agents but always answer on the shared model, so the
+# shared quota applies without an agent to look up. Without this, the lookup
+# below fails on the name and the call goes uncapped (roadmap#90).
+SHARED_MODEL_CALLERS = frozenset({"workflow_suggest"})
+
 
 def agent_uses_default_llm(agent_name: str) -> bool:
     """True if this agent runs on the shared model.
@@ -35,6 +40,8 @@ def agent_uses_default_llm(agent_name: str) -> bool:
     is not intercepted here -- its consumption is still recorded (the
     recorder runs on every sub-agent), so it will be capped on the next run.
     """
+    if agent_name in SHARED_MODEL_CALLERS:
+        return True
     try:
         from apowerb.core.agent_helpers.agent_utils import get_agent_details
         from apowerb.core.agent_helpers.default_llm import is_default_llm_model

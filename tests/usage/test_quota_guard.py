@@ -113,3 +113,15 @@ def test_unresolvable_agent_is_treated_as_not_default(monkeypatch):
     monkeypatch.setattr(au, "get_agent_details", _boom)
     assert qg.agent_uses_default_llm("agent999") is False
     assert qg.agent_uses_default_llm("not-an-id") is False
+
+
+def test_a_workflow_suggestion_always_counts_on_the_shared_model(monkeypatch):
+    """Not an agent: nothing to look up, the shared quota applies (roadmap#90)."""
+    import apowerb.core.agent_helpers.agent_utils as au
+    from apowerb.core.workflow_suggest import USAGE_AGENT_NAME
+
+    def _boom(**_kw):
+        raise RuntimeError("store down")
+
+    monkeypatch.setattr(au, "get_agent_details", _boom)
+    assert qg.agent_uses_default_llm(USAGE_AGENT_NAME) is True
