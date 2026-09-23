@@ -102,7 +102,7 @@ def env(monkeypatch):
     monkeypatch.setattr(
         workflow_suggest,
         "_owner_agents",
-        lambda owner: [{"agent_id": "agent3", "name": "Tri SCEI", "description": "trie les mails"}],
+        lambda owner: [{"agent_id": "agent3", "name": "Tri des mails", "description": "trie les mails"}],
     )
 
     from apowerb.auth.dependencies import get_current_user
@@ -173,7 +173,7 @@ def test_the_model_sees_the_structure_never_the_values(env):
     view = json.loads(env.calls[0]["messages"][1]["content"])
 
     assert view["nodes"][0]["payload_fields"] == ["email", "subject"]
-    assert view["agents"] == [{"agent_id": "agent3", "name": "Tri SCEI", "description": "trie les mails"}]
+    assert view["agents"] == [{"agent_id": "agent3", "name": "Tri des mails", "description": "trie les mails"}]
     for leaked in ("client@secret.fr", "Dupont", "boss@corp.fr", "token=abc123", "api.corp.fr", "{{start}}"):
         assert leaked not in sent, leaked
 
