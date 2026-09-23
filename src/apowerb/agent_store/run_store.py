@@ -22,6 +22,7 @@ from sqlalchemy import (
     String,
     MetaData,
     inspect,
+    text,
 )
 
 from apowerb.configs.th2logger import setup_logging
@@ -90,6 +91,10 @@ class RunStore(BaseModel):
             # Le run dont celui-ci est le rejeu. Un rejeu n'écrase jamais son
             # original : il le cite.
             Column("replay_of", String, index=True),
+            # Les outils qu'un run d'agent a appelés, en JSON. ``NULL`` veut
+            # dire « inconnu », pas « aucun » : c'est ce qui décide si un
+            # échec peut être rejoué sans refaire un effet de bord.
+            Column("tools_executed", String),
         )
 
     def create_table(self):
@@ -107,3 +112,29 @@ class RunStore(BaseModel):
             self.table_name,
             "already exists" if existed else "created successfully",
         )
+        self.ensure_columns()
+
+    def ensure_columns(self):
+        """Ajoute aux tables déjà en service les colonnes venues après elles.
+
+        ``create_all`` ne modifie jamais une table existante : sans ce
+        rattrapage, une base créée avant la colonne ne l'aurait jamais.
+        """
+        existing = {
+            c["name"]
+            for c in inspect(self.engine).get_columns(
+                self.table_name, schema=self.db_schema or None
+            )
+        }
+        added_later: dict[str, str] = {"tools_executed": "VARCHAR"}
+        schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
+        with self.engine.begin() as conn:
+            for col, typ in added_later.items():
+                if col not in existing:
+                    conn.execute(
+                        text(
+                            f'ALTER TABLE {schema_prefix}"{self.table_name}" '
+                            f'ADD COLUMN "{col}" {typ}'
+                        )
+                    )
+                    logger.info("Run store: colonne %s ajoutée.", col)

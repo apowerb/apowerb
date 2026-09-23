@@ -16,7 +16,8 @@ runs a workflow with an attached file:
   ran, how it ended, and whether its input is still on disk.
 
 * ``POST /api/workflows/runs/{run_id}/replay`` — re-runs one from the input it
-  kept, as a new run that cites the original.
+  kept, as a new run that cites the original. A canvas run replays its
+  canvas; an agent run (``schedule``) resends its message to the same agent.
 
 * ``GET /api/workflows/tools/schema?tool=<tool_ref>`` — the argument schema
   of one tool (types, required, defaults, per-arg description), so the
@@ -134,6 +135,69 @@ async def _server_workflow_runner(
         cancel_event=cancel_event,
     ):
         yield chunk
+
+
+async def _agent_replay_runner(
+    run_id: str, owner: str, config: dict[str, Any]
+) -> AsyncGenerator[str, None]:
+    """Rejoue un run d'agent : le message conservé, au même agent.
+
+    Session ADK neuve (celle d'origine peut porter un échange à moitié fait),
+    gardes de run et identité du propriétaire, comme un run planifié. Les
+    outils appelés sont consignés, succès ou échec : c'est ce qui permettra, à
+    son tour, de dire si ce rejeu peut être rejoué sans refaire d'effet.
+    """
+    from apowerb.core import adk_runner, agent_main, run_gate, workflow_engine
+    from apowerb.core.invocation_context import set_current_invoker
+
+    tools: list[str] | None = []
+    try:
+        folder = agent_main.get_agent_folder_name(config["agent_name"])
+        await run_gate.apply_run_guards(
+            agent_name=folder,
+            owner_id=owner,
+            plan=await run_gate.resolve_owner_plan(owner),
+        )
+        set_current_invoker(owner)
+        token = workflow_engine.access_token_factory(owner)()
+        session_id = f"replay_{run_id}"
+        await adk_runner.create_adk_agent_session(
+            agent_name=folder, user_id=owner, session_id=session_id, data={}, token=token
+        )
+        try:
+            response = await adk_runner.run_adk_agent(
+                agent_name=folder,
+                user_id=owner,
+                session_id=session_id,
+                new_message=config["new_message"],
+                run_mode="run",
+                token=token,
+            )
+        except Exception:
+            tools = await run_main.executed_tools_in_session(
+                folder, owner, session_id, token
+            )
+            raise
+        tools = run_main.executed_tools(response)
+        output = workflow_engine.extract_response_text(response)
+    except Exception as exc:  # l'issue doit être consignée
+        _record_tools(run_id, tools)
+        logger.exception("[workflows] rejeu d'agent run_id=%s a echoue", run_id)
+        yield (
+            "data: "
+            + json.dumps({"event": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            + "\n\n"
+        )
+        return
+    _record_tools(run_id, tools)
+    yield f"data: {json.dumps({'event': 'done', 'output': output})}\n\n"
+
+
+def _record_tools(run_id: str, tools: list[str] | None) -> None:
+    try:
+        run_main.record_tools_executed(run_id, tools)
+    except Exception:  # la trace ne doit pas casser le flux
+        logger.exception("[workflows] outils du run_id=%s non consignes", run_id)
 
 
 def _select_runner():
@@ -381,6 +445,15 @@ async def replay_run(
     court. Le rejeu est un **nouveau** run qui cite l'original.
     """
     replay = run_main.prepare_replay(run_id, owner_id=current_user.email, force=force)
+    if replay["trigger"] in run_main.AGENT_TRIGGERS:
+        new_run_id, owner, config = replay["run_id"], current_user.email, replay["config"]
+        return _streaming_run(
+            run_id=new_run_id,
+            agent_ids=[],
+            file_bytes=None,
+            owner=owner,
+            runner=lambda _cancel: _agent_replay_runner(new_run_id, owner, config),
+        )
     return _streaming_run(
         run_id=replay["run_id"],
         agent_ids=[str(a) for a in replay["agent_ids"]],

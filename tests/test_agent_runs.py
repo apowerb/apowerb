@@ -291,3 +291,239 @@ def test_an_existing_database_still_gets_the_runs_table(monkeypatch):
 
     schema = run_store.run_table.schema
     assert "agent_runs" in sa_inspect(engine).get_table_names(schema=schema)
+
+
+# ---------------------------------------------------------------------------
+# Runs started by the scheduler (Mage -> run_agent_from_refresh_token)
+# ---------------------------------------------------------------------------
+#
+# The scheduler reaches the ADK server directly, outside /workflows/run-sse:
+# before this, a scheduled run that failed left a log line and nothing else.
+
+
+SCHEDULED_TOKEN = {
+    "agent_name": "reporting-agent",
+    "user_id": OWNER,
+    "session_id": "sched-base",
+    "new_message": {"role": "user", "content": "Send the weekly report"},
+    "run_mode": "single",
+    "streaming": False,
+}
+
+
+def _call(name):
+    return {"content": {"role": "model", "parts": [{"functionCall": {"name": name, "args": {}}}]}}
+
+
+@pytest.fixture
+def scheduler(monkeypatch, store):
+    """The real scheduler entry point, with the ADK server faked out.
+
+    ``run_adk`` and ``session_events`` are what the fake server answers; tests
+    set them before calling ``run``.
+    """
+    from unittest.mock import AsyncMock
+
+    from apowerb.core import adk_runner as core_adk
+    from apowerb.core import run_gate
+    from apowerb.helpers import security
+    from apowerb.scheduler import run_agent_background as rab
+
+    state = SimpleNamespace(run_adk=AsyncMock(return_value=[]), session_events=[])
+
+    async def _get_session(**kwargs):
+        return {"id": kwargs.get("session_id"), "events": state.session_events}
+
+    async def _no_guard(**kwargs):
+        return None
+
+    async def _plan(owner):
+        return None
+
+    monkeypatch.setattr(rab, "decode_agent_refresh_token", lambda token: dict(SCHEDULED_TOKEN))
+    monkeypatch.setattr(rab, "get_agent_folder_name", lambda name: "reporting_agent")
+    monkeypatch.setattr(security, "refresh_access_token_from_agent_refresh", lambda token: "access")
+    monkeypatch.setattr(core_adk, "get_adk_session", _get_session)
+    monkeypatch.setattr(core_adk, "create_adk_agent_session", AsyncMock(return_value={}))
+    monkeypatch.setattr(run_gate, "apply_run_guards", _no_guard)
+    monkeypatch.setattr(run_gate, "resolve_owner_plan", _plan)
+    monkeypatch.setattr(rab, "run_adk_agent", lambda **kwargs: state.run_adk(**kwargs))
+    # The replay goes through the core runner, not the scheduler package.
+    monkeypatch.setattr(core_adk, "run_adk_agent", lambda **kwargs: state.run_adk(**kwargs))
+
+    async def _run():
+        return await rab.run_agent_from_refresh_token("refresh", agent_id="agent-42")
+
+    state.run = _run
+    return state
+
+
+@pytest.mark.asyncio
+async def test_a_failed_scheduled_run_is_listed_with_its_cause(scheduler):
+    scheduler.run_adk.side_effect = RuntimeError("provider answered 503")
+
+    with pytest.raises(RuntimeError):
+        await scheduler.run()
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["trigger"] == "schedule"
+    assert run["status"] == "error"
+    assert "provider answered 503" in run["error_message"]
+    assert run["agent_ids"] == ["agent-42"]
+    # The input the replay will need: which agent, and the exact message.
+    assert run["config"]["agent_name"] == "reporting-agent"
+    assert run["config"]["new_message"]["parts"][0]["text"] == "Send the weekly report"
+    # No tool ran before the failure: nothing stands in the way of a replay.
+    assert run["tools_executed"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_successful_scheduled_run_is_not_replayable_as_a_failure(scheduler):
+    """Counter-example: success and failure must not end up in the same state."""
+    scheduler.run_adk.return_value = [_call("send_email")]
+
+    await scheduler.run()
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["status"] == "success"
+    assert run["error_message"] is None
+    assert run["tools_executed"] == ["send_email"]
+    with pytest.raises(Exception) as excinfo:
+        run_main.prepare_replay(run["run_id"], owner_id=OWNER)
+    assert getattr(excinfo.value, "status_code", None) == 409
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_whose_tools_already_ran_is_not_replayed_silently(scheduler):
+    """The e-mail went out before the crash: replaying would send it twice."""
+    scheduler.run_adk.side_effect = RuntimeError("model crashed after the tool")
+    scheduler.session_events = [_call("send_email")]
+
+    with pytest.raises(RuntimeError):
+        await scheduler.run()
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["status"] == "error"
+    assert run["tools_executed"] == ["send_email"]
+    with pytest.raises(Exception) as excinfo:
+        run_main.prepare_replay(run["run_id"], owner_id=OWNER)
+    assert excinfo.value.status_code == 409
+    assert "send_email" in str(excinfo.value.detail)
+    # A deliberate gesture still goes through.
+    assert run_main.prepare_replay(run["run_id"], owner_id=OWNER, force=True)["run_id"]
+
+
+def test_an_agent_run_whose_side_effects_are_unknown_is_not_replayed(store):
+    """Unknown is not "none": the trace of the tools could not be read."""
+    run_id = _start(trigger="schedule", config={"agent_name": "a", "new_message": {}})
+    run_main.finish_run(run_id, status="error", error_message="boom")
+
+    with pytest.raises(Exception) as excinfo:
+        run_main.prepare_replay(run_id, owner_id=OWNER)
+    assert excinfo.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_a_scheduled_run_is_invisible_to_another_user(scheduler):
+    scheduler.run_adk.side_effect = RuntimeError("boom")
+    with pytest.raises(RuntimeError):
+        await scheduler.run()
+    [run] = run_main.list_runs(owner_id=OWNER)
+
+    assert run_main.list_runs(owner_id=OTHER) == []
+    assert run_main.get_run(run["run_id"], owner_id=OTHER) is None
+    with pytest.raises(Exception) as excinfo:
+        run_main.prepare_replay(run["run_id"], owner_id=OTHER)
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_storage_failure_does_not_stop_a_scheduled_run(scheduler, monkeypatch):
+    def _broken(**kwargs):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(run_main, "start_run", _broken)
+    scheduler.run_adk.return_value = []
+
+    result = await scheduler.run()
+
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_replaying_a_failed_scheduled_run_sends_its_message_again(scheduler, workflows, monkeypatch):
+    """The endpoint must replay an agent run as an agent run, not as a canvas."""
+    scheduler.run_adk.side_effect = RuntimeError("provider answered 503")
+    with pytest.raises(RuntimeError):
+        await scheduler.run()
+    [original] = run_main.list_runs(owner_id=OWNER)
+    original_session = scheduler.run_adk.await_args.kwargs["session_id"]
+
+    async def _canvas_must_not_run(*args, **kwargs):
+        raise AssertionError("an agent run was replayed as a workflow canvas")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(workflows, "_workflow_runner", _canvas_must_not_run)
+    from apowerb.core import agent_main
+
+    monkeypatch.setattr(agent_main, "get_agent_folder_name", lambda name: "reporting_agent")
+    scheduler.run_adk.side_effect = None
+    scheduler.run_adk.return_value = [
+        {"content": {"role": "model", "parts": [{"text": "Report sent."}]}}
+    ]
+
+    response = await workflows.replay_run(original["run_id"], force=False, current_user=_user())
+    body = await _drain(response)
+
+    assert b"Report sent." in body
+    kwargs = scheduler.run_adk.await_args.kwargs
+    assert kwargs["agent_name"] == "reporting_agent"
+    assert kwargs["user_id"] == OWNER
+    assert kwargs["new_message"]["parts"][0]["text"] == "Send the weekly report"
+    # A fresh session: the failed one may hold a half-done conversation.
+    assert kwargs["session_id"] != original_session
+    [replay] = [r for r in run_main.list_runs(owner_id=OWNER) if r["replay_of"]]
+    assert replay["replay_of"] == original["run_id"]
+    assert replay["trigger"] == "schedule"
+    assert replay["status"] == "success"
+    assert replay["tools_executed"] == []
+    assert run_main.get_run(original["run_id"], owner_id=OWNER)["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_replay_that_fails_again_is_recorded_as_a_failure(scheduler, workflows, monkeypatch):
+    scheduler.run_adk.side_effect = RuntimeError("first failure")
+    with pytest.raises(RuntimeError):
+        await scheduler.run()
+    [original] = run_main.list_runs(owner_id=OWNER)
+    from apowerb.core import agent_main
+
+    monkeypatch.setattr(agent_main, "get_agent_folder_name", lambda name: "reporting_agent")
+    scheduler.run_adk.side_effect = RuntimeError("second failure")
+
+    response = await workflows.replay_run(original["run_id"], force=False, current_user=_user())
+    await _drain(response)
+
+    [replay] = [r for r in run_main.list_runs(owner_id=OWNER) if r["replay_of"]]
+    assert replay["status"] == "error"
+    assert "second failure" in replay["error_message"]
+    assert replay["tools_executed"] == []
+
+
+def test_an_existing_runs_table_gets_the_tools_column(monkeypatch):
+    """The DDL trap again: the column is new, the table is not."""
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
+
+    engine = _sqlite_engine()
+    run_store = run_main.run_store
+    monkeypatch.setattr(run_store, "engine", engine)
+    schema = run_store.run_table.schema
+    qualified = f"{schema}.agent_runs" if schema else "agent_runs"
+    with engine.begin() as conn:
+        conn.execute(text(f"CREATE TABLE {qualified} (run_id VARCHAR PRIMARY KEY, status VARCHAR)"))
+
+    run_store.create_table()
+
+    columns = {c["name"] for c in sa_inspect(engine).get_columns("agent_runs", schema=schema)}
+    assert "tools_executed" in columns

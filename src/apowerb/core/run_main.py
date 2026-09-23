@@ -8,6 +8,22 @@ consigne ici au moment où il démarre, avec ce qu'il a reçu ; son issue est
 Le rejeu crée toujours un nouveau run qui cite l'original (``replay_of``) :
 l'historique n'est pas réécrit, et un rejeu raté se distingue de l'échec
 d'origine.
+
+Ce qu'un rejeu refait, selon le déclencheur :
+
+- ``workflow`` : le canvas, avec les agents, la configuration et le fichier
+  conservés.
+- ``schedule`` : le message conservé, envoyé au même agent, sous l'identité du
+  propriétaire, dans une session ADK **neuve** — la session d'origine peut
+  contenir un échange à moitié fait.
+
+Les effets de bord : un agent agit par ses outils (envoyer un mail, écrire en
+base). Un run d'agent consigne donc les outils qu'il a appelés
+(``tools_executed``), et un échec n'est rejoué d'office que si l'on sait
+qu'aucun outil n'a été appelé. Si un outil l'a été, ou si on ne peut pas le
+savoir (``NULL``), le rejeu est refusé (409) : rien ne permet de rejouer un
+agent en sautant les appels déjà faits, donc rejouer referait l'effet. Seul
+``force=true`` passe outre, en connaissance de cause.
 """
 
 from __future__ import annotations
@@ -38,6 +54,10 @@ STATUS_CANCELLED = "cancelled"
 # effets de bord et un run en vol n'a pas encore rendu son verdict : les deux
 # demandent un geste explicite (``force``) ou un refus.
 _REPLAYABLE = (STATUS_ERROR, STATUS_CANCELLED)
+
+# Déclencheurs dont le run est un agent ADK, qui agit par ses outils : ceux-là
+# ne sont rejoués sans ``force`` que si leurs outils sont connus et vides.
+AGENT_TRIGGERS = ("schedule",)
 
 
 def _now() -> str:
@@ -154,9 +174,63 @@ def finish_run(run_id: str, status: str, error_message: str | None = None) -> No
         )
 
 
+def record_tools_executed(run_id: str, tools: list[str] | None) -> None:
+    """Consigne les outils qu'un run a appelés. ``None`` laisse « inconnu »."""
+    if tools is None:
+        return
+    with run_store.engine.begin() as conn:
+        conn.execute(
+            run_store.run_table.update()
+            .where(run_store.run_table.c.run_id == run_id)
+            .values(tools_executed=json.dumps(tools))
+        )
+
+
+def executed_tools(events) -> list[str]:
+    """Les outils appelés dans une liste d'événements ADK, dans l'ordre.
+
+    C'est l'appel (``functionCall``) qui compte, pas la réponse : un outil
+    qui plante à mi-course a pu agir sans jamais répondre.
+    """
+    names: list[str] = []
+    for event in events if isinstance(events, list) else []:
+        content = event.get("content") if isinstance(event, dict) else None
+        for part in (content or {}).get("parts") or []:
+            call = part.get("functionCall") or part.get("function_call")
+            if isinstance(call, dict) and call.get("name"):
+                names.append(call["name"])
+    return names
+
+
+async def executed_tools_in_session(
+    agent_name: str, user_id: str, session_id: str, token: str | None
+) -> list[str] | None:
+    """Les outils appelés dans une session ADK, ou ``None`` si illisible.
+
+    Sert après un échec : l'appel ``/run`` a levé, sa réponse est perdue,
+    mais la session a gardé ce qui s'est passé avant.
+    """
+    from apowerb.core import adk_runner
+
+    try:
+        session = await adk_runner.get_adk_session(
+            agent_name=agent_name, user_id=user_id, session_id=session_id, token=token
+        )
+    except Exception as exc:  # noqa: BLE001 - inconnu, pas « aucun »
+        logger.warning(
+            "[RUNS] session %s illisible (%s) — outils appelés inconnus",
+            session_id,
+            exc.__class__.__name__,
+        )
+        return None
+    return executed_tools((session or {}).get("events"))
+
+
 def _row_to_dict(row) -> dict:
     run = row._asdict()
     run["agent_ids"] = json.loads(run.get("agent_ids") or "[]")
+    tools = run.get("tools_executed")
+    run["tools_executed"] = json.loads(tools) if tools else None
     try:
         run["config"] = json.loads(run.get("config") or "{}")
     except json.JSONDecodeError:
@@ -189,6 +263,29 @@ def list_runs(owner_id: str, limit: int = 50) -> list[dict]:
             .limit(limit)
         ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def _refuse_if_side_effects(tools_executed: str | None) -> None:
+    """409 si l'échec a pu laisser un effet de bord qu'un rejeu referait."""
+    if tools_executed is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "It is unknown whether this run called any tool before failing, "
+                "so a replay could repeat a side effect. Pass force=true to "
+                "run it again anyway."
+            ),
+        )
+    tools = json.loads(tools_executed or "[]")
+    if tools:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This run already called {', '.join(tools)} before failing: "
+                "a replay would call them again. Pass force=true to run it "
+                "again anyway."
+            ),
+        )
 
 
 def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
@@ -226,6 +323,13 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
                 "happened. Pass force=true to run it again anyway."
             ),
         )
+
+    if (
+        not force
+        and status in _REPLAYABLE
+        and original.get("trigger") in AGENT_TRIGGERS
+    ):
+        _refuse_if_side_effects(original.get("tools_executed"))
 
     file_bytes = None
     file_name = original.get("input_file_name")
@@ -267,6 +371,7 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
     return {
         "run_id": new_run_id,
         "replay_of": run_id,
+        "trigger": original.get("trigger") or "workflow",
         "agent_ids": agent_ids,
         "config": config,
         "file_bytes": file_bytes,
