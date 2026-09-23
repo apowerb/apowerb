@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import logging
 import math
 import os
 import statistics
@@ -231,6 +232,8 @@ def summarize(records: list[dict], *, usd_per_eur: Optional[float]) -> dict:
     merged_by_repeat = [_rate([x["score"]["merged_top3"] for x in rs]) for _, rs in sorted(by_repeat.items())]
     configs = [r["score"]["config"] for r in records if r["score"]["config"]]
     usd = [r["cost_usd"] for r in records if r["cost_usd"] is not None]
+    kept = sum(len(r["score"]["ai_types"]) for r in ok)
+    rejected = sum(len(r.get("rejected", [])) for r in ok)
     rules_top3 = _rate([r["score"]["rules_top3"] for r in records])
     merged_top3 = _rate([r["score"]["merged_top3"] for r in records])
     p95 = percentile(latencies, 95)
@@ -247,6 +250,12 @@ def summarize(records: list[dict], *, usd_per_eur: Optional[float]) -> dict:
         "ai_hit_pct": _rate([r["score"]["ai_hit"] for r in records]),
         "answered_pct": _rate([r["status"] == 200 for r in records]),
         "failures": _count(r.get("reason") or str(r["status"]) for r in records if r["status"] != 200),
+        "rejected_pct": round(100 * rejected / (kept + rejected), 1) if kept + rejected else None,
+        "rejected_reasons": _count(
+            reason.split(" : ")[0] + " : " + reason.split(" : ")[-1][:60]
+            for r in ok
+            for reason in r.get("rejected", [])
+        ),
         "ai_suggestions_avg": round(statistics.mean(len(r["score"]["ai_types"]) for r in ok), 2) if ok else None,
         "route_ok_pct": _rate([r["score"]["route_ok"] for r in ok]),
         "config_agent_ok_pct": _rate([c["agent_ok"] for c in configs if c["agent_ok"] is not None]),
@@ -267,6 +276,11 @@ def _count(items) -> dict:
     for i in items:
         out[i] = out.get(i, 0) + 1
     return out
+
+
+def _top(counts: dict, n: int = 5) -> str:
+    ranked = sorted(counts.items(), key=lambda kv: -kv[1])[:n]
+    return "; ".join(f"{k} ×{v}" for k, v in ranked) or "aucune"
 
 
 def _round(value: Optional[float], digits: int = 3) -> Optional[float]:
@@ -297,6 +311,22 @@ class Route:
             raise SystemExit("DEFAULT_LLM_MODEL et DEFAULT_LLM_API_KEY sont requis (voir README.md).")
 
         self.usage: list[dict] = []
+        # Les propositions écartées par la validation ne sortent pas de la
+        # route : on les lit dans son journal, un appel à la fois.
+        self.rejected: list[str] = []
+        route = self
+
+        class Rejections(logging.Handler):
+            def emit(self, record):
+                message = record.getMessage()
+                if "écartée" in message:
+                    route.rejected.append(message.split("proposition ", 1)[-1][:160])
+
+        self.log_handler = Rejections(level=logging.INFO)
+        suggest_log = logging.getLogger(workflow_suggest.__name__)
+        suggest_log.addHandler(self.log_handler)
+        if suggest_log.getEffectiveLevel() > logging.INFO:
+            suggest_log.setLevel(logging.INFO)
 
         async def no_guard(**_):
             return None
@@ -322,6 +352,7 @@ class Route:
 
     def ask(self, case: dict) -> dict:
         self.usage.clear()
+        self.rejected.clear()
         started = time.perf_counter()
         response = self.client.post(
             "/api/workflows/defs/suggest-next",
@@ -343,6 +374,7 @@ class Route:
             "reason": (body.get("detail") or {}).get("reason") if response.status_code != 200 else None,
             "tokens_in": int(usage.get("input_tokens") or 0),
             "tokens_out": int(usage.get("output_tokens") or 0),
+            "rejected": list(self.rejected),
         }
 
 
@@ -415,6 +447,8 @@ def report_markdown(meta: dict, summary: dict, records: list[dict]) -> str:
         f"- Le modèle propose le bon type dans {_pct(s['ai_hit_pct'])} des appels ; "
         f"{s['ai_suggestions_avg']} proposition(s) retenue(s) par réponse en moyenne.",
         f"- Réponses utilisables : {_pct(s['answered_pct'])} ; échecs : {s['failures'] or 'aucun'}.",
+        f"- Propositions écartées par la validation : {_pct(s['rejected_pct'])} "
+        f"({sum(s['rejected_reasons'].values())}) — {_top(s['rejected_reasons'])}.",
         f"- Branche à câbler juste : {_pct(s['route_ok_pct'])} (calculée par le serveur, pas par le modèle).",
         f"- Configuration, quand le modèle a le bon type : bon agent {_pct(s['config_agent_ok_pct'])}, "
         f"lit le nœud source {_pct(s['config_reads_source_pct'])}.",
@@ -446,6 +480,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--fx-date", default="", help="date du taux BCE cité")
     parser.add_argument("--rules-source", default="apowerb-ui src/lib/nextNodeSuggestions.js")
     parser.add_argument("--out", type=Path, default=HERE / "results")
+    parser.add_argument("--label", default="", help="suffixe du rapport, pour garder les runs précédents")
     parser.add_argument("--dump-cases", type=Path, help="écrit les cas (pour rules_parity.mjs) et s'arrête")
     parser.add_argument("--check-parity", type=Path, help="compare la sortie de rules_parity.mjs et s'arrête")
     args = parser.parse_args(argv)
@@ -478,7 +513,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "fx": f"1 € = {args.usd_per_eur} $, BCE {args.fx_date}" if args.usd_per_eur else "pas de taux BCE fourni",
     }
     args.out.mkdir(parents=True, exist_ok=True)
-    stem = f"{meta['date']}-{route.model.replace('/', '_')}"
+    stem = f"{meta['date']}-{route.model.replace('/', '_')}" + (f"-{args.label}" if args.label else "")
     (args.out / f"{stem}.json").write_text(
         json.dumps({"meta": meta, "summary": summary, "records": records}, ensure_ascii=False, indent=1),
         encoding="utf-8",

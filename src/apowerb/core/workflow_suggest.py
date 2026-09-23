@@ -28,6 +28,8 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from apowerb.core.workflow_graph import (
+    CONVERT_TARGETS,
+    EXTRACT_FIELD_TYPES,
     GraphError,
     Node,
     WorkflowGraph,
@@ -37,21 +39,82 @@ from apowerb.core.workflow_graph import (
 
 logger = logging.getLogger(__name__)
 
-# Ce que le modèle peut proposer. Exclus : trigger (un seul par workflow),
-# approval (pas encore exécutable), tool/http (le modèle inventerait un outil
-# ou une URL), loop/try/subworkflow/merge (des structures, pas une étape).
-SUGGESTIBLE_TYPES = (
-    "agent",
-    "classifier",
-    "router",
-    "condition",
-    "convert",
-    "extract",
-    "rag",
-    "set",
-    "notification",
-    "output",
-)
+# Ce que le modèle peut proposer, et la forme minimale de la configuration de
+# chaque type telle que ``validate_node`` l'accepte : une règle en clair et un
+# exemple. Le prompt est construit à partir de cette table (roadmap#89) ; sans
+# elle, le banc #86 voyait 101 propositions sur 132 appels écartées faute de
+# canal, de règles, de champs ou de requête.
+#
+# Exclus : trigger (un seul par workflow), approval (pas encore exécutable),
+# tool/http (le modèle inventerait un outil ou une URL), loop/try/subworkflow/
+# merge (des structures, pas une étape).
+SELECTED = "SELECTED"
+_AGENT = "AGENT_ID"
+# Les opérateurs que ``evaluate_rule`` sait exécuter.
+RULE_OPS = ("eq", "ne", "gt", "gte", "lt", "lte", "contains", "in", "exists")
+_RULE = f"field (a template), op ({', '.join(RULE_OPS)}), value"
+CONFIG_SHAPES: dict[str, tuple[str, dict]] = {
+    "agent": (
+        "agent_id from the agents list; input is the text the agent receives",
+        {"agent_id": _AGENT, "input": f"{{{{{SELECTED}}}}}"},
+    ),
+    "classifier": (
+        "agent_id; input; routes: at least two, each {route, description}",
+        {
+            "agent_id": _AGENT,
+            "input": f"{{{{{SELECTED}}}}}",
+            "routes": [
+                {"route": "billing", "description": "invoices and payments"},
+                {"route": "other", "description": "anything else"},
+            ],
+        },
+    ),
+    "router": (
+        f"rules: at least one {{route, {_RULE}}}, tried in order; default_route when none matches",
+        {
+            "rules": [
+                {"route": "urgent", "field": f"{{{{{SELECTED}.priority}}}}", "op": "eq", "value": "high"}
+            ],
+            "default_route": "normal",
+        },
+    ),
+    "condition": (
+        f"rules: at least one {{{_RULE}}}; match: all or any; its branches are true and false",
+        {"rules": [{"field": f"{{{{{SELECTED}.amount}}}}", "op": "gt", "value": 1000}], "match": "all"},
+    ),
+    "convert": (
+        f"to: one of {', '.join(CONVERT_TARGETS)}; input",
+        {"to": "json", "input": f"{{{{{SELECTED}}}}}"},
+    ),
+    "extract": (
+        "agent_id; input; fields: 1 to 30 {name, type, description, required}, "
+        f"name an identifier (letters, digits, _), type one of {', '.join(EXTRACT_FIELD_TYPES)}",
+        {
+            "agent_id": _AGENT,
+            "input": f"{{{{{SELECTED}}}}}",
+            "fields": [
+                {"name": "amount", "type": "number", "description": "total amount", "required": True}
+            ],
+        },
+    ),
+    "rag": (
+        "agent_id; query: the text to search the documents for",
+        {"agent_id": _AGENT, "query": f"{{{{{SELECTED}}}}}"},
+    ),
+    "set": (
+        "fields: at least one {key, value}, keys unique",
+        {"fields": [{"key": "status", "value": "done"}]},
+    ),
+    "notification": (
+        'channel "app" only (it notifies the workflow owner, so no "to"); subject; body',
+        {"channel": "app", "subject": "New request", "body": f"{{{{{SELECTED}}}}}"},
+    ),
+    "output": (
+        "value: what the workflow returns",
+        {"value": f"{{{{{SELECTED}}}}}"},
+    ),
+}
+SUGGESTIBLE_TYPES = tuple(CONFIG_SHAPES)
 _NEEDS_AGENT = {"agent", "classifier", "extract", "rag"}
 MAX_SUGGESTIONS = 2
 USAGE_AGENT_NAME = "workflow_suggest"
@@ -63,16 +126,32 @@ _MAX_AGENTS = 50
 _SYSTEM = (
     "You help build an automation workflow, one node at a time. Given the "
     "workflow description, its nodes and the user's agents, propose at most "
-    f"{MAX_SUGGESTIONS} nodes to add right after the selected node. Allowed "
-    f"types: {', '.join(SUGGESTIBLE_TYPES)}. Each node must be complete and "
-    "runnable: agent, classifier, extract and rag need an agent_id taken from "
-    "the agents list; a classifier needs at least two routes; templates "
-    "reference an upstream node output as {{node_id}} or {{node_id.field}}. "
-    "Never invent URLs, e-mail addresses or agents. Answer with JSON only: "
+    f"{MAX_SUGGESTIONS} nodes to add right after the selected node. Each node "
+    "must be complete and runnable, with a config of this shape (the examples "
+    f"read the selected node, {{{{{SELECTED}}}}}; {_AGENT} stands for an agent_id "
+    "taken from the agents list):\n"
+    + "\n".join(
+        f"- {node_type}: {rule}. Example: {json.dumps(example)}"
+        for node_type, (rule, example) in CONFIG_SHAPES.items()
+    )
+    + "\nThe new node reads the selected node's output: reference it as "
+    f"{{{{{SELECTED}}}}}, or {{{{{SELECTED}.field}}}} for one of its payload_fields "
+    "or fields; another upstream node only when it is the one needed. Never "
+    "invent URLs, e-mail addresses or agents. Answer with JSON only: "
     '{"suggestions": [{"type": "...", "label": "...", "config": {...}, '
     '"reason": "one short sentence"}]}. Write label and reason in the '
     "language of the workflow name."
 )
+
+
+def system_prompt(selected: str) -> str:
+    """``_SYSTEM`` avec l'identifiant réel du nœud sélectionné.
+
+    Laissé en jeton ``SELECTED``, l'exemple était recopié tel quel par le
+    modèle : 39 % des propositions du banc #89 lisaient ``{{SELECTED}}`` et la
+    route les écartait (référence hors amont).
+    """
+    return _SYSTEM.replace(SELECTED, selected)
 
 
 class SuggestUnavailable(Exception):
@@ -378,7 +457,7 @@ async def suggest_next(
     )
     kwargs = _completion_kwargs(
         [
-            {"role": "system", "content": _SYSTEM},
+            {"role": "system", "content": system_prompt(node_id)},
             {"role": "user", "content": json.dumps(view, ensure_ascii=False)},
         ]
     )

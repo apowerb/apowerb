@@ -1,0 +1,8385 @@
+{
+ "meta": {
+  "date": "2026-09-23",
+  "model": "gemini/gemini-2.5-flash",
+  "timeout_s": 4.0,
+  "repeats": 3,
+  "rules_source": "apowerb-ui src/lib/nextNodeSuggestions.js",
+  "fx": "1 € = 1.1463 $, BCE 2026-09-22"
+ },
+ "summary": {
+  "calls": 132,
+  "cases": 44,
+  "rules_top3_pct": 63.6,
+  "merged_top3_pct": 83.3,
+  "merged_top3_by_repeat_pct": [
+   81.8,
+   84.1,
+   84.1
+  ],
+  "gain_points": 19.7,
+  "rules_top1_pct": 31.8,
+  "merged_top1_pct": 68.2,
+  "ai_hit_pct": 83.3,
+  "answered_pct": 100.0,
+  "failures": {},
+  "rejected_pct": 0.4,
+  "rejected_reasons": {
+   "set écartée : référence hors amont": 1
+  },
+  "ai_suggestions_avg": 1.76,
+  "route_ok_pct": 100.0,
+  "config_agent_ok_pct": 100.0,
+  "config_reads_source_pct": 56.4,
+  "latency_p50_s": 1.386,
+  "latency_p95_s": 2.154,
+  "latency_max_s": 2.906,
+  "tokens_in_avg": 1235.2,
+  "tokens_out_avg": 204.5,
+  "cost_usd_per_call": 0.0008818,
+  "cost_eur_per_call": 0.0007693,
+  "go": true
+ },
+ "records": [
+  {
+   "case": "support-triage/trigger1->classifier1",
+   "repeat": 1,
+   "expected": {
+    "type": "classifier",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.63,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "classifier",
+     "label": "Classify message",
+     "config": {
+      "agent_id": "agent1",
+      "input": "{{trigger1.body}}",
+      "routes": [
+       {
+        "route": "billing",
+        "description": "invoices and payments"
+       },
+       {
+        "route": "technical issue",
+        "description": "problems with the product or service"
+       },
+       {
+        "route": "other",
+        "description": "anything else"
+       }
+      ]
+     },
+     "reason": "The workflow needs to sort incoming support messages, and a classifier agent is ideal for this task."
+    },
+    {
+     "type": "agent",
+     "label": "Summarize message",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{trigger1.body}}"
+     },
+     "reason": "Summarizing the message can help in quickly understanding the core issue before further processing."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1147,
+   "tokens_out": 255,
+   "rejected": [],
+   "cost_usd": 0.0009816,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "classifier",
+     "agent",
+     "convert"
+    ],
+    "ai_types": [
+     "classifier",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "billing"
+   },
+   "status": 200,
+   "latency_s": 1.411,
+   "route": "billing",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft billing reply",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Draft a polite answer to the customer about a billing issue. The original message was: {{trigger1.body}}"
+     },
+     "reason": "Draft an answer for billing inquiries using the 'Reply writer' agent."
+    },
+    {
+     "type": "output",
+     "label": "Output billing route",
+     "config": {
+      "value": "Billing issue detected: {{trigger1.body}}"
+     },
+     "reason": "Provide a clear output for the billing route, indicating the message content."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1205,
+   "tokens_out": 174,
+   "rejected": [],
+   "cost_usd": 0.0007965000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->rag1",
+   "repeat": 1,
+   "expected": {
+    "type": "rag",
+    "route": "technical"
+   },
+   "status": 200,
+   "latency_s": 0.822,
+   "route": "technical",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "{{trigger1.body}}"
+     },
+     "reason": "Draft an answer for technical issues using the Reply writer agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1254,
+   "tokens_out": 84,
+   "rejected": [],
+   "cost_usd": 0.0005862,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": "other"
+   },
+   "status": 200,
+   "latency_s": 1.3,
+   "route": "other",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft 'other' answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "The customer message is about: {{classifier1.route}}. Original message: {{trigger1.body}}"
+     },
+     "reason": "Draft an answer for 'other' inquiries using the reply writer agent."
+    },
+    {
+     "type": "notification",
+     "label": "Notify support team",
+     "config": {
+      "channel": "app",
+      "subject": "New 'other' support request",
+      "body": "A new support request classified as 'other' has arrived. Please review: {{trigger1.body}}"
+     },
+     "reason": "Notify the support team about 'other' inquiries that might need manual handling."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1304,
+   "tokens_out": 207,
+   "rejected": [],
+   "cost_usd": 0.0009087,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.701,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Answer",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow should output the drafted answer for billing inquiries."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1350,
+   "tokens_out": 69,
+   "rejected": [],
+   "cost_usd": 0.0005775,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/rag1->agent2",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.236,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "The customer's message: {{trigger1.body}}\n\nHere is the relevant information from our knowledge base: {{rag1}}"
+     },
+     "reason": "After finding relevant information, an agent can draft an answer to the customer."
+    },
+    {
+     "type": "output",
+     "label": "Output search results",
+     "config": {
+      "value": "{{rag1}}"
+     },
+     "reason": "If no further processing is needed, the search results can be directly returned as the workflow output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1377,
+   "tokens_out": 179,
+   "rejected": [],
+   "cost_usd": 0.0008606,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "output"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent2->output2",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.741,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output the answer",
+     "config": {
+      "value": "{{agent2}}"
+     },
+     "reason": "The workflow needs to output the drafted answer to the user."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1420,
+   "tokens_out": 72,
+   "rejected": [],
+   "cost_usd": 0.000606,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/trigger1->extract1",
+   "repeat": 1,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.916,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extract invoice details",
+     "config": {
+      "agent_id": "agent3",
+      "input": "{{trigger1.text}}",
+      "fields": [
+       {
+        "name": "supplier",
+        "type": "string",
+        "description": "Name of the supplier",
+        "required": true
+       },
+       {
+        "name": "amount",
+        "type": "number",
+        "description": "Total amount of the invoice",
+        "required": true
+       },
+       {
+        "name": "due_date",
+        "type": "string",
+        "description": "Due date of the invoice",
+        "required": false
+       }
+      ]
+     },
+     "reason": "The workflow needs to read supplier invoices, so extracting details like supplier, amount, and due date is the logical next step using the 'Invoice reader' agent."
+    },
+    {
+     "type": "condition",
+     "label": "Check if amount is large",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger1.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "After extracting the invoice amount, the workflow needs to check if it's a 'large one' to determine if approval is needed, making a condition node appropriate."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1152,
+   "tokens_out": 363,
+   "rejected": [],
+   "cost_usd": 0.0012531,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "condition",
+     "agent"
+    ],
+    "ai_types": [
+     "extract",
+     "condition"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/extract1->condition1",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.491,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Is the amount large?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{extract1.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description mentions checking the amount and asking for approval of large ones, so a condition node is needed to check the amount."
+    },
+    {
+     "type": "output",
+     "label": "Output invoice details",
+     "config": {
+      "value": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}"
+      }
+     },
+     "reason": "If the amount is not large, the workflow might simply output the extracted invoice details."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1210,
+   "tokens_out": 235,
+   "rejected": [],
+   "cost_usd": 0.0009505,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "condition",
+     "output",
+     "notification"
+    ],
+    "ai_types": [
+     "condition",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.382,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Ask for approval",
+     "config": {
+      "channel": "app",
+      "subject": "Invoice approval needed for {{extract1.supplier}}",
+      "body": "An invoice for {{extract1.amount}} from {{extract1.supplier}} is over 5000 and requires your approval. Due date: {{extract1.due_date}}."
+     },
+     "reason": "When an invoice is over 5000, the workflow should notify someone to ask for approval."
+    },
+    {
+     "type": "set",
+     "label": "Set status to 'pending approval'",
+     "config": {
+      "fields": [
+       {
+        "key": "status",
+        "value": "pending approval"
+       }
+      ]
+     },
+     "reason": "Setting a status helps track the state of the invoice in the workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1258,
+   "tokens_out": 231,
+   "rejected": [],
+   "cost_usd": 0.0009549,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "set",
+     "output"
+    ],
+    "ai_types": [
+     "notification",
+     "set"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->set1",
+   "repeat": 1,
+   "expected": {
+    "type": "set",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.347,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output invoice details",
+     "config": {
+      "value": "{{extract1}}"
+     },
+     "reason": "If the invoice amount is not over 5000, the workflow can simply output the extracted invoice details as the final result."
+    },
+    {
+     "type": "notification",
+     "label": "Notify about small invoice",
+     "config": {
+      "channel": "app",
+      "subject": "Invoice Processed (Small Amount)",
+      "body": "Invoice from {{extract1.supplier}} for {{extract1.amount}} due on {{extract1.due_date}} has been processed."
+     },
+     "reason": "Notify the workflow owner that a small invoice has been processed without requiring approval."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1305,
+   "tokens_out": 198,
+   "rejected": [],
+   "cost_usd": 0.0008864999999999999,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "notification",
+     "agent"
+    ],
+    "ai_types": [
+     "output",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/set1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.968,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "value": {
+       "status": "{{set1.status}}",
+       "supplier": "{{set1.supplier}}",
+       "amount": "{{extract1.amount}}"
+      }
+     },
+     "reason": "The workflow has processed the invoice and marked it as approved, so the next logical step is to output the result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1353,
+   "tokens_out": 116,
+   "rejected": [],
+   "cost_usd": 0.0006959,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/trigger1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.01,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extraire les informations du message",
+     "config": {
+      "agent_id": "agent6",
+      "input": "{{trigger1.message}}",
+      "fields": [
+       {
+        "name": "company_size",
+        "type": "string",
+        "description": "La taille de l'entreprise du lead (ex: PME, grande entreprise, startup)",
+        "required": false
+       },
+       {
+        "name": "project_scope",
+        "type": "string",
+        "description": "La description du projet ou du besoin exprimé par le lead",
+        "required": true
+       },
+       {
+        "name": "timeline",
+        "type": "string",
+        "description": "Le délai envisagé pour le projet",
+        "required": false
+       }
+      ]
+     },
+     "reason": "Pour qualifier un lead, il est essentiel d'extraire des informations structurées du message libre."
+    },
+    {
+     "type": "agent",
+     "label": "Qualifier le lead",
+     "config": {
+      "agent_id": "agent6",
+      "input": "Budget: {{trigger1.budget}}\nEntreprise: {{trigger1.company}}\nMessage: {{trigger1.message}}"
+     },
+     "reason": "L'agent 'Lead qualifier' est conçu pour évaluer la qualité d'un lead, ce qui est l'objectif principal de ce workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1141,
+   "tokens_out": 366,
+   "rejected": [],
+   "cost_usd": 0.0012573,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "extract",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/agent1->convert1",
+   "repeat": 1,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.084,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extraire le score",
+     "config": {
+      "agent_id": "agent6",
+      "input": "{{agent1}}",
+      "fields": [
+       {
+        "name": "score",
+        "type": "number",
+        "description": "Score du lead de 0 à 100",
+        "required": true
+       },
+       {
+        "name": "explanation",
+        "type": "string",
+        "description": "Explication du score",
+        "required": true
+       }
+      ]
+     },
+     "reason": "Extrait le score et l'explication du lead qualifié par l'agent pour une utilisation ultérieure."
+    },
+    {
+     "type": "notification",
+     "label": "Notifier le nouveau lead",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead qualifié",
+      "body": "Un nouveau lead a été qualifié avec le score : {{agent1}}"
+     },
+     "reason": "Notifie l'utilisateur du workflow qu'un nouveau lead a été qualifié par l'agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1186,
+   "tokens_out": 292,
+   "rejected": [],
+   "cost_usd": 0.0010858,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "extract",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "extract",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/convert1->condition1",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.976,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Le lead est-il qualifié ?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{convert1.score}}",
+        "op": "gte",
+        "value": 70
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "Vérifie si le score du lead est suffisant pour le considérer comme qualifié, permettant ainsi de créer des branches pour les leads qualifiés et non qualifiés."
+    },
+    {
+     "type": "notification",
+     "label": "Notifier le lead qualifié",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead qualifié : {{trigger1.company}}",
+      "body": "Un nouveau lead de {{trigger1.company}} a été qualifié avec un score de {{convert1.score}}.\nBudget : {{trigger1.budget}}\nEmail : {{trigger1.email}}\nMessage : {{trigger1.message}}\nExplication : {{convert1.explanation}}"
+     },
+     "reason": "Envoie une notification interne pour informer de l'arrivée d'un lead qualifié, incluant les détails pertinents du lead."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1227,
+   "tokens_out": 303,
+   "rejected": [],
+   "cost_usd": 0.0011256,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "condition",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "condition",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.598,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notifier le commercial",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead chaud : {{trigger1.company}}",
+      "body": "Un nouveau lead chaud de {{trigger1.company}} a été identifié. Budget : {{trigger1.budget}}, Email : {{trigger1.email}}, Message : {{trigger1.message}}"
+     },
+     "reason": "Notifier le commercial pour qu'il puisse prendre contact avec le lead chaud."
+    },
+    {
+     "type": "output",
+     "label": "Retourner le lead qualifié",
+     "config": {
+      "value": {
+       "status": "hot",
+       "company": "{{trigger1.company}}",
+       "email": "{{trigger1.email}}",
+       "budget": "{{trigger1.budget}}",
+       "message": "{{trigger1.message}}",
+       "score": "{{convert1.score}}"
+      }
+     },
+     "reason": "Retourner les informations du lead qualifié comme 'chaud' pour les systèmes en aval."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1271,
+   "tokens_out": 275,
+   "rejected": [],
+   "cost_usd": 0.0010688,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.587,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Prévenir le marketing",
+     "config": {
+      "channel": "app",
+      "subject": "Lead froid détecté",
+      "body": "Un lead froid a été détecté. Score: {{convert1.score}}. Raison: {{convert1.reason}}"
+     },
+     "reason": "Notifier l'équipe marketing qu'un lead est froid pour une éventuelle action de nurturing."
+    },
+    {
+     "type": "output",
+     "label": "Fin du workflow (lead froid)",
+     "config": {
+      "value": {
+       "status": "cold_lead",
+       "score": "{{convert1.score}}",
+       "reason": "{{convert1.reason}}"
+      }
+     },
+     "reason": "Terminer le workflow en indiquant que le lead est froid et en fournissant les détails de la qualification."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1319,
+   "tokens_out": 226,
+   "rejected": [],
+   "cost_usd": 0.0009607000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/trigger1->http1",
+   "repeat": 1,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.324,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify workflow started",
+     "config": {
+      "channel": "app",
+      "subject": "Daily sales digest workflow started",
+      "body": "The daily sales digest workflow has started."
+     },
+     "reason": "It's good practice to notify when a scheduled workflow starts, especially for daily tasks."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1139,
+   "tokens_out": 192,
+   "rejected": [
+    "set écartée : référence hors amont"
+   ],
+   "cost_usd": 0.0008217000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "notification",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/http1->convert1",
+   "repeat": 1,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.156,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarize orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{http1}}"
+     },
+     "reason": "The workflow aims to summarise yesterday's orders, and this agent is designed for summarisation."
+    },
+    {
+     "type": "notification",
+     "label": "Notify team",
+     "config": {
+      "channel": "app",
+      "subject": "Daily Sales Digest",
+      "body": "Yesterday's orders: {{http1}}"
+     },
+     "reason": "After fetching orders, the next logical step is to notify the team, which can be done with a notification node."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1179,
+   "tokens_out": 184,
+   "rejected": [],
+   "cost_usd": 0.0008137,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/convert1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.792,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarize orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{convert1}}"
+     },
+     "reason": "The workflow aims to summarise daily sales, so an agent to summarise the parsed orders is the next logical step."
+    },
+    {
+     "type": "extract",
+     "label": "Extract order details",
+     "config": {
+      "agent_id": "agent9",
+      "input": "{{convert1}}",
+      "fields": [
+       {
+        "name": "total_orders",
+        "type": "number",
+        "description": "The total number of orders.",
+        "required": true
+       },
+       {
+        "name": "total_revenue",
+        "type": "number",
+        "description": "The total revenue from all orders.",
+        "required": true
+       },
+       {
+        "name": "top_selling_product",
+        "type": "string",
+        "description": "The name of the best-selling product.",
+        "required": false
+       }
+      ]
+     },
+     "reason": "To create a sales digest, specific details like total orders, revenue, and top products need to be extracted from the parsed order data."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1218,
+   "tokens_out": 321,
+   "rejected": [],
+   "cost_usd": 0.0011679,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "agent",
+     "extract",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "extract"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/agent1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.174,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Email team",
+     "config": {
+      "channel": "app",
+      "subject": "Daily Sales Digest",
+      "body": "{{agent1}}"
+     },
+     "reason": "After summarizing the sales, the next logical step is to email the team with the digest."
+    },
+    {
+     "type": "output",
+     "label": "Return digest",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "If the digest is not to be emailed, it should be returned as the workflow's output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1261,
+   "tokens_out": 162,
+   "rejected": [],
+   "cost_usd": 0.0007833,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/notification1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.225,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output summary",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow's purpose is to summarise daily sales; outputting the summary makes it available to other systems."
+    },
+    {
+     "type": "set",
+     "label": "Set status",
+     "config": {
+      "fields": [
+       {
+        "key": "status",
+        "value": "completed"
+       }
+      ]
+     },
+     "reason": "Setting a status field can indicate the successful completion of the daily digest process."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1302,
+   "tokens_out": 165,
+   "rejected": [],
+   "cost_usd": 0.0008031000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output",
+     "set"
+    ],
+    "ai_types": [
+     "output",
+     "set"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/trigger1->rag1",
+   "repeat": 1,
+   "expected": {
+    "type": "rag",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.296,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "rag",
+     "label": "Rechercher dans la base de connaissances",
+     "config": {
+      "agent_id": "agent5",
+      "query": "{{trigger1.question}}"
+     },
+     "reason": "La première étape pour répondre à une question FAQ est de rechercher la réponse dans la base de connaissances."
+    },
+    {
+     "type": "agent",
+     "label": "Rédiger une réponse",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Rédigez une réponse polie à la question du client : {{trigger1.question}}"
+     },
+     "reason": "Si la base de connaissances ne suffit pas, un agent peut rédiger une réponse directe à la question du client."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1148,
+   "tokens_out": 199,
+   "rejected": [],
+   "cost_usd": 0.0008419,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "rag",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "rag",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/rag1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.189,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Rédiger la réponse",
+     "config": {
+      "agent_id": "agent2",
+      "input": "{{rag1}}"
+     },
+     "reason": "Après avoir trouvé la réponse dans la documentation, l'étape logique est de la rédiger pour le client."
+    },
+    {
+     "type": "output",
+     "label": "Retourner la réponse",
+     "config": {
+      "value": "{{rag1}}"
+     },
+     "reason": "Si la réponse de la base de connaissances est suffisante, le workflow peut la retourner directement."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1194,
+   "tokens_out": 162,
+   "rejected": [],
+   "cost_usd": 0.0007632,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/agent1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.822,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Réponse au client",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "Le but du workflow est de répondre à la question du client, donc la dernière étape est de retourner la réponse rédigée."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1240,
+   "tokens_out": 87,
+   "rejected": [],
+   "cost_usd": 0.0005895,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/trigger1->extract1",
+   "repeat": 1,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.515,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extract contract terms",
+     "config": {
+      "agent_id": "agent8",
+      "input": "{{trigger1.contract_text}}",
+      "fields": [
+       {
+        "name": "contract_type",
+        "type": "string",
+        "description": "Type of contract (e.g., NDA, Service Agreement, Lease)",
+        "required": true
+       },
+       {
+        "name": "parties",
+        "type": "list",
+        "description": "List of all parties involved in the contract",
+        "required": true
+       },
+       {
+        "name": "effective_date",
+        "type": "string",
+        "description": "The date the contract becomes effective",
+        "required": true
+       },
+       {
+        "name": "termination_date",
+        "type": "string",
+        "description": "The date the contract terminates, if applicable",
+        "required": false
+       },
+       {
+        "name": "governing_law",
+        "type": "string",
+        "description": "The jurisdiction whose laws govern the contract",
+        "required": true
+       },
+       {
+        "name": "risky_clauses",
+        "type": "list",
+        "description": "List of clauses identified as risky, with an explanation for each",
+        "required": false
+       }
+      ]
+     },
+     "reason": "The workflow's purpose is to extract key terms and flag risky clauses, which directly aligns with the 'Contract reviewer' agent's capabilities."
+    },
+    {
+     "type": "agent",
+     "label": "Review contract for risks",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for key terms and identify any risky clauses, explaining why they are risky:\n\n{{trigger1.contract_text}}"
+     },
+     "reason": "This node directly uses the 'Contract reviewer' agent to fulfill the core objective of the workflow: identifying risky clauses in the uploaded contract."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1145,
+   "tokens_out": 507,
+   "rejected": [],
+   "cost_usd": 0.0016110000000000002,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "extract",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/extract1->router1",
+   "repeat": 1,
+   "expected": {
+    "type": "router",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.685,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Flag risky clauses",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for risky clauses:\n\n{{trigger1.contract_text}}\n\nExtracted terms:\nParty: {{extract1.party}}\nEnd Date: {{extract1.end_date}}\nLiability Cap: {{extract1.liability_cap}}\nAuto Renewal: {{extract1.auto_renewal}}"
+     },
+     "reason": "The workflow description mentions flagging risky clauses, and agent8 is designed for contract review."
+    },
+    {
+     "type": "output",
+     "label": "Output extracted terms",
+     "config": {
+      "value": {
+       "party": "{{extract1.party}}",
+       "end_date": "{{extract1.end_date}}",
+       "liability_cap": "{{extract1.liability_cap}}",
+       "auto_renewal": "{{extract1.auto_renewal}}"
+      }
+     },
+     "reason": "The extracted key terms are a primary output of this workflow, so they should be returned."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1209,
+   "tokens_out": 282,
+   "rejected": [],
+   "cost_usd": 0.0010677,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "risky"
+   },
+   "status": 200,
+   "latency_s": 1.495,
+   "route": "risky",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review risky clauses",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for risky clauses:\n\n{{trigger1.contract_text}}"
+     },
+     "reason": "The 'risky' branch implies a need for a detailed review of the contract text to identify and explain risky clauses, which agent8 is designed to do."
+    },
+    {
+     "type": "notification",
+     "label": "Notify legal team",
+     "config": {
+      "channel": "app",
+      "subject": "Risky contract detected",
+      "body": "A contract with counterparty {{trigger1.counterparty}} has been flagged as risky. Please review. Key terms extracted: {{extract1}}"
+     },
+     "reason": "When a contract is identified as risky, it's crucial to notify the relevant team (e.g., legal) for further action."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1255,
+   "tokens_out": 241,
+   "rejected": [],
+   "cost_usd": 0.000979,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "standard"
+   },
+   "status": 200,
+   "latency_s": 1.452,
+   "route": "standard",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output contract details",
+     "config": {
+      "value": "{{extract1}}"
+     },
+     "reason": "The 'standard' branch indicates the contract is not risky, so its extracted details can be outputted directly."
+    },
+    {
+     "type": "notification",
+     "label": "Notify contract reviewed",
+     "config": {
+      "channel": "app",
+      "subject": "Contract reviewed: {{trigger1.counterparty}}",
+      "body": "The contract with {{trigger1.counterparty}} has been reviewed and deemed standard. Key terms: {{extract1}}"
+     },
+     "reason": "Notify the user that a standard contract has been reviewed and include its key terms."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1305,
+   "tokens_out": 192,
+   "rejected": [],
+   "cost_usd": 0.0008715000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "notification",
+     "agent"
+    ],
+    "ai_types": [
+     "output",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/agent1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.198,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "Contract risk identified",
+      "body": "A contract has been flagged as risky. Details: {{agent1}}"
+     },
+     "reason": "After explaining the risk, it's important to notify the workflow owner about the identified risk."
+    },
+    {
+     "type": "output",
+     "label": "Output risk explanation",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow should output the explanation of the risk as its final result for risky contracts."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1337,
+   "tokens_out": 172,
+   "rejected": [],
+   "cost_usd": 0.0008311,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/trigger1->condition1",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.192,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Vérifier la langue",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger1.language}}",
+        "op": "eq",
+        "value": "fr"
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "Vérifie si le ticket est déjà en français pour éviter une traduction inutile."
+    },
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input": "{{trigger1.text}}"
+     },
+     "reason": "Traduit le texte du ticket en français pour le traitement ultérieur."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1140,
+   "tokens_out": 197,
+   "rejected": [],
+   "cost_usd": 0.0008345,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "condition",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "condition",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.167,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input": "{{trigger1.text}}"
+     },
+     "reason": "Le ticket n'est pas en français, il faut donc le traduire en utilisant l'agent de traduction."
+    },
+    {
+     "type": "output",
+     "label": "Retourner le ticket original",
+     "config": {
+      "value": "{{trigger1.text}}"
+     },
+     "reason": "Si aucune traduction n'est nécessaire ou possible, le workflow peut retourner le texte original du ticket."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1185,
+   "tokens_out": 169,
+   "rejected": [],
+   "cost_usd": 0.000778,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 0.777,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Retourner le ticket original",
+     "config": {
+      "value": "{{trigger1}}"
+     },
+     "reason": "Si le ticket est déjà en français, il n'a pas besoin d'être traduit et peut être retourné tel quel."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1235,
+   "tokens_out": 88,
+   "rejected": [],
+   "cost_usd": 0.0005905,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/agent1->output2",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.849,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Retourner la traduction",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "Le but du workflow est de traduire le ticket, donc l'étape suivante est de retourner la traduction."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1267,
+   "tokens_out": 82,
+   "rejected": [],
+   "cost_usd": 0.0005851,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/trigger1->set1",
+   "repeat": 1,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.784,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify new customer",
+     "config": {
+      "channel": "app",
+      "subject": "New customer signed up: {{trigger1.company}}",
+      "body": "A new customer, {{trigger1.company}}, has signed up for the {{trigger1.plan}} plan. Their email is {{trigger1.email}}."
+     },
+     "reason": "It's important to notify the workflow owner about a new customer signup to keep them informed."
+    },
+    {
+     "type": "set",
+     "label": "Set onboarding status",
+     "config": {
+      "fields": [
+       {
+        "key": "onboarding_status",
+        "value": "started"
+       },
+       {
+        "key": "customer_company",
+        "value": "{{trigger1.company}}"
+       },
+       {
+        "key": "customer_email",
+        "value": "{{trigger1.email}}"
+       },
+       {
+        "key": "customer_plan",
+        "value": "{{trigger1.plan}}"
+       }
+      ]
+     },
+     "reason": "Setting initial status and customer details helps track the onboarding process and makes data available for subsequent nodes."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1151,
+   "tokens_out": 308,
+   "rejected": [],
+   "cost_usd": 0.0011153,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "notification",
+     "set",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "set"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/set1->http1",
+   "repeat": 1,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.825,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Register in CRM",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Register the new customer with company name: {{set1.company}}, email: {{trigger1.email}}, and plan: {{set1.plan}} in the CRM. Draft a welcome message for them."
+     },
+     "reason": "The workflow needs to register the new customer in the CRM and draft a welcome message, which an agent can handle."
+    },
+    {
+     "type": "notification",
+     "label": "Notify new customer",
+     "config": {
+      "channel": "app",
+      "subject": "New customer signed up: {{set1.company}}",
+      "body": "A new customer, {{set1.company}}, has signed up for the {{set1.plan}} plan. Email: {{trigger1.email}}."
+     },
+     "reason": "It's good practice to notify the workflow owner about new customer sign-ups for monitoring."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1194,
+   "tokens_out": 255,
+   "rejected": [],
+   "cost_usd": 0.0009957,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/http1->agent1",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.626,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "New customer: {{trigger1.company}}",
+      "body": "A new customer {{trigger1.company}} ({{trigger1.email}}) has signed up for the {{trigger1.plan}} plan. CRM response: {{http1}}"
+     },
+     "reason": "It is good practice to notify the workflow owner when a new customer is onboarded, including the CRM response."
+    },
+    {
+     "type": "agent",
+     "label": "Welcome email",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Draft a welcome email to {{trigger1.company}} ({{trigger1.email}}) for their {{trigger1.plan}} plan. Mention that their account has been created in the CRM. CRM response: {{http1}}"
+     },
+     "reason": "Draft a welcome email to the new customer using an agent, incorporating details from the sign-up and CRM creation."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1235,
+   "tokens_out": 262,
+   "rejected": [],
+   "cost_usd": 0.0010255000000000002,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "notification",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/agent1->notification1",
+   "repeat": 1,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.275,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "New customer onboarded",
+      "body": "A new customer {{trigger1.company}} has been onboarded with plan {{trigger1.plan}}."
+     },
+     "reason": "It is good practice to notify the workflow owner when a new customer is onboarded."
+    },
+    {
+     "type": "output",
+     "label": "Workflow output",
+     "config": {
+      "value": "Customer {{trigger1.company}} onboarded successfully."
+     },
+     "reason": "The workflow should return a confirmation message after onboarding the customer."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1278,
+   "tokens_out": 181,
+   "rejected": [],
+   "cost_usd": 0.0008359000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/notification1->output1",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.999,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Workflow output",
+     "config": {
+      "value": "Customer onboarding complete for {{trigger1.company}}."
+     },
+     "reason": "The workflow has completed its main tasks, so it's appropriate to define its final output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1319,
+   "tokens_out": 86,
+   "rejected": [],
+   "cost_usd": 0.0006107,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/trigger->order",
+   "repeat": 1,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.037,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Order amount > 1000",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description states that orders above 1,000 are reviewed by an agent, so a condition node is needed to check the order amount."
+    },
+    {
+     "type": "extract",
+     "label": "Extract order details",
+     "config": {
+      "agent_id": "agent9",
+      "input": "{{trigger}}",
+      "fields": [
+       {
+        "name": "amount",
+        "type": "number",
+        "description": "Total amount of the order",
+        "required": true
+       },
+       {
+        "name": "items",
+        "type": "list",
+        "description": "List of items in the order",
+        "required": false
+       },
+       {
+        "name": "customer_id",
+        "type": "string",
+        "description": "ID of the customer who placed the order",
+        "required": false
+       }
+      ]
+     },
+     "reason": "To properly review an order, it's essential to extract key details like the amount, items, and customer information from the incoming webhook data."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1119,
+   "tokens_out": 362,
+   "rejected": [],
+   "cost_usd": 0.0012407,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "condition",
+     "extract",
+     "agent"
+    ],
+    "ai_types": [
+     "condition",
+     "extract"
+    ]
+   }
+  },
+  {
+   "case": "order-review/order->big",
+   "repeat": 1,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.165,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Check order amount",
+     "config": {
+      "rules": [
+       {
+        "field": "{{order.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description states that orders above 1,000 are reviewed by an agent, so a condition node is needed to check the order amount."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1152,
+   "tokens_out": 134,
+   "rejected": [],
+   "cost_usd": 0.0006806,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "condition",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "condition"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->review",
+   "repeat": 1,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.456,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "input": "{{order}}"
+     },
+     "reason": "The workflow description states that orders above 1,000 should be reviewed by an agent, and 'big' node's 'true' branch means the order is above 1,000."
+    },
+    {
+     "type": "notification",
+     "label": "Notify owner of large order",
+     "config": {
+      "channel": "app",
+      "subject": "Large order received",
+      "body": "A large order has been received and requires review. Order details: {{order}}"
+     },
+     "reason": "It's good practice to notify the workflow owner when a significant event, like a large order, occurs, especially if it requires manual review."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1186,
+   "tokens_out": 222,
+   "rejected": [],
+   "cost_usd": 0.0009108,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->skip",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 0.891,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output order",
+     "config": {
+      "value": "{{order}}"
+     },
+     "reason": "The 'false' branch of the condition means the order is not large, so it can be directly outputted as processed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1225,
+   "tokens_out": 83,
+   "rejected": [],
+   "cost_usd": 0.000575,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/review->done",
+   "repeat": 1,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.274,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner of review",
+     "config": {
+      "channel": "app",
+      "subject": "Order {{order.id}} reviewed",
+      "body": "Order {{order.id}} has been reviewed. Outcome: {{review}}"
+     },
+     "reason": "It is good practice to notify the workflow owner when a manual review is completed."
+    },
+    {
+     "type": "output",
+     "label": "Output review result",
+     "config": {
+      "value": "{{review}}"
+     },
+     "reason": "The workflow should output the result of the review for further processing or visibility."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1254,
+   "tokens_out": 173,
+   "rejected": [],
+   "cost_usd": 0.0008087000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/trigger1->classifier1",
+   "repeat": 2,
+   "expected": {
+    "type": "classifier",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.84,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "classifier",
+     "label": "Classify message",
+     "config": {
+      "agent_id": "agent1",
+      "input": "{{trigger1.body}}",
+      "routes": [
+       {
+        "route": "billing",
+        "description": "The message is about invoices, payments, or other billing-related queries."
+       },
+       {
+        "route": "technical_issue",
+        "description": "The message describes a technical problem or bug."
+       },
+       {
+        "route": "other",
+        "description": "The message is about something else not covered by billing or technical issues."
+       }
+      ]
+     },
+     "reason": "The workflow needs to sort incoming support messages, and a classifier agent is ideal for this initial triage based on the message body."
+    },
+    {
+     "type": "agent",
+     "label": "Summarize message",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{trigger1.body}}"
+     },
+     "reason": "Summarizing the message body can provide a quick overview for further processing or for drafting a concise response."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1147,
+   "tokens_out": 289,
+   "rejected": [],
+   "cost_usd": 0.0010666,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "classifier",
+     "agent",
+     "convert"
+    ],
+    "ai_types": [
+     "classifier",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "billing"
+   },
+   "status": 200,
+   "latency_s": 1.428,
+   "route": "billing",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft billing reply",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Draft a polite answer for a customer about a billing issue. The original message was: {{trigger1.body}}"
+     },
+     "reason": "Drafts a reply for billing inquiries using the 'Reply writer' agent."
+    },
+    {
+     "type": "notification",
+     "label": "Notify billing team",
+     "config": {
+      "channel": "app",
+      "subject": "New billing inquiry from {{trigger1.from}}",
+      "body": "A new billing inquiry has been received:\nSubject: {{trigger1.subject}}\nBody: {{trigger1.body}}"
+     },
+     "reason": "Notifies the billing team about a new billing inquiry."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1205,
+   "tokens_out": 213,
+   "rejected": [],
+   "cost_usd": 0.000894,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->rag1",
+   "repeat": 2,
+   "expected": {
+    "type": "rag",
+    "route": "technical"
+   },
+   "status": 200,
+   "latency_s": 1.648,
+   "route": "technical",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "{{classifier1}}"
+     },
+     "reason": "Draft an answer for technical issues using the Reply writer agent."
+    },
+    {
+     "type": "rag",
+     "label": "Search knowledge base",
+     "config": {
+      "agent_id": "agent5",
+      "query": "{{trigger1.body}}"
+     },
+     "reason": "Search the knowledge base for answers related to the technical issue described in the original message body."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1254,
+   "tokens_out": 161,
+   "rejected": [],
+   "cost_usd": 0.0007787,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "rag",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "rag"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": "other"
+   },
+   "status": 200,
+   "latency_s": 1.489,
+   "route": "other",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft 'other' answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "The customer message is about: {{classifier1}}. Draft a polite answer."
+     },
+     "reason": "The 'other' route needs an agent to draft a general response, similar to the 'billing' route."
+    },
+    {
+     "type": "notification",
+     "label": "Notify support team",
+     "config": {
+      "channel": "app",
+      "subject": "New 'other' support request",
+      "body": "A new support request classified as 'other' has arrived: {{trigger1.body}}"
+     },
+     "reason": "For 'other' requests, it might be useful to notify the support team for manual handling or further investigation."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1304,
+   "tokens_out": 213,
+   "rejected": [],
+   "cost_usd": 0.0009237000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.8,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow should output the drafted answer for billing inquiries."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1350,
+   "tokens_out": 69,
+   "rejected": [],
+   "cost_usd": 0.0005775,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/rag1->agent2",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.317,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "The customer's message: {{trigger1.body}}\n\nHere is the relevant information from our knowledge base: {{rag1}}"
+     },
+     "reason": "After searching the knowledge base, an agent can draft an answer using the retrieved information and the original message."
+    },
+    {
+     "type": "output",
+     "label": "Output search results",
+     "config": {
+      "value": "{{rag1}}"
+     },
+     "reason": "If no further processing is needed, the search results can be directly returned as the workflow's output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1377,
+   "tokens_out": 187,
+   "rejected": [],
+   "cost_usd": 0.0008806,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "output"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent2->output2",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.077,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output the answer",
+     "config": {
+      "value": "{{agent2}}"
+     },
+     "reason": "The workflow needs to output the drafted answer to the user."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1420,
+   "tokens_out": 72,
+   "rejected": [],
+   "cost_usd": 0.000606,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/trigger1->extract1",
+   "repeat": 2,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.041,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extract invoice details",
+     "config": {
+      "agent_id": "agent3",
+      "input": "{{trigger1.text}}",
+      "fields": [
+       {
+        "name": "supplier",
+        "type": "string",
+        "description": "Name of the supplier",
+        "required": true
+       },
+       {
+        "name": "amount",
+        "type": "number",
+        "description": "Total amount of the invoice",
+        "required": true
+       },
+       {
+        "name": "due_date",
+        "type": "string",
+        "description": "Due date of the invoice",
+        "required": false
+       }
+      ]
+     },
+     "reason": "The workflow needs to read supplier invoices, so extracting details like supplier, amount, and due date is the logical next step using the 'Invoice reader' agent."
+    },
+    {
+     "type": "condition",
+     "label": "Check for large amount",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger1.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description mentions checking the amount and asking for approval of large ones, so a condition to check if the amount is greater than a certain threshold is appropriate."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1152,
+   "tokens_out": 361,
+   "rejected": [],
+   "cost_usd": 0.0012481,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "condition",
+     "agent"
+    ],
+    "ai_types": [
+     "extract",
+     "condition"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/extract1->condition1",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.708,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Is amount large?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{extract1.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "This condition checks if the extracted invoice amount is greater than a certain threshold to determine if it's a 'large' invoice."
+    },
+    {
+     "type": "notification",
+     "label": "Notify about invoice",
+     "config": {
+      "channel": "app",
+      "subject": "New invoice from {{extract1.supplier}}",
+      "body": "An invoice for {{extract1.amount}} from {{extract1.supplier}} is due on {{extract1.due_date}}."
+     },
+     "reason": "This notification informs the workflow owner about the details of the newly processed invoice."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1210,
+   "tokens_out": 242,
+   "rejected": [],
+   "cost_usd": 0.0009680000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "condition",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "condition",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.625,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Ask for approval",
+     "config": {
+      "channel": "app",
+      "subject": "Invoice approval needed: {{extract1.supplier}} for {{extract1.amount}}",
+      "body": "An invoice from {{extract1.supplier}} for {{extract1.amount}} (due {{extract1.due_date}}) requires your approval."
+     },
+     "reason": "When an invoice is over 5000, the workflow should ask for approval."
+    },
+    {
+     "type": "output",
+     "label": "Output invoice details",
+     "config": {
+      "value": {
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}",
+       "status": "pending_approval"
+      }
+     },
+     "reason": "This node outputs the invoice details and its status for further processing."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1258,
+   "tokens_out": 248,
+   "rejected": [],
+   "cost_usd": 0.0009973999999999998,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->set1",
+   "repeat": 2,
+   "expected": {
+    "type": "set",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.068,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "value": "Invoice from {{extract1.supplier}} for {{extract1.amount}} due on {{extract1.due_date}} processed."
+     },
+     "reason": "The workflow should output a confirmation for invoices under 5000 that don't require approval."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1305,
+   "tokens_out": 103,
+   "rejected": [],
+   "cost_usd": 0.0006490000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/set1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.341,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "value": {
+       "status": "{{set1.status}}",
+       "supplier": "{{set1.supplier}}",
+       "amount": "{{extract1.amount}}"
+      }
+     },
+     "reason": "The workflow has processed the invoice and marked it as approved, so it should output the result."
+    },
+    {
+     "type": "notification",
+     "label": "Notify sender",
+     "config": {
+      "channel": "app",
+      "subject": "Invoice processed",
+      "body": "Invoice from {{set1.supplier}} for {{extract1.amount}} has been approved."
+     },
+     "reason": "It is good practice to notify the sender or relevant parties that the invoice has been processed and approved."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1353,
+   "tokens_out": 212,
+   "rejected": [],
+   "cost_usd": 0.0009359000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "notification",
+     "http"
+    ],
+    "ai_types": [
+     "output",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/trigger1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.192,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extraire les informations du message",
+     "config": {
+      "agent_id": "agent6",
+      "input": "{{trigger1.message}}",
+      "fields": [
+       {
+        "name": "project_type",
+        "type": "string",
+        "description": "Le type de projet que le lead souhaite réaliser",
+        "required": false
+       },
+       {
+        "name": "timeline",
+        "type": "string",
+        "description": "Le délai envisagé pour le projet",
+        "required": false
+       }
+      ]
+     },
+     "reason": "Pour qualifier un lead, il est utile d'extraire des informations spécifiques du message du formulaire de contact."
+    },
+    {
+     "type": "agent",
+     "label": "Qualifier le lead",
+     "config": {
+      "agent_id": "agent6",
+      "input": "Budget: {{trigger1.budget}}\nEntreprise: {{trigger1.company}}\nEmail: {{trigger1.email}}\nMessage: {{trigger1.message}}"
+     },
+     "reason": "Utilise l'agent 'Lead qualifier' pour évaluer le lead en se basant sur toutes les informations du formulaire de contact."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1141,
+   "tokens_out": 315,
+   "rejected": [],
+   "cost_usd": 0.0011298,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "extract",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/agent1->convert1",
+   "repeat": 2,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.783,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extraire le score",
+     "config": {
+      "agent_id": "agent6",
+      "input": "{{agent1}}",
+      "fields": [
+       {
+        "name": "score",
+        "type": "number",
+        "description": "Score du lead de 0 à 100",
+        "required": true
+       },
+       {
+        "name": "explanation",
+        "type": "string",
+        "description": "Explication du score",
+        "required": true
+       }
+      ]
+     },
+     "reason": "Pour extraire le score et l'explication du lead qualifié par l'agent."
+    },
+    {
+     "type": "notification",
+     "label": "Notifier le propriétaire",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead qualifié",
+      "body": "Un nouveau lead a été qualifié avec le score : {{agent1.score}}.\nExplication : {{agent1.explanation}}"
+     },
+     "reason": "Pour informer le propriétaire du workflow du résultat de la qualification du lead."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1186,
+   "tokens_out": 293,
+   "rejected": [],
+   "cost_usd": 0.0010883,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "extract",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "extract",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/convert1->condition1",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.875,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Le lead est-il qualifié ?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{convert1.score}}",
+        "op": "gte",
+        "value": 70
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "Vérifie si le score du lead est suffisant pour être considéré comme qualifié, permettant de créer des branches pour les leads qualifiés et non qualifiés."
+    },
+    {
+     "type": "notification",
+     "label": "Notifier le nouveau lead",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead qualifié : {{trigger1.company}}",
+      "body": "Un nouveau lead a été qualifié avec un score de {{convert1.score}}.\nRaison: {{convert1.explanation}}\nBudget: {{trigger1.budget}}\nEmail: {{trigger1.email}}\nMessage: {{trigger1.message}}"
+     },
+     "reason": "Envoie une notification interne avec les détails du lead et sa qualification pour informer l'équipe."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1227,
+   "tokens_out": 285,
+   "rejected": [],
+   "cost_usd": 0.0010806000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "condition",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "condition",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.788,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notifier le commercial",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead chaud : {{trigger1.company}}",
+      "body": "Un nouveau lead chaud de {{trigger1.company}} a été identifié. Budget : {{trigger1.budget}}, Email : {{trigger1.email}}, Message : {{trigger1.message}}"
+     },
+     "reason": "Notifier le commercial pour qu'il puisse prendre contact avec le lead chaud."
+    },
+    {
+     "type": "output",
+     "label": "Retourner le lead qualifié",
+     "config": {
+      "value": {
+       "status": "hot_lead",
+       "company": "{{trigger1.company}}",
+       "email": "{{trigger1.email}}",
+       "budget": "{{trigger1.budget}}",
+       "message": "{{trigger1.message}}",
+       "score_explanation": "{{convert1}}"
+      }
+     },
+     "reason": "Retourner les informations du lead qualifié comme sortie du workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1271,
+   "tokens_out": 271,
+   "rejected": [],
+   "cost_usd": 0.0010588,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.543,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Prévenir le marketing",
+     "config": {
+      "channel": "app",
+      "subject": "Lead froid",
+      "body": "Un lead froid a été identifié. Détails : {{trigger1.email}} - {{trigger1.company}}"
+     },
+     "reason": "Si le lead n'est pas chaud, le marketing doit être informé pour un suivi différent."
+    },
+    {
+     "type": "output",
+     "label": "Fin du workflow",
+     "config": {
+      "value": "Lead froid, aucune action supplémentaire requise."
+     },
+     "reason": "Si le lead n'est pas chaud, le workflow peut se terminer ici, indiquant qu'aucune action immédiate n'est nécessaire."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1319,
+   "tokens_out": 200,
+   "rejected": [],
+   "cost_usd": 0.0008956999999999999,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/trigger1->http1",
+   "repeat": 2,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.557,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "set",
+     "label": "Set yesterday's date",
+     "config": {
+      "fields": [
+       {
+        "key": "yesterday",
+        "value": "{{date.yesterday()}}"
+       }
+      ]
+     },
+     "reason": "To fetch yesterday's orders, we need to define 'yesterday' as a variable."
+    },
+    {
+     "type": "notification",
+     "label": "Notify workflow started",
+     "config": {
+      "channel": "app",
+      "subject": "Daily sales digest workflow started",
+      "body": "The daily sales digest workflow has started at {{trigger1.triggered_at}}."
+     },
+     "reason": "It's good practice to notify when a scheduled workflow starts, especially for daily tasks."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1139,
+   "tokens_out": 208,
+   "rejected": [],
+   "cost_usd": 0.0008617000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "set",
+     "notification",
+     "agent"
+    ],
+    "ai_types": [
+     "set",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/http1->convert1",
+   "repeat": 2,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.348,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarize orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{http1}}"
+     },
+     "reason": "The workflow aims to summarise yesterday's orders, and this agent can do that."
+    },
+    {
+     "type": "notification",
+     "label": "Notify team",
+     "config": {
+      "channel": "app",
+      "subject": "Daily Sales Digest",
+      "body": "Yesterday's orders: {{http1}}"
+     },
+     "reason": "The workflow's goal is to e-mail the team, and a notification is a good first step to achieve that."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1179,
+   "tokens_out": 184,
+   "rejected": [],
+   "cost_usd": 0.0008137,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/convert1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.932,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarize orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{convert1}}"
+     },
+     "reason": "The workflow aims to summarise daily sales, so an agent to summarise the parsed orders is the next logical step."
+    },
+    {
+     "type": "extract",
+     "label": "Extract order details",
+     "config": {
+      "agent_id": "agent9",
+      "input": "{{convert1}}",
+      "fields": [
+       {
+        "name": "total_orders",
+        "type": "number",
+        "description": "Total number of orders",
+        "required": true
+       },
+       {
+        "name": "total_revenue",
+        "type": "number",
+        "description": "Total revenue from all orders",
+        "required": true
+       },
+       {
+        "name": "top_selling_items",
+        "type": "list",
+        "description": "List of top selling product names",
+        "required": false
+       }
+      ]
+     },
+     "reason": "To create a sales digest, extracting key metrics like total orders, revenue, and top-selling items from the parsed JSON is essential."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1218,
+   "tokens_out": 317,
+   "rejected": [],
+   "cost_usd": 0.0011579,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "agent",
+     "extract",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "extract"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/agent1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.193,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Email team",
+     "config": {
+      "channel": "app",
+      "subject": "Daily sales digest",
+      "body": "{{agent1}}"
+     },
+     "reason": "The workflow's goal is to email the team with the daily sales digest."
+    },
+    {
+     "type": "output",
+     "label": "Return summary",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow might need to return the summary as its final output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1261,
+   "tokens_out": 153,
+   "rejected": [],
+   "cost_usd": 0.0007608000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/notification1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.81,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output summary",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow's purpose is to summarise daily sales, so the summary should be the workflow's output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1302,
+   "tokens_out": 81,
+   "rejected": [],
+   "cost_usd": 0.0005931,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/trigger1->rag1",
+   "repeat": 2,
+   "expected": {
+    "type": "rag",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.656,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "rag",
+     "label": "Rechercher dans la base de connaissances",
+     "config": {
+      "agent_id": "agent5",
+      "query": "{{trigger1.question}}"
+     },
+     "reason": "La première étape pour répondre à une question FAQ est de rechercher la réponse dans la base de connaissances."
+    },
+    {
+     "type": "agent",
+     "label": "Rédiger une réponse",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Rédigez une réponse polie à la question du client: {{trigger1.question}}"
+     },
+     "reason": "Si la base de connaissances ne suffit pas, un agent peut rédiger une réponse initiale à la question du client."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1148,
+   "tokens_out": 199,
+   "rejected": [],
+   "cost_usd": 0.0008419,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "rag",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "rag",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/rag1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.37,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Rédiger la réponse",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Voici la question du client : {{trigger1.question}}\nVoici la réponse trouvée dans la documentation : {{rag1}}"
+     },
+     "reason": "Après avoir trouvé la réponse dans la documentation, l'étape logique est de rédiger une réponse conviviale pour le client."
+    },
+    {
+     "type": "output",
+     "label": "Retourner la réponse",
+     "config": {
+      "value": "{{rag1}}"
+     },
+     "reason": "Si l'objectif est de simplement retourner l'information trouvée, alors un nœud de sortie est approprié."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1194,
+   "tokens_out": 194,
+   "rejected": [],
+   "cost_usd": 0.0008432,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/agent1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.863,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Réponse au client",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "Le but du workflow est de répondre aux questions des clients, donc la réponse rédigée par l'agent doit être la sortie finale."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1240,
+   "tokens_out": 89,
+   "rejected": [],
+   "cost_usd": 0.0005945,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/trigger1->extract1",
+   "repeat": 2,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.522,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extract contract terms",
+     "config": {
+      "agent_id": "agent8",
+      "input": "{{trigger1.contract_text}}",
+      "fields": [
+       {
+        "name": "contract_type",
+        "type": "string",
+        "description": "Type of contract (e.g., NDA, Service Agreement)",
+        "required": true
+       },
+       {
+        "name": "parties",
+        "type": "list",
+        "description": "List of parties involved in the contract",
+        "required": true
+       },
+       {
+        "name": "effective_date",
+        "type": "string",
+        "description": "The date the contract becomes effective",
+        "required": false
+       },
+       {
+        "name": "termination_date",
+        "type": "string",
+        "description": "The date the contract terminates, if applicable",
+        "required": false
+       },
+       {
+        "name": "risky_clauses",
+        "type": "list",
+        "description": "List of clauses identified as risky, with explanations",
+        "required": false
+       }
+      ]
+     },
+     "reason": "The workflow's goal is to extract key terms and flag risky clauses, which the 'Contract reviewer' agent is designed to do."
+    },
+    {
+     "type": "agent",
+     "label": "Review contract for risks",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for key terms and identify any risky clauses, explaining why they are risky:\n\nContract Text:\n{{trigger1.contract_text}}\n\nCounterparty: {{trigger1.counterparty}}"
+     },
+     "reason": "This agent directly addresses the workflow's description to 'flag risky clauses' by using the 'Contract reviewer' agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1145,
+   "tokens_out": 468,
+   "rejected": [],
+   "cost_usd": 0.0015135,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "extract",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/extract1->router1",
+   "repeat": 2,
+   "expected": {
+    "type": "router",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.406,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Flag risky clauses",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for risky clauses, considering the extracted terms:\nContract Text: {{trigger1.contract_text}}\nExtracted Terms: {{extract1}}"
+     },
+     "reason": "The workflow description mentions flagging risky clauses, and agent8 is suitable for this task."
+    },
+    {
+     "type": "output",
+     "label": "Output extracted terms",
+     "config": {
+      "value": "{{extract1}}"
+     },
+     "reason": "This node completes the initial extraction goal by outputting the key terms."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1209,
+   "tokens_out": 182,
+   "rejected": [],
+   "cost_usd": 0.0008177,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "risky"
+   },
+   "status": 200,
+   "latency_s": 1.954,
+   "route": "risky",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Flag risky clauses",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for risky clauses:\nContract text: {{trigger1.contract_text}}\nCounterparty: {{trigger1.counterparty}}\nExtracted terms: {{extract1}}"
+     },
+     "reason": "The 'risky' branch of the router indicates a need to further analyze the contract for risks, which agent8 (Contract reviewer) is designed to do."
+    },
+    {
+     "type": "notification",
+     "label": "Notify legal team",
+     "config": {
+      "channel": "app",
+      "subject": "Risky contract detected for {{trigger1.counterparty}}",
+      "body": "A contract with {{trigger1.counterparty}} has been flagged as potentially risky. Please review the details.\nExtracted terms: {{extract1}}"
+     },
+     "reason": "When a contract is identified as risky, it's crucial to notify the relevant team (e.g., legal) for immediate attention."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1255,
+   "tokens_out": 272,
+   "rejected": [],
+   "cost_usd": 0.0010565000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "standard"
+   },
+   "status": 200,
+   "latency_s": 1.482,
+   "route": "standard",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output standard contract",
+     "config": {
+      "value": "Contract is standard and reviewed. Key terms: {{extract1}}"
+     },
+     "reason": "The 'standard' branch of the router indicates the contract is not risky, so the workflow can output the result."
+    },
+    {
+     "type": "notification",
+     "label": "Notify standard contract",
+     "config": {
+      "channel": "app",
+      "subject": "Standard Contract Review Complete",
+      "body": "The contract for {{trigger1.counterparty}} has been reviewed and is considered standard. Key terms: {{extract1}}"
+     },
+     "reason": "Notify the user that the contract has been reviewed and is standard, providing key details."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1305,
+   "tokens_out": 199,
+   "rejected": [],
+   "cost_usd": 0.000889,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "notification",
+     "agent"
+    ],
+    "ai_types": [
+     "output",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/agent1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.134,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "Contract risk identified",
+      "body": "A contract has been flagged as risky. Details: {{agent1}}"
+     },
+     "reason": "Notify the workflow owner about the identified risk and the explanation provided by the agent."
+    },
+    {
+     "type": "output",
+     "label": "Output risk explanation",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "Return the explanation of the risky clause as the final output of the workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1337,
+   "tokens_out": 167,
+   "rejected": [],
+   "cost_usd": 0.0008186000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/trigger1->condition1",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.413,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Vérifier la langue",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger1.language}}",
+        "op": "ne",
+        "value": "fr"
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "Vérifie si la langue du ticket n'est pas le français pour décider s'il faut le traduire."
+    },
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input": "{{trigger1.text}}"
+     },
+     "reason": "Traduit le texte du ticket en français en utilisant l'agent de traduction."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1140,
+   "tokens_out": 206,
+   "rejected": [],
+   "cost_usd": 0.000857,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "condition",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "condition",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.173,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input": "{{trigger1.text}}"
+     },
+     "reason": "Le ticket n'est pas en français, il faut donc le traduire en utilisant l'agent de traduction."
+    },
+    {
+     "type": "output",
+     "label": "Retourner le ticket original",
+     "config": {
+      "value": "{{trigger1.text}}"
+     },
+     "reason": "Si le ticket n'est pas en français et qu'aucune traduction n'est nécessaire, le ticket original peut être retourné."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1185,
+   "tokens_out": 176,
+   "rejected": [],
+   "cost_usd": 0.0007955,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.014,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Sortie",
+     "config": {
+      "value": "{{trigger1.text}}"
+     },
+     "reason": "Si le ticket est déjà en français, il n'y a pas besoin de le traduire, donc le texte original peut être directement la sortie."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1235,
+   "tokens_out": 90,
+   "rejected": [],
+   "cost_usd": 0.0005955,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/agent1->output2",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.838,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Retourner la traduction",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "Le but du workflow est de traduire le ticket, donc la traduction doit être retournée en sortie."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1267,
+   "tokens_out": 81,
+   "rejected": [],
+   "cost_usd": 0.0005826,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/trigger1->set1",
+   "repeat": 2,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.375,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify new sign-up",
+     "config": {
+      "channel": "app",
+      "subject": "New customer sign-up: {{trigger1.company}}",
+      "body": "A new customer, {{trigger1.company}}, has signed up for the {{trigger1.plan}} plan. Contact: {{trigger1.email}}"
+     },
+     "reason": "It's good practice to notify the workflow owner about new customer sign-ups."
+    },
+    {
+     "type": "set",
+     "label": "Set onboarding status",
+     "config": {
+      "fields": [
+       {
+        "key": "onboarding_status",
+        "value": "started"
+       }
+      ]
+     },
+     "reason": "Setting an initial status helps track the customer's onboarding progress."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1151,
+   "tokens_out": 220,
+   "rejected": [],
+   "cost_usd": 0.0008953,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "notification",
+     "set",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "set"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/set1->http1",
+   "repeat": 2,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.672,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Register in CRM",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Register new customer with company name: {{set1.company}}, email: {{trigger1.email}}, and plan: {{set1.plan}} in the CRM."
+     },
+     "reason": "The next logical step after collecting account data is to register the new customer in the CRM using an agent."
+    },
+    {
+     "type": "notification",
+     "label": "Notify team of new customer",
+     "config": {
+      "channel": "app",
+      "subject": "New Customer Onboarding: {{set1.company}}",
+      "body": "A new customer, {{set1.company}}, has signed up for the {{set1.plan}} plan. Email: {{trigger1.email}}."
+     },
+     "reason": "Notifying the team about a new customer ensures everyone is aware and can take further actions if needed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1194,
+   "tokens_out": 248,
+   "rejected": [],
+   "cost_usd": 0.0009782,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/http1->agent1",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.598,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "New customer {{trigger1.company}}",
+      "body": "A new customer {{trigger1.company}} has signed up for the {{trigger1.plan}} plan. CRM response: {{http1}}"
+     },
+     "reason": "Notify the workflow owner about the new customer and the CRM creation status."
+    },
+    {
+     "type": "agent",
+     "label": "Welcome email draft",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Draft a welcome email for new customer {{trigger1.company}} who signed up for the {{trigger1.plan}} plan. The CRM creation was successful. Their email is {{trigger1.email}}."
+     },
+     "reason": "Draft a welcome email for the new customer using an agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1235,
+   "tokens_out": 232,
+   "rejected": [],
+   "cost_usd": 0.0009505,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "notification",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/agent1->notification1",
+   "repeat": 2,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.686,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "New customer onboarded",
+      "body": "New customer {{trigger1.company}} ({{trigger1.email}}) has been onboarded with plan {{trigger1.plan}}."
+     },
+     "reason": "It is good practice to notify the workflow owner when a new customer has been onboarded."
+    },
+    {
+     "type": "output",
+     "label": "Workflow output",
+     "config": {
+      "value": "Welcome message sent to {{trigger1.email}}."
+     },
+     "reason": "The workflow has completed its purpose, so it should return a confirmation."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1278,
+   "tokens_out": 190,
+   "rejected": [],
+   "cost_usd": 0.0008584,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/notification1->output1",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.883,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Workflow output",
+     "config": {
+      "value": "Customer onboarding workflow completed for {{trigger1.company}}."
+     },
+     "reason": "This node marks the end of the workflow and provides a final confirmation message."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1319,
+   "tokens_out": 83,
+   "rejected": [],
+   "cost_usd": 0.0006032,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/trigger->order",
+   "repeat": 2,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.215,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Order amount > 1000?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description states that orders above 1,000 are reviewed by an agent, so a condition node is needed to check the order amount."
+    },
+    {
+     "type": "extract",
+     "label": "Extract order details",
+     "config": {
+      "agent_id": "agent9",
+      "input": "{{trigger}}",
+      "fields": [
+       {
+        "name": "amount",
+        "type": "number",
+        "description": "Total amount of the order",
+        "required": true
+       },
+       {
+        "name": "items",
+        "type": "list",
+        "description": "List of items in the order",
+        "required": false
+       },
+       {
+        "name": "customer_id",
+        "type": "string",
+        "description": "ID of the customer placing the order",
+        "required": false
+       }
+      ]
+     },
+     "reason": "To properly review an order, it's essential to extract key details like the amount, items, and customer information from the incoming webhook data."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1119,
+   "tokens_out": 361,
+   "rejected": [],
+   "cost_usd": 0.0012382,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "condition",
+     "extract",
+     "agent"
+    ],
+    "ai_types": [
+     "condition",
+     "extract"
+    ]
+   }
+  },
+  {
+   "case": "order-review/order->big",
+   "repeat": 2,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.128,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Check order amount",
+     "config": {
+      "rules": [
+       {
+        "field": "{{order.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description states that orders above 1,000 are reviewed by an agent, so a condition node is needed to check the amount."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1152,
+   "tokens_out": 133,
+   "rejected": [],
+   "cost_usd": 0.0006781000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "condition",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "condition"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->review",
+   "repeat": 2,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.482,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "input": "Review this order: {{order}}"
+     },
+     "reason": "The workflow description states that orders above 1,000 should be reviewed by an agent, and 'big' node's 'true' branch means the order is large, so an agent should review it."
+    },
+    {
+     "type": "notification",
+     "label": "Notify owner of large order",
+     "config": {
+      "channel": "app",
+      "subject": "Large order received for review",
+      "body": "A large order has been received and requires review. Order details: {{order}}"
+     },
+     "reason": "It's good practice to notify the workflow owner when a significant event, like a large order requiring review, occurs."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1186,
+   "tokens_out": 225,
+   "rejected": [],
+   "cost_usd": 0.0009183,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->skip",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 0.8,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output order",
+     "config": {
+      "value": "{{order}}"
+     },
+     "reason": "The 'false' branch of the condition means the order is not large, so it can be directly outputted as processed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1225,
+   "tokens_out": 83,
+   "rejected": [],
+   "cost_usd": 0.000575,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/review->done",
+   "repeat": 2,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.18,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner of review",
+     "config": {
+      "channel": "app",
+      "subject": "Order reviewed",
+      "body": "An order has been reviewed: {{review}}"
+     },
+     "reason": "Notify the workflow owner that the order review is complete."
+    },
+    {
+     "type": "output",
+     "label": "Output review result",
+     "config": {
+      "value": "{{review}}"
+     },
+     "reason": "Return the result of the order review as the workflow's output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1254,
+   "tokens_out": 156,
+   "rejected": [],
+   "cost_usd": 0.0007662000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/trigger1->classifier1",
+   "repeat": 3,
+   "expected": {
+    "type": "classifier",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.912,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "classifier",
+     "label": "Classify message",
+     "config": {
+      "agent_id": "agent1",
+      "input": "{{trigger1.body}}",
+      "routes": [
+       {
+        "route": "billing",
+        "description": "invoices and payments"
+       },
+       {
+        "route": "technical issue",
+        "description": "problems with the product or service"
+       },
+       {
+        "route": "other",
+        "description": "anything else"
+       }
+      ]
+     },
+     "reason": "The workflow needs to sort incoming support messages, and agent1 is designed for this classification."
+    },
+    {
+     "type": "agent",
+     "label": "Summarize message",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{trigger1.body}}"
+     },
+     "reason": "Summarizing the message can help in quickly understanding the core issue before further processing."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1147,
+   "tokens_out": 254,
+   "rejected": [],
+   "cost_usd": 0.0009791000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "classifier",
+     "agent",
+     "convert"
+    ],
+    "ai_types": [
+     "classifier",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "billing"
+   },
+   "status": 200,
+   "latency_s": 1.583,
+   "route": "billing",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft billing reply",
+     "config": {
+      "agent_id": "agent2",
+      "input": "The customer's message is about billing. Draft a polite answer to the customer. Original message: {{trigger1.body}}"
+     },
+     "reason": "Draft a reply for billing inquiries using the 'Reply writer' agent."
+    },
+    {
+     "type": "notification",
+     "label": "Notify billing team",
+     "config": {
+      "channel": "app",
+      "subject": "New billing inquiry from {{trigger1.from}}",
+      "body": "A new billing inquiry has been received:\nSubject: {{trigger1.subject}}\nBody: {{trigger1.body}}"
+     },
+     "reason": "Notify the workflow owner about a new billing inquiry."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1205,
+   "tokens_out": 214,
+   "rejected": [],
+   "cost_usd": 0.0008964999999999999,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->rag1",
+   "repeat": 3,
+   "expected": {
+    "type": "rag",
+    "route": "technical"
+   },
+   "status": 200,
+   "latency_s": 1.176,
+   "route": "technical",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "{{classifier1}}"
+     },
+     "reason": "Draft an answer for technical issues using the Reply writer agent."
+    },
+    {
+     "type": "rag",
+     "label": "Search knowledge base",
+     "config": {
+      "agent_id": "agent5",
+      "query": "{{trigger1.body}}"
+     },
+     "reason": "Search the knowledge base for answers to technical questions."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1254,
+   "tokens_out": 153,
+   "rejected": [],
+   "cost_usd": 0.0007587,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "rag",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "rag"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/classifier1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": "other"
+   },
+   "status": 200,
+   "latency_s": 1.318,
+   "route": "other",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft 'other' answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "The customer message is about: {{classifier1.route}}. Original message: {{trigger1.body}}"
+     },
+     "reason": "The 'other' route needs an agent to draft a response, similar to the 'billing' route."
+    },
+    {
+     "type": "notification",
+     "label": "Notify support team",
+     "config": {
+      "channel": "app",
+      "subject": "New 'other' support request",
+      "body": "A new support request classified as 'other' has arrived. Please review: {{trigger1.body}}"
+     },
+     "reason": "For 'other' requests, it's good practice to notify the support team for manual review or handling."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1304,
+   "tokens_out": 221,
+   "rejected": [],
+   "cost_usd": 0.0009437,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.821,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Answer",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow should output the drafted answer to the customer."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1350,
+   "tokens_out": 69,
+   "rejected": [],
+   "cost_usd": 0.0005775,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/rag1->agent2",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.579,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Draft technical answer",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Based on the following information from the knowledge base: {{rag1}}, draft a polite answer to the customer regarding their technical issue. The original message was: {{trigger1.body}}"
+     },
+     "reason": "After searching the knowledge base, an agent should draft an answer to the customer's technical query."
+    },
+    {
+     "type": "output",
+     "label": "Return answer",
+     "config": {
+      "value": "{{rag1}}"
+     },
+     "reason": "If no further processing is needed, the result of the RAG search can be returned as the workflow's output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1377,
+   "tokens_out": 196,
+   "rejected": [],
+   "cost_usd": 0.0009031,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "output"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "support-triage/agent2->output2",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.875,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Return answer",
+     "config": {
+      "value": "{{agent2}}"
+     },
+     "reason": "The workflow needs to return the drafted answer to the user."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1420,
+   "tokens_out": 71,
+   "rejected": [],
+   "cost_usd": 0.0006035,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/trigger1->extract1",
+   "repeat": 3,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.007,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extract invoice details",
+     "config": {
+      "agent_id": "agent3",
+      "input": "{{trigger1.text}}",
+      "fields": [
+       {
+        "name": "supplier",
+        "type": "string",
+        "description": "Name of the supplier",
+        "required": true
+       },
+       {
+        "name": "amount",
+        "type": "number",
+        "description": "Total amount of the invoice",
+        "required": true
+       },
+       {
+        "name": "due_date",
+        "type": "string",
+        "description": "Due date of the invoice",
+        "required": false
+       }
+      ]
+     },
+     "reason": "The workflow needs to read supplier invoices, so extracting details like supplier, amount, and due date is the logical next step using the 'Invoice reader' agent."
+    },
+    {
+     "type": "condition",
+     "label": "Check for large amount",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger1.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description mentions checking the amount and asking for approval of large ones, so a condition to check if the amount is large is appropriate."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1152,
+   "tokens_out": 357,
+   "rejected": [],
+   "cost_usd": 0.0012381,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "condition",
+     "agent"
+    ],
+    "ai_types": [
+     "extract",
+     "condition"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/extract1->condition1",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.314,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Is amount large?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{extract1.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description mentions checking the amount and asking for approval of large ones, so a condition node is needed to branch based on the amount."
+    },
+    {
+     "type": "output",
+     "label": "Output invoice details",
+     "config": {
+      "value": "{{extract1}}"
+     },
+     "reason": "If there are no further conditions or actions for small invoices, the workflow should output the extracted details."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1210,
+   "tokens_out": 200,
+   "rejected": [],
+   "cost_usd": 0.000863,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "condition",
+     "output",
+     "notification"
+    ],
+    "ai_types": [
+     "condition",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.569,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify for approval",
+     "config": {
+      "channel": "app",
+      "subject": "Invoice approval needed: {{extract1.supplier}} for {{extract1.amount}}",
+      "body": "An invoice from {{extract1.supplier}} for {{extract1.amount}} (due on {{extract1.due_date}}) requires your approval."
+     },
+     "reason": "When an invoice is over 5000, it needs approval, so a notification is appropriate."
+    },
+    {
+     "type": "output",
+     "label": "Output for approval",
+     "config": {
+      "value": {
+       "status": "pending_approval",
+       "supplier": "{{extract1.supplier}}",
+       "amount": "{{extract1.amount}}",
+       "due_date": "{{extract1.due_date}}"
+      }
+     },
+     "reason": "This node can output the invoice details for an external system to handle the approval process."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1258,
+   "tokens_out": 255,
+   "rejected": [],
+   "cost_usd": 0.0010149,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/condition1->set1",
+   "repeat": 3,
+   "expected": {
+    "type": "set",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.021,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output invoice details",
+     "config": {
+      "value": "{{extract1}}"
+     },
+     "reason": "If the invoice amount is not over 5000, the workflow can simply output the extracted invoice details as the final result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1305,
+   "tokens_out": 87,
+   "rejected": [],
+   "cost_usd": 0.000609,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "invoice-intake/set1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.424,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output",
+     "config": {
+      "value": {
+       "status": "{{set1.status}}",
+       "supplier": "{{set1.supplier}}",
+       "amount": "{{extract1.amount}}"
+      }
+     },
+     "reason": "The workflow has processed the invoice and marked it as approved, so it should output the result."
+    },
+    {
+     "type": "notification",
+     "label": "Notify sender",
+     "config": {
+      "channel": "app",
+      "subject": "Invoice processed",
+      "body": "Invoice from {{set1.supplier}} for {{extract1.amount}} has been approved."
+     },
+     "reason": "It is good practice to notify the sender or relevant parties that the invoice has been processed and approved."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1353,
+   "tokens_out": 212,
+   "rejected": [],
+   "cost_usd": 0.0009359000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "notification",
+     "http"
+    ],
+    "ai_types": [
+     "output",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/trigger1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.48,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extraire les informations du message",
+     "config": {
+      "agent_id": "agent6",
+      "input": "{{trigger1.message}}",
+      "fields": [
+       {
+        "name": "company_size",
+        "type": "string",
+        "description": "La taille de l'entreprise du lead (ex: PME, grande entreprise, startup)",
+        "required": false
+       },
+       {
+        "name": "project_timeline",
+        "type": "string",
+        "description": "Le calendrier du projet mentionné par le lead (ex: urgent, 3 mois, 6 mois)",
+        "required": false
+       },
+       {
+        "name": "specific_needs",
+        "type": "string",
+        "description": "Les besoins spécifiques ou les fonctionnalités mentionnées par le lead",
+        "required": false
+       }
+      ]
+     },
+     "reason": "Pour qualifier un lead, il est utile d'extraire des informations détaillées du message du formulaire de contact."
+    },
+    {
+     "type": "agent",
+     "label": "Qualifier le lead",
+     "config": {
+      "agent_id": "agent6",
+      "input": "Budget: {{trigger1.budget}}\nEntreprise: {{trigger1.company}}\nEmail: {{trigger1.email}}\nMessage: {{trigger1.message}}"
+     },
+     "reason": "Utilise l'agent 'Lead qualifier' pour évaluer le lead en se basant sur toutes les informations du formulaire de contact."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1141,
+   "tokens_out": 389,
+   "rejected": [],
+   "cost_usd": 0.0013148,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "extract",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/agent1->convert1",
+   "repeat": 3,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.606,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extraire le score",
+     "config": {
+      "agent_id": "agent6",
+      "input": "{{agent1}}",
+      "fields": [
+       {
+        "name": "score",
+        "type": "number",
+        "description": "Score du lead de 0 à 100",
+        "required": true
+       },
+       {
+        "name": "explanation",
+        "type": "string",
+        "description": "Explication du score",
+        "required": true
+       }
+      ]
+     },
+     "reason": "Extraire le score et l'explication du lead qualifié par l'agent pour une utilisation ultérieure."
+    },
+    {
+     "type": "condition",
+     "label": "Vérifier le budget",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger1.budget}}",
+        "op": "exists",
+        "value": true
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "Vérifier si le budget est renseigné dans le formulaire de contact pour adapter la suite du workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1186,
+   "tokens_out": 301,
+   "rejected": [],
+   "cost_usd": 0.0011083,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "extract",
+     "condition",
+     "output"
+    ],
+    "ai_types": [
+     "extract",
+     "condition"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/convert1->condition1",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.915,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Le lead est-il qualifié ?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{convert1.score}}",
+        "op": "gte",
+        "value": 70
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "Vérifie si le score du lead est suffisant pour le considérer comme qualifié, permettant de créer des branches pour les leads qualifiés et non qualifiés."
+    },
+    {
+     "type": "notification",
+     "label": "Notifier le lead qualifié",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead qualifié : {{trigger1.company}}",
+      "body": "Un nouveau lead de {{trigger1.company}} a été qualifié avec un score de {{convert1.score}}.\nBudget: {{trigger1.budget}}\nEmail: {{trigger1.email}}\nMessage: {{trigger1.message}}\nExplication: {{convert1.explanation}}"
+     },
+     "reason": "Envoie une notification à l'équipe interne avec les détails du lead et son score de qualification."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1227,
+   "tokens_out": 295,
+   "rejected": [],
+   "cost_usd": 0.0011056,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "condition",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "condition",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.823,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notifier le commercial",
+     "config": {
+      "channel": "app",
+      "subject": "Nouveau lead chaud : {{trigger1.company}}",
+      "body": "Un nouveau lead chaud de {{trigger1.company}} a été identifié. Budget : {{trigger1.budget}}, Email : {{trigger1.email}}, Message : {{trigger1.message}}"
+     },
+     "reason": "Notifier le commercial pour qu'il puisse prendre contact avec le lead chaud."
+    },
+    {
+     "type": "output",
+     "label": "Retourner le lead qualifié",
+     "config": {
+      "value": {
+       "status": "chaud",
+       "company": "{{trigger1.company}}",
+       "email": "{{trigger1.email}}",
+       "budget": "{{trigger1.budget}}",
+       "message": "{{trigger1.message}}",
+       "score": "{{convert1.score}}"
+      }
+     },
+     "reason": "Retourner les informations du lead qualifié comme sortie du workflow."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1271,
+   "tokens_out": 270,
+   "rejected": [],
+   "cost_usd": 0.0010563,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "lead-qualification/condition1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.388,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Prévenir le marketing",
+     "config": {
+      "channel": "app",
+      "subject": "Lead froid",
+      "body": "Un lead froid a été identifié : {{trigger1.email}} ({{trigger1.company}}). Message : {{trigger1.message}}"
+     },
+     "reason": "Notifier l'équipe marketing qu'un lead n'est pas chaud pour un suivi potentiel."
+    },
+    {
+     "type": "output",
+     "label": "Fin du workflow (lead froid)",
+     "config": {
+      "value": "Lead froid, aucune action supplémentaire requise pour les ventes."
+     },
+     "reason": "Terminer le workflow en indiquant que le lead est froid et ne nécessite pas d'action immédiate des ventes."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1319,
+   "tokens_out": 207,
+   "rejected": [],
+   "cost_usd": 0.0009132000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/trigger1->http1",
+   "repeat": 3,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.386,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Fetch yesterday's orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "Fetch yesterday's orders."
+     },
+     "reason": "The workflow needs to fetch yesterday's orders as the first step after the daily trigger."
+    },
+    {
+     "type": "notification",
+     "label": "Notify workflow started",
+     "config": {
+      "channel": "app",
+      "subject": "Daily sales digest workflow started",
+      "body": "The daily sales digest workflow has started."
+     },
+     "reason": "It's good practice to notify the owner when a scheduled workflow starts, especially for daily tasks."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1139,
+   "tokens_out": 187,
+   "rejected": [],
+   "cost_usd": 0.0008092,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "classifier"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/http1->convert1",
+   "repeat": 3,
+   "expected": {
+    "type": "convert",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.346,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarize orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{http1}}"
+     },
+     "reason": "The workflow aims to summarise yesterday's orders, and this agent is designed for summarization."
+    },
+    {
+     "type": "notification",
+     "label": "Email sales digest",
+     "config": {
+      "channel": "app",
+      "subject": "Daily Sales Digest",
+      "body": "{{http1}}"
+     },
+     "reason": "The workflow's goal is to email the team a daily sales digest, and this node can send a notification."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1179,
+   "tokens_out": 179,
+   "rejected": [],
+   "cost_usd": 0.0008012,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/convert1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.936,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Summarize orders",
+     "config": {
+      "agent_id": "agent4",
+      "input": "{{convert1}}"
+     },
+     "reason": "The workflow aims to summarise daily sales, so an agent to summarise the parsed orders is the next logical step."
+    },
+    {
+     "type": "extract",
+     "label": "Extract order details",
+     "config": {
+      "agent_id": "agent9",
+      "input": "{{convert1}}",
+      "fields": [
+       {
+        "name": "total_orders",
+        "type": "number",
+        "description": "The total number of orders.",
+        "required": true
+       },
+       {
+        "name": "total_revenue",
+        "type": "number",
+        "description": "The total revenue from all orders.",
+        "required": true
+       },
+       {
+        "name": "top_selling_items",
+        "type": "list",
+        "description": "A list of the top selling product names.",
+        "required": false
+       }
+      ]
+     },
+     "reason": "To create a digest, specific details like total orders, revenue, and top-selling items are usually needed, which an extraction agent can provide."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1218,
+   "tokens_out": 323,
+   "rejected": [],
+   "cost_usd": 0.0011729000000000002,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent",
+     "condition"
+    ],
+    "merged_types": [
+     "agent",
+     "extract",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "extract"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/agent1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.113,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Email team",
+     "config": {
+      "channel": "app",
+      "subject": "Daily Sales Digest",
+      "body": "{{agent1}}"
+     },
+     "reason": "The workflow's goal is to email the team with the daily sales digest."
+    },
+    {
+     "type": "output",
+     "label": "Return summary",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow can output the summary for further use or inspection."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1261,
+   "tokens_out": 152,
+   "rejected": [],
+   "cost_usd": 0.0007583,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "daily-digest/notification1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.851,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output summary",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow's purpose is to summarise daily sales, so the summary should be the workflow's output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1302,
+   "tokens_out": 81,
+   "rejected": [],
+   "cost_usd": 0.0005931,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/trigger1->rag1",
+   "repeat": 3,
+   "expected": {
+    "type": "rag",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.571,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "rag",
+     "label": "Rechercher dans la base de connaissances",
+     "config": {
+      "agent_id": "agent5",
+      "query": "{{trigger1.question}}"
+     },
+     "reason": "La première étape pour répondre à une question FAQ est de rechercher la réponse dans la base de connaissances."
+    },
+    {
+     "type": "agent",
+     "label": "Rédiger une réponse",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Rédigez une réponse polie à la question du client : {{trigger1.question}}"
+     },
+     "reason": "Si la base de connaissances ne suffit pas, un agent peut rédiger une réponse directe à la question du client."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1148,
+   "tokens_out": 199,
+   "rejected": [],
+   "cost_usd": 0.0008419,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "rag",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "rag",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/rag1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.811,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Rédiger la réponse",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Voici la question du client : {{trigger1.question}}\nVoici la réponse trouvée dans la documentation : {{rag1}}"
+     },
+     "reason": "Après avoir trouvé la réponse dans la documentation, il est logique de rédiger une réponse polie pour le client."
+    },
+    {
+     "type": "output",
+     "label": "Retourner la réponse",
+     "config": {
+      "value": "{{rag1}}"
+     },
+     "reason": "Si l'objectif est simplement de retourner la réponse trouvée, un nœud de sortie est approprié."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1194,
+   "tokens_out": 190,
+   "rejected": [],
+   "cost_usd": 0.0008332000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "faq-answers/agent1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.85,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Réponse au client",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "Le workflow est conçu pour répondre aux questions des clients, donc la dernière étape devrait être de renvoyer la réponse rédigée."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1240,
+   "tokens_out": 88,
+   "rejected": [],
+   "cost_usd": 0.000592,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/trigger1->extract1",
+   "repeat": 3,
+   "expected": {
+    "type": "extract",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.906,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "extract",
+     "label": "Extract contract terms",
+     "config": {
+      "agent_id": "agent8",
+      "input": "{{trigger1.contract_text}}",
+      "fields": [
+       {
+        "name": "contract_type",
+        "type": "string",
+        "description": "Type of contract (e.g., NDA, Service Agreement)",
+        "required": true
+       },
+       {
+        "name": "effective_date",
+        "type": "string",
+        "description": "The date the contract becomes effective",
+        "required": true
+       },
+       {
+        "name": "termination_date",
+        "type": "string",
+        "description": "The date the contract terminates, if applicable",
+        "required": false
+       },
+       {
+        "name": "parties",
+        "type": "list",
+        "description": "List of all parties involved in the contract",
+        "required": true
+       },
+       {
+        "name": "risky_clauses",
+        "type": "list",
+        "description": "List of clauses identified as risky, with explanations",
+        "required": false
+       }
+      ]
+     },
+     "reason": "The workflow aims to extract key terms and flag risky clauses, which directly aligns with the 'extract' node using the 'Contract reviewer' agent."
+    },
+    {
+     "type": "agent",
+     "label": "Review contract for risks",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for key terms and identify any risky clauses:\n\nContract Text: {{trigger1.contract_text}}\nCounterparty: {{trigger1.counterparty}}"
+     },
+     "reason": "The 'Contract reviewer' agent is designed to read contracts and explain risky clauses, making it a suitable next step to process the uploaded contract."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1145,
+   "tokens_out": 466,
+   "rejected": [],
+   "cost_usd": 0.0015085,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "extract",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "extract",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/extract1->router1",
+   "repeat": 3,
+   "expected": {
+    "type": "router",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.845,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Flag risky clauses",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for risky clauses:\n\n{{trigger1.contract_text}}\n\nExtracted terms:\nParty: {{extract1.party}}\nEnd Date: {{extract1.end_date}}\nLiability Cap: {{extract1.liability_cap}}\nAuto Renewal: {{extract1.auto_renewal}}"
+     },
+     "reason": "The workflow description mentions flagging risky clauses, and agent8 is designed for contract review."
+    },
+    {
+     "type": "output",
+     "label": "Output extracted terms",
+     "config": {
+      "value": {
+       "party": "{{extract1.party}}",
+       "end_date": "{{extract1.end_date}}",
+       "liability_cap": "{{extract1.liability_cap}}",
+       "auto_renewal": "{{extract1.auto_renewal}}"
+      }
+     },
+     "reason": "After extracting key terms, the workflow might need to output these terms as a result."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1209,
+   "tokens_out": 281,
+   "rejected": [],
+   "cost_usd": 0.0010652,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "agent",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "risky"
+   },
+   "status": 200,
+   "latency_s": 1.663,
+   "route": "risky",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review risky clauses",
+     "config": {
+      "agent_id": "agent8",
+      "input": "Review the following contract text for risky clauses:\n\n{{trigger1.contract_text}}"
+     },
+     "reason": "The 'risky' branch of the router indicates a need for a detailed review of the contract text for potential risks, which agent8 is designed to do."
+    },
+    {
+     "type": "notification",
+     "label": "Notify legal team",
+     "config": {
+      "channel": "app",
+      "subject": "Risky contract detected for {{trigger1.counterparty}}",
+      "body": "A contract with {{trigger1.counterparty}} has been flagged as risky. Please review the details."
+     },
+     "reason": "When a contract is identified as risky, it's crucial to notify the relevant team (e.g., legal) for further action."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1255,
+   "tokens_out": 241,
+   "rejected": [],
+   "cost_usd": 0.000979,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/router1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "standard"
+   },
+   "status": 200,
+   "latency_s": 1.331,
+   "route": "standard",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output standard contract",
+     "config": {
+      "value": "Contract is standard: {{extract1}}"
+     },
+     "reason": "The 'standard' branch of the router indicates the contract is not risky, so the workflow can output the extracted terms."
+    },
+    {
+     "type": "notification",
+     "label": "Notify standard contract",
+     "config": {
+      "channel": "app",
+      "subject": "Standard Contract Review Complete",
+      "body": "The contract for {{trigger1.counterparty}} has been reviewed and is considered standard. Key terms: {{extract1}}"
+     },
+     "reason": "Notify the user that a standard contract has been processed, providing key details."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1305,
+   "tokens_out": 193,
+   "rejected": [],
+   "cost_usd": 0.000874,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "notification",
+     "agent"
+    ],
+    "ai_types": [
+     "output",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "contract-review/agent1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.154,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "Contract risk identified",
+      "body": "A contract has been flagged as risky. Details: {{agent1}}"
+     },
+     "reason": "After explaining the risk, it's important to notify the workflow owner about the identified risk."
+    },
+    {
+     "type": "output",
+     "label": "Output risk explanation",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The final step in this branch is to output the explanation of the risk."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1337,
+   "tokens_out": 170,
+   "rejected": [],
+   "cost_usd": 0.0008261,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/trigger1->condition1",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.37,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Est-ce que le ticket est en français ?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger1.language}}",
+        "op": "eq",
+        "value": "fr"
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "Vérifie si la langue du ticket est déjà le français pour éviter une traduction inutile."
+    },
+    {
+     "type": "agent",
+     "label": "Traduire le ticket en français",
+     "config": {
+      "agent_id": "agent7",
+      "input": "{{trigger1.text}}"
+     },
+     "reason": "Traduit le texte du ticket en français en utilisant l'agent de traduction."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1140,
+   "tokens_out": 207,
+   "rejected": [],
+   "cost_usd": 0.0008595,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "condition",
+     "agent",
+     "classifier"
+    ],
+    "ai_types": [
+     "condition",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 0.974,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Traduire le ticket",
+     "config": {
+      "agent_id": "agent7",
+      "input": "{{trigger1.text}}"
+     },
+     "reason": "Si le ticket n'est pas en français, la première étape logique est de le traduire en français pour le traitement."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1185,
+   "tokens_out": 99,
+   "rejected": [],
+   "cost_usd": 0.000603,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/condition1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 1.038,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Ticket en français",
+     "config": {
+      "value": {
+       "ticket_id": "{{trigger1.ticket_id}}",
+       "language": "{{trigger1.language}}",
+       "text": "{{trigger1.text}}"
+      }
+     },
+     "reason": "Le ticket est déjà en français, donc le workflow peut le retourner tel quel."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1235,
+   "tokens_out": 115,
+   "rejected": [],
+   "cost_usd": 0.0006580000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "ticket-translation/agent1->output2",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.863,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Retourner la traduction",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "Le but du workflow est de traduire le ticket, donc l'étape suivante logique est de retourner la traduction."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1267,
+   "tokens_out": 83,
+   "rejected": [],
+   "cost_usd": 0.0005876,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/trigger1->set1",
+   "repeat": 3,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.65,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify new customer",
+     "config": {
+      "channel": "app",
+      "subject": "New customer signed up: {{trigger1.company}}",
+      "body": "A new customer, {{trigger1.company}}, has signed up for the {{trigger1.plan}} plan. Their email is {{trigger1.email}}."
+     },
+     "reason": "It's important to notify the workflow owner about new customer sign-ups immediately."
+    },
+    {
+     "type": "set",
+     "label": "Set onboarding status",
+     "config": {
+      "fields": [
+       {
+        "key": "onboarding_status",
+        "value": "started"
+       }
+      ]
+     },
+     "reason": "Setting an initial status helps track the customer's onboarding progress."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1151,
+   "tokens_out": 219,
+   "rejected": [],
+   "cost_usd": 0.0008928,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "notification",
+     "set",
+     "agent"
+    ],
+    "ai_types": [
+     "notification",
+     "set"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/set1->http1",
+   "repeat": 3,
+   "expected": {
+    "type": "http",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.795,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Register in CRM",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Register the new customer with company name: {{set1.company}}, email: {{trigger1.email}}, and plan: {{set1.plan}}. Draft a welcome message for them."
+     },
+     "reason": "The next logical step after collecting account data is to register the customer in the CRM and send a welcome message."
+    },
+    {
+     "type": "notification",
+     "label": "Notify new customer",
+     "config": {
+      "channel": "app",
+      "subject": "Welcome to {{set1.company}}!",
+      "body": "A new customer, {{trigger1.email}}, has signed up for the {{set1.plan}} plan. Please ensure all onboarding steps are completed."
+     },
+     "reason": "It's good practice to send an internal notification when a new customer signs up, informing the team about the new registration."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1194,
+   "tokens_out": 252,
+   "rejected": [],
+   "cost_usd": 0.0009882,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/http1->agent1",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.616,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "New customer {{trigger1.company}}",
+      "body": "A new customer {{trigger1.company}} has signed up for the {{trigger1.plan}} plan. CRM response: {{http1}}"
+     },
+     "reason": "Notify the workflow owner about the new customer and the CRM creation status."
+    },
+    {
+     "type": "agent",
+     "label": "Welcome email draft",
+     "config": {
+      "agent_id": "agent2",
+      "input": "Draft a welcome email for new customer {{trigger1.company}} who signed up for the {{trigger1.plan}} plan. The CRM creation was successful. Their email is {{trigger1.email}}."
+     },
+     "reason": "Draft a welcome email for the new customer using an agent."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1235,
+   "tokens_out": 232,
+   "rejected": [],
+   "cost_usd": 0.0009505,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "convert",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "agent",
+     "output"
+    ],
+    "ai_types": [
+     "notification",
+     "agent"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/agent1->notification1",
+   "repeat": 3,
+   "expected": {
+    "type": "notification",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.243,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner",
+     "config": {
+      "channel": "app",
+      "subject": "New customer onboarded",
+      "body": "A new customer {{trigger1.company}} has been onboarded with plan {{trigger1.plan}}."
+     },
+     "reason": "It is good practice to notify the workflow owner when a new customer has been onboarded."
+    },
+    {
+     "type": "output",
+     "label": "Return welcome message",
+     "config": {
+      "value": "{{agent1}}"
+     },
+     "reason": "The workflow should return the welcome message generated by the agent as its final output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1278,
+   "tokens_out": 179,
+   "rejected": [],
+   "cost_usd": 0.0008309000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "customer-onboarding/notification1->output1",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 0.914,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Workflow output",
+     "config": {
+      "value": "Customer onboarding complete for {{trigger1.company}}."
+     },
+     "reason": "The workflow has completed its main tasks, so it's appropriate to define its final output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1319,
+   "tokens_out": 86,
+   "rejected": [],
+   "cost_usd": 0.0006107,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output"
+    ],
+    "merged_types": [
+     "output"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/trigger->order",
+   "repeat": 3,
+   "expected": {
+    "type": "set",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 2.154,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Order amount > 1000?",
+     "config": {
+      "rules": [
+       {
+        "field": "{{trigger.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description states that orders above 1,000 are reviewed by an agent, so a condition node is needed to check the order amount."
+    },
+    {
+     "type": "extract",
+     "label": "Extract order details",
+     "config": {
+      "agent_id": "agent9",
+      "input": "{{trigger}}",
+      "fields": [
+       {
+        "name": "amount",
+        "type": "number",
+        "description": "Total amount of the order",
+        "required": true
+       },
+       {
+        "name": "items",
+        "type": "list",
+        "description": "List of items in the order",
+        "required": false
+       },
+       {
+        "name": "customer_id",
+        "type": "string",
+        "description": "ID of the customer placing the order",
+        "required": false
+       }
+      ]
+     },
+     "reason": "To properly review an order, it's essential to extract key details like the amount, items, and customer information from the incoming webhook data."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1119,
+   "tokens_out": 361,
+   "rejected": [],
+   "cost_usd": 0.0012382,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": false,
+    "rules_top1": false,
+    "merged_top1": false,
+    "ai_hit": false,
+    "route_ok": true,
+    "config": null,
+    "rule_types": [
+     "agent",
+     "classifier",
+     "convert"
+    ],
+    "merged_types": [
+     "condition",
+     "extract",
+     "agent"
+    ],
+    "ai_types": [
+     "condition",
+     "extract"
+    ]
+   }
+  },
+  {
+   "case": "order-review/order->big",
+   "repeat": 3,
+   "expected": {
+    "type": "condition",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.14,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "condition",
+     "label": "Check order amount",
+     "config": {
+      "rules": [
+       {
+        "field": "{{order.amount}}",
+        "op": "gt",
+        "value": 1000
+       }
+      ],
+      "match": "all"
+     },
+     "reason": "The workflow description states that orders above 1,000 are reviewed by an agent, so a condition node is needed to check the amount."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1152,
+   "tokens_out": 133,
+   "rejected": [],
+   "cost_usd": 0.0006781000000000001,
+   "score": {
+    "rules_top3": false,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "http",
+     "notification"
+    ],
+    "merged_types": [
+     "condition",
+     "output",
+     "http"
+    ],
+    "ai_types": [
+     "condition"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->review",
+   "repeat": 3,
+   "expected": {
+    "type": "agent",
+    "route": "true"
+   },
+   "status": 200,
+   "latency_s": 1.632,
+   "route": "true",
+   "suggestions": [
+    {
+     "type": "agent",
+     "label": "Review order",
+     "config": {
+      "agent_id": "agent9",
+      "input": "Review the following order:\nCustomer: {{order.customer}}\nAmount: {{order.amount}}"
+     },
+     "reason": "The workflow description states that orders above 1,000 should be reviewed by an agent, and 'big' node's true branch means the order is large."
+    },
+    {
+     "type": "notification",
+     "label": "Notify about large order",
+     "config": {
+      "channel": "app",
+      "subject": "Large Order for Review: {{order.customer}}",
+      "body": "A large order has been placed by {{order.customer}} for {{order.amount}}. Please review."
+     },
+     "reason": "It's good practice to notify relevant personnel when a significant event, like a large order, occurs, especially if it requires manual review."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1186,
+   "tokens_out": 243,
+   "rejected": [],
+   "cost_usd": 0.0009633,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": false,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": true,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "agent",
+     "notification",
+     "output"
+    ],
+    "ai_types": [
+     "agent",
+     "notification"
+    ]
+   }
+  },
+  {
+   "case": "order-review/big->skip",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": "false"
+   },
+   "status": 200,
+   "latency_s": 0.849,
+   "route": "false",
+   "suggestions": [
+    {
+     "type": "output",
+     "label": "Output order",
+     "config": {
+      "value": "{{order}}"
+     },
+     "reason": "The 'false' branch of the condition means the order is not large, so it can be directly outputted as processed."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1225,
+   "tokens_out": 83,
+   "rejected": [],
+   "cost_usd": 0.000575,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": true,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": false
+    },
+    "rule_types": [
+     "output",
+     "agent"
+    ],
+    "merged_types": [
+     "output",
+     "agent"
+    ],
+    "ai_types": [
+     "output"
+    ]
+   }
+  },
+  {
+   "case": "order-review/review->done",
+   "repeat": 3,
+   "expected": {
+    "type": "output",
+    "route": null
+   },
+   "status": 200,
+   "latency_s": 1.373,
+   "route": null,
+   "suggestions": [
+    {
+     "type": "notification",
+     "label": "Notify owner of review",
+     "config": {
+      "channel": "app",
+      "subject": "Order reviewed",
+      "body": "An order has been reviewed: {{review}}"
+     },
+     "reason": "Notify the workflow owner that the order review is complete."
+    },
+    {
+     "type": "output",
+     "label": "Output review result",
+     "config": {
+      "value": "{{review}}"
+     },
+     "reason": "Return the result of the order review as the workflow's output."
+    }
+   ],
+   "reason": null,
+   "tokens_in": 1254,
+   "tokens_out": 156,
+   "rejected": [],
+   "cost_usd": 0.0007662000000000001,
+   "score": {
+    "rules_top3": true,
+    "merged_top3": true,
+    "rules_top1": true,
+    "merged_top1": false,
+    "ai_hit": true,
+    "route_ok": true,
+    "config": {
+     "agent_ok": null,
+     "reads_source": true
+    },
+    "rule_types": [
+     "output",
+     "condition",
+     "notification"
+    ],
+    "merged_types": [
+     "notification",
+     "output",
+     "condition"
+    ],
+    "ai_types": [
+     "notification",
+     "output"
+    ]
+   }
+  }
+ ]
+}
