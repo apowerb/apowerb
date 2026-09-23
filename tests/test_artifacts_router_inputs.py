@@ -31,11 +31,12 @@ SESSION = "session_1785833154778"
 
 
 def _put(fake: FakeS3Client, segment: str, filename: str, version: int,
-         body: bytes, session_id: str = SESSION) -> None:
+         body: bytes, session_id: str = SESSION,
+         content_type: str = "application/octet-stream") -> None:
     key = f"artifacts/{AGENT}/{session_id}/{segment}/{filename}/{version}/{filename}"
     fake._objects[key] = {
         "body": body,
-        "content_type": "application/octet-stream",
+        "content_type": content_type,
         "metadata": {},
         "last_modified": datetime.datetime.now(datetime.timezone.utc),
     }
@@ -143,6 +144,46 @@ def test_binary_upload_is_reported_not_mangled(s3_env):
     assert r.status_code == 200
     assert r.json()["binary"] is True
     assert r.json()["code"] == ""
+
+
+# A minimal PDF can be pure ASCII: no compressed stream, no binary comment
+# line. It decodes as UTF-8 without error, so decoding alone would ship it
+# as text and the viewer would print its raw bytes.
+ASCII_PDF = (
+    b"%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+    b"2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\n"
+    b"trailer << /Root 1 0 R >>\n%%EOF\n"
+)
+
+
+def test_ascii_only_pdf_upload_is_binary(s3_env):
+    client, fake = s3_env
+    ASCII_PDF.decode("utf-8")
+    _put(fake, "input", "simple.pdf", 0, ASCII_PDF)
+
+    r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/simple.pdf")
+    assert r.status_code == 200
+    assert r.json()["binary"] is True
+    assert r.json()["code"] == ""
+
+
+def test_upload_with_a_binary_mime_type_is_binary(s3_env):
+    """The stored content type is known before any byte is inspected."""
+    client, fake = s3_env
+    _put(fake, "input", "photo.png", 0, b"ascii body", content_type="image/png")
+
+    r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/photo.png")
+    assert r.json()["binary"] is True
+
+
+def test_text_upload_stays_text(s3_env):
+    client, fake = s3_env
+    _put(fake, "input", "readme.md", 0, b"# Titre\n\nUn vrai texte.\n",
+         content_type="text/markdown")
+
+    r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/readme.md")
+    assert r.json()["binary"] is False
+    assert r.json()["code"] == "# Titre\n\nUn vrai texte.\n"
 
 
 def test_generated_artifact_wins_a_name_collision(s3_env):

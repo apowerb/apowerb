@@ -119,6 +119,17 @@ def test_a_binary_legacy_file_is_flagged_not_mangled(s3_env):
     assert r.json()["binary"] is True
 
 
+def test_an_ascii_only_legacy_pdf_is_flagged_binary(s3_env):
+    """The legacy prefix carries no content type: the signature decides."""
+    client, fake = s3_env
+    _put(fake, f"uploads/{AGENT}/simple.pdf",
+         b"%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << >>\n%%EOF\n")
+
+    r = client.get(f"/api/artifacts/{AGENT}/{USER}/_shared/simple.pdf")
+    assert r.status_code == 200
+    assert r.json()["binary"] is True
+
+
 def test_legacy_files_of_another_agent_stay_out(s3_env):
     client, fake = s3_env
     _put(fake, "uploads/agent999/autre.html", b"<h1>autre</h1>")
