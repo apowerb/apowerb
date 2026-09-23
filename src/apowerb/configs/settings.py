@@ -434,6 +434,16 @@ class Settings(BaseSettings):
     # DEFAULT_LLM_PLAN_QUOTAS={"free": 1000000, "pro": 50000000}
     default_llm_plan_quotas: dict[str, int] = {}
 
+    # ── Nœud suivant proposé par un modèle (Workflow Studio, roadmap#85) ──
+    # Éteint par défaut : chaque appel consomme le modèle mutualisé, sous le
+    # même plafond que les runs. WORKFLOW_SUGGEST_MODEL permet un modèle plus
+    # rapide et moins cher, servi par la MÊME clé/endpoint que
+    # DEFAULT_LLM_MODEL ; vide, c'est DEFAULT_LLM_MODEL. Le délai est court
+    # parce que l'éditeur attend la réponse : au-delà, il garde ses règles.
+    workflow_suggest_enabled: bool = False
+    workflow_suggest_model: str = ""
+    workflow_suggest_timeout_s: float = 4.0
+
     # Registration feature flag — set AUTH_REGISTER_ENABLED=false to keep
     # the login endpoint open while disabling user self-registration. One
     # deployment uses this so internal users can sign in but the public POST /users/

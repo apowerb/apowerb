@@ -44,6 +44,13 @@ class RunBody(BaseModel):
     payload: Any = None
 
 
+class SuggestBody(BaseModel):
+    graph: dict
+    node_id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 def _not_found(workflow_id: str) -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown workflow: {workflow_id}")
 
@@ -88,6 +95,28 @@ async def validate_graph(
     body: GraphBody, current_user: user_schemas.User = Depends(get_current_user)
 ):
     return workflow_main.check_workflow(body.graph, owner_id=current_user.email)
+
+
+@router.post("/suggest-next")
+async def suggest_next_node(
+    body: SuggestBody, current_user: user_schemas.User = Depends(get_current_user)
+):
+    """Nœuds proposés par le modèle après ``node_id`` (graphe non enregistré).
+
+    Sans état, comme ``/validate`` : l'éditeur envoie le brouillon tel qu'il
+    est à l'écran. 404 si la fonction est éteinte, 402 si le plafond de jetons
+    est atteint, 503 si le modèle ne répond pas utilement.
+    """
+    from apowerb.core import workflow_suggest
+
+    graph = _call(workflow_main.parse_graph, body.graph)
+    return await workflow_suggest.suggest_next(
+        graph,
+        body.node_id,
+        owner_id=current_user.email,
+        name=body.name,
+        description=body.description,
+    )
 
 
 @router.get("/{workflow_id}")

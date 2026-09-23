@@ -1251,6 +1251,164 @@ def _parse_date(value: Any):
     raise ValueError(f"{value!r} is not a recognizable date")
 
 
+def validate_node(
+    n: Node,
+    *,
+    workflow_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
+) -> None:
+    """Configuration d'un nœud seul, sans ses arêtes ni ses références.
+
+    Extraite de ``validate_graph`` pour juger un nœud qui n'est pas encore
+    dans le graphe : une proposition de ``workflow_suggest`` doit passer les
+    mêmes règles qu'un nœud enregistré, sans qu'un brouillon encore incomplet
+    ailleurs ne masque son verdict.
+    """
+    cfg = n.config
+    if n.type in _NOT_YET:
+        raise GraphError(f"{n.id} : le type {n.type} n'est pas encore exécutable")
+    if n.type in ("agent", "classifier", "extract", "rag") and not cfg.get(
+        "agent_id"
+    ):
+        raise GraphError(f"{n.id} : agent_id manquant")
+    if n.type == "tool" and not cfg.get("tool"):
+        raise GraphError(f"{n.id} : outil manquant")
+    if n.type == "router" and not cfg.get("rules"):
+        raise GraphError(f"{n.id} : aucune règle de routage")
+    if n.type == "classifier" and len(_declared_routes(n)) < 2:
+        raise GraphError(f"{n.id} : un classifieur demande au moins deux routes")
+    if n.type == "loop":
+        _loop_body(n, workflow_id=workflow_id)
+    if n.type == "try":
+        _try_config(n, workflow_id=workflow_id)
+    if n.type == "subworkflow":
+        target = cfg.get("workflow_id")
+        if not isinstance(target, str) or not target.strip():
+            raise GraphError(f"{n.id} : workflow_id manquant")
+        if workflow_id is not None and target == workflow_id:
+            raise GraphError(
+                f"{n.id} : un workflow ne peut pas s'appeler lui-même",
+                code="subworkflow_cycle",
+                params={"node": n.id, "workflow": target},
+            )
+    if n.type == "convert" and cfg.get("to") not in CONVERT_TARGETS:
+        raise GraphError(
+            f"{n.id} : conversion inconnue {cfg.get('to')!r} "
+            f"(attendu : {', '.join(CONVERT_TARGETS)})"
+        )
+    if n.type == "trigger":
+        validate_trigger_config(
+            cfg, node_id=n.id, workflow_id=workflow_id, owner_id=owner_id
+        )
+    if n.type == "set":
+        fields = cfg.get("fields") or []
+        if not fields:
+            raise GraphError(f"{n.id} : aucun champ à définir")
+        keys = [f.get("key") if isinstance(f, dict) else None for f in fields]
+        for key in keys:
+            if not isinstance(key, str) or not key.strip():
+                raise GraphError(f"{n.id} : clé de champ vide")
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        if dupes:
+            raise GraphError(
+                f"{n.id} : clé de champ dupliquée : {', '.join(dupes)}"
+            )
+    if n.type == "condition":
+        if not cfg.get("rules"):
+            raise GraphError(f"{n.id} : aucune règle de condition")
+        match = cfg.get("match", "all")
+        if match not in ("all", "any"):
+            raise GraphError(f"{n.id} : match inconnu {match!r} (all ou any)")
+    if n.type == "extract":
+        _validate_extract_fields(n)
+    if n.type == "rag":
+        if not cfg.get("query"):
+            raise GraphError(f"{n.id} : query manquant")
+        top_k = cfg.get("top_k", _DEFAULT_RAG_TOP_K)
+        if (
+            isinstance(top_k, bool)
+            or not isinstance(top_k, int)
+            or not _MIN_RAG_TOP_K <= top_k <= _MAX_RAG_TOP_K
+        ):
+            raise GraphError(
+                f"{n.id} : top_k doit être un entier de {_MIN_RAG_TOP_K} à "
+                f"{_MAX_RAG_TOP_K}"
+            )
+    if n.type == "http":
+        if cfg.get("method") not in _HTTP_METHODS:
+            raise GraphError(
+                f"{n.id} : méthode HTTP inconnue {cfg.get('method')!r} "
+                f"(attendu : {', '.join(_HTTP_METHODS)})"
+            )
+        if not cfg.get("url"):
+            raise GraphError(f"{n.id} : url manquante")
+        for h in cfg.get("headers") or []:
+            key = str(h.get("key", "")).strip().lower()
+            if key in _FORBIDDEN_HTTP_HEADERS:
+                raise GraphError(
+                    f"{n.id} : l'en-tête {h.get('key')!r} ne peut pas être écrit en "
+                    "clair dans le graphe (secret potentiel) ; l'authentification "
+                    "HTTP passera par auth.integration_id"
+                )
+            if key == "host":
+                # Refusé aussi à l'exécution : le moteur fixe Host lui-même
+                # (IP résolue et vérifiée, protection contre le DNS rebinding).
+                raise GraphError(
+                    f"{n.id} : l'en-tête Host est fixé par le moteur d'après "
+                    "l'URL ; retirez-le"
+                )
+        timeout = cfg.get("timeout_s", DEFAULT_HTTP_TIMEOUT)
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, int)
+            or not MIN_HTTP_TIMEOUT <= timeout <= MAX_HTTP_TIMEOUT
+        ):
+            raise GraphError(
+                f"{n.id} : timeout_s doit être un entier de {MIN_HTTP_TIMEOUT} à "
+                f"{MAX_HTTP_TIMEOUT}"
+            )
+        if cfg.get("auth") is not None:
+            # Pas de stockage de secret encore branché pour ce nœud : voir le
+            # docstring du module et le rapport du lot. auth doit rester null
+            # tant que ça n'existe pas, plutôt que d'inventer une résolution.
+            raise GraphError(
+                f"{n.id} : authentification HTTP pas encore disponible"
+            )
+    if n.type == "notification":
+        channel = cfg.get("channel")
+        if channel not in _NOTIF_CHANNELS:
+            raise GraphError(
+                f"{n.id} : canal de notification inconnu {channel!r} "
+                f"(attendu : {', '.join(sorted(_NOTIF_CHANNELS))})"
+            )
+        to = cfg.get("to") or []
+        if channel == "email":
+            if (
+                not isinstance(to, list)
+                or not 1 <= len(to) <= MAX_NOTIFICATION_RECIPIENTS
+            ):
+                raise GraphError(
+                    f"{n.id} : de 1 à {MAX_NOTIFICATION_RECIPIENTS} destinataires "
+                    "(to) requis pour l'email"
+                )
+            if not cfg.get("subject"):
+                raise GraphError(f"{n.id} : subject manquant")
+        elif channel == "app" and to:
+            raise GraphError(
+                f"{n.id} : to doit être vide pour une notification app "
+                "(le destinataire est le propriétaire du workflow)"
+            )
+        elif channel == "teams":
+            if to:
+                raise GraphError(
+                    f"{n.id} : to doit être vide pour une notification teams "
+                    "(le destinataire est le webhook Teams du propriétaire)"
+                )
+            if not cfg.get("subject"):
+                raise GraphError(f"{n.id} : subject manquant")
+
+
+
 def validate_graph(
     graph: WorkflowGraph,
     *,
@@ -1288,148 +1446,7 @@ def validate_graph(
                 raise GraphError(f"arête vers un nœud inconnu : {end}")
 
     for n in graph.nodes:
-        cfg = n.config
-        if n.type in _NOT_YET:
-            raise GraphError(f"{n.id} : le type {n.type} n'est pas encore exécutable")
-        if n.type in ("agent", "classifier", "extract", "rag") and not cfg.get(
-            "agent_id"
-        ):
-            raise GraphError(f"{n.id} : agent_id manquant")
-        if n.type == "tool" and not cfg.get("tool"):
-            raise GraphError(f"{n.id} : outil manquant")
-        if n.type == "router" and not cfg.get("rules"):
-            raise GraphError(f"{n.id} : aucune règle de routage")
-        if n.type == "classifier" and len(_declared_routes(n)) < 2:
-            raise GraphError(f"{n.id} : un classifieur demande au moins deux routes")
-        if n.type == "loop":
-            _loop_body(n, workflow_id=workflow_id)
-        if n.type == "try":
-            _try_config(n, workflow_id=workflow_id)
-        if n.type == "subworkflow":
-            target = cfg.get("workflow_id")
-            if not isinstance(target, str) or not target.strip():
-                raise GraphError(f"{n.id} : workflow_id manquant")
-            if workflow_id is not None and target == workflow_id:
-                raise GraphError(
-                    f"{n.id} : un workflow ne peut pas s'appeler lui-même",
-                    code="subworkflow_cycle",
-                    params={"node": n.id, "workflow": target},
-                )
-        if n.type == "convert" and cfg.get("to") not in CONVERT_TARGETS:
-            raise GraphError(
-                f"{n.id} : conversion inconnue {cfg.get('to')!r} "
-                f"(attendu : {', '.join(CONVERT_TARGETS)})"
-            )
-        if n.type == "trigger":
-            validate_trigger_config(
-                cfg, node_id=n.id, workflow_id=workflow_id, owner_id=owner_id
-            )
-        if n.type == "set":
-            fields = cfg.get("fields") or []
-            if not fields:
-                raise GraphError(f"{n.id} : aucun champ à définir")
-            keys = [f.get("key") if isinstance(f, dict) else None for f in fields]
-            for key in keys:
-                if not isinstance(key, str) or not key.strip():
-                    raise GraphError(f"{n.id} : clé de champ vide")
-            dupes = sorted({k for k in keys if keys.count(k) > 1})
-            if dupes:
-                raise GraphError(
-                    f"{n.id} : clé de champ dupliquée : {', '.join(dupes)}"
-                )
-        if n.type == "condition":
-            if not cfg.get("rules"):
-                raise GraphError(f"{n.id} : aucune règle de condition")
-            match = cfg.get("match", "all")
-            if match not in ("all", "any"):
-                raise GraphError(f"{n.id} : match inconnu {match!r} (all ou any)")
-        if n.type == "extract":
-            _validate_extract_fields(n)
-        if n.type == "rag":
-            if not cfg.get("query"):
-                raise GraphError(f"{n.id} : query manquant")
-            top_k = cfg.get("top_k", _DEFAULT_RAG_TOP_K)
-            if (
-                isinstance(top_k, bool)
-                or not isinstance(top_k, int)
-                or not _MIN_RAG_TOP_K <= top_k <= _MAX_RAG_TOP_K
-            ):
-                raise GraphError(
-                    f"{n.id} : top_k doit être un entier de {_MIN_RAG_TOP_K} à "
-                    f"{_MAX_RAG_TOP_K}"
-                )
-        if n.type == "http":
-            if cfg.get("method") not in _HTTP_METHODS:
-                raise GraphError(
-                    f"{n.id} : méthode HTTP inconnue {cfg.get('method')!r} "
-                    f"(attendu : {', '.join(_HTTP_METHODS)})"
-                )
-            if not cfg.get("url"):
-                raise GraphError(f"{n.id} : url manquante")
-            for h in cfg.get("headers") or []:
-                key = str(h.get("key", "")).strip().lower()
-                if key in _FORBIDDEN_HTTP_HEADERS:
-                    raise GraphError(
-                        f"{n.id} : l'en-tête {h.get('key')!r} ne peut pas être écrit en "
-                        "clair dans le graphe (secret potentiel) ; l'authentification "
-                        "HTTP passera par auth.integration_id"
-                    )
-                if key == "host":
-                    # Refusé aussi à l'exécution : le moteur fixe Host lui-même
-                    # (IP résolue et vérifiée, protection contre le DNS rebinding).
-                    raise GraphError(
-                        f"{n.id} : l'en-tête Host est fixé par le moteur d'après "
-                        "l'URL ; retirez-le"
-                    )
-            timeout = cfg.get("timeout_s", DEFAULT_HTTP_TIMEOUT)
-            if (
-                isinstance(timeout, bool)
-                or not isinstance(timeout, int)
-                or not MIN_HTTP_TIMEOUT <= timeout <= MAX_HTTP_TIMEOUT
-            ):
-                raise GraphError(
-                    f"{n.id} : timeout_s doit être un entier de {MIN_HTTP_TIMEOUT} à "
-                    f"{MAX_HTTP_TIMEOUT}"
-                )
-            if cfg.get("auth") is not None:
-                # Pas de stockage de secret encore branché pour ce nœud : voir le
-                # docstring du module et le rapport du lot. auth doit rester null
-                # tant que ça n'existe pas, plutôt que d'inventer une résolution.
-                raise GraphError(
-                    f"{n.id} : authentification HTTP pas encore disponible"
-                )
-        if n.type == "notification":
-            channel = cfg.get("channel")
-            if channel not in _NOTIF_CHANNELS:
-                raise GraphError(
-                    f"{n.id} : canal de notification inconnu {channel!r} "
-                    f"(attendu : {', '.join(sorted(_NOTIF_CHANNELS))})"
-                )
-            to = cfg.get("to") or []
-            if channel == "email":
-                if (
-                    not isinstance(to, list)
-                    or not 1 <= len(to) <= MAX_NOTIFICATION_RECIPIENTS
-                ):
-                    raise GraphError(
-                        f"{n.id} : de 1 à {MAX_NOTIFICATION_RECIPIENTS} destinataires "
-                        "(to) requis pour l'email"
-                    )
-                if not cfg.get("subject"):
-                    raise GraphError(f"{n.id} : subject manquant")
-            elif channel == "app" and to:
-                raise GraphError(
-                    f"{n.id} : to doit être vide pour une notification app "
-                    "(le destinataire est le propriétaire du workflow)"
-                )
-            elif channel == "teams":
-                if to:
-                    raise GraphError(
-                        f"{n.id} : to doit être vide pour une notification teams "
-                        "(le destinataire est le webhook Teams du propriétaire)"
-                    )
-                if not cfg.get("subject"):
-                    raise GraphError(f"{n.id} : subject manquant")
+        validate_node(n, workflow_id=workflow_id, owner_id=owner_id)
 
     for e in graph.edges:
         src = by_id[e.source]
