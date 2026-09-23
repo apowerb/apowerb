@@ -382,6 +382,8 @@ def _is_binary_mime(content_type: Optional[str]) -> bool:
     uploader did not say -- so it leaves the decision to the bytes.
     """
     mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if mime == "image/svg+xml":
+        return False  # XML text, shown as such
     return (
         mime.startswith(_BINARY_MIME_PREFIXES)
         or mime in _BINARY_MIME_TYPES

@@ -186,6 +186,17 @@ def test_text_upload_stays_text(s3_env):
     assert r.json()["code"] == "# Titre\n\nUn vrai texte.\n"
 
 
+def test_svg_upload_stays_text(s3_env):
+    """An SVG is an image type, but its body is XML the tab can show."""
+    client, fake = s3_env
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="1"/></svg>'
+    _put(fake, "input", "logo.svg", 0, svg, content_type="image/svg+xml")
+
+    r = client.get(f"/api/artifacts/{AGENT}/{USER}/{SESSION}/logo.svg")
+    assert r.json()["binary"] is False
+    assert r.json()["code"] == svg.decode()
+
+
 def test_generated_artifact_wins_a_name_collision(s3_env):
     """Uploading report.html and then having the agent generate report.html
     is a real sequence. Without ?kind=, the generated one answers -- what
