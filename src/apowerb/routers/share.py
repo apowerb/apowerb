@@ -1,14 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from datetime import datetime, timedelta, timezone
 from nanoid import generate                          # pip install nanoid
 
 from apowerb.auth.dependencies import get_current_user, get_optional_user
+from apowerb.configs.settings import get_settings
 from apowerb.helpers.database import get_db
 from apowerb.models import SharedConversation
 from apowerb.schema.share_schema import (
-    ShareCreateRequest, ShareCreateResponse, SharedConversationResponse
+    ShareCreateRequest, ShareCreateResponse, ShareListItem,
+    SharedConversationResponse,
 )
 from apowerb.users import schemas as user_schemas
 
@@ -41,6 +43,44 @@ async def create_share(
     db.add(record)
     await db.commit()
     return ShareCreateResponse(shareId=share_id, isPublic=bool(payload.isPublic))
+
+
+@router.get("", response_model=list[ShareListItem])
+async def list_my_shares(
+    db: AsyncSession = Depends(get_db),
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """The caller's own snapshots that still lead somewhere.
+
+    Scoped by owner only: ``owner_id`` is the e-mail, and the organisation is
+    its domain (``get_domain_from_email``), so the owner filter already keeps
+    the list inside one organisation. A revoked share is deleted, so it cannot
+    appear; an expired one answers 410 and is left out.
+    """
+    result = await db.execute(
+        select(SharedConversation)
+        .where(SharedConversation.owner_id == current_user.email)
+        .where(
+            or_(
+                SharedConversation.expires_at.is_(None),
+                SharedConversation.expires_at > datetime.now(timezone.utc),
+            )
+        )
+        .order_by(SharedConversation.created_at.desc())
+    )
+    base = get_settings().app_public_url.rstrip("/")
+    return [
+        ShareListItem(
+            id        = r.id,
+            title     = r.title,
+            agentName = r.agent_name,
+            createdAt = r.created_at,
+            expiresAt = r.expires_at,
+            isPublic  = bool(r.is_public),
+            url       = f"{base}/share/{r.id}",
+        )
+        for r in result.scalars().all()
+    ]
 
 
 @router.get("/{share_id}", response_model=SharedConversationResponse)
