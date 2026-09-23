@@ -13,9 +13,11 @@ Ce qu'un rejeu refait, selon le déclencheur :
 
 - ``workflow`` : le canvas, avec les agents, la configuration et le fichier
   conservés.
-- ``schedule`` : le message conservé, envoyé au même agent, sous l'identité du
-  propriétaire, dans une session ADK **neuve** — la session d'origine peut
-  contenir un échange à moitié fait.
+- ``schedule`` et ``chat`` : le message conservé, envoyé au même agent, sous
+  l'identité du propriétaire, dans une session ADK **neuve** — la session
+  d'origine peut contenir un échange à moitié fait, et pour le chat c'est la
+  conversation de l'utilisateur, où un rejeu n'a pas à s'écrire. Conséquence :
+  l'historique de la conversation n'est pas rejoué, seul le message l'est.
 
 Les effets de bord : un agent agit par ses outils (envoyer un mail, écrire en
 base). Un run d'agent consigne donc les outils qu'il a appelés
@@ -28,8 +30,10 @@ agent en sautant les appels déjà faits, donc rejouer referait l'effet. Seul
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -57,7 +61,7 @@ _REPLAYABLE = (STATUS_ERROR, STATUS_CANCELLED)
 
 # Déclencheurs dont le run est un agent ADK, qui agit par ses outils : ceux-là
 # ne sont rejoués sans ``force`` que si leurs outils sont connus et vides.
-AGENT_TRIGGERS = ("schedule",)
+AGENT_TRIGGERS = ("schedule", "chat")
 
 
 def _now() -> str:
@@ -156,6 +160,50 @@ def start_run(
     return run_id
 
 
+def start_run_safely(**kwargs) -> str | None:
+    """``start_run``, sans jamais empêcher le run de partir.
+
+    Même politique que ``/workflows/run-sse`` : une base indisponible dégrade
+    le suivi, pas l'exécution. Le run part sans trace — donc sans rejeu — et
+    on le dit au niveau qui réveille quelqu'un.
+    """
+    try:
+        return start_run(**kwargs)
+    except Exception:  # la trace ne doit pas arrêter le run
+        logger.exception(
+            "[RUNS] run %s non consigne — il s'execute sans trace, donc sans rejeu",
+            kwargs.get("trigger"),
+        )
+        return None
+
+
+def settle_run(
+    run_id: str | None,
+    status: str,
+    error_message: str | None = None,
+    tools_executed: list[str] | None = None,
+) -> None:
+    """Écrit l'issue d'un run et ses outils, sans jamais masquer cette issue."""
+    if run_id is None:
+        return
+    try:
+        finish_run(run_id, status=status, error_message=error_message)
+        record_tools_executed(run_id, tools_executed)
+    except Exception:  # la trace ne doit pas masquer l'issue
+        logger.exception("[RUNS] issue du run_id=%s non consignee", run_id)
+
+
+def failure_cause(exc: BaseException) -> str:
+    """La cause consignée d'un échec.
+
+    Un routeur traduit l'exception d'origine en ``HTTPException`` au message
+    générique, pour ne rien divulguer au client ; la trace, elle, est lue par
+    le propriétaire du run et doit dire ce qui s'est passé.
+    """
+    origin = exc.__context__ if isinstance(exc, HTTPException) and exc.__context__ else exc
+    return f"{type(origin).__name__}: {origin}"
+
+
 def finish_run(run_id: str, status: str, error_message: str | None = None) -> None:
     """Écrit l'issue d'un run.
 
@@ -208,7 +256,9 @@ async def executed_tools_in_session(
     """Les outils appelés dans une session ADK, ou ``None`` si illisible.
 
     Sert après un échec : l'appel ``/run`` a levé, sa réponse est perdue,
-    mais la session a gardé ce qui s'est passé avant.
+    mais la session a gardé ce qui s'est passé avant. Seul compte ce qui suit
+    le dernier message de l'utilisateur : une conversation porte les outils
+    de ses tours précédents, qui ne sont pas des effets de celui-ci.
     """
     from apowerb.core import adk_runner
 
@@ -223,7 +273,59 @@ async def executed_tools_in_session(
             exc.__class__.__name__,
         )
         return None
-    return executed_tools((session or {}).get("events"))
+    events = (session or {}).get("events") or []
+    last_user_turn = max(
+        (i for i, e in enumerate(events) if isinstance(e, dict) and e.get("author") == "user"),
+        default=-1,
+    )
+    return executed_tools(events[last_user_turn + 1 :])
+
+
+async def track_agent_stream(
+    run_id: str | None, stream: AsyncIterator[str]
+) -> AsyncIterator[str]:
+    """Relaie un flux SSE d'agent tel quel et consigne son issue.
+
+    Le relais transmet des octets bruts : un événement peut être coupé
+    n'importe où, d'où le tampon découpé sur ``\n\n``. Le flux se termine
+    normalement même quand l'agent a échoué — sur une enveloppe
+    ``{"error": ...}`` — et c'est elle qui fait l'échec. Un client qui ferme
+    le flux annule le run.
+    """
+    status, error, tools, buffer = STATUS_SUCCESS, None, [], ""
+    try:
+        async for chunk in stream:
+            yield chunk
+            buffer += chunk.decode() if isinstance(chunk, bytes) else chunk
+            *blocks, buffer = buffer.split("\n\n")
+            for block in blocks:
+                event = _sse_event(block)
+                if event is None:
+                    continue
+                if event.get("error"):
+                    status, error = STATUS_ERROR, str(event["error"])
+                elif not event.get("partial"):
+                    # Un événement partiel est répété en entier ensuite.
+                    tools.extend(executed_tools([event]))
+    except (GeneratorExit, asyncio.CancelledError):
+        status = STATUS_CANCELLED
+        raise
+    except Exception as exc:
+        status, error = STATUS_ERROR, failure_cause(exc)
+        raise
+    finally:
+        settle_run(run_id, status, error, tools)
+
+
+def _sse_event(block: str) -> dict | None:
+    data = "".join(
+        line[len("data:") :].strip() for line in block.splitlines() if line.startswith("data:")
+    )
+    try:
+        event = json.loads(data) if data else None
+    except ValueError:
+        return None
+    return event if isinstance(event, dict) else None
 
 
 def _row_to_dict(row) -> dict:

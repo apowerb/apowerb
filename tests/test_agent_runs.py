@@ -17,6 +17,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.pool import StaticPool
 
@@ -175,7 +176,9 @@ def test_runs_are_listed_newest_first_for_their_owner(store):
 
 async def _drain(response):
     """Consume a StreamingResponse body the way the ASGI server would."""
-    return b"".join([chunk async for chunk in response.body_iterator])
+    chunks = [chunk async for chunk in response.body_iterator]
+    # The chat relay streams str, the workflow router bytes.
+    return b"".join(c if isinstance(c, bytes) else c.encode() for c in chunks)
 
 
 def _user(email=OWNER):
@@ -527,3 +530,231 @@ def test_an_existing_runs_table_gets_the_tools_column(monkeypatch):
 
     columns = {c["name"] for c in sa_inspect(engine).get_columns("agent_runs", schema=schema)}
     assert "tools_executed" in columns
+
+
+# ---------------------------------------------------------------------------
+# Chat turns (/api/adk/run and /api/adk/run_sse)
+# ---------------------------------------------------------------------------
+#
+# A chat turn is a run too: one message, one agent, one outcome. The session
+# carries the whole conversation, so only what happened *during this turn*
+# decides whether a replay could repeat a side effect.
+
+
+def _user_turn(text):
+    return {"author": "user", "content": {"role": "user", "parts": [{"text": text}]}}
+
+
+def _sse(event):
+    return f"data: {json.dumps(event)}\n\n"
+
+
+@pytest.fixture
+def chat(monkeypatch, store, scheduler):
+    """The real chat endpoints, with the ADK server faked out.
+
+    Reuses the scheduler fake (``run_adk``, ``session_events``); ``stream`` is
+    what ``/run_sse`` relays.
+    """
+    from unittest.mock import AsyncMock
+
+    from apowerb.routers import adk_runner as router
+    from apowerb.schema.adk_runner_schema import RunADKAgentRequest
+
+    async def _get_session(**kwargs):
+        return {"id": kwargs.get("session_id"), "events": scheduler.session_events}
+
+    async def _stream(**kwargs):
+        for chunk in scheduler.stream:
+            yield chunk
+
+    monkeypatch.setattr(router, "get_agent_folder_name", lambda name: "support_agent")
+    monkeypatch.setattr(router, "get_adk_session", _get_session)
+    monkeypatch.setattr(router, "create_adk_agent_session", AsyncMock(return_value={}))
+    monkeypatch.setattr(router, "run_adk_agent", lambda **kw: scheduler.run_adk(**kw))
+    monkeypatch.setattr(router, "stream_adk_agent", _stream)
+    scheduler.stream = []
+
+    # The chat endpoints read the caller's plan for the run guards.
+    chat_user = SimpleNamespace(email=OWNER, user_id=1, role="USER", plan=None)
+
+    def _request(text="Refund order 1234"):
+        return RunADKAgentRequest(
+            agent_name="support-agent",
+            user_id=OWNER,
+            session_id="conv-1",
+            new_message={"role": "user", "parts": [{"text": text}]},
+        )
+
+    async def _run(text="Refund order 1234"):
+        return await router.run_agent(
+            _request(text), credentials=None, current_user=chat_user
+        )
+
+    async def _run_sse(text="Refund order 1234"):
+        response = await router.run_agent_sse(
+            _request(text), credentials=None, current_user=chat_user
+        )
+        return response
+
+    scheduler.chat = _run
+    scheduler.chat_sse = _run_sse
+    return scheduler
+
+
+@pytest.mark.asyncio
+async def test_a_failed_chat_turn_is_listed_with_its_cause(chat):
+    chat.run_adk.side_effect = RuntimeError("model overloaded")
+    # An earlier turn of the same conversation called a tool; this one did not.
+    chat.session_events = [
+        _user_turn("Look up order 1234"),
+        _call("lookup_order"),
+        _user_turn("Refund order 1234"),
+    ]
+
+    with pytest.raises(HTTPException):
+        await chat.chat()
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["trigger"] == "chat"
+    assert run["status"] == "error"
+    assert "model overloaded" in run["error_message"]
+    assert run["config"]["agent_name"] == "support-agent"
+    assert run["config"]["session_id"] == "conv-1"
+    assert run["config"]["new_message"]["parts"][0]["text"] == "Refund order 1234"
+    # Only this turn counts: the earlier lookup is not a side effect of it.
+    assert run["tools_executed"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_chat_turn_that_called_a_tool_before_failing_is_not_replayed(chat):
+    chat.run_adk.side_effect = RuntimeError("model overloaded")
+    chat.session_events = [_user_turn("Refund order 1234"), _call("issue_refund")]
+
+    with pytest.raises(HTTPException):
+        await chat.chat()
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["tools_executed"] == ["issue_refund"]
+    with pytest.raises(Exception) as excinfo:
+        run_main.prepare_replay(run["run_id"], owner_id=OWNER)
+    assert excinfo.value.status_code == 409
+    assert "issue_refund" in str(excinfo.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_a_successful_chat_turn_is_recorded_and_not_replayable(chat):
+    chat.run_adk.return_value = [
+        _call("issue_refund"),
+        {"content": {"role": "model", "parts": [{"text": "Refunded."}]}},
+    ]
+
+    await chat.chat()
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["status"] == "success"
+    assert run["tools_executed"] == ["issue_refund"]
+    with pytest.raises(Exception) as excinfo:
+        run_main.prepare_replay(run["run_id"], owner_id=OWNER)
+    assert excinfo.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_chat_turn_records_its_tools_across_chunk_boundaries(chat):
+    whole = (
+        _sse({"content": {"parts": [{"functionCall": {"name": "lookup_order"}}]}})
+        + _sse({"partial": True, "content": {"parts": [{"text": "Your order"}]}})
+        + _sse({"content": {"parts": [{"text": "Your order ships today."}]}})
+    )
+    # The relay forwards raw bytes: an event can be cut anywhere.
+    chat.stream = [whole[:17], whole[17:60], whole[60:]]
+
+    response = await chat.chat_sse()
+    body = await _drain(response)
+
+    assert b"ships today" in body
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["trigger"] == "chat"
+    assert run["status"] == "success"
+    assert run["tools_executed"] == ["lookup_order"]
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_chat_turn_that_ends_on_an_error_is_a_failure(chat):
+    """Counter-example: the stream closes normally, but on an error envelope."""
+    chat.stream = [_sse({"error": "The agent service is unavailable.", "code": 503})]
+
+    response = await chat.chat_sse()
+    await _drain(response)
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["status"] == "error"
+    assert "unavailable" in run["error_message"]
+    assert run["tools_executed"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_chat_stream_closed_by_the_client_is_cancelled(chat):
+    chat.stream = [
+        _sse({"content": {"parts": [{"text": "Thinking"}]}}),
+        _sse({"content": {"parts": [{"text": "never read"}]}}),
+    ]
+
+    response = await chat.chat_sse()
+    iterator = response.body_iterator
+    await iterator.__anext__()
+    await iterator.aclose()
+
+    [run] = run_main.list_runs(owner_id=OWNER)
+    assert run["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_a_chat_turn_is_invisible_to_another_user(chat):
+    chat.run_adk.side_effect = RuntimeError("boom")
+    with pytest.raises(HTTPException):
+        await chat.chat()
+    [run] = run_main.list_runs(owner_id=OWNER)
+
+    assert run_main.list_runs(owner_id=OTHER) == []
+    assert run_main.get_run(run["run_id"], owner_id=OTHER) is None
+
+
+@pytest.mark.asyncio
+async def test_a_storage_failure_does_not_stop_a_chat_turn(chat, monkeypatch):
+    def _broken(**kwargs):
+        raise RuntimeError("database is down")
+
+    monkeypatch.setattr(run_main, "start_run", _broken)
+    chat.run_adk.return_value = [{"content": {"parts": [{"text": "Hello"}]}}]
+
+    result = await chat.chat()
+
+    assert result == [{"content": {"parts": [{"text": "Hello"}]}}]
+
+
+@pytest.mark.asyncio
+async def test_replaying_a_failed_chat_turn_resends_it_in_a_fresh_session(chat, workflows, monkeypatch):
+    chat.run_adk.side_effect = RuntimeError("model overloaded")
+    chat.session_events = [_user_turn("Refund order 1234")]
+    with pytest.raises(HTTPException):
+        await chat.chat()
+    [original] = run_main.list_runs(owner_id=OWNER)
+    from apowerb.core import agent_main
+
+    monkeypatch.setattr(agent_main, "get_agent_folder_name", lambda name: "support_agent")
+    chat.run_adk.side_effect = None
+    chat.run_adk.return_value = [{"content": {"parts": [{"text": "Refunded."}]}}]
+
+    response = await workflows.replay_run(original["run_id"], force=False, current_user=_user())
+    body = await _drain(response)
+
+    assert b"Refunded." in body
+    kwargs = chat.run_adk.await_args.kwargs
+    assert kwargs["agent_name"] == "support_agent"
+    assert kwargs["new_message"]["parts"][0]["text"] == "Refund order 1234"
+    # Not the user's conversation: a replay must not append to it.
+    assert kwargs["session_id"] != "conv-1"
+    [replay] = [r for r in run_main.list_runs(owner_id=OWNER) if r["replay_of"]]
+    assert replay["trigger"] == "chat"
+    assert replay["status"] == "success"
