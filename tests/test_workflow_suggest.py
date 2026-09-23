@@ -169,8 +169,11 @@ def test_valid_proposals_come_back_complete_and_the_call_is_capped_and_counted(e
 
 def test_the_model_sees_the_structure_never_the_values(env):
     _suggest(env)
-    sent = json.dumps(env.calls[0]["messages"], ensure_ascii=False)
-    view = json.loads(env.calls[0]["messages"][1]["content"])
+    system, user = env.calls[0]["messages"]
+    # Du graphe, le prompt système ne reçoit que l'identifiant sélectionné.
+    assert system["content"] == workflow_suggest.system_prompt("start")
+    sent = user["content"]
+    view = json.loads(sent)
 
     assert view["nodes"][0]["payload_fields"] == ["email", "subject"]
     assert view["agents"] == [{"agent_id": "agent3", "name": "Tri des mails", "description": "trie les mails"}]
@@ -293,3 +296,57 @@ def test_public_config_announces_the_feature_only_when_it_is_served(env, monkeyp
     assert client.get("/api/config").json()["workflow_suggest_enabled"] is True
     monkeypatch.setattr(env.settings, "workflow_suggest_enabled", False)
     assert client.get("/api/config").json()["workflow_suggest_enabled"] is False
+
+
+# --- Forme de la configuration enseignée au modèle (roadmap#89) --------------
+
+
+@pytest.mark.parametrize("node_type", workflow_suggest.SUGGESTIBLE_TYPES)
+def test_every_proposable_type_has_a_shape_whose_example_the_validator_accepts(node_type):
+    from apowerb.core.workflow_graph import Node, validate_node
+
+    rule, example = workflow_suggest.CONFIG_SHAPES[node_type]
+    validate_node(Node(id="x", type=node_type, config=example))
+    assert rule and json.dumps(example) in workflow_suggest._SYSTEM
+
+
+def test_the_table_is_the_single_list_of_proposable_types():
+    assert tuple(workflow_suggest.CONFIG_SHAPES) == workflow_suggest.SUGGESTIBLE_TYPES
+
+
+def test_examples_only_read_the_selected_node():
+    from apowerb.core.workflow_graph import Node, _outer_refs
+
+    for node_type, (_, example) in workflow_suggest.CONFIG_SHAPES.items():
+        refs = _outer_refs(Node(id="x", type=node_type, config=example))
+        assert refs <= {workflow_suggest.SELECTED}, node_type
+
+
+def test_the_rule_operators_taught_are_exactly_those_the_engine_runs():
+    from apowerb.core.workflow_graph import GraphError, evaluate_rule
+
+    for op in workflow_suggest.RULE_OPS:
+        evaluate_rule({"op": op, "value": [1]}, 1)
+        assert op in workflow_suggest._SYSTEM
+    with pytest.raises(GraphError):
+        evaluate_rule({"op": "between", "value": 1}, 1)
+
+
+def test_the_prompt_teaches_the_choices_the_validator_enforces():
+    from apowerb.core.workflow_graph import CONVERT_TARGETS, EXTRACT_FIELD_TYPES
+
+    for choice in (*CONVERT_TARGETS, *EXTRACT_FIELD_TYPES):
+        assert choice in workflow_suggest._SYSTEM
+    # Le modèle ne voit jamais d'adresse (describe_graph les tait) : il ne
+    # peut proposer qu'une notification dans l'application.
+    rule, example = workflow_suggest.CONFIG_SHAPES["notification"]
+    assert example["channel"] == "app" and "to" not in example
+
+
+def test_the_examples_carry_the_real_selected_id_not_a_placeholder(env):
+    """Banc #89 : avec ``{{SELECTED}}`` dans les exemples, le modèle le
+    recopiait tel quel et 39 % des propositions tombaient (hors amont)."""
+    _suggest(env)
+    system = env.calls[0]["messages"][0]["content"]
+    assert workflow_suggest.SELECTED not in system
+    assert '"input": "{{start}}"' in system and "{{start.field}}" in system

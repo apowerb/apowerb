@@ -8,6 +8,7 @@ proposable par le modèle, et que le score compte ce qu'il annonce.
 
 import importlib.util
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -173,7 +174,7 @@ def test_a_run_goes_through_the_real_route(monkeypatch):
 
     async def fake_completion(**kwargs):
         sent.append(json.loads(kwargs["messages"][1]["content"]))
-        answer = {"suggestions": [{"type": "classifier", "config": {"agent_id": "agent1", "input": "{{trigger1.body}}", "routes": [{"route": "a"}, {"route": "b"}]}}]}
+        answer = {"suggestions": [{"type": "rag", "config": {"agent_id": "agent5"}}, {"type": "classifier", "config": {"agent_id": "agent1", "input": "{{trigger1.body}}", "routes": [{"route": "a"}, {"route": "b"}]}}]}
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(answer)))],
             usage=SimpleNamespace(prompt_tokens=300, completion_tokens=40, total_tokens=340),
@@ -182,11 +183,15 @@ def test_a_run_goes_through_the_real_route(monkeypatch):
     monkeypatch.setattr(litellm, "acompletion", fake_completion)
     route = bench.Route(DATA["agents"])
     records = bench.run(CASES[:1], route, repeats=2)
+    logging.getLogger(workflow_suggest.__name__).removeHandler(route.log_handler)
 
     assert [r["status"] for r in records] == [200, 200]
     assert records[0]["score"]["ai_types"] == ["classifier"] and records[0]["score"]["merged_top1"]
     assert (records[0]["tokens_in"], records[0]["tokens_out"]) == (300, 40)
     assert sent[0]["agents"] == DATA["agents"] and sent[0]["selected_node"] == "trigger1"
+    assert [len(r["rejected"]) for r in records] == [1, 1] and "query" in records[0]["rejected"][0]
+    summary = bench.summarize(records, usd_per_eur=None)
+    assert summary["rejected_pct"] == 50.0 and sum(summary["rejected_reasons"].values()) == 2
 
 
 def test_no_verdict_when_the_model_never_answered(monkeypatch, tmp_path):
@@ -203,3 +208,21 @@ def test_no_verdict_when_the_model_never_answered(monkeypatch, tmp_path):
     monkeypatch.setattr(bench, "Route", Down)
     assert bench.main(["--repeats", "1", "--out", str(tmp_path)]) == 1
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_label_keeps_earlier_reports(monkeypatch, tmp_path):
+    class Up:
+        model, timeout_s = "gemini/gemini-test", 4.0
+
+        def __init__(self, agents):
+            pass
+
+        def ask(self, case):
+            return {"status": 200, "latency_s": 1.0, "route": case["expected"]["route"],
+                    "suggestions": [], "reason": None, "tokens_in": 0, "tokens_out": 0, "rejected": []}
+
+    monkeypatch.setattr(bench, "Route", Up)
+    assert bench.main(["--repeats", "1", "--out", str(tmp_path)]) == 0
+    assert bench.main(["--repeats", "1", "--out", str(tmp_path), "--label", "v2"]) == 0
+    names = sorted(p.name for p in tmp_path.iterdir())
+    assert len(names) == 4 and sum(n.endswith("-v2.md") for n in names) == 1

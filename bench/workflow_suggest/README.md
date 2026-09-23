@@ -19,6 +19,9 @@ the editor's rules alone, **and** the p95 latency stays **under 3 s**.
   is no database. Latency is measured around the HTTP call, so it includes the
   route's own work; the prod timeout (`WORKFLOW_SUGGEST_TIMEOUT_S`) applies, and a
   timeout counts as a miss with its full latency.
+- Rejected proposals: the route drops any proposal the validator refuses; the
+  bench reads those drops from the route log and reports their share among all
+  proposals, with the reasons.
 - Rules + model = the chips the editor shows: the model's first, then the rule
   chips of other types; the first three are scored.
 
