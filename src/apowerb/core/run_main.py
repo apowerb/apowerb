@@ -339,7 +339,14 @@ def _row_to_dict(row) -> dict:
         run["config"] = {}
     # Le chemin disque ne regarde pas l'appelant : il dit où vivent les données
     # sur le serveur. On expose seulement s'il reste rejouable.
-    run["input_available"] = bool(run.pop("input_file_path", None))
+    has_file = bool(run.pop("input_file_path", None))
+    if run.get("trigger") in AGENT_TRIGGERS:
+        # Un run d'agent garde son entrée dans ``config``, jamais sur disque :
+        # c'est ce que relit le rejeu (_agent_replay_runner).
+        config = run["config"]
+        run["input_available"] = bool(config.get("agent_name") and config.get("new_message"))
+    else:
+        run["input_available"] = has_file
     return run
 
 
