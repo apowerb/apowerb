@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (without the leading v); must already be on PyPI"
+        description: "Version to republish (without the leading v); its v<version> tag is built and the wheel must already be on PyPI"
         required: true
         type: string
 
@@ -32,11 +32,6 @@ jobs:
       version: ${{ steps.release.outputs.version }}
 
     steps:
-      # On a release this is the tag, so the Dockerfile and build context are
-      # exactly the tree that produced the wheel being installed.
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Resolve the release version
         id: release
         shell: bash
@@ -60,6 +55,14 @@ jobs:
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # The tag, on a release and on a dispatch alike, so the Dockerfile and
+      # build context are the tree that produced the wheel being installed. A
+      # dispatch otherwise runs on the default branch and would build main.
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/v{0}', steps.release.outputs.version) || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -109,8 +112,11 @@ jobs:
             runner: ubuntu-24.04-arm
 
     steps:
-      - name: Checkout repository
+      # Same tree as the wheel being installed: the tag, never main.
+      - name: Check out the release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/v{0}', needs.release.outputs.version) || github.ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
