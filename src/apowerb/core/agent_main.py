@@ -342,6 +342,18 @@ def fetch_agents(user_id: str | None = None) -> list[Dict]:
         agent["tags"] = _parse_string_list(agent.get("tags"))
         agent["agent_skills"] = _parse_string_list(agent.get("agent_skills"))
 
+        # Same mask as get_agent: the stored value is ciphertext, and a client
+        # sending it back through the PUT would have it encrypted a second
+        # time. The PUT swaps the mask for the stored key. Kept a JSON string,
+        # the type existing clients parse.
+        if agent.get("agent_model_params"):
+            try:
+                params = json.loads(agent["agent_model_params"])
+            except (TypeError, ValueError):
+                params = None
+            if isinstance(params, dict):
+                agent["agent_model_params"] = json.dumps(mask_model_api_key(params))
+
         # Decrypt mcp_servers params/env to prevent double-encryption on re-save
         if agent.get("mcp_servers"):
             try:
