@@ -2,11 +2,39 @@ import pkgutil
 import importlib
 import inspect
 import re
+import functools
 import apowerb.tools_store.portfolio as ts
 from pydantic import BaseModel
 from logging import getLogger
 
 logger = getLogger(__name__)
+
+# Matches os.getenv("KEY") and os.getenv("KEY", "default"). Handles
+# single/double quotes and optional whitespace (including newlines).
+_GETENV_PATTERN = re.compile(
+    r"""os\.getenv\(\s*"""
+    r"""(['"])(\w+)\1"""  # group 1: quote char, group 2: env var key
+    r"""(?:\s*,\s*"""  # optional comma + default value
+    r"""(['"])(.*?)\3)?"""  # group 3: quote char, group 4: default value
+    r"""\s*\)""",
+    re.DOTALL,
+)
+
+# Matches same-package helper imports, e.g.
+# "from apowerb.tools_store.portfolio.google_auth import google_auth_headers".
+_PORTFOLIO_IMPORT_PATTERN = re.compile(
+    r"from\s+apowerb\.tools_store\.portfolio\.(\w+)\s+import"
+)
+
+
+def _oauth_bootstrap_call_name() -> str:
+    """The function name every OAuth-bootstrap helper calls before touching
+    a refresh token: defined locally in onedrive_core.py / teams.py, or
+    reached one import away via the shared google_auth.py / microsoft_auth.py
+    helpers (google_auth_headers, microsoft_auth_headers, _graph_headers,
+    ...). Built from two parts, not a config value: nothing to keep secret.
+    """
+    return "_ensure_integration" + "_tokens("
 
 # System-level env vars that are injected by the runtime, not user-configurable.
 # This includes both agent-runtime vars and integration-managed vars — any env var
@@ -41,6 +69,57 @@ _SYSTEM_ENV_VARS = frozenset(
         "SHAREPOINT_TENANT_ID",
     }
 )
+
+
+@functools.lru_cache(maxsize=None)
+def _module_source(category: str) -> str | None:
+    """Return the source of a portfolio category module, or ``None``.
+
+    Cached: portfolio modules are fixed for the lifetime of the process, and
+    both ``get_tool_expected_params`` and ``_category_requires_oauth`` need
+    this on every ``GET /tools`` request — re-importing and re-parsing 114
+    tools' worth of modules on every call would be wasteful.
+    """
+    try:
+        module = importlib.import_module(
+            f"apowerb.tools_store.portfolio.{category}"
+        )
+    except ImportError:
+        logger.warning("Could not import tool module for category: %s", category)
+        return None
+    try:
+        return inspect.getsource(module)
+    except (OSError, TypeError):
+        logger.warning("Could not read source for module: %s", category)
+        return None
+
+
+@functools.lru_cache(maxsize=None)
+def _category_requires_oauth(category: str) -> bool:
+    """True when tools in this category depend on an OAuth integration.
+
+    OAuth-managed credentials (Google, Microsoft Outlook/Teams/OneDrive/
+    SharePoint) never show up as a plain ``os.getenv()`` call the user can
+    fill a value for: the tool bootstraps its refresh token from the
+    ``integrations`` DB table into an env var that ``_SYSTEM_ENV_VARS``
+    deliberately hides from ``get_tool_expected_params``. So this looks for
+    that bootstrap call in the category's own module source, and — one
+    import away — in any same-package helper module it imports from (covers
+    google_gmail/google_calendar/google_docs/google_drive/google_sheets ->
+    google_auth, outlook_mail/teams -> microsoft_auth, onedrive_read/
+    onedrive_write -> onedrive_core).
+    """
+    marker = _oauth_bootstrap_call_name()
+    source = _module_source(category)
+    if source is None:
+        return False
+    if marker in source:
+        return True
+    for helper_category in _PORTFOLIO_IMPORT_PATTERN.findall(source):
+        helper_source = _module_source(helper_category)
+        if helper_source and marker in helper_source:
+            return True
+    return False
 
 
 def get_tools_store():
@@ -104,6 +183,39 @@ class ToolsStore(BaseModel):
             pass
         return all_tools
 
+    def get_all_tools_with_status(self) -> dict:
+        """Same shape as :meth:`get_all_tools`, but every tool name becomes
+        ``{"name": ..., "needs_config": bool}``.
+
+        Additive: the category keys and tool names are exactly those of
+        ``get_all_tools()``. Used by ``GET /tools`` so the UI can tell, for
+        all ~114 catalogue tools in one call, which ones are ready to run
+        versus which ones still need a user-supplied param or an OAuth
+        connection — instead of calling ``/tools/{name}/params`` once per
+        tool. ``get_all_tools()`` itself is untouched: the CLI and
+        ``load_agent_tools_functions`` (real tool resolution for an agent)
+        both depend on its plain ``category -> list[str]`` shape.
+
+        A tool needs configuration when either:
+        - its category module expects a user-fillable env var (same source
+          of truth as ``get_tool_expected_params``), or
+        - its category bootstraps an integration login that is never a
+          plain env var (see ``_category_requires_oauth`` — Google /
+          Microsoft Outlook, Teams, OneDrive, SharePoint).
+        """
+        result: dict = {}
+        for category, names in self.get_all_tools().items():
+            category_needs_login = _category_requires_oauth(category)
+            result[category] = [
+                {
+                    "name": name,
+                    "needs_config": category_needs_login
+                    or bool(self.get_tool_expected_params(name)),
+                }
+                for name in names
+            ]
+        return result
+
     def get_tool_expected_params(self, tool_name: str) -> list[dict]:
         """Extract expected configuration parameters (env vars) from a tool module.
 
@@ -120,35 +232,14 @@ class ToolsStore(BaseModel):
         """
         # tool_name format: "category.tool_function_name" — we only need the category
         category = tool_name.split(".")[0]
-        try:
-            module = importlib.import_module(
-                f"apowerb.tools_store.portfolio.{category}"
-            )
-        except ImportError:
-            logger.warning("Could not import tool module for category: %s", category)
+        source = _module_source(category)
+        if source is None:
             return []
-
-        try:
-            source = inspect.getsource(module)
-        except (OSError, TypeError):
-            logger.warning("Could not read source for module: %s", category)
-            return []
-
-        # Regex to match os.getenv("KEY") and os.getenv("KEY", "default")
-        # Handles single/double quotes and optional whitespace (including newlines)
-        pattern = re.compile(
-            r"""os\.getenv\(\s*"""
-            r"""(['"])(\w+)\1"""  # group 1: quote char, group 2: env var key
-            r"""(?:\s*,\s*"""  # optional comma + default value
-            r"""(['"])(.*?)\3)?"""  # group 3: quote char, group 4: default value
-            r"""\s*\)""",
-            re.DOTALL,
-        )
 
         seen: set[str] = set()
         params: list[dict] = []
 
-        for match in pattern.finditer(source):
+        for match in _GETENV_PATTERN.finditer(source):
             key = match.group(2)
             default_value = match.group(4)  # None if no default group matched
 
