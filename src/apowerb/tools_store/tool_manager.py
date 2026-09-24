@@ -27,14 +27,16 @@ _PORTFOLIO_IMPORT_PATTERN = re.compile(
 )
 
 
-def _oauth_bootstrap_call_name() -> str:
-    """The function name every OAuth-bootstrap helper calls before touching
-    a refresh token: defined locally in onedrive_core.py / teams.py, or
-    reached one import away via the shared google_auth.py / microsoft_auth.py
-    helpers (google_auth_headers, microsoft_auth_headers, _graph_headers,
-    ...). Built from two parts, not a config value: nothing to keep secret.
+def _integration_markers() -> tuple[str, ...]:
+    """Calls that mean a tool reads the user's ``integrations`` row.
+
+    ``fetch_integration_configs(`` is the common path: google_auth,
+    microsoft_auth (Outlook, Teams), onedrive_core, github and odoo all go
+    through it. ``_ensure_integration_tokens(`` is the older bootstrap kept
+    by teams.py / onedrive_core.py. Built from parts, not a config value:
+    nothing to keep secret.
     """
-    return "_ensure_integration" + "_tokens("
+    return ("fetch_integration" + "_configs(", "_ensure_integration" + "_tokens(")
 
 # System-level env vars that are injected by the runtime, not user-configurable.
 # This includes both agent-runtime vars and integration-managed vars — any env var
@@ -103,21 +105,21 @@ def _category_requires_oauth(category: str) -> bool:
     fill a value for: the tool bootstraps its refresh token from the
     ``integrations`` DB table into an env var that ``_SYSTEM_ENV_VARS``
     deliberately hides from ``get_tool_expected_params``. So this looks for
-    that bootstrap call in the category's own module source, and — one
+    an integration lookup in the category's own module source, and — one
     import away — in any same-package helper module it imports from (covers
     google_gmail/google_calendar/google_docs/google_drive/google_sheets ->
     google_auth, outlook_mail/teams -> microsoft_auth, onedrive_read/
-    onedrive_write -> onedrive_core).
+    onedrive_write -> onedrive_core; github and odoo look it up directly).
     """
-    marker = _oauth_bootstrap_call_name()
+    markers = _integration_markers()
     source = _module_source(category)
     if source is None:
         return False
-    if marker in source:
+    if any(marker in source for marker in markers):
         return True
     for helper_category in _PORTFOLIO_IMPORT_PATTERN.findall(source):
         helper_source = _module_source(helper_category)
-        if helper_source and marker in helper_source:
+        if helper_source and any(marker in helper_source for marker in markers):
             return True
     return False
 

@@ -53,7 +53,7 @@ _SOURCES = {
         "    return host\n"
     ),
     # No os.getenv() at all -- the only signal is the OAuth bootstrap call,
-    # exactly like the real onedrive_read/onedrive_write/teams/outlook_mail
+    # exactly like the real onedrive_read/onedrive_write/teams
     # modules that import a `_graph_headers`/`microsoft_auth_headers` helper
     # which itself calls `_ensure_integration_tokens(...)`.
     "oauth_cat": (
@@ -150,6 +150,36 @@ def test_real_oauth_category_needs_config():
     onedrive_tools = {t["name"]: t["needs_config"] for t in result.get("onedrive_read", [])}
     assert onedrive_tools
     assert all(onedrive_tools.values())
+
+
+@pytest.mark.parametrize("category", ["outlook_mail", "github", "odoo"])
+def test_real_integration_category_needs_config(category):
+    """These read the user's integrations row through
+    fetch_integration_configs (directly, or via microsoft_auth for Outlook)
+    and never call _ensure_integration_tokens: they were reported ready.
+    """
+    store = get_tools_store()
+    result = store.get_all_tools_with_status()
+    tools = {t["name"]: t["needs_config"] for t in result.get(category, [])}
+    assert tools
+    assert all(tools.values())
+
+
+def test_integration_lookup_in_a_helper_counts_as_needs_config():
+    sources = {
+        "mail_cat": (
+            "from apowerb.tools_store.portfolio.mail_auth import headers\n\n"
+            "def tool_list_mails():\n"
+            "    return headers()\n"
+        ),
+        "mail_auth": (
+            "def headers():\n"
+            "    configs = fetch_integration_configs('mail')\n"
+            "    return configs\n"
+        ),
+    }
+    with patch.object(tool_manager, "_module_source", side_effect=sources.get):
+        assert tool_manager._category_requires_oauth("mail_cat") is True
 
 
 # -- the route --------------------------------------------------------------
