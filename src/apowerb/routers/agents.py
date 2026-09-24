@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from apowerb.core.agent_main import (
     delete_agent,
     register_agent,
@@ -99,6 +101,35 @@ async def update_agent(
     )
     invalidate_agent_runtime(request.app.state, str(clean_id))
     return result
+
+
+@router.patch("/agents/{agent_id}", tags=["agents"])
+async def patch_agent(
+    agent_id: str,
+    request: Request,
+    changes: dict = Body(...),
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Update only the fields sent; every other field keeps its stored value.
+
+    The stored agent is read as ``GET /api/agents/{id}`` returns it (API key
+    masked, which the write swaps back), merged with ``changes``, validated
+    like a PUT body and written through the PUT.
+    """
+    unknown = sorted(set(changes) - set(AgentCreateSchema.model_fields))
+    if unknown:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown agent fields: {', '.join(unknown)}"
+        )
+    clean_id = int(agent_id.replace("agent", ""))
+    current = get_agent(clean_id, user_id=current_user.email)
+    if not current:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    try:
+        agent_data = AgentCreateSchema.model_validate({**current, **changes})
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(include_url=False)) from exc
+    return await update_agent(agent_id, agent_data, request, current_user)
 
 
 @router.delete("/agents/{agent_id}", tags=["agents"])
