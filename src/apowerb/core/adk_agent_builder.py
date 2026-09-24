@@ -121,6 +121,33 @@ def _stub_cannot_import_the_core(agent_file: str) -> bool:
         return True
 
 
+def ensure_agent_module(agent_id, agents_pool_path: str | None = None) -> str | None:
+    """Write the stub of one agent if it is missing or stale.
+
+    Also called before each run: an agent created on another replica has a row
+    in the database but no module on this one's disk until it restarts.
+    Returns ``"missing"`` or ``"stale"`` when it wrote the stub, None otherwise.
+    """
+    agents_pool_path = agents_pool_path or str(agents_pool_dir())
+    folder_name = f"agent{agent_id}"
+    agent_dir = os.path.join(agents_pool_path, folder_name)
+    agent_file = os.path.join(agent_dir, "agent.py")
+
+    missing = not os.path.exists(agent_file)
+    stale = not missing and _stub_cannot_import_the_core(agent_file)
+    if not (missing or stale):
+        return None
+
+    os.makedirs(agent_dir, exist_ok=True)
+    init_file = os.path.join(agent_dir, "__init__.py")
+    if not os.path.exists(init_file):
+        with open(init_file, "w") as f:
+            f.write("# Agent module\n")
+    with open(agent_file, "w") as f:
+        f.write(_agent_stub_source(folder_name))
+    return "missing" if missing else "stale"
+
+
 def ensure_agent_modules(agents_pool_path: str | None = None) -> None:
     """Auto-repair: regenerate missing *or stale* agent.py files for every agent.
 
@@ -147,24 +174,9 @@ def ensure_agent_modules(agents_pool_path: str | None = None) -> None:
         agent_id = agent.get("agent_id")
         if not agent_id:
             continue
-        folder_name = f"agent{agent_id}"
-        agent_dir = os.path.join(agents_pool_path, folder_name)
-        agent_file = os.path.join(agent_dir, "agent.py")
-
-        missing = not os.path.exists(agent_file)
-        stale = not missing and _stub_cannot_import_the_core(agent_file)
-
-        if missing or stale:
-            os.makedirs(agent_dir, exist_ok=True)
-            # Write __init__.py
-            init_file = os.path.join(agent_dir, "__init__.py")
-            if not os.path.exists(init_file):
-                with open(init_file, "w") as f:
-                    f.write("# Agent module\n")
-            # Write agent.py
-            with open(agent_file, "w") as f:
-                f.write(_agent_stub_source(folder_name))
-            repaired.append(f"{folder_name} ({'missing' if missing else 'stale'})")
+        state = ensure_agent_module(agent_id, agents_pool_path)
+        if state:
+            repaired.append(f"agent{agent_id} ({state})")
 
     if repaired:
         print(f"[ensure_agent_modules] Repaired {len(repaired)} agent(s): {repaired}")

@@ -441,6 +441,11 @@ app = get_fast_api_app(
 from apowerb.core.agent_helpers.run_config_patch import apply_adk_run_config_patch
 apply_adk_run_config_patch()
 
+# Every worker checks the agent against the database before serving its cached
+# runner: a write only invalidates the cache of the process that served it.
+from apowerb.core.agent_runtime_sync import keep_runners_in_sync
+_AdkServer.get_runner_async = keep_runners_in_sync(_AdkServer.get_runner_async)
+
 # Expose the captured ADK handles on app.state so routers can reach them.
 app.state.adk_web_server = _ADK_HANDLES.get("web_server")
 app.state.adk_agent_loader = _ADK_HANDLES.get("agent_loader")
