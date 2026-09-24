@@ -83,6 +83,7 @@ from apowerb.bi.data.dataset_router import router as bi_dataset_router
 from apowerb.routers.models import router as models_router
 from apowerb.bi.refresh_router import router as bi_refresh_router
 from apowerb.bi.chart_refresh_router import router as bi_chart_refresh_router
+from apowerb.routers.forecast import router as forecast_router
 
 from apowerb.configs.settings import get_settings
 from apowerb.helpers.api_schema import hide_api_schema, publishes_api_schema
@@ -571,6 +572,7 @@ api_router.include_router(bi_upload_router, prefix="/api/v1")
 api_router.include_router(bi_dataset_router, prefix="/api/v1")
 api_router.include_router(bi_refresh_router, prefix="/api/v1")
 api_router.include_router(bi_chart_refresh_router, prefix="/api/v1")
+api_router.include_router(forecast_router, prefix="/api/v1")
 api_router.include_router(share_router, prefix="/api")
 api_router.include_router(skills_router, prefix="/api")
 api_router.include_router(models_router, prefix="/api")

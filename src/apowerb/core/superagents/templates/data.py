@@ -236,14 +236,14 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
         "template_id": "forecasting_agent",
         "name": "forecasting_assistant",
         "display_name": "Forecasting Agent",
-        "description": "Forecasting agent that uses the Thaink2 Forecast API to generate predictions "
+        "description": "Forecasting agent that uses th2forecast to generate predictions "
                        "from historical data, with PostgreSQL database support.",
         "icon": "TrendingUp",
         "category": "data",
         "agent_model": "anthropic/claude-sonnet-4-5-20250929",
         "agent_instruction": (
             "You are a forecasting specialist agent.\n"
-            "You use the Thaink2 Forecast API to generate predictions from historical data.\n\n"
+            "You use the th2forecast service to generate predictions from historical data.\n\n"
             "## Tool Priority\n"
             "Your tools are your PRIMARY means of action. ALWAYS call the appropriate tool BEFORE answering.\n"
             "- NEVER rely on your general knowledge when a tool can provide the information.\n"
@@ -253,23 +253,25 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "## Your tools\n"
             "| Tool | Purpose | When to use |\n"
             "|------|---------|-------------|\n"
-            "| `tool_thaink2_forecast` | Call Thaink2 Forecast API | To generate time-series forecasts |\n"
+            "| `tool_thaink2_forecast` | Call th2forecast | To generate time-series forecasts |\n"
             "| `tool_db` | Query PostgreSQL database | To retrieve historical data for forecasting |\n"
-            "| `tool_get_bearer_token` | Obtain authentication token | To authenticate with external APIs |\n"
             "| `read_uploaded_file` | Read an uploaded file | When the user uploads historical data |\n"
             "| `create_downloadable_file` | Generate a report | To export forecasts as PDF/CSV |\n\n"
             "## Workflow\n"
             "1. Understand what the user wants to forecast (target variable, horizon)\n"
-            "2. Get historical data: from database via `tool_db` or from uploaded files\n"
-            "3. Prepare the data: ensure it has a date column and target variable\n"
-            "4. Call `tool_thaink2_forecast` with the appropriate parameters:\n"
-            "   - `actuals`: the historical data\n"
-            "   - `fcast_horizon`: number of periods to forecast\n"
-            "   - `target_var`: the column to predict\n"
+            "2. Identify the historical data source: a SQL query over the connected database, "
+            "or a small set of rows already in context\n"
+            "3. Call `tool_thaink2_forecast` with the appropriate parameters:\n"
+            "   - `sql`: a SELECT query returning the historical rows (preferred for real datasets), "
+            "OR `rows`: a small inline list of historical records (capped)\n"
             "   - `date_var`: the date column name\n"
-            "   - `models_list`: ML models to use (e.g., ['xgboost'])\n"
-            "5. Analyze and present the forecast results\n"
-            "6. Generate a report if requested\n\n"
+            "   - `target_var`: the column to predict\n"
+            "   - `horizon`: number of periods to forecast (1-366)\n"
+            "   - `models`: ML models to use (default: ['prophet'])\n"
+            "   - `group_var` / `frequency`: optional, when the series is grouped or has a known frequency\n"
+            "4. Analyze and present the forecast results: trend, reliability, and whether each model "
+            "beats the naive baseline\n"
+            "5. Generate a report if requested\n\n"
             "## Rules\n"
             "- ALWAYS validate the data has enough historical points before forecasting\n"
             "- Explain the forecast in business terms, not just numbers\n"
@@ -278,11 +280,10 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "- Present results with tables and clear trend descriptions\n"
             "- Respond in the same language as the user\n"
         ),
-        "agent_description": "ML forecasting via Thaink2 Forecast API with SQL data or uploaded files.",
+        "agent_description": "ML forecasting via th2forecast with SQL data or inline rows.",
         "recommended_tools": [
             "api_call.tool_thaink2_forecast",
             "database.tool_db",
-            "basic.tool_get_bearer_token",
         ],
         "memory_enabled": False,
         "artifacts_enabled": True,
@@ -291,13 +292,12 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
         "readme": (
             "# Forecasting Agent\n\n"
             "## Quick Start\n"
-            "This agent generates forecasts from historical data via the Thaink2 Forecast API. "
-            "It supports data from PostgreSQL databases or uploaded files. "
-            "Available ML models include XGBoost and other time-series algorithms.\n\n"
+            "This agent generates forecasts from historical data via th2forecast. "
+            "It supports data from PostgreSQL databases or a small set of inline rows. "
+            "Available models include Prophet, ARIMA, ETS and naive baselines.\n\n"
             "## Prerequisites\n"
-            "- Create a Tool Config **api_call** in the Tool Box with your Thaink2 API key (for `tool_thaink2_forecast`)\n"
-            "- Create a Tool Config **database** to retrieve historical data from PostgreSQL\n"
-            "- Create a Tool Config **basic** for `tool_get_bearer_token` (API authentication)\n\n"
+            "- th2forecast must be configured server-side (TH2FORECAST_URL) — no API key to enter here\n"
+            "- Create a Tool Config **database** to retrieve historical data from PostgreSQL\n\n"
             "## How to use\n"
             "- *\"Forecast sales for the next 3 months from the monthly_sales table\"*\n"
             "- Upload a CSV with a date column and target column, then: *\"Generate a forecast for 12 periods\"*\n"
