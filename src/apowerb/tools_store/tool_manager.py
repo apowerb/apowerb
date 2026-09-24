@@ -188,7 +188,7 @@ class ToolsStore(BaseModel):
         ``{"name": ..., "needs_config": bool}``.
 
         Additive: the category keys and tool names are exactly those of
-        ``get_all_tools()``. Used by ``GET /tools`` so the UI can tell, for
+        ``get_all_tools()``. Used by ``GET /tools?include_status=true`` so the UI can tell, for
         all ~114 catalogue tools in one call, which ones are ready to run
         versus which ones still need a user-supplied param or an OAuth
         connection — instead of calling ``/tools/{name}/params`` once per

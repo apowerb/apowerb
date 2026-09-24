@@ -40,15 +40,20 @@ def _toolbox_dir() -> Path:
 
 
 @router.get("/tools", tags=["tools"])
-async def list_tools(tools_store=Depends(get_tools_store), _current_user: user_schemas.User = Depends(get_current_user)):
+async def list_tools(
+    include_status: bool = False,
+    tools_store=Depends(get_tools_store),
+    _current_user: user_schemas.User = Depends(get_current_user),
+):
     """Endpoint to list all available tools.
 
-    Each tool carries ``needs_config`` (bool) so the UI can tell, in this
-    single call, which of the catalogue's tools are ready to run versus
-    which still need a user-supplied param or an integration login —
-    without calling ``/tools/{name}/params`` once per tool.
+    With ``include_status=true``, each tool becomes ``{"name", "needs_config"}``
+    so the UI can tell, in one call, which tools still need a user-supplied
+    param or an integration login. The default shape is unchanged.
     """
-    return tools_store.get_all_tools_with_status()
+    if include_status:
+        return tools_store.get_all_tools_with_status()
+    return tools_store.get_all_tools()
 
 
 @router.get("/tools/docs", tags=["tools"])

@@ -174,8 +174,17 @@ def client():
     return TestClient(app)
 
 
-def test_route_returns_needs_config_per_tool(client):
+def test_route_default_shape_is_unchanged(client):
+    """Existing clients (both UIs, the SDK) read plain tool names."""
     resp = client.get("/api/tools")
+    assert resp.status_code == 200
+    db_tools = resp.json().get("database", [])
+    assert "database.tool_run_sql" in db_tools
+    assert all(isinstance(name, str) for name in db_tools)
+
+
+def test_route_returns_needs_config_per_tool(client):
+    resp = client.get("/api/tools", params={"include_status": "true"})
     assert resp.status_code == 200
     body = resp.json()
     db_tools = {t["name"]: t for t in body.get("database", [])}
