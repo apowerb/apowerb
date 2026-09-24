@@ -269,6 +269,23 @@ class MageAPIClient:
         except OrchestratorUnavailable as e:
             return degrade_unless_unreachable(e, None, logger, "update a schedule")
 
+    def delete_schedule(self, schedule_id: int) -> None:
+        """Delete a pipeline schedule."""
+        url = (
+            f"{self.base_url}/api/pipeline_schedules/{schedule_id}"
+            f"?project={self.project_name}"
+        )
+        self._ask(
+            lambda: requests.delete(
+                url,
+                headers=self._get_headers(),
+                json={"api_key": self.api_key},
+                timeout=30,
+            ),
+            doing="delete a schedule",
+            body=False,
+        )
+
     def trigger_pipeline_run_for_schedule(
         self,
         schedule_id: int,
@@ -764,6 +781,20 @@ def load_agent_data(*args, **kwargs):
 
         print("=" * 70)
         return result
+
+    def delete_agent_schedules(self, agent_id: str) -> int:
+        """Delete the schedules named after an agent; return how many.
+
+        ``/run_now`` and ``/schedule_run`` name the schedule after the id the
+        caller sent, with or without the ``agent`` prefix: both are covered.
+        """
+        numeric = str(agent_id).removeprefix("agent")
+        names = {numeric, f"agent{numeric}"}
+        schedules = self.client.get_pipeline_schedules(self.PIPELINE_UUID)
+        doomed = [s["id"] for s in schedules if s.get("name") in names]
+        for schedule_id in doomed:
+            self.client.delete_schedule(schedule_id)
+        return len(doomed)
 
     def create_schedule_trigger_for_agent(
         self,

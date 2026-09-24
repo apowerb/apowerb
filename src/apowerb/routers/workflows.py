@@ -18,7 +18,8 @@ runs a workflow with an attached file:
 * ``POST /api/workflows/runs/{run_id}/replay`` — re-runs one from the input it
   kept, as a new run that cites the original. A canvas run replays its
   canvas; an agent run (``schedule``, ``chat``) resends its message to the
-  same agent, in a fresh session.
+  same agent, in a fresh session; a persisted workflow run replays the graph
+  of the version it ran, and fails if that graph is gone.
 
 * ``GET /api/workflows/tools/schema?tool=<tool_ref>`` — the argument schema
   of one tool (types, required, defaults, per-arg description), so the
@@ -192,6 +193,62 @@ async def _agent_replay_runner(
         return
     _record_tools(run_id, tools)
     yield f"data: {json.dumps({'event': 'done', 'output': output})}\n\n"
+
+
+def _is_graph_run(agent_ids: list, config: dict) -> bool:
+    """Un run de workflow persisté (``/defs/{id}/run`` ou trigger), pas un canvas.
+
+    Son entrée est le graphe à la version exécutée plus le payload ; il ne
+    porte aucun agent de canvas.
+    """
+    return not agent_ids and "workflow_id" in config and "version" in config
+
+
+async def _graph_replay_runner(
+    owner: str, config: dict[str, Any], cancel_event: asyncio.Event
+) -> AsyncGenerator[str, None]:
+    """Rejoue un run de workflow : le graphe de la version qu'il avait exécutée.
+
+    Graphe introuvable (workflow supprimé, version non archivée) : le rejeu
+    échoue explicitement. Relancer autre chose, ou rien, ferait passer pour
+    réussi un run qui n'a pas reproduit l'original.
+    """
+    from apowerb.core import workflow_graph, workflow_main, workflow_runtime
+    from apowerb.core.run_gate import resolve_owner_plan
+
+    workflow_id = config["workflow_id"]
+    try:
+        raw = workflow_main.get_workflow_graph_at(
+            workflow_id, config["version"], owner_id=owner
+        )
+        if raw is None:
+            raise LookupError(
+                f"graphe du workflow {workflow_id} en version {config['version']} "
+                "introuvable : rejeu impossible"
+            )
+        graph = workflow_main.parse_graph(raw)
+        run_agent, run_tool, run_rag, run_notify = workflow_runtime.bindings_for(
+            owner, await resolve_owner_plan(owner)
+        )
+    except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
+        yield (
+            "data: "
+            + json.dumps({"event": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            + "\n\n"
+        )
+        return
+    async for chunk in workflow_graph.run_graph(
+        graph,
+        payload=config.get("payload"),
+        run_agent=run_agent,
+        run_tool=run_tool,
+        run_rag=run_rag,
+        run_subworkflow=workflow_runtime.resolve_workflow_for(owner),
+        workflow_id=workflow_id,
+        cancel_event=cancel_event,
+        run_notify=run_notify,
+    ):
+        yield chunk
 
 
 def _record_tools(run_id: str, tools: list[str] | None) -> None:
@@ -454,6 +511,15 @@ async def replay_run(
             file_bytes=None,
             owner=owner,
             runner=lambda _cancel: _agent_replay_runner(new_run_id, owner, config),
+        )
+    if _is_graph_run(replay["agent_ids"], replay["config"]):
+        owner, config = current_user.email, replay["config"]
+        return _streaming_run(
+            run_id=replay["run_id"],
+            agent_ids=[],
+            file_bytes=None,
+            owner=owner,
+            runner=lambda cancel: _graph_replay_runner(owner, config, cancel),
         )
     return _streaming_run(
         run_id=replay["run_id"],

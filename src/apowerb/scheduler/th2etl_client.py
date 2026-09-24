@@ -584,6 +584,27 @@ class Th2etlAPIClient:
             )
         return {"id": agent_id}
 
+    def delete_schedule(self, schedule_id: str) -> None:
+        """Delete a scheduler and the trigger created with it.
+
+        Already gone (404) is the state asked for, not a failure.
+        """
+        for path, doing in (
+            (f"/schedulers/{schedule_id}", "delete a schedule"),
+            (f"/triggers/{self._trigger_name(schedule_id)}", "delete a trigger"),
+        ):
+            try:
+                self._ask(
+                    lambda path=path: self._http.delete(
+                        self._url(path), timeout=self.timeout
+                    ),
+                    doing=doing,
+                    body=False,
+                )
+            except OrchestratorUnavailable as e:
+                if e.status != 404:
+                    raise
+
     def update_schedule_variables(self, schedule_id: str, variables: dict[str, Any]) -> dict[str, Any]:
         """Replace a scheduler's runtime variables (token rotation)."""
         self._ask(
