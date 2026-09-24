@@ -71,3 +71,15 @@ def test_a_workflow_run_still_depends_on_its_file(store):
     assert run_main.get_run(without_file, owner_id=OWNER)["input_available"] is False
     # The disk path stays private.
     assert "input_file_path" not in run_main.get_run(with_file, owner_id=OWNER)
+
+
+def test_a_persisted_workflow_run_keeps_its_input_in_config(store):
+    graph_run = _failed(
+        trigger="workflow",
+        agent_ids=[],
+        config={"workflow_id": "wf-1", "version": 2, "payload": {"q": 1}},
+    )
+    no_version = _failed(trigger="workflow", agent_ids=[], config={"workflow_id": "wf-1"})
+
+    assert run_main.get_run(graph_run, owner_id=OWNER)["input_available"] is True
+    assert run_main.get_run(no_version, owner_id=OWNER)["input_available"] is False
