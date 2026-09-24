@@ -350,6 +350,61 @@ async def _list_input_artifacts_s3(
     return artifacts
 
 
+# Leading bytes of formats that can be pure ASCII yet are never text to
+# show. A minimal uncompressed PDF decodes as UTF-8 without error, so
+# decoding alone let it through as text and the tab printed its raw bytes.
+_BINARY_SIGNATURES = (
+    b"%PDF-",
+    b"\x89PNG\r\n\x1a\n",
+    b"PK\x03\x04",
+    b"GIF87a",
+    b"GIF89a",
+    b"\xff\xd8\xff",
+    b"\x1f\x8b",
+)
+
+_BINARY_MIME_PREFIXES = ("image/", "audio/", "video/", "font/")
+_BINARY_MIME_TYPES = {
+    "application/pdf",
+    "application/zip",
+    "application/gzip",
+    "application/x-tar",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+}
+
+
+def _is_binary_mime(content_type: Optional[str]) -> bool:
+    """True for a stored type that names a binary format.
+
+    ``application/octet-stream`` names none -- it is the default when the
+    uploader did not say -- so it leaves the decision to the bytes.
+    """
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if mime == "image/svg+xml":
+        return False  # XML text, shown as such
+    return (
+        mime.startswith(_BINARY_MIME_PREFIXES)
+        or mime in _BINARY_MIME_TYPES
+        or mime.startswith("application/vnd.openxmlformats-officedocument.")
+        or mime.startswith("application/vnd.oasis.opendocument.")
+    )
+
+
+def _raw_file_payload(data: bytes, content_type: Optional[str] = None) -> dict:
+    """Body of a raw file for the tab: its text, or a binary flag.
+
+    Known type first, then signature; UTF-8 decoding is only the last resort.
+    """
+    if _is_binary_mime(content_type) or data.startswith(_BINARY_SIGNATURES):
+        return {"binary": True, "code": ""}
+    try:
+        return {"code": data.decode("utf-8")}
+    except UnicodeDecodeError:
+        return {"binary": True, "code": ""}
+
+
 async def _resolve_input_artifact_s3(
     service: S3ArtifactService, agent_name: str, session_id: str, filename: str,
 ):
@@ -367,12 +422,9 @@ async def _resolve_input_artifact_s3(
     if loaded is None:
         return None
 
-    try:
-        code = loaded["data"].decode("utf-8")
-    except UnicodeDecodeError:
-        return loaded["version"], {"binary": True, "code": ""}
-
-    return loaded["version"], {"code": code}
+    return loaded["version"], _raw_file_payload(
+        loaded["data"], loaded.get("content_type"),
+    )
 
 
 @router.get("/artifacts/library", tags=["artifacts"])
@@ -563,10 +615,7 @@ async def _resolve_legacy_file(agent_name: str, filename: str):
         return None
 
     raw = await asyncio.to_thread(download_file_from_s3, key)
-    try:
-        return 0, {"code": raw.decode("utf-8")}
-    except UnicodeDecodeError:
-        return 0, {"binary": True, "code": ""}
+    return 0, _raw_file_payload(raw)
 
 
 @router.get("/artifacts/{agent_name}/{user_id}/{session_id}/{filename}", tags=["artifacts"])
