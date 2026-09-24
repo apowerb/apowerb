@@ -71,7 +71,7 @@ async def read_agent(
     agent = get_agent(int(agent_id.replace("agent", "")), user_id=current_user.email)
     if agent:
         return agent
-    return {"message": "Agent not found."}
+    raise HTTPException(status_code=404, detail="Agent not found.")
 
 
 @router.put("/agents/{agent_id}", tags=["agents"])

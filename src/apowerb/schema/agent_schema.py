@@ -1,3 +1,5 @@
+import json
+
 from pydantic import BaseModel, field_validator
 
 # Credential-bearing keys: pasted by hand, so the same whitespace accident
@@ -5,6 +7,22 @@ from pydantic import BaseModel, field_validator
 # leading-underscore name inside a pydantic v2 model body becomes a private
 # attribute, not a plain tuple.
 _CREDENTIAL_KEYS = ("model_api_key", "model_api_base", "model_api_version")
+
+
+def _decode_json_text(value):
+    """Accept an object column as the GET hands it out: a JSON string.
+
+    ``GET /api/agents`` returns these columns as stored (``"{}"``, ``"null"``),
+    and existing clients parse them, so the read side is left alone; the write
+    side takes both forms. A string that is not JSON is passed through for the
+    field type to refuse.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
 
 
 class McpServerConfig(BaseModel):
@@ -88,6 +106,7 @@ class AgentCreateSchema(BaseModel):
         error that names neither the cause nor the field. Only the two
         credential keys are touched; every other parameter is left verbatim.
         """
+        value = _decode_json_text(value)
         if not isinstance(value, dict):
             return value
         return {
@@ -110,6 +129,12 @@ class AgentCreateSchema(BaseModel):
     code_executor: str | None = None
     tags: list[str] | None = None
     guardrails_config: dict | None = None
+
+    @field_validator("input_schema", "output_schema", "guardrails_config", mode="before")
+    @classmethod
+    def _decode_json_columns(cls, value):
+        return _decode_json_text(value)
+
     memory_enabled: bool = False
     artifacts_enabled: bool = False
     superagent_template_id: str | None = None
