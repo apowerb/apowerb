@@ -345,6 +345,10 @@ def _row_to_dict(row) -> dict:
         # c'est ce que relit le rejeu (_agent_replay_runner).
         config = run["config"]
         run["input_available"] = bool(config.get("agent_name") and config.get("new_message"))
+    elif not run["agent_ids"] and "workflow_id" in run["config"] and "version" in run["config"]:
+        # Un run de workflow persisté se rejoue depuis le graphe de sa version
+        # (même critère que routers.workflows._is_graph_run).
+        run["input_available"] = True
     else:
         run["input_available"] = has_file
     return run
