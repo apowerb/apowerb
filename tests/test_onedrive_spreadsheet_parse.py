@@ -204,3 +204,76 @@ class TestDownloadAndParseSpreadsheetSheetName:
         assert err is None
         assert df is not None
         assert list(df.columns) == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# Tests — xlsx/xlsm engine (calamine)
+# ---------------------------------------------------------------------------
+
+
+def _mixed_workbook() -> bytes:
+    """A sheet mixing the cell types a business workbook carries, plus a
+    second sheet, written by openpyxl like the files users upload."""
+    from datetime import date, datetime
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        pd.DataFrame(
+            {
+                "date": [date(2025, 1, 31), date(2025, 2, 28), None],
+                "horodatage": [datetime(2025, 3, 1, 14, 30), None, datetime(2025, 3, 2, 8, 0)],
+                "client": ["Société Générale", "", "Łódź & Co"],
+                "montant": [1234.56, -0.01, None],
+                "quantite": [3, 0, 12],
+                "actif": [True, False, True],
+            }
+        ).to_excel(writer, index=False, sheet_name="Ventes")
+        pd.DataFrame([{"k": "v"}]).to_excel(writer, index=False, sheet_name="Notes")
+    return buf.getvalue()
+
+
+class TestXlsxEngine:
+    """xlsx/xlsm are read with calamine (Rust): ~4x faster than openpyxl on
+    20k-100k row files, same DataFrame. These tests pin the engine and the
+    parity so a revert or an engine swap is caught."""
+
+    @pytest.mark.parametrize("ext", [".xlsx", ".xlsm"])
+    @pytest.mark.parametrize(
+        "parse", ["download_and_parse_spreadsheet", "shared_download_and_parse"]
+    )
+    def test_excel_branch_reads_with_calamine(
+        self, monkeypatch: pytest.MonkeyPatch, parse: str, ext: str
+    ) -> None:
+        _patch_download(monkeypatch, _mixed_workbook())
+        seen: dict[str, Any] = {}
+        real_read_excel = pd.read_excel
+
+        def spy(*args: Any, **kwargs: Any) -> pd.DataFrame:
+            seen.update(kwargs)
+            return real_read_excel(*args, **kwargs)
+
+        monkeypatch.setattr(pd, "read_excel", spy)
+
+        df, err = getattr(onedrive_core, parse)(
+            f"Reports/ventes{ext}", {"Authorization": "Bearer fake"}
+        )
+
+        assert err is None
+        assert df is not None
+        assert seen.get("engine") == "calamine"
+
+    @pytest.mark.parametrize("sheet_name", [None, "Ventes", "Notes", 1])
+    def test_same_dataframe_as_openpyxl(
+        self, monkeypatch: pytest.MonkeyPatch, sheet_name: str | int | None
+    ) -> None:
+        content = _mixed_workbook()
+        _patch_download(monkeypatch, content)
+        kwargs = {} if sheet_name is None else {"sheet_name": sheet_name}
+
+        df, err = onedrive_core.download_and_parse_spreadsheet(
+            "Reports/ventes.xlsx", {"Authorization": "Bearer fake"}, **kwargs
+        )
+
+        assert err is None
+        expected = pd.read_excel(io.BytesIO(content), engine="openpyxl", **kwargs)
+        pd.testing.assert_frame_equal(df, expected)
