@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field, field_validator
 # the same limit th2forecast would enforce (it can still return 413 for a
 # smaller-but-still-too-large deployment-specific limit).
 MAX_HORIZON = 366
+# th2forecast's own MAX_ROWS default: rejecting larger payloads here avoids
+# relaying tens of megabytes only for th2forecast to answer 413.
+MAX_DATA_ROWS = 100_000
 
 ALLOWED_MODELS = frozenset({"prophet", "arima", "ets", "snaive", "naive", "auto"})
 ALLOWED_FREQUENCIES = frozenset({"day", "week", "month", "quarter", "year"})
@@ -19,7 +22,7 @@ ALLOWED_FREQUENCIES = frozenset({"day", "week", "month", "quarter", "year"})
 class ForecastRequestSchema(BaseModel):
     """Body of POST /api/v1/forecast — relayed to th2forecast almost verbatim."""
 
-    data: list[dict[str, Any]] = Field(..., min_length=1)
+    data: list[dict[str, Any]] = Field(..., min_length=1, max_length=MAX_DATA_ROWS)
     date_var: str = Field(..., min_length=1)
     target_var: str = Field(..., min_length=1)
     group_var: str | None = None
