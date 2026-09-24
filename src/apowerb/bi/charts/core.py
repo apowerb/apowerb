@@ -49,6 +49,7 @@ class ChartType(str, Enum):
     TABLE = "table"
     STAT = "stat"
     HISTOGRAM = "histogram"
+    FORECAST = "forecast"
 
 
 class AggregationFunc(str, Enum):
