@@ -13,7 +13,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 
 _ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 if _ENV_PATH.exists():
@@ -43,7 +44,7 @@ async def _validate_ws_token(token: str) -> str | None:
             algorithms=[get_algorithm()],
         )
         return payload.get("sub")
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         logger.warning("WebSocket JWT validation failed: %s", exc)
         return None
 

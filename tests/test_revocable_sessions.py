@@ -112,7 +112,7 @@ async def test_a_token_with_no_iat_is_treated_as_older():
     """Tokens minted before this shipped carry no `iat`. An administrator
     who revokes wants them gone, so the unknown case resolves to refused.
     """
-    from jose import jwt
+    import jwt
 
     from apowerb.helpers.security import get_algorithm
 
@@ -237,7 +237,8 @@ async def test_a_mocked_mfa_enabled_does_not_satisfy_a_real_demand():
 @pytest.mark.asyncio
 async def test_signing_back_in_right_after_a_revocation_works():
     """The whole point of "force re-login" is that they can sign in again."""
-    revoked_at = datetime.now(timezone.utc).replace(microsecond=500_000)
+    # Anchored in the past: PyJWT rejects an `iat` later than now.
+    revoked_at = (datetime.now(timezone.utc) - timedelta(seconds=2)).replace(microsecond=500_000)
     user = _user(sessions_valid_from=revoked_at)
 
     # The token they get one second later, as `create_access_token` stamps it.

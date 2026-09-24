@@ -26,10 +26,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import ast
+import base64
+import hashlib
+import hmac
+import json
 import pathlib
 
 import pytest
-from jose import jwt
+import jwt
 
 from apowerb.configs.settings import get_settings
 
@@ -37,8 +41,18 @@ ALGO = "HS256"
 
 
 def forge(payload: dict) -> str:
-    """Un jeton signé avec la chaîne vide — ce qu'un attaquant produirait."""
-    return jwt.encode(payload, "", algorithm=ALGO)
+    """Un jeton signé avec la chaîne vide — ce qu'un attaquant produirait.
+
+    Assemblé à la main : PyJWT refuse lui-même de signer avec une clé vide,
+    mais un attaquant n'a pas besoin de PyJWT pour calculer ce HMAC.
+    """
+    def b64(octets: bytes) -> bytes:
+        return base64.urlsafe_b64encode(octets).rstrip(b"=")
+
+    entête = b64(json.dumps({"alg": ALGO, "typ": "JWT"}).encode())
+    charge = b64(json.dumps(payload).encode())
+    signature = b64(hmac.new(b"", entête + b"." + charge, hashlib.sha256).digest())
+    return b".".join((entête, charge, signature)).decode()
 
 
 @pytest.fixture

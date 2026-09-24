@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 from fastapi import Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -213,7 +214,7 @@ async def reset_password(
     """
     try:
         payload = jwt.decode(token, get_secret_key(), algorithms=[get_algorithm()])
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise exceptions.InvalidCredentials("Invalid or expired token") from exc
 
     if payload.get("type") != PASSWORD_RESET_TOKEN_TYPE:
@@ -277,7 +278,7 @@ async def verify_email_token(token: str, db: AsyncSession) -> None:
     """Consume an email_verify token -> set email_verified=True. Idempotent."""
     try:
         payload = jwt.decode(token, get_secret_key(), algorithms=[get_algorithm()])
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise exceptions.InvalidCredentials("Invalid or expired token") from exc
     if payload.get("type") != EMAIL_VERIFY_TOKEN_TYPE:
         raise exceptions.InvalidCredentials("Invalid token type")

@@ -18,7 +18,7 @@ Ces tests verrouillent l'unicité, pas la valeur : ``HS512`` doit marcher.
 from __future__ import annotations
 
 import pytest
-from jose import jwt
+import jwt
 
 from apowerb.configs.settings import get_settings
 from apowerb.helpers import security

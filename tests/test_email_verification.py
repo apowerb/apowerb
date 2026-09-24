@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 from fastapi import Response
-from jose import jwt
+import jwt
 
 from apowerb.auth import exceptions, service
 from apowerb.helpers.security import get_algorithm, get_secret_key, get_password_hash

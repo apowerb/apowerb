@@ -25,7 +25,8 @@ import re
 from logging import getLogger
 from typing import Optional
 
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 from starlette.requests import Request
 from starlette.websockets import WebSocket
 
@@ -54,7 +55,7 @@ def access_token_subject(token: str) -> Optional[str]:
     secret = get_secret_key()
     try:
         payload = jwt.decode(token, secret, algorithms=[get_algorithm()])
-    except JWTError:
+    except InvalidTokenError:
         return None
     if payload.get("type") != "access" or not payload.get("sub"):
         return None

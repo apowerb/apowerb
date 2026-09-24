@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from jose import jwt
+import jwt
 
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
