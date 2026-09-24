@@ -41,7 +41,7 @@ class TestDownloadTokenClaims:
     def test_verify_rejects_token_without_sub(self):
         # A legacy/unscoped token (no sub, no agent_id) must be rejected.
         from datetime import datetime, timedelta, timezone
-        from jose import jwt
+        import jwt
         from apowerb.helpers.security import get_secret_key, get_algorithm
 
         expire = datetime.now(timezone.utc) + timedelta(minutes=5)

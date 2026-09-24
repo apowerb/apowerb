@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
 
@@ -150,7 +151,7 @@ def decode_access_token(token: str) -> Dict:
 
         return payload
 
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
@@ -172,7 +173,7 @@ def decode_refresh_token(token: str) -> Dict:
 
         return payload
 
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
@@ -211,7 +212,7 @@ def decode_agent_refresh_token(token: str) -> Dict:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Agent refresh token has expired. Please reschedule the agent run.",
         )
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate agent refresh token",
@@ -229,8 +230,9 @@ def refresh_access_token_from_agent_refresh(refresh_token: str) -> str:
     # ADKAuthMiddleware requires a `sub` identity claim. Agent refresh tokens
     # carry the identity in `user_id`, so map it across — otherwise the minted
     # access token is rejected with "Missing identity claim" (401).
+    # PyJWT rejects a non-string sub claim at decode time, so coerce it here.
     if not access_data.get("sub") and access_data.get("user_id"):
-        access_data["sub"] = access_data["user_id"]
+        access_data["sub"] = str(access_data["user_id"])
     
     # Create fresh access token
     access_token = create_access_token(access_data)
@@ -268,7 +270,7 @@ def verify_download_token(token: str) -> Optional[Dict]:
     """
     try:
         payload = jwt.decode(token, get_secret_key(), algorithms=[get_algorithm()])
-    except JWTError:
+    except InvalidTokenError:
         return None
 
     if payload.get("type") != "download":

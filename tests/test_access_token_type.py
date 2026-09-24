@@ -17,7 +17,7 @@ Ces tests verrouillent le contrat suivant :
 
 from datetime import timedelta
 
-from jose import jwt
+import jwt
 
 from apowerb.configs.settings import get_settings
 from apowerb.helpers.security import create_access_token

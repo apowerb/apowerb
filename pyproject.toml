@@ -49,7 +49,7 @@ dependencies = [
     "cryptography>=50.0.0",
     "bcrypt==4.0.1",
     "passlib>=1.7.4",
-    "python-jose>=3.5.0",
+    "pyjwt>=2.10.0",
     # pypdf, not PyPDF2: PyPDF2 3.0.1 is the last release ever published (the
     # project was renamed), so its advisories can never be patched — GHSA
     # "possible infinite loop when a comment is not terminated" has no fix

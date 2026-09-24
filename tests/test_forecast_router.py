@@ -128,3 +128,21 @@ def test_forecast_rejects_unknown_model_before_calling_client():
 
     assert resp.status_code == 422
     mock_ctor.assert_not_called()
+
+
+def test_forecast_rejects_oversized_data_payload_before_calling_client():
+    """A request with an absurd number of data rows must be rejected by
+    validation, not forwarded to th2forecast — same DoS-sized-payload floor
+    the tool wrapper (`_MAX_INLINE_ROWS`) already enforces for the agent tool
+    path, now also enforced on the HTTP route (schema-level cap)."""
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    from apowerb.schema.forecast_schema import MAX_DATA_ROWS
+
+    oversized_body = dict(_VALID_BODY, data=[{"date": "2024-01-01", "sales": 1}] * (MAX_DATA_ROWS + 1))
+    with patch("apowerb.routers.forecast.Th2forecastClient") as mock_ctor:
+        resp = client.post("/api/v1/forecast", json=oversized_body)
+
+    assert resp.status_code == 422
+    mock_ctor.assert_not_called()

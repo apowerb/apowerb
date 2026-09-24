@@ -12,7 +12,8 @@ from starlette.responses import JSONResponse
 import typer
 import uvicorn
 import os
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 
 from apowerb.core.invocation_context import set_current_invoker
 from apowerb.middleware.adk_identity import ADKLiveAuthMiddleware, foreign_user_id
@@ -320,10 +321,10 @@ class ADKAuthMiddleware(BaseHTTPMiddleware):
                 # refresh tokens MUST NOT be usable here; they have a
                 # dedicated /run_from_refresh_token endpoint.
                 if payload.get("type") != "access":
-                    raise JWTError("Invalid token type")
+                    raise InvalidTokenError("Invalid token type")
                 if payload.get("sub") is None:
-                    raise JWTError("Missing identity claim")
-            except JWTError:
+                    raise InvalidTokenError("Missing identity claim")
+            except InvalidTokenError:
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Could not validate credentials"},
