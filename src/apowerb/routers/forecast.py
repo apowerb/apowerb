@@ -35,7 +35,7 @@ def _error_body(message: str, *, field: str | None = None) -> dict:
 
 
 @router.post("/forecast")
-async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser):
+def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser):
     """Run a forecast via th2forecast and relay its response as-is.
 
     th2forecast's own errors (400/401/413) are relayed with their original
