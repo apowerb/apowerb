@@ -6,6 +6,7 @@ from apowerb.core.superagents.templates.dashboard import DASHBOARD_TEMPLATES
 from apowerb.core.superagents.templates.marketing import MARKETING_TEMPLATES
 from apowerb.core.superagents.templates.image import IMAGE_TEMPLATES
 from apowerb.core.superagents.templates.audio import AUDIO_TEMPLATES
+from apowerb.core.superagents.templates.jev import JEV_TEMPLATES
 from apowerb.core.extensions.registry import registry as _ext_registry
 
 
@@ -22,6 +23,7 @@ def _build_templates() -> list[dict]:
         MARKETING_TEMPLATES,
         IMAGE_TEMPLATES,
         AUDIO_TEMPLATES,
+        JEV_TEMPLATES,
     ):
         for tpl in group:
             by_id[tpl["template_id"]] = tpl
@@ -42,6 +44,7 @@ def _build_templates() -> list[dict]:
         # "Data Analyst", now owned by text_to_sql_agent. Kept in DATA_TEMPLATES
         # for backward-compat with agents already created from it.
         "forecasting_agent",
+        "jev_decision_agent",
         "knowledge_assistant",
         "dashboard_agent",
         "image_creator",

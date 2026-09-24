@@ -546,6 +546,21 @@ class Settings(BaseSettings):
     # (many series x many models), hence the generous default.
     th2forecast_timeout_s: float = 300
 
+    # ── Jev (TypeSafe decision model, 24/09/2026) ───────────────────────
+    # Key for the Jev decision tools (tool_jev_classify / decide / score).
+    # Empty means "not configured": the tools answer with an explicit error
+    # instead of calling out. Server-side only, never an LLM tool argument.
+    jev_api_key: str | None = None
+    # "openrouter" (POST /api/alpha/decisions) or "typesafe" (/v1/systemone):
+    # same body, the key must belong to the chosen provider.
+    jev_transport: str = "openrouter"
+    # Empty: the transport's pinned default (typesafe/jev-1.13, jev-1.13.0).
+    jev_model: str = ""
+    # Per-decision HTTP timeout, in seconds.
+    jev_timeout_s: float = 30
+    # Items per tool call; each item is one Jev decision.
+    jev_max_items: int = 200
+
     # Authentication settings
     frontend_urls: str = "http://localhost:3000"  # Allowed origins for CORS
     # B8 — Explicit CORS whitelist (comma-separated). When set, supersedes
