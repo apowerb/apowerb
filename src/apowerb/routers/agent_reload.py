@@ -24,6 +24,7 @@ from logging import getLogger
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from apowerb.auth.dependencies import get_current_user
+from apowerb.core.agent_runtime_sync import drop_cached_agent
 from apowerb.users import schemas as user_schemas
 
 logger = getLogger(__name__)
@@ -60,38 +61,9 @@ def invalidate_agent_runtime(app_state, agent_id: str) -> bool:
     if agent_loader is None or adk_server is None:
         return False
 
-    app_name = _folder_name_for(str(agent_id))
-
-    try:
-        agent_loader.remove_agent_from_cache(app_name)
-    except Exception as exc:
-        logger.warning(
-            "[agent-reload] remove_agent_from_cache(%s) raised %s: %s",
-            app_name,
-            type(exc).__name__,
-            exc,
-        )
-    # Only queue the runner for cleanup if one actually exists: ADK's
-    # close_runners([None]) crashes with ``'NoneType' object has no
-    # attribute 'close'`` otherwise. When the agent has never been
-    # instantiated in this process, dropping the module cache via
-    # remove_agent_from_cache is already enough — the next request will
-    # build a fresh runner from scratch.
-    try:
-        runner_dict = getattr(adk_server, "runner_dict", None) or {}
-        if app_name in runner_dict:
-            adk_server.runners_to_clean.add(app_name)
-        else:
-            logger.debug(
-                "[agent-reload] no live runner for %s — skipping cleanup queue",
-                app_name,
-            )
-    except Exception as exc:
-        logger.warning(
-            "[agent-reload] could not mark runner %s for cleanup: %s",
-            app_name,
-            exc,
-        )
+    # Only this process: the other workers notice the change themselves at
+    # their next run (see core.agent_runtime_sync).
+    drop_cached_agent(adk_server, _folder_name_for(str(agent_id)))
     return True
 
 
