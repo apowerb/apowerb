@@ -45,31 +45,22 @@ def _folder_name_for(agent_id: str) -> str:
     return agent_id
 
 
-@router.post(
-    "/{agent_id}/reload",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Hot-reload an agent's module and runner",
-)
-async def reload_agent(
-    agent_id: str,
-    request: Request,
-    _user: user_schemas.User = Depends(get_current_user),
-):
-    """Invalidate the ADK caches for ``agent_id`` so the next run rebuilds it."""
-    agent_loader = getattr(request.app.state, "adk_agent_loader", None)
-    adk_server = getattr(request.app.state, "adk_web_server", None)
+def invalidate_agent_runtime(app_state, agent_id: str) -> bool:
+    """Drop the cached module and runner of ``agent_id`` so its next run rebuilds it.
 
+    Every run goes through ADK's ``/run``, which serves the runner cached in
+    ``runner_dict``; the agent module only calls ``to_agent()`` at import time.
+    Without this, a definition written to the database stays invisible until a
+    manual reload or a restart (Réf. roadmap 93).
+
+    Returns False when the ADK handles are not on ``app_state``.
+    """
+    agent_loader = getattr(app_state, "adk_agent_loader", None)
+    adk_server = getattr(app_state, "adk_web_server", None)
     if agent_loader is None or adk_server is None:
-        logger.error(
-            "[agent-reload] ADK handles missing on app.state — cannot reload %s",
-            agent_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ADK runtime is not available for hot reload on this server.",
-        )
+        return False
 
-    app_name = _folder_name_for(agent_id)
+    app_name = _folder_name_for(str(agent_id))
 
     try:
         agent_loader.remove_agent_from_cache(app_name)
@@ -101,9 +92,32 @@ async def reload_agent(
             app_name,
             exc,
         )
+    return True
+
+
+@router.post(
+    "/{agent_id}/reload",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Hot-reload an agent's module and runner",
+)
+async def reload_agent(
+    agent_id: str,
+    request: Request,
+    _user: user_schemas.User = Depends(get_current_user),
+):
+    """Invalidate the ADK caches for ``agent_id`` so the next run rebuilds it."""
+    if not invalidate_agent_runtime(request.app.state, agent_id):
+        logger.error(
+            "[agent-reload] ADK handles missing on app.state — cannot reload %s",
+            agent_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ADK runtime is not available for hot reload on this server.",
+        )
 
     logger.info(
         "[agent-reload] agent %s marked for hot reload (user=%s)",
-        app_name,
+        _folder_name_for(agent_id),
         _user.email,
     )

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from apowerb.core.agent_main import (
     delete_agent,
     register_agent,
@@ -16,6 +16,7 @@ from apowerb.helpers.emails import get_domain_from_email
 from apowerb.core.agent_main import update_agent as update_agent_func
 from apowerb.configs.th2logger import setup_logging
 from apowerb.core.agent_helpers.llm_model_builder import validate_agent_model
+from apowerb.routers.agent_reload import invalidate_agent_runtime
 
 router = APIRouter()
 logger = setup_logging(__name__)
@@ -77,6 +78,7 @@ async def read_agent(
 async def update_agent(
     agent_id: str,
     agent_data: AgentCreateSchema,
+    request: Request,
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Endpoint to update an existing agent."""
@@ -95,17 +97,21 @@ async def update_agent(
     result = update_agent_func(
         clean_id, agent_data_with_owner, user_id=current_user.email
     )
+    invalidate_agent_runtime(request.app.state, str(clean_id))
     return result
 
 
 @router.delete("/agents/{agent_id}", tags=["agents"])
 async def remove_agent(
-    agent_id: str, current_user: user_schemas.User = Depends(get_current_user)
+    agent_id: str,
+    request: Request,
+    current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Endpoint to delete an agent by ID."""
     # Strip 'agent' prefix if present to match DB ID
     clean_id = agent_id.replace("agent", "")
     delete_agent(clean_id, user_id=current_user.email)
+    invalidate_agent_runtime(request.app.state, clean_id)
     return {"message": "Agent deleted successfully."}
 
 
@@ -131,6 +137,7 @@ async def agent_revisions(
 async def restore_agent(
     agent_id: str,
     revision_id: int,
+    request: Request,
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Put an archived definition back in service, without a redeploy.
@@ -141,7 +148,9 @@ async def restore_agent(
     redémarrage du service.
     """
     clean_id = int(agent_id.replace("agent", ""))
-    return restore_agent_revision(clean_id, revision_id, user_id=current_user.email)
+    result = restore_agent_revision(clean_id, revision_id, user_id=current_user.email)
+    invalidate_agent_runtime(request.app.state, str(clean_id))
+    return result
 
 
 @router.get("/agents/{agent_id}/template-status", tags=["agents"])
@@ -172,6 +181,7 @@ async def template_status(
 @router.post("/agents/{agent_id}/resync-template", tags=["agents"])
 async def resync_template(
     agent_id: str,
+    request: Request,
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Overwrite the agent's hash-relevant fields with the live template.
@@ -184,4 +194,6 @@ async def resync_template(
     show ``is_in_sync: true``).
     """
     clean_id = int(agent_id.replace("agent", ""))
-    return resync_agent_to_template(clean_id, user_id=current_user.email)
+    result = resync_agent_to_template(clean_id, user_id=current_user.email)
+    invalidate_agent_runtime(request.app.state, str(clean_id))
+    return result
