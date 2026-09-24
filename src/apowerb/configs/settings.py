@@ -531,6 +531,21 @@ class Settings(BaseSettings):
     # Must equal the `API_KEY` of the th2etl instance being addressed.
     th2etl_api_key: str | None = None
 
+    # ── th2forecast (forecast-tool contract, 24/09/2026) ────────────────
+    # Base URL of the th2forecast service (lot A). Empty means "not
+    # configured" -- POST /api/v1/forecast then answers 503 rather than
+    # trying to reach an empty string. Never surfaced to an LLM tool
+    # argument: only this server-side setting and the token below carry it.
+    th2forecast_url: str = ""
+    # Bearer token th2forecast expects on every route but /health, when the
+    # th2forecast deployment has TH2FORECAST_API_TOKEN set. Optional: some
+    # deployments run without auth.
+    th2forecast_api_token: str | None = None
+    # Global deadline (seconds) for a forecast job: submit + poll until
+    # success/failure or this elapses. th2forecast forecasts can run long
+    # (many series x many models), hence the generous default.
+    th2forecast_timeout_s: float = 300
+
     # Authentication settings
     frontend_urls: str = "http://localhost:3000"  # Allowed origins for CORS
     # B8 — Explicit CORS whitelist (comma-separated). When set, supersedes
