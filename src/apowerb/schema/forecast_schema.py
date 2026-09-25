@@ -2,9 +2,10 @@
 shape fixed by the contract (~/tmp/th2fc/CONTRAT.md), validated here so a
 malformed request never reaches th2forecast at all."""
 
+from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # th2forecast's own MAX_HORIZON default (see contract); the route validates
 # against this ceiling too so an oversized horizon fails fast, locally, with
@@ -31,6 +32,11 @@ class ForecastRequestSchema(BaseModel):
     models: list[str] = Field(default_factory=lambda: ["prophet"], min_length=1)
     confidence_levels: list[float] | None = Field(default_factory=lambda: [0.8, 0.95])
     holidays_country: str | None = None
+    # Contexte métier (th2forecast : événements appris comme covariables et
+    # scénarios « et si »). Sans ces champs, Pydantic les jetterait en silence ;
+    # leur contenu est validé par th2forecast, qui répond 400 avec un message clair.
+    events: list[dict[str, Any]] | None = Field(None, max_length=20)
+    scenarios: list[dict[str, Any]] | None = Field(None, max_length=5)
 
     @field_validator("models")
     @classmethod
@@ -72,3 +78,28 @@ class ForecastRequestSchema(BaseModel):
             if not row:
                 raise ValueError(f"data[{i}] est une ligne vide")
         return value
+
+
+class ForecastInterpretSchema(BaseModel):
+    """Body of POST /api/v1/forecast/interpret — free text to dated events."""
+
+    text: str = Field(..., min_length=3, max_length=2000)
+    history_start: date
+    history_end: date
+    horizon_end: date
+    frequency: str
+    groups: list[str] = Field(default_factory=list, max_length=200)
+    events: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+
+    @field_validator("frequency")
+    @classmethod
+    def _frequency_in_allowed_set(cls, value: str) -> str:
+        if value not in ALLOWED_FREQUENCIES:
+            raise ValueError(f"frequency invalide : {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _dates_in_order(self) -> "ForecastInterpretSchema":
+        if not self.history_start <= self.history_end < self.horizon_end:
+            raise ValueError("attendu : history_start <= history_end < horizon_end")
+        return self

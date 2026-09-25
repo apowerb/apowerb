@@ -444,6 +444,13 @@ class Settings(BaseSettings):
     workflow_suggest_model: str = ""
     workflow_suggest_timeout_s: float = 4.0
 
+    # ── Contexte d'une prévision dit en français (th2forecast : events/scenarios) ──
+    # Éteint par défaut : le modèle mutualisé traduit le texte en événements
+    # datés, sous le même plafond que les runs. Le délai est plus long que pour
+    # l'éditeur : le modèle peut énumérer des centaines de dates.
+    forecast_interpret_enabled: bool = False
+    forecast_interpret_timeout_s: float = 30.0
+
     # Registration feature flag — set AUTH_REGISTER_ENABLED=false to keep
     # the login endpoint open while disabling user self-registration. One
     # deployment uses this so internal users can sign in but the public POST /users/
