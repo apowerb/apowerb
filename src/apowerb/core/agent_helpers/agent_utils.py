@@ -680,6 +680,11 @@ def to_agent(agent_name: str) -> LlmAgent:
         _add_auto_tool(propose_agent_upgrade)
         _add_auto_tool(embed_chart)
         _add_auto_tool(request_location)
+        # Any agent can build a tool for its user: a published agent_tool
+        # workflow, run by the workflow engine with its own guards.
+        from apowerb.core.agent_helpers.tool_creator import create_tool
+
+        _add_auto_tool(create_tool)
 
         tools_funcs = dedupe_tools_by_name(tools_funcs, agent_name=agent_name)
 
