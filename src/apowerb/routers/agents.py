@@ -19,6 +19,7 @@ from apowerb.core.agent_main import update_agent as update_agent_func
 from apowerb.configs.th2logger import setup_logging
 from apowerb.core.agent_helpers.llm_model_builder import validate_agent_model
 from apowerb.routers.agent_reload import invalidate_agent_runtime
+from apowerb.core.agent_helpers.tool_catalog import addable_tool
 
 router = APIRouter()
 logger = setup_logging(__name__)
@@ -130,6 +131,37 @@ async def patch_agent(
     except ValidationError as exc:
         raise RequestValidationError(exc.errors(include_url=False)) from exc
     return await update_agent(agent_id, agent_data, request, current_user)
+
+
+@router.post("/agents/{agent_id}/tools", tags=["agents"])
+async def add_agent_tool(
+    agent_id: str,
+    request: Request,
+    payload: dict = Body(...),
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Add one catalogue tool to the agent (the chat "Enable" card).
+
+    Refused with a 422 when the tool is unknown or needs a Tool Config: only
+    tools that need nothing typed by the user (at most an integration, which
+    the chat connects on first use) are added this way. Written through the
+    PATCH, so the agent is validated and reloaded like any edit. Adding a tool
+    the agent already has changes nothing.
+    """
+    tool_name = str(payload.get("tool_name") or "").strip()
+    ok, reason = addable_tool(tool_name)
+    if not ok:
+        raise HTTPException(status_code=422, detail=reason)
+    clean_id = int(agent_id.replace("agent", ""))
+    current = get_agent(clean_id, user_id=current_user.email)
+    if not current:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    tools = list(current.get("agent_tools") or [])
+    if tool_name in tools:
+        return {"added": False, "agent_tools": tools}
+    tools.append(tool_name)
+    await patch_agent(agent_id, request, {"agent_tools": tools}, current_user)
+    return {"added": True, "agent_tools": tools}
 
 
 @router.delete("/agents/{agent_id}", tags=["agents"])

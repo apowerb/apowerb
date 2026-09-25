@@ -101,23 +101,14 @@ MODELS = [
         "provider": "gemini",
         "tag": "Latest",
     },
+    # gemini-3-pro, gemini-2.0-flash and gemini-2.0-pro were removed on
+    # 2026-09-25: Google answered 404 (or the run failed) for each on
+    # agent-dev, and gemini-2.0-flash's 404 names gemini-3.8-flash instead.
     {
-        "id": "gemini/gemini-3-pro",
-        "name": "Gemini 3 Pro",
-        "provider": "gemini",
-        "tag": "Powerful",
-    },
-    {
-        "id": "gemini/gemini-2.0-flash",
-        "name": "Gemini 2.0 Flash",
+        "id": "gemini/gemini-3.8-flash",
+        "name": "Gemini 3.8 Flash",
         "provider": "gemini",
         "tag": "Fast",
-    },
-    {
-        "id": "gemini/gemini-2.0-pro",
-        "name": "Gemini 2.0 Pro",
-        "provider": "gemini",
-        "tag": None,
     },
     {
         "id": "deepseek/deepseek-chat",

@@ -39,6 +39,7 @@ class WorkflowStore(BaseModel):
     metadata: Any = None
     workflow_table: Any = None
     revision_table: Any = None
+    suggest_table: Any = None
 
     def __init__(self, **data: Any):
         super().__init__(**data)
@@ -80,6 +81,19 @@ class WorkflowStore(BaseModel):
             Column("saved_at", String),
             # "update" | "restore"
             Column("reason", String),
+        )
+        # Adoption des pastilles « Étape suivante » (roadmap#88) : des totaux
+        # par jour × source × type, rien qui désigne un utilisateur ou un graphe.
+        # ``node_type = ""`` porte les totaux de la source.
+        self.suggest_table = Table(
+            "workflow_suggest_daily",
+            self.metadata,
+            Column("day", String, primary_key=True),
+            Column("source", String, primary_key=True),
+            Column("node_type", String, primary_key=True),
+            Column("steps", Integer, nullable=False),
+            Column("shown", Integer, nullable=False),
+            Column("accepted", Integer, nullable=False),
         )
 
     def create_table(self):

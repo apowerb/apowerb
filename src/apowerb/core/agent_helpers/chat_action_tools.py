@@ -316,12 +316,22 @@ def propose_agent_upgrade(
         capability: Short description of the new capability.
         reason: Why this capability is needed for the task.
         skill_id: Optional identifier of the skill to enable.
-        tool_name: Optional name of the tool to enable.
+        tool_name: Optional exact catalogue name of the tool to enable, as
+            returned by ``find_tools`` (e.g. "google_gmail.tool_list_emails").
+            On approval the tool is added to this agent.
 
     Returns:
         None once the card is displayed; the run then waits for the user.
-        Do not repeat the card in your reply.
+        Do not repeat the card in your reply. An error when ``tool_name`` is
+        not a catalogue tool that can be added from the chat: call
+        ``find_tools`` and use the exact ``tool_name`` it returns.
     """
+    if tool_name:
+        from apowerb.core.agent_helpers.tool_catalog import addable_tool
+
+        ok, reason = addable_tool(tool_name)
+        if not ok:
+            return {"status": "error", "message": reason}
     _request_pause(tool_context)
     return None
 

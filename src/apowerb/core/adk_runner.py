@@ -9,6 +9,7 @@ import json
 from logging import getLogger
 
 from apowerb.configs.settings import get_settings
+from apowerb.core.provider_errors import chat_message, provider_error_code_from_text
 from apowerb.helpers.error_responses import safe_error_message
 
 logger = getLogger(__name__)
@@ -61,6 +62,34 @@ def _upstream_error_event(status: int, body: str) -> str:
     lost_session = status == 404 and "session not found" in body.lower()
     message = _SESSION_LOST_MESSAGE if lost_session else _UPSTREAM_ERROR_MESSAGE
     return _error_event(message, status=status, code=status)
+
+
+def _name_provider_refusals(chunk: str) -> str:
+    """Replace a model refusal forwarded by ADK with its category (roadmap 37).
+
+    ADK writes the provider's text into the stream (``data: {"error":
+    "litellm.AuthenticationError: ... set ANTHROPIC_API_KEY ..."}``): the user
+    saw that verbatim. The event keeps its shape, with the chat's wording and a
+    ``code``; the provider text goes to the log only. An event split across two
+    chunks does not parse and is forwarded as before.
+    """
+    if '"error"' not in chunk:
+        return chunk
+    lines = chunk.split("\n")
+    for i, line in enumerate(lines):
+        if not line.startswith("data: "):
+            continue
+        try:
+            data = json.loads(line[6:])
+        except ValueError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        code = provider_error_code_from_text(data.get("error"))
+        if code:
+            logger.error("[STREAM] model refusal %s: %s", code, data.get("error"))
+            lines[i] = "data: " + json.dumps({"error": chat_message(code), "code": code})
+    return "\n".join(lines)
 
 
 def _chunk_signals_rate_limit(chunk: str) -> bool:
@@ -442,6 +471,7 @@ async def stream_adk_agent(
                 # error chunk has been emitted by ADK and any follow-up
                 # bytes belong to the failed attempt.
                 break
+            chunk = _name_provider_refusals(chunk)
             if not overflowed:
                 content_buffer.append(chunk)
                 buffered_len += len(chunk)
