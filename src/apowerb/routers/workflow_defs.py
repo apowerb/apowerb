@@ -9,13 +9,15 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from nanoid import generate as nanoid_generate
 from pydantic import BaseModel
 
+from apowerb.admin.guard import require_admin
 from apowerb.auth.dependencies import get_current_user
-from apowerb.core import run_main, workflow_main
+from apowerb.core import run_main, workflow_main, workflow_suggest_stats
 from apowerb.core.workflow_graph import run_graph
+from apowerb.core.workflow_suggest_stats import SuggestEvent
 from apowerb.routers.workflows import _streaming_run, logger
 from apowerb.users import schemas as user_schemas
 
@@ -117,6 +119,27 @@ async def suggest_next_node(
         name=body.name,
         description=body.description,
     )
+
+
+@router.post("/suggest-events", status_code=status.HTTP_204_NO_CONTENT)
+async def record_suggest_event(
+    body: SuggestEvent, current_user: user_schemas.User = Depends(get_current_user)
+):
+    """Une étape suivante vue dans l'éditeur, ajoutée aux totaux du jour.
+
+    Connexion exigée, mais rien de l'utilisateur n'est conservé (roadmap#88).
+    """
+    workflow_suggest_stats.record_event(body)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/suggest-stats")
+async def suggest_stats(
+    days: int = Query(30, ge=1, le=365),
+    current_user: user_schemas.User = Depends(require_admin),
+):
+    """Adoption des pastilles règles contre IA sur ``days`` jours (admin)."""
+    return workflow_suggest_stats.read_totals(days=days)
 
 
 @router.get("/{workflow_id}")
