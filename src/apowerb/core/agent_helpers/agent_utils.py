@@ -677,6 +677,11 @@ def to_agent(agent_name: str) -> LlmAgent:
             _add_auto_tool(tool_save_code_artifact)
 
         _add_auto_tool(request_file_from_user)
+        # find_tools gives propose_agent_upgrade a real tool name to offer:
+        # without it the card named tools the agent guessed.
+        from apowerb.core.agent_helpers.tool_catalog import find_tools
+
+        _add_auto_tool(find_tools)
         _add_auto_tool(propose_agent_upgrade)
         _add_auto_tool(embed_chart)
         _add_auto_tool(request_location)

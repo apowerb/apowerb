@@ -176,7 +176,7 @@ class TestProposeAgentUpgrade:
             capability="OCR parsing",
             reason="Needed to read scanned PDFs",
             skill_id="skill_ocr_v1",
-            tool_name="pdf_ocr",
+            tool_name="google_gmail.tool_list_emails",
         )
         assert result is None
 
