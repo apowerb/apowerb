@@ -11,14 +11,21 @@ l'appelant (même contrôle d'accès propriétaire/organisation que
 la requête répond 404 avant tout appel au moteur. `chart_id` n'est jamais
 relayé à th2forecast. Quand l'accès est validé, la réponse gagne un champ
 `tracking` (couverture des bandes, MASE, ruptures — voir
-``apowerb.bi.forecast_tracking``) comparant l'historique reçu aux instantanés
-précédents de même configuration, et cette réponse est elle-même stockée
-comme nouvel instantané (table ``bi_forecast_snapshots``, 60 conservés par
+``apowerb.bi.forecast_tracking``) comparant l'historique RÉGULARISÉ renvoyé
+par le moteur (`series[].history`, jamais le `data` brut de la requête) aux
+instantanés précédents de même configuration, et une version élaguée de
+cette réponse (group/level/model/forecast seulement) est stockée comme
+nouvel instantané (table ``bi_forecast_snapshots``, 60 conservés par
 graphique). Un échec de stockage est journalisé et n'empêche pas la
 prévision : la réponse est alors rendue sans `tracking`.
+
+``client.forecast()`` est un appel bloquant (``requests`` + attente de
+polling) : il est déporté via ``asyncio.to_thread`` pour ne pas geler la
+boucle asyncio pendant tout le calcul.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import date as date_type
 from logging import getLogger
 from typing import Annotated
@@ -31,7 +38,7 @@ from apowerb.auth.dependencies import get_current_user
 from apowerb.bi.charts.service import ChartNotFoundError, ChartService
 from apowerb.bi.db_stores import DatabaseChartStore
 from apowerb.bi.forecast_snapshot_store import ForecastSnapshotStore
-from apowerb.bi.forecast_tracking import compute_config_hash, compute_tracking
+from apowerb.bi.forecast_tracking import compute_config_hash, compute_tracking, prunable_snapshot_payload
 from apowerb.helpers.database import get_db
 from apowerb.integrations.th2forecast_client import (
     Th2forecastAPIError,
@@ -72,10 +79,19 @@ def _relay_payload(body: ForecastRequestSchema) -> dict:
     return payload
 
 
-def _history_end(body: ForecastRequestSchema) -> date_type | None:
-    """La dernière date de l'historique fourni — sert de clé de version à
-    l'instantané et de repère pour le suivi (contrat étape 5 §3)."""
-    dates = [row.get(body.date_var) for row in body.data if row.get(body.date_var)]
+def _history_end(series: list[dict]) -> date_type | None:
+    """La dernière date de l'historique RÉGULARISÉ renvoyé par le moteur
+    (`series[].history`, toujours ISO `YYYY-MM-DD`) — sert de clé de version
+    à l'instantané et de repère pour le suivi (contrat étape 5 §3). Le `data`
+    brut de la requête n'est jamais utilisé ici : son format de date peut
+    différer (`2024/01/05`, avec heure...) et ses groupes peuvent être
+    numériques, alors que le moteur régularise les deux."""
+    dates = [
+        point.get("date")
+        for s in series
+        for point in (s.get("history") or [])
+        if point.get("date")
+    ]
     if not dates:
         return None
     latest = max(dates)
@@ -118,7 +134,9 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
 
     try:
         payload = _relay_payload(body)
-        result = client.forecast(payload)
+        # client.forecast() est bloquant (requests + sleep de polling) : hors
+        # thread, il gèlerait toute la boucle asyncio pendant tout le calcul.
+        result = await asyncio.to_thread(client.forecast, payload)
     except Th2forecastAPIError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.body)
     except Th2forecastTimeout as exc:
@@ -137,7 +155,7 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
     if chart is not None:
         try:
             result = await _track_and_store(
-                db, chart=chart, owner=current_user.email, body=body, payload=payload, result=result
+                db, chart=chart, owner=current_user.email, payload=payload, result=result
             )
         except Exception:
             # Un échec de stockage/suivi ne casse pas la prévision : on la
@@ -151,11 +169,15 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
 
 
 async def _track_and_store(
-    db: AsyncSession, *, chart, owner: str, body: ForecastRequestSchema, payload: dict, result: dict
+    db: AsyncSession, *, chart, owner: str, payload: dict, result: dict
 ) -> dict:
-    """Suivi puis instantané (contrat étape 5 §3 : dans cet ordre)."""
-    history_end = _history_end(body)
+    """Suivi puis instantané (contrat étape 5 §3 : dans cet ordre). Les
+    actuels du suivi et `history_end` viennent de `result["series"]`
+    (réponse du moteur, régularisée) — jamais de `data` brut."""
+    series = result.get("series", [])
+    history_end = _history_end(series)
     if history_end is None:
+        logger.warning("forecast response for chart %s has no series history to track", chart.id)
         return result
 
     config_hash = compute_config_hash(payload)
@@ -165,14 +187,7 @@ async def _track_and_store(
         {"config_hash": s.config_hash, "history_end": s.history_end.isoformat(), "payload": s.payload}
         for s in existing
     ]
-    tracking = compute_tracking(
-        data=body.data,
-        date_var=body.date_var,
-        target_var=body.target_var,
-        group_var=body.group_var,
-        snapshots=snapshots,
-        config_hash=config_hash,
-    )
+    tracking = compute_tracking(series=series, snapshots=snapshots, config_hash=config_hash)
 
     await snapshot_store.upsert(
         chart_id=chart.id,
@@ -180,8 +195,8 @@ async def _track_and_store(
         organization_id=chart.organization_id,
         config_hash=config_hash,
         history_end=history_end,
-        frequency=body.frequency,
-        payload=result,
+        frequency=payload.get("frequency"),
+        payload=prunable_snapshot_payload(result),
     )
 
     return {**result, "tracking": tracking}
