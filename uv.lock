@@ -410,7 +410,7 @@ requires-dist = [
     { name = "s3fs", specifier = ">=2023.12.0" },
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2024.6.0" },
     { name = "s3transfer", specifier = ">=0.8.2" },
-    { name = "sqlalchemy", specifier = ">=2.0.45" },
+    { name = "sqlalchemy", specifier = ">=2.0.45,<2.1" },
     { name = "stripe", specifier = ">=14.3.0" },
     { name = "tavily-python", specifier = ">=0.7.22" },
     { name = "th2pulse", marker = "python_full_version >= '3.11' and extra == 'otel'", specifier = ">=0.1.4" },
