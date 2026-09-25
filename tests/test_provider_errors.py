@@ -97,6 +97,8 @@ def _run(app_and_name):
         (401, "model_provider_auth", 502),
         (403, "model_provider_auth", 502),
         (429, "model_provider_rate_limit", 429),
+        # Roadmap 37: a model the provider withdrew (gemini-2.0-flash, 25/09).
+        (404, "model_not_found", 502),
     ],
 )
 def test_provider_refusal_reaches_run_as_a_category(tmp_path, status, code, http):
@@ -131,3 +133,26 @@ def test_the_application_registers_the_handlers():
     assert litellm.exceptions.AuthenticationError in app.exception_handlers
     assert litellm.exceptions.PermissionDeniedError in app.exception_handlers
     assert litellm.exceptions.RateLimitError in app.exception_handlers
+
+
+# Roadmap 37: in the chat, ADK does not raise -- it writes the provider's
+# refusal into the SSE stream as text. These are the texts measured on
+# agent-dev on 2026-09-25 after switching a conversation's model (trimmed).
+@pytest.mark.parametrize(
+    "text, code",
+    [
+        (("AuthenticationError: litellm.AuthenticationError: Missing Anthropic API Key - "
+          "A call is being made to anthropic but no key is set"), "model_provider_auth"),
+        (("NotFoundError: litellm.NotFoundError: Vertex_ai_betaException - This model "
+          "models/gemini-2.0-flash is no longer available."), "model_not_found"),
+        ("litellm.ContextWindowExceededError: litellm.BadRequestError: prompt is too long",
+         "model_context_exceeded"),
+        # Rate limits keep their own path: stream_adk_agent retries them.
+        ("litellm.RateLimitError: 429 RESOURCE_EXHAUSTED", None),
+        ("ValueError: something unrelated", None),
+    ],
+)
+def test_provider_refusal_is_named_from_the_stream_text(text, code):
+    from apowerb.core.provider_errors import provider_error_code_from_text
+
+    assert provider_error_code_from_text(text) == code
