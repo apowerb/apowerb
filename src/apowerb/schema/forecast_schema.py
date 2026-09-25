@@ -99,8 +99,8 @@ class ForecastRequestSchema(BaseModel):
     ) -> list[str] | None:
         if value is None:
             return value
-        if not value:
-            raise ValueError("hierarchy ne peut pas être une liste vide (null pour aucune hiérarchie)")
+        # Contrat étape 5 §2 : liste éventuellement vide (Total seul, aucun
+        # niveau intermédiaire) — seul `null` signifie « pas de hiérarchie ».
         if any(not level for level in value):
             raise ValueError("hierarchy ne peut pas contenir de colonne vide")
         if not info.data.get("group_var"):
