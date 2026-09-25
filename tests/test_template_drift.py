@@ -199,6 +199,36 @@ def test_drift_still_detected_when_native_tools_diverge_from_template():
     assert "agent_tools" in report["drift_fields"]
 
 
+@pytest.mark.parametrize("agent_tools", [[], ["tool_config7"]])
+def test_fresh_agent_from_recommended_tools_template_is_in_sync(agent_tools):
+    """Prod regression 2026-09-25 (core 0.2.42): an agent created from the
+    jev_decision_agent template showed "diverging field: agent_tools" right
+    after creation. The template declares ``recommended_tools`` (resolved at
+    runtime) and no ``agent_tools``; the UI creates the agent with
+    ``agent_tools: []`` plus the user's tool_config* attachments, and
+    ``get_agent`` hands the column back as a parsed list."""
+    tpl = get_superagent_template("jev_decision_agent", user=None)
+    assert tpl is not None
+    assert tpl.get("agent_tools") is None
+    assert tpl["recommended_tools"]
+    agent = _agent_snapshot_of("jev_decision_agent", agent_tools=agent_tools)
+
+    report = diff_agent_against_template(agent, "jev_decision_agent")
+
+    assert report["drift_fields"] == []
+    assert report["is_in_sync"] is True
+
+
+def test_drift_detected_when_agent_adds_native_tool_to_template_without_agent_tools():
+    """The None/[] equivalence must not hide a real native-tool divergence."""
+    agent = _agent_snapshot_of(
+        "jev_decision_agent", agent_tools=["basic.notify_user"]
+    )
+    report = diff_agent_against_template(agent, "jev_decision_agent")
+    assert "agent_tools" in report["drift_fields"]
+    assert report["is_in_sync"] is False
+
+
 # --------------------------------------------------------------------------- #
 # resync_agent_to_template — preservation of user-owned tool_configs
 # --------------------------------------------------------------------------- #

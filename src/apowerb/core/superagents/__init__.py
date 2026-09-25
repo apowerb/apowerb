@@ -243,6 +243,10 @@ def diff_agent_against_template(
                 t for t in agent_value
                 if not (isinstance(t, str) and t.startswith("tool_config"))
             ]
+            # Most templates only declare ``recommended_tools`` (resolved at
+            # runtime) and no ``agent_tools``: an agent created from them
+            # stores an empty list, which is not a divergence from "none".
+            template_value = template_value or []
         if agent_value != template_value:
             drift_fields.append(field)
 
