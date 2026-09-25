@@ -141,6 +141,26 @@ def get_superagent_template(
     return None
 
 
+def offer_default_llm(template: dict) -> dict:
+    """Template as offered in the picker: on the server's default LLM when it has one.
+
+    Templates declare an Anthropic model. A server without an Anthropic key
+    cannot run it: an agent created with that model fails at its first
+    message. When the server serves ``thaink2/default`` (DEFAULT_LLM_MODEL +
+    DEFAULT_LLM_API_KEY), the picker proposes it instead -- the user can still
+    pick another provider in the form. Returns a copy: the registry keeps the
+    declared model for internal paths.
+    """
+    from apowerb.core.agent_helpers.default_llm import (
+        DEFAULT_LLM_MODEL_ID,
+        default_llm_available,
+    )
+
+    if not default_llm_available():
+        return template
+    return {**template, "agent_model": DEFAULT_LLM_MODEL_ID}
+
+
 def _canonical_hash_payload(template: dict) -> bytes:
     """Build a deterministic byte payload from the hash-relevant template
     fields, so the hash is stable across Python runs and dict orderings."""
