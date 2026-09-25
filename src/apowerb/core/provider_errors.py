@@ -23,12 +23,22 @@ logger = getLogger(__name__)
 MODEL_PROVIDER_AUTH = "model_provider_auth"
 MODEL_PROVIDER_RATE_LIMIT = "model_provider_rate_limit"
 MODEL_PROVIDER_UNAVAILABLE = "model_provider_unavailable"
+MODEL_NOT_FOUND = "model_not_found"
+MODEL_CONTEXT_EXCEEDED = "model_context_exceeded"
 
 # code -> (HTTP status returned by /run, English fallback message)
 _RESPONSES = {
     MODEL_PROVIDER_AUTH: (
         502,
         "The model provider rejected the credentials of this agent's model.",
+    ),
+    MODEL_NOT_FOUND: (
+        502,
+        "The model provider does not offer this agent's model anymore.",
+    ),
+    MODEL_CONTEXT_EXCEEDED: (
+        400,
+        "The conversation is longer than this agent's model can read.",
     ),
     MODEL_PROVIDER_RATE_LIMIT: (
         429,
@@ -52,6 +62,8 @@ def _exception_classes() -> dict[type[BaseException], Optional[str]]:
 
     ex = litellm.exceptions
     return {
+        ex.ContextWindowExceededError: MODEL_CONTEXT_EXCEEDED,
+        ex.NotFoundError: MODEL_NOT_FOUND,
         ex.AuthenticationError: MODEL_PROVIDER_AUTH,
         ex.PermissionDeniedError: MODEL_PROVIDER_AUTH,
         ex.RateLimitError: MODEL_PROVIDER_RATE_LIMIT,
@@ -92,6 +104,52 @@ def provider_error_code(exc: BaseException) -> Optional[str]:
                     return found
         seen = seen.__cause__ or seen.__context__
     return None
+
+
+# What the chat shows when the model refuses a turn, often right after the
+# agent's model or key was changed (roadmap 37): what to do, and that nothing
+# of the conversation is lost -- the history is replayed to the new model.
+_CHAT_MESSAGES = {
+    MODEL_PROVIDER_AUTH: (
+        "The model provider rejected this agent's API key, or it has none. Add a valid "
+        "key in the agent's settings, or switch the agent back to the thaink2 model. "
+        "Your conversation is kept."
+    ),
+    MODEL_NOT_FOUND: (
+        "This agent's model is not offered by its provider anymore. Pick another model "
+        "in the agent's settings. Your conversation is kept."
+    ),
+    MODEL_CONTEXT_EXCEEDED: (
+        "This conversation is longer than this agent's model can read. Pick a model "
+        "with a larger context window, or start a new conversation. Your conversation "
+        "is kept."
+    ),
+}
+
+
+def provider_error_code_from_text(text: str) -> Optional[str]:
+    """The category of a provider refusal that ADK wrote into the chat stream.
+
+    Covers the refusals the chat words for the user (``_CHAT_MESSAGES``). Rate
+    limits are left out on purpose: the stream retries them itself.
+    """
+    if not isinstance(text, str):
+        return None
+    # ContextWindowExceededError first: its text also names BadRequestError.
+    for name, code in (
+        ("ContextWindowExceededError", MODEL_CONTEXT_EXCEEDED),
+        ("NotFoundError", MODEL_NOT_FOUND),
+        ("AuthenticationError", MODEL_PROVIDER_AUTH),
+        ("PermissionDeniedError", MODEL_PROVIDER_AUTH),
+    ):
+        if f"litellm.{name}" in text:
+            return code
+    return None
+
+
+def chat_message(code: str) -> str:
+    """What the chat tells the user for a refusal named by the function above."""
+    return _CHAT_MESSAGES[code]
 
 
 def provider_error_response(exc: BaseException, code: str) -> JSONResponse:
