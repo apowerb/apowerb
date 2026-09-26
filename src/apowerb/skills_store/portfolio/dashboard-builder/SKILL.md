@@ -1,6 +1,6 @@
 ---
 name: dashboard-builder
-description: "Create interactive BI dashboards with charts, KPIs, and tables. Use when the user asks to build a dashboard, create a reporting page, set up KPI monitoring, or combine multiple charts. Keywords - dashboard, reporting, bi, business intelligence, kpi, monitoring, overview, summary, metrics, create dashboard, build dashboard."
+description: "Create interactive BI dashboards with charts, KPIs, and tables. Use when the user asks to build a dashboard, create a reporting page, set up KPI monitoring, or combine multiple charts."
 ---
 
 # Dashboard Builder
