@@ -8,7 +8,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from apowerb.tools_store.portfolio import api_call
-from apowerb.tools_store.portfolio import bi_datasets
 
 
 _TH2FORECAST_RESPONSE = {

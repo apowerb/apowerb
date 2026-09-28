@@ -1,5 +1,4 @@
 """Lot A4 : inject_bi_dashboard_tools ajoute les outils de prévision."""
-import pytest
 
 from apowerb.core.agent_helpers import extras_loader
 
