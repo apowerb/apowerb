@@ -130,8 +130,9 @@ def _dashboard_config(chart_ids, *, status=DashboardStatus.PUBLISHED,
 
 
 def _db_returning(configs):
+    """Rows of (owner, config); the owner column matches each config's creator."""
     result = MagicMock()
-    result.scalars.return_value = iter(configs)
+    result.all.return_value = [(c.get("created_by"), c) for c in configs]
     db = MagicMock()
     db.execute = AsyncMock(return_value=result)
     return db

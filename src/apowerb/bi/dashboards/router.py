@@ -105,7 +105,7 @@ async def list_shared_dashboards(
     shared = [
         d for d in all_dashboards
         # Skip own dashboards; must be published and visible to the viewer
-        if d.created_by != user.email
+        if (d.created_by or "").lower() != user.email.lower()
         and d.status == DashboardStatus.PUBLISHED
         and visible_to(d, user.email)
     ]
