@@ -17,6 +17,8 @@ from datetime import date, datetime
 from logging import getLogger
 from typing import Any
 
+from apowerb.schema.forecast_schema import MAX_DATA_ROWS
+
 logger = getLogger(__name__)
 
 # Message unique, qu'un jeu appartienne à quelqu'un d'autre ou n'existe pas :
@@ -24,7 +26,8 @@ logger = getLogger(__name__)
 _NOT_FOUND_MESSAGE = "Jeu de données introuvable."
 
 _MAX_LIST_RESULTS = 50
-_DESCRIBE_ROW_CAP = 100_000
+# Même plafond que la prévision (schema/forecast_schema.py).
+_DESCRIBE_ROW_CAP = MAX_DATA_ROWS
 _MAX_DISTINCT = 1000
 _TYPE_INFERENCE_THRESHOLD = 0.9
 
