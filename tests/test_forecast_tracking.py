@@ -269,3 +269,161 @@ class TestConfigHashExcludesScenarios:
         `config_hash` — ajouter un scénario ne remet pas le suivi à zéro."""
         with_scenario = {**BASE_PAYLOAD, "scenarios": [{"name": "Promo +15%"}]}
         assert compute_config_hash(with_scenario) == compute_config_hash(BASE_PAYLOAD)
+
+
+class TestPrunableSnapshotPayloadKeepsScenarios:
+    def test_scenarios_are_kept_when_present(self):
+        """Contrat etape 7 SS2d : l'instantane elague garde aussi les
+        scenarios (name + forecast date/value) pour permettre le calcul de
+        tracking.adjustments plus tard."""
+        result = {
+            "status": "success",
+            "series": [
+                {
+                    "group": "A", "level": None, "model": "prophet",
+                    "history": _hist(("2024-01-01", 10)),
+                    "forecast": [{"date": "2024-02-01", "value": 10}],
+                    "scenarios": [
+                        {"name": "Promo +15%", "forecast": [
+                            {"date": "2024-02-01", "value": 11.5, "lower_80": 10, "upper_80": 13},
+                        ]},
+                    ],
+                }
+            ],
+        }
+        pruned = prunable_snapshot_payload(result)
+        assert pruned["series"][0]["scenarios"] == [
+            {"name": "Promo +15%", "forecast": [{"date": "2024-02-01", "value": 11.5}]}
+        ]
+
+    def test_scenarios_key_absent_when_engine_did_not_send_any(self):
+        result = {"status": "success", "series": [
+            {"group": "A", "level": None, "model": "prophet", "history": [], "forecast": []},
+        ]}
+        pruned = prunable_snapshot_payload(result)
+        assert "scenarios" not in pruned["series"][0]
+
+
+class TestBreachExplanation:
+    """Contrat etape 7 SS2b : chaque rupture (tracking.breaches[i]) gagne une
+    explanation {kind, magnitude, consecutive, event}. Priorite : event >
+    common_shock > level_shift (consecutive >= 2) > spike."""
+
+    def _snap(self, points_by_group):
+        series = [_series(g, pts) for g, pts in points_by_group.items()]
+        return _snapshot("h1", "2024-01-01", series)
+
+    def test_spike_is_the_default_for_an_isolated_breach(self):
+        snap = self._snap({"A": [
+            {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+        ]})
+        series = [_series("A", [], history=_hist(("2024-02-01", 130)))]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
+        exp = out["breaches"][0]["explanation"]
+        assert exp["kind"] == "spike"
+        assert exp["consecutive"] == 1
+        assert exp["event"] is None
+
+    def test_magnitude_is_overshoot_over_half_band_width(self):
+        # upper=110, value=100 -> demi-largeur = 10 ; actual=130 -> depassement 20 -> 2.0
+        snap = self._snap({"A": [
+            {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+        ]})
+        series = [_series("A", [], history=_hist(("2024-02-01", 130)))]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
+        assert out["breaches"][0]["explanation"]["magnitude"] == 2.0
+
+    def test_level_shift_when_two_consecutive_breaches_same_direction(self):
+        snap = self._snap({"A": [
+            {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+            {"date": "2024-03-01", "value": 100, "lower_80": 90, "upper_80": 110},
+        ]})
+        history = _hist(("2024-02-01", 130), ("2024-03-01", 130))
+        series = [_series("A", [], history=history)]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
+        latest = next(b for b in out["breaches"] if b["date"] == "2024-03-01")
+        assert latest["explanation"]["kind"] == "level_shift"
+        assert latest["explanation"]["consecutive"] == 2
+
+    def test_common_shock_when_two_other_series_breach_same_date_and_direction(self):
+        snap = self._snap({
+            "A": [{"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110}],
+            "B": [{"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110}],
+            "C": [{"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110}],
+        })
+        series = [
+            _series("A", [], history=_hist(("2024-02-01", 130))),
+            _series("B", [], history=_hist(("2024-02-01", 130))),
+            _series("C", [], history=_hist(("2024-02-01", 130))),
+        ]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
+        for b in out["breaches"]:
+            assert b["explanation"]["kind"] == "common_shock"
+
+    def test_event_wins_over_everything_when_it_covers_the_date_and_group(self):
+        snap = self._snap({
+            "A": [{"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110}],
+            "B": [{"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110}],
+            "C": [{"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110}],
+        })
+        series = [
+            _series("A", [], history=_hist(("2024-02-01", 130))),
+            _series("B", [], history=_hist(("2024-02-01", 130))),
+            _series("C", [], history=_hist(("2024-02-01", 130))),
+        ]
+        events = [{"name": "Promo de decembre", "ranges": [{"start": "2024-01-15", "end": "2024-02-15"}], "groups": ["A"]}]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1", events=events)
+        by_group = {b["group"]: b for b in out["breaches"]}
+        assert by_group["A"]["explanation"]["kind"] == "event"
+        assert by_group["A"]["explanation"]["event"] == "Promo de decembre"
+        assert by_group["B"]["explanation"]["kind"] == "common_shock"
+
+
+class TestTrackingAdjustments:
+    """Contrat etape 7 SS2d : tracking.adjustments compare, par nom de
+    scenario, l'erreur de base a l'erreur avec le scenario, sur les memes
+    dates comparables que le suivi."""
+
+    def _snap_with_scenario(self):
+        return _snapshot("h1", "2024-01-01", [
+            {
+                "group": "A", "level": None, "model": "prophet", "history": [],
+                "forecast": [
+                    {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+                    {"date": "2024-03-01", "value": 100, "lower_80": 90, "upper_80": 110},
+                ],
+                "scenarios": [
+                    {"name": "Promo +15%", "forecast": [
+                        {"date": "2024-02-01", "value": 115},
+                        {"date": "2024-03-01", "value": 115},
+                    ]},
+                ],
+            },
+        ])
+
+    def test_adjustments_reports_mae_base_and_mae_scenario(self):
+        snap = self._snap_with_scenario()
+        history = _hist(("2024-02-01", 118), ("2024-03-01", 112))
+        series = [_series("A", [], history=history)]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
+        assert out["adjustments"] == [
+            {"name": "Promo +15%", "points": 2, "mae_base": 15.0, "mae_scenario": 3.0},
+        ]
+
+    def test_adjustments_absent_when_no_scenario_in_any_snapshot(self):
+        snap = _snapshot("h1", "2024-01-01", [_series("A", [
+            {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+        ])])
+        series = [_series("A", [], history=_hist(("2024-02-01", 100)))]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
+        assert "adjustments" not in out
+
+    def test_adding_a_scenario_does_not_reset_points_or_breaches(self):
+        """Regression contrat etape 7 SS2d : le suivi de base ne doit pas
+        etre affecte par la presence de scenarios dans l'instantane."""
+        snap = self._snap_with_scenario()
+        history = _hist(("2024-02-01", 130))
+        series = [_series("A", [], history=history)]
+        out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
+        assert out["points"] == 1
+        assert len(out["breaches"]) == 1

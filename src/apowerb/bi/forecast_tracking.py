@@ -75,14 +75,29 @@ def prunable_snapshot_payload(result: dict[str, Any]) -> dict[str, Any]:
     moment, jamais relue depuis un instantané passé."""
     series = []
     for s in result.get("series", []):
-        series.append(
-            {
-                "group": s.get("group"),
-                "level": s.get("level"),
-                "model": s.get("model"),
-                "forecast": s.get("forecast", []),
-            }
-        )
+        pruned = {
+            "group": s.get("group"),
+            "level": s.get("level"),
+            "model": s.get("model"),
+            "forecast": s.get("forecast", []),
+        }
+        # Contrat etape 7 SS2d : garde aussi les scenarios (name + points
+        # date/value seulement, jamais les bandes) pour calculer
+        # tracking.adjustments plus tard -- absent quand le moteur n'en a
+        # pas envoye (pas de "scenarios" dans la requete).
+        scenarios = s.get("scenarios")
+        if scenarios:
+            pruned["scenarios"] = [
+                {
+                    "name": scn.get("name"),
+                    "forecast": [
+                        {"date": p.get("date"), "value": p.get("value")}
+                        for p in scn.get("forecast", [])
+                    ],
+                }
+                for scn in scenarios
+            ]
+        series.append(pruned)
     return {"series": series}
 
 
@@ -101,6 +116,64 @@ def _forecast_point(snapshot: dict[str, Any], key: SeriesKey, date: str) -> dict
     return None
 
 
+def _scenario_forecast_point(
+    snapshot: dict[str, Any], key: SeriesKey, name: str, date: str
+) -> dict[str, Any] | None:
+    """Le point prevu par le scenario `name` de `snapshot` pour la serie
+    `key` a `date`, ou None (contrat etape 7 SS2d)."""
+    payload = snapshot.get("payload") or {}
+    for s in payload.get("series", []):
+        if _series_key(s) != key:
+            continue
+        for scenario in s.get("scenarios") or []:
+            if scenario.get("name") != name:
+                continue
+            for point in scenario.get("forecast", []):
+                if point.get("date") == date:
+                    return point
+    return None
+
+
+def _compute_adjustments(
+    comparisons: list[tuple[SeriesKey, str, float, dict[str, Any]]],
+    relevant: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """`tracking.adjustments` : par nom de scenario, MAE de base vs MAE avec
+    le scenario, sur les points reellement comparables (memes regles
+    d'appariement que le suivi : instantane le plus recent dont
+    history_end < date). Absent (liste vide) si aucun point comparable."""
+    by_name: dict[str, list[tuple[float, float, float]]] = {}
+    for key, date, actual, base_point in comparisons:
+        candidates = [snap for snap in relevant if snap["history_end"] < date]
+        if not candidates:
+            continue
+        snapshot = max(candidates, key=lambda snap: snap["history_end"])
+        payload = snapshot.get("payload") or {}
+        for s in payload.get("series", []):
+            if _series_key(s) != key:
+                continue
+            for scenario in s.get("scenarios") or []:
+                name = scenario.get("name")
+                point = _scenario_forecast_point(snapshot, key, name, date)
+                if point is None or not isinstance(point.get("value"), (int, float)):
+                    continue
+                by_name.setdefault(name, []).append((actual, base_point["value"], point["value"]))
+
+    adjustments = []
+    for name, triples in by_name.items():
+        mae_base = sum(abs(actual - base) for actual, base, _ in triples) / len(triples)
+        mae_scenario = sum(abs(actual - scen) for actual, _, scen in triples) / len(triples)
+        adjustments.append(
+            {
+                "name": name,
+                "points": len(triples),
+                "mae_base": round(mae_base, 2),
+                "mae_scenario": round(mae_scenario, 2),
+            }
+        )
+    return adjustments
+
+
 def _confidence_levels(comparisons: list[tuple]) -> list[str]:
     """Les suffixes de niveau ("80", "95"...) présents sur les points comparés,
     du plus étroit au plus large."""
@@ -113,11 +186,99 @@ def _confidence_levels(comparisons: list[tuple]) -> list[str]:
     return sorted(levels, key=lambda s: float(s))
 
 
+def _event_covers(event: dict[str, Any], group: Any, date_str: str) -> bool:
+    """Un evenement de la requete (contrat etape 5 SS2, forme figee par
+    fc-aci/context.py::parse_events) couvre `date_str` pour `group` : ses
+    `groups` est absent/None (toutes les series) ou contient `str(group)`,
+    et `date_str` tombe dans au moins une de ses `ranges` (bornes incluses)."""
+    from datetime import date as _date
+
+    groups = event.get("groups")
+    if groups and str(group) not in {str(g) for g in groups}:
+        return False
+    d = _date.fromisoformat(date_str)
+    for r in event.get("ranges") or []:
+        start, end = r.get("start"), r.get("end")
+        if start is None or end is None:
+            continue
+        if _date.fromisoformat(start) <= d <= _date.fromisoformat(end):
+            return True
+    return False
+
+
+def _matching_event_name(events: list[dict[str, Any]], group: Any, date_str: str) -> str | None:
+    for event in events:
+        if _event_covers(event, group, date_str):
+            return event.get("name")
+    return None
+
+
+def _annotate_explanations(
+    breaches: list[tuple[SeriesKey, dict[str, Any]]], events: list[dict[str, Any]]
+) -> None:
+    """Ajoute `explanation` a chaque rupture, en place (contrat etape 7 SS2b).
+
+    Priorite : event > common_shock > level_shift (>= 2 ruptures
+    consecutives de meme direction pour la serie) > spike (par defaut).
+    `consecutive` se calcule sur la sequence ordonnee (par date) des
+    ruptures de CETTE serie, independamment des autres series.
+    """
+    by_key: dict[SeriesKey, list[dict[str, Any]]] = {}
+    for key, breach in breaches:
+        by_key.setdefault(key, []).append(breach)
+
+    consecutive_by_id: dict[int, int] = {}
+    for key, ordered in by_key.items():
+        ordered.sort(key=lambda b: b["date"])
+        run = 0
+        last_direction = None
+        for breach in ordered:
+            if breach["direction"] == last_direction:
+                run += 1
+            else:
+                run = 1
+                last_direction = breach["direction"]
+            consecutive_by_id[id(breach)] = run
+
+    by_date_direction: dict[tuple[str, str], list[SeriesKey]] = {}
+    for key, breach in breaches:
+        by_date_direction.setdefault((breach["date"], breach["direction"]), []).append(key)
+
+    for key, breach in breaches:
+        group = key[0]
+        lower, upper, value, actual = breach["lower"], breach["upper"], breach["value"], breach["actual"]
+        half_width = (upper - value) if breach["direction"] == "above" else (value - lower)
+        overshoot = (actual - upper) if breach["direction"] == "above" else (lower - actual)
+        magnitude = round(overshoot / half_width, 2) if half_width > 0 else 0.0
+
+        consecutive = consecutive_by_id[id(breach)]
+        other_keys = by_date_direction[(breach["date"], breach["direction"])]
+        other_series_count = len({k for k in other_keys if k != key})
+
+        event_name = _matching_event_name(events, group, breach["date"])
+        if event_name is not None:
+            kind = "event"
+        elif other_series_count >= 2:
+            kind = "common_shock"
+        elif consecutive >= 2:
+            kind = "level_shift"
+        else:
+            kind = "spike"
+
+        breach["explanation"] = {
+            "kind": kind,
+            "magnitude": magnitude,
+            "consecutive": consecutive,
+            "event": event_name,
+        }
+
+
 def compute_tracking(
     *,
     series: list[dict[str, Any]],
     snapshots: list[dict[str, Any]],
     config_hash: str,
+    events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Le champ `tracking` de la réponse : compare l'historique régularisé
     renvoyé par le moteur (``series[].history``) aux instantanés antérieurs
@@ -196,6 +357,7 @@ def compute_tracking(
     # Ruptures : hors bande la plus large -> ce niveau ; sinon hors bande la
     # plus étroite -> ce niveau ; sinon rien. 20 plus récentes d'abord.
     breaches: list[dict[str, Any]] = []
+    keyed_breaches: list[tuple[SeriesKey, dict[str, Any]]] = []
     widest, narrowest = levels[-1], levels[0]
     for key, date, actual, point in comparisons:
         level_hit = None
@@ -209,25 +371,34 @@ def compute_tracking(
         if level_hit is None:
             continue
         lower, upper = point[f"lower_{level_hit}"], point[f"upper_{level_hit}"]
-        breaches.append(
-            {
-                "group": key[0],
-                "date": date,
-                "actual": actual,
-                "value": point["value"],
-                "lower": lower,
-                "upper": upper,
-                "level": level_hit,
-                "direction": "above" if actual > upper else "below",
-            }
-        )
+        breach = {
+            "group": key[0],
+            "date": date,
+            "actual": actual,
+            "value": point["value"],
+            "lower": lower,
+            "upper": upper,
+            "level": level_hit,
+            "direction": "above" if actual > upper else "below",
+        }
+        breaches.append(breach)
+        keyed_breaches.append((key, breach))
+
+    _annotate_explanations(keyed_breaches, events or [])
+
+    # Ajustements de valeur par scenario (contrat etape 7 SS2d) : par nom de
+    # scenario, MAE avec/sans le scenario sur les memes dates comparables
+    # que le suivi (meme instantane le plus recent, meme regle
+    # d'appariement) -- calcule avant le tri/troncature des ruptures, sur
+    # `comparisons` qui porte deja (key, date, actual, base_point).
+    adjustments = _compute_adjustments(comparisons, relevant)
 
     latest_date = max(date for _, date, _, _ in comparisons)
     latest_breach = any(b["date"] == latest_date for b in breaches)
 
     breaches.sort(key=lambda b: b["date"], reverse=True)
 
-    return {
+    out = {
         "points": len(comparisons),
         "since": min(date for _, date, _, _ in comparisons),
         "coverage": coverage,
@@ -235,3 +406,6 @@ def compute_tracking(
         "breaches": breaches[:_MAX_BREACHES],
         "latest_breach": latest_breach,
     }
+    if adjustments:
+        out["adjustments"] = adjustments
+    return out
