@@ -427,3 +427,57 @@ class TestTrackingAdjustments:
         out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
         assert out["points"] == 1
         assert len(out["breaches"]) == 1
+
+
+class TestBuildFeedback:
+    """Contrat etape 7 SS2a : feedback construit depuis les instantanes,
+    pour chaque (group, level) et chaque date prevue par un instantane, le
+    point de l'instantane le plus recent dont history_end < date. Au plus
+    les 60 dates les plus recentes par serie."""
+
+    def test_no_relevant_snapshot_gives_empty_feedback(self):
+        from apowerb.bi.forecast_tracking import build_feedback
+        assert build_feedback([], "h1") == []
+
+    def test_one_snapshot_yields_its_forecast_points_as_feedback(self):
+        from apowerb.bi.forecast_tracking import build_feedback
+        snap = _snapshot("h1", "2024-01-01", [_series("A", [
+            {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+        ], level="bottom")])
+        out = build_feedback([snap], "h1")
+        assert out == [
+            {"group": "A", "level": "bottom", "points": [
+                {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+            ]},
+        ]
+
+    def test_different_config_hash_is_ignored(self):
+        from apowerb.bi.forecast_tracking import build_feedback
+        snap = _snapshot("other", "2024-01-01", [_series("A", [
+            {"date": "2024-02-01", "value": 100, "lower_80": 90, "upper_80": 110},
+        ])])
+        assert build_feedback([snap], "h1") == []
+
+    def test_most_recent_snapshot_before_the_date_wins(self):
+        from apowerb.bi.forecast_tracking import build_feedback
+        older = _snapshot("h1", "2024-01-01", [_series("A", [
+            {"date": "2024-03-01", "value": 100, "lower_80": 90, "upper_80": 110},
+        ])])
+        newer = _snapshot("h1", "2024-02-01", [_series("A", [
+            {"date": "2024-03-01", "value": 105, "lower_80": 95, "upper_80": 115},
+        ])])
+        out = build_feedback([older, newer], "h1")
+        assert out[0]["points"][0]["value"] == 105
+
+    def test_capped_at_sixty_most_recent_dates_per_series(self):
+        from apowerb.bi.forecast_tracking import build_feedback
+        forecast = [
+            {"date": f"2024-{(i // 28) + 1:02d}-{(i % 28) + 1:02d}", "value": i, "lower_80": i - 1, "upper_80": i + 1}
+            for i in range(70)
+        ]
+        snap = _snapshot("h1", "2020-01-01", [_series("A", forecast)])
+        out = build_feedback([snap], "h1")
+        assert len(out[0]["points"]) == 60
+        dates = [p["date"] for p in out[0]["points"]]
+        assert dates == sorted(dates)
+        assert dates[-1] == forecast[-1]["date"]

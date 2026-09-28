@@ -66,6 +66,53 @@ def compute_config_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+# Contrat etape 7 SS2a : au plus les 60 dates les plus recentes par serie
+# relayees au moteur en `feedback`.
+_MAX_FEEDBACK_DATES = 60
+
+
+def build_feedback(snapshots: list[dict[str, Any]], config_hash: str) -> list[dict[str, Any]]:
+    """Le champ `feedback` relaye au moteur (contrat etape 7 SS2a) : pour
+    chaque (group, level) et chaque date prevue par au moins un instantane
+    de meme `config_hash`, le point de l'instantane le plus recent dont
+    `history_end < date`. Au plus les 60 dates les plus recentes par serie.
+
+    Contrairement a `compute_tracking`, ceci tourne AVANT l'appel au moteur :
+    il n'y a pas encore de reponse courante, seulement les instantanes
+    passes -- les dates candidates viennent donc de leurs `forecast`, pas
+    d'un `history` qui n'existe pas encore.
+    """
+    relevant = [s for s in snapshots if s.get("config_hash") == config_hash]
+    if not relevant:
+        return []
+
+    dates_by_key: dict[SeriesKey, set[str]] = {}
+    for snapshot in relevant:
+        for s in (snapshot.get("payload") or {}).get("series", []):
+            key = _series_key(s)
+            for point in s.get("forecast", []):
+                date = point.get("date")
+                if date is not None:
+                    dates_by_key.setdefault(key, set()).add(date)
+
+    feedback = []
+    for key, dates in dates_by_key.items():
+        points = []
+        for date in sorted(dates):
+            candidates = [snap for snap in relevant if snap["history_end"] < date]
+            if not candidates:
+                continue
+            snapshot = max(candidates, key=lambda snap: snap["history_end"])
+            point = _forecast_point(snapshot, key, date)
+            if point is None:
+                continue
+            points.append(dict(point))
+        points = points[-_MAX_FEEDBACK_DATES:]
+        if points:
+            feedback.append({"group": key[0], "level": key[1], "points": points})
+    return feedback
+
+
 def prunable_snapshot_payload(result: dict[str, Any]) -> dict[str, Any]:
     """Ce qui est réellement stocké dans l'instantané (contrat étape 5 §3) :
     par série group/level/model/forecast seulement — ni `history`, ni
