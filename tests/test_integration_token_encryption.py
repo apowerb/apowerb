@@ -413,12 +413,13 @@ def orm_engine(active_fernet) -> Engine:
     <schema>.integrations`` work out of the box.
     """
     from sqlalchemy import text
-    from apowerb.configs.settings import get_settings
     from apowerb.models import Integration
 
-    schema = get_settings().db_schema
+    # Le schema porte par la table ("public" compris) : c'est lui que
+    # CREATE TABLE vise, quel que soit l'ordre d'execution des tests.
+    schema = Integration.__table__.schema
     engine = create_engine("sqlite:///:memory:")
-    if schema and schema != "public":
+    if schema:
         with engine.begin() as conn:
             conn.execute(text(f"ATTACH DATABASE ':memory:' AS {schema}"))
     Integration.__table__.create(engine, checkfirst=True)
