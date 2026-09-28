@@ -15,11 +15,11 @@ from apowerb.schema.forecast_schema import (
 )
 from apowerb.tools_store.portfolio.bi_datasets import (
     _agent_owner,
+    _load_agent_sql_rows,
     _load_owned_dataset_rows,
     _run_async,
     validate_forecast_columns,
 )
-from apowerb.tools_store.portfolio.database import tool_run_sql
 
 # A row count an LLM can reasonably paste inline (`rows=`) without truncating
 # its own context. Larger datasets must go through `sql`, which is executed
@@ -116,11 +116,11 @@ def _compact_response(th2forecast_response: dict) -> dict:
     }
 
 
-def _rows_from_sql(sql: str) -> dict[str, Any]:
-    result = tool_run_sql(sql)
-    if not result.get("success"):
-        return {"error": f"La requête SQL a échoué : {result.get('error')}"}
-    return {"rows": result.get("data") or []}
+def _too_large_message(what: str) -> str:
+    return (
+        f"{what} dépasse {MAX_DATA_ROWS} lignes, au-delà du plafond "
+        "supporté pour la prévision. Il ne peut pas être chargé en entier."
+    )
 
 
 def tool_thaink2_forecast(
@@ -147,8 +147,11 @@ def tool_thaink2_forecast(
         date_var (str): Name of the date column in the data.
         target_var (str): Name of the column to forecast.
         horizon (int): Number of future periods to forecast (1-366).
-        sql (str): SELECT query returning the historical rows (run via the
-            database tool). Preferred for a real database dataset.
+        sql (str): A single SELECT query returning the historical rows, run
+            on this agent's database connection (its database tool_config;
+            refused when the agent has none). Preferred for a real database
+            dataset; write it with tool_text_to_sql. A query starting with
+            WITH is refused.
         rows (list[dict]): Historical rows, provided inline. Capped at
             2000 rows — use `sql` or `dataset_id` for anything larger.
         dataset_id (str): Identifier of an imported CSV dataset (see
@@ -178,26 +181,21 @@ def tool_thaink2_forecast(
             "message": "Fournir exactement une source de données : sql, rows ou dataset_id.",
         }
 
-    if sql:
-        sourced = _rows_from_sql(sql)
-        if "error" in sourced:
-            return {"status": "error", "message": sourced["error"]}
-        data_rows = sourced["rows"]
-    elif dataset_id:
+    if sql or dataset_id:
         owner = _agent_owner()
         if not owner:
             return {"status": "error", "message": "Aucun contexte propriétaire (agent hors contexte BI)."}
-        loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner, MAX_DATA_ROWS))
+        if sql:
+            # The agent's own database connection, never the process DB_*
+            # variables (they point at the platform's database).
+            loaded = _run_async(_load_agent_sql_rows(sql, owner, MAX_DATA_ROWS))
+        else:
+            loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner, MAX_DATA_ROWS))
         if not loaded["success"]:
             return {"status": "error", "message": loaded["error"]}
         if loaded["truncated"]:
-            return {
-                "status": "error",
-                "message": (
-                    f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes, au-delà du plafond "
-                    "supporté pour la prévision. Il ne peut pas être chargé en entier."
-                ),
-            }
+            what = "Le résultat de la requête" if sql else "Le jeu de données"
+            return {"status": "error", "message": _too_large_message(what)}
         column_error = validate_forecast_columns(
             loaded["columns"], date_var, target_var, group_var or ""
         )

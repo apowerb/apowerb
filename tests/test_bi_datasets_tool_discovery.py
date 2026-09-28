@@ -9,6 +9,7 @@ def test_bi_datasets_tools_are_discovered():
     tools = store.get_tools_in_category("bi_datasets")
     assert "bi_datasets.tool_list_datasets" in tools
     assert "bi_datasets.tool_describe_dataset" in tools
+    assert "bi_datasets.tool_describe_sql" in tools
 
 
 def test_forecast_chart_tool_discovered_in_business_intelligence():

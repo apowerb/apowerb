@@ -1,4 +1,5 @@
-"""Accès aux jeux de données importés (BI), limité au propriétaire de l'agent.
+"""Accès aux jeux de données importés (BI) et à la base de l'agent, limité à
+son propriétaire.
 
 Dans le style de ``business_intelligence.py`` : ``_run_async``, ``_get_session``,
 ``_agent_owner`` sont dupliqués ici plutôt que partagés, pour éviter un
@@ -14,6 +15,7 @@ import io
 import re
 import threading
 from datetime import date, datetime
+from decimal import Decimal
 from logging import getLogger
 from typing import Any
 
@@ -284,6 +286,98 @@ def validate_forecast_columns(
 
 
 # ---------------------------------------------------------------------------
+# Agent database connection (owner-scoped tool_config, never the process DB_*)
+# ---------------------------------------------------------------------------
+
+_NO_CONNECTION_MESSAGE = (
+    "Aucune connexion base de données configurée pour cet agent : "
+    "ajoutez-lui un outil base de données (tool_config) pour lire une source SQL."
+)
+
+
+def _agent_db_connection(owner: str | None = None) -> tuple[str, str] | None:
+    """``(tool_config_id, owner)`` of the running agent's database tool, or None.
+
+    The tool_config is looked up for ``owner`` (default: the agent's owner),
+    which also admits ``system`` configs; a foreign tenant's config is never
+    found. Never falls back to the process ``DB_*`` variables, which point at
+    the platform's own database.
+    """
+    import json
+    import os
+
+    agent_id = os.getenv("ROOT_AGENT_ID", "")
+    if not agent_id:
+        return None
+    from apowerb.core.agent_helpers import get_agent_details
+    from apowerb.tools_store.tools_helpers import load_tool_config_params
+
+    details = get_agent_details(int(agent_id))
+    tools_raw = details.get("agent_tools", "[]")
+    tools = json.loads(tools_raw) if isinstance(tools_raw, str) else (tools_raw or [])
+    lookup_owner = owner or details.get("owner_id") or _agent_owner()
+    if not lookup_owner:
+        return None
+    for tool in tools:
+        if isinstance(tool, str) and tool.startswith("tool_config"):
+            tool_name, _ = load_tool_config_params(tool, owner_id=lookup_owner)
+            if tool_name and "database" in str(tool_name).lower():
+                return tool, lookup_owner
+    return None
+
+
+def _jsonable(value: Any) -> Any:
+    """Database value -> JSON value, in the form the CSV path already yields."""
+    if isinstance(value, datetime):
+        if value.time() == datetime.min.time() and value.tzinfo is None:
+            return value.date().isoformat()
+        return value.isoformat(sep=" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+async def _load_agent_sql_rows(sql: str, owner: str, limit: int) -> dict:
+    """Run ``sql`` on the agent's database connection, capped at ``limit`` rows.
+
+    Same shape as ``_load_owned_dataset_rows``: ``{"success": False, "error"}``
+    or ``{"success": True, "rows", "truncated", "columns"}``, rows made
+    JSON-safe. ``truncated`` is never silent: the caller decides.
+    """
+    if not owner:
+        return {"success": False, "error": "No owner context."}
+    try:
+        connection = _agent_db_connection(owner)
+    except Exception:
+        logger.exception("[BI_DATASETS] agent database connection lookup failed")
+        return {"success": False, "error": "Lecture de la connexion base de l'agent impossible."}
+    if connection is None:
+        return {"success": False, "error": _NO_CONNECTION_MESSAGE}
+    config_id, config_owner = connection
+
+    from apowerb.bi.charts.core import DataSource
+    from apowerb.bi.data.db_executor import DatabaseQueryExecutor
+
+    executor = DatabaseQueryExecutor(config_id, owner_id=config_owner, max_rows=limit + 1)
+    try:
+        raw = await executor.run(DataSource(query=sql, connection_config_id=config_id, limit=None))
+    except (RuntimeError, ValueError) as exc:
+        return {"success": False, "error": f"La requête SQL a échoué : {exc}"}
+    rows = [{k: _jsonable(v) for k, v in r.items()} for r in raw[:limit]]
+    return {
+        "success": True,
+        "rows": rows,
+        "truncated": len(raw) > limit,
+        "columns": list(rows[0].keys()) if rows else [],
+        "connection_config_id": config_id,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Agent tools (ADK function-calling interface)
 # ---------------------------------------------------------------------------
 
@@ -372,4 +466,49 @@ def tool_describe_dataset(dataset_id: str, folder_name: str = "") -> dict:
         return _run_async(_async_describe_dataset(dataset_id, owner))
     except Exception as e:
         logger.exception("[BI_DATASETS] tool_describe_dataset failed")
+        return {"success": False, "error": str(e)}
+
+
+async def _async_describe_sql(sql: str, owner: str) -> dict:
+    loaded = await _load_agent_sql_rows(sql, owner, _DESCRIBE_ROW_CAP)
+    if not loaded["success"]:
+        return loaded
+    rows = loaded["rows"]
+    return {
+        "success": True,
+        "columns": _describe_columns(rows),
+        "sample_rows": rows[:5],
+        # True : statistiques calculées sur les premières lignes seulement.
+        "truncated": loaded["truncated"],
+    }
+
+
+def tool_describe_sql(sql: str, folder_name: str = "") -> dict:
+    """Describes the columns a SELECT query returns on this agent's database
+    connection: inferred type, non-null/distinct counts, min/max, and — for
+    date columns — a suggested forecast frequency, plus 5 sample rows.
+
+    Use it before tool_create_forecast_chart(sql=...) to pick real
+    date_var/target_var/group_var columns. Write the query with
+    tool_text_to_sql rather than guessing the schema. Only a single SELECT
+    is accepted (a query starting with WITH is refused).
+
+    Args:
+        sql:         A single SELECT query returning the historical rows.
+        folder_name: Agent folder name (injected automatically).
+
+    Returns:
+        dict with success status; on success, columns (list of
+        {name, type, non_null_count, distinct_count, min, max,
+        suggested_frequency}), sample_rows (up to 5) and truncated (True
+        when the stats cover only the first 100000 rows). On failure, an
+        error: no database connection on this agent, or the query failed.
+    """
+    owner = _agent_owner()
+    if not owner:
+        return {"success": False, "error": "No owner context."}
+    try:
+        return _run_async(_async_describe_sql(sql, owner))
+    except Exception as e:
+        logger.exception("[BI_DATASETS] tool_describe_sql failed")
         return {"success": False, "error": str(e)}

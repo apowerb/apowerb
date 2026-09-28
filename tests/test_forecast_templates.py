@@ -13,6 +13,7 @@ class TestDashboardAgentTemplate:
         tools = tpl["recommended_tools"]
         assert "bi_datasets.tool_list_datasets" in tools
         assert "bi_datasets.tool_describe_dataset" in tools
+        assert "bi_datasets.tool_describe_sql" in tools
         assert "business_intelligence.tool_create_forecast_chart" in tools
 
     def test_has_forecasting_skill(self):
@@ -26,6 +27,7 @@ class TestForecastingAgentTemplate:
         tools = tpl["recommended_tools"]
         assert "bi_datasets.tool_list_datasets" in tools
         assert "bi_datasets.tool_describe_dataset" in tools
+        assert "bi_datasets.tool_describe_sql" in tools
         assert "business_intelligence.tool_create_forecast_chart" in tools
         assert "api_call.tool_thaink2_forecast" in tools
 

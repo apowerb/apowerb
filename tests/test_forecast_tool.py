@@ -6,7 +6,7 @@ shape built from a th2forecast response, and error propagation.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from apowerb.tools_store.portfolio import api_call
 
@@ -76,11 +76,13 @@ class TestArgumentValidation:
         result = api_call.tool_thaink2_forecast(**_valid_kwargs(rows=[]))
         assert result["status"] == "error"
 
-    def test_sql_source_runs_through_tool_run_sql(self):
+    def test_sql_source_runs_through_the_agent_connection(self, monkeypatch):
+        monkeypatch.setenv("AGENT_OWNER", "owner@example.com")
+        loaded = {"success": True, "rows": [{"date": "2024-01-01", "sales": 90}], "truncated": False,
+                  "columns": ["date", "sales"], "connection_config_id": "tool_config7"}
         with patch.object(
-            api_call, "tool_run_sql",
-            return_value={"success": True, "data": [{"date": "2024-01-01", "sales": 90}]},
-        ) as mock_run_sql, patch.object(api_call, "Th2forecastClient") as mock_ctor:
+            api_call, "_load_agent_sql_rows", new=AsyncMock(return_value=loaded),
+        ) as mock_load, patch.object(api_call, "Th2forecastClient") as mock_ctor:
             mock_instance = MagicMock()
             mock_instance.forecast.return_value = _TH2FORECAST_RESPONSE
             mock_ctor.return_value = mock_instance
@@ -89,13 +91,14 @@ class TestArgumentValidation:
                 date_var="date", target_var="sales", horizon=3, sql="SELECT date, sales FROM monthly_sales"
             )
 
-        mock_run_sql.assert_called_once_with("SELECT date, sales FROM monthly_sales")
+        assert mock_load.await_args.args[:2] == ("SELECT date, sales FROM monthly_sales", "owner@example.com")
         assert result["status"] == "success"
 
-    def test_sql_failure_is_reported(self):
+    def test_sql_failure_is_reported(self, monkeypatch):
+        monkeypatch.setenv("AGENT_OWNER", "owner@example.com")
         with patch.object(
-            api_call, "tool_run_sql",
-            return_value={"success": False, "error": "colonne inconnue"},
+            api_call, "_load_agent_sql_rows",
+            new=AsyncMock(return_value={"success": False, "error": "colonne inconnue"}),
         ):
             result = api_call.tool_thaink2_forecast(
                 date_var="date", target_var="sales", horizon=3, sql="SELECT bogus FROM t"

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 from apowerb.bi.charts.core import (
     Chart,
+    ChartType,
     DataSource,
     Filter,
     FilterOperator,
@@ -346,8 +347,13 @@ class ChartDataService:
                     raise NoDataSourceError(
                         f"Chart '{chart.id}' uses a database source but no user context provided."
                     )
+                # A forecast chart is computed on up to MAX_DATA_ROWS rows; the
+                # widget must re-read the same series, not the 10 000 default.
+                from apowerb.schema.forecast_schema import MAX_DATA_ROWS
+
+                cap = {"max_rows": MAX_DATA_ROWS} if chart.chart_type == ChartType.FORECAST else {}
                 executor = DatabaseQueryExecutor(
-                    chart.source.connection_config_id, owner_id=user_id
+                    chart.source.connection_config_id, owner_id=user_id, **cap
                 )
             else:
                 raise NoDataSourceError(

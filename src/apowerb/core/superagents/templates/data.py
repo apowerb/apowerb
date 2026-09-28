@@ -255,8 +255,9 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "|------|---------|-------------|\n"
             "| `tool_list_datasets` | List imported CSV datasets | FIRST — check for an already-imported dataset before writing SQL |\n"
             "| `tool_describe_dataset` | Inspect a dataset's columns | To pick real date_var/target_var/group_var, never guessed |\n"
-            "| `tool_create_forecast_chart` | Forecast + widget from a dataset | To show the forecast inline in the chat |\n"
-            "| `tool_thaink2_forecast` | Call th2forecast directly | For a SQL-sourced or inline-rows series, or a summary without a chart |\n"
+            "| `tool_describe_sql` | Inspect the columns a SELECT returns | Same, for a series read from your database connection |\n"
+            "| `tool_create_forecast_chart` | Forecast + widget from a dataset or a SQL query | To show the forecast inline in the chat |\n"
+            "| `tool_thaink2_forecast` | Call th2forecast directly | For an inline-rows series, or a summary without a chart |\n"
             "| `tool_db` | Query PostgreSQL database | To retrieve historical data for forecasting |\n"
             "| `read_uploaded_file` | Read an uploaded file | When the user uploads historical data |\n"
             "| `create_downloadable_file` | Generate a report | To export forecasts as PDF/CSV |\n\n"
@@ -265,9 +266,11 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "2. Identify the historical data source, in this order: an already-imported dataset "
             "(`tool_list_datasets` then `tool_describe_dataset`) FIRST, then a SQL query over the "
             "connected database, then a small set of rows already in context\n"
-            "3. Imported dataset: call `tool_create_forecast_chart` with `dataset_id`, `date_var`, "
-            "`target_var`, `horizon` (and optional `group_var`/`frequency`), then `embed_chart` to "
-            "show the widget. Otherwise call `tool_thaink2_forecast` with the appropriate parameters:\n"
+            "3. Call `tool_create_forecast_chart` with exactly one source — `dataset_id` (imported "
+            "dataset) or `sql` (a single SELECT on your database connection, checked first with "
+            "`tool_describe_sql`) — plus `date_var`, `target_var`, `horizon` (and optional "
+            "`group_var`/`frequency`), then `embed_chart` to show the widget. Without a chart, call "
+            "`tool_thaink2_forecast` with the appropriate parameters:\n"
             "   - `sql`: a SELECT query returning the historical rows, OR `rows`: a small inline "
             "list of historical records (capped)\n"
             "   - `date_var`: the date column name\n"
@@ -290,6 +293,7 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
         "recommended_tools": [
             "bi_datasets.tool_list_datasets",
             "bi_datasets.tool_describe_dataset",
+            "bi_datasets.tool_describe_sql",
             "business_intelligence.tool_create_forecast_chart",
             "api_call.tool_thaink2_forecast",
             "database.tool_db",

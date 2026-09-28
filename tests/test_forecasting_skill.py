@@ -28,7 +28,7 @@ class TestForecastingSkill:
     def test_mentions_required_tools(self):
         content = SKILL_FILE.read_text()
         for tool in (
-            "tool_list_datasets", "tool_describe_dataset",
+            "tool_list_datasets", "tool_describe_dataset", "tool_describe_sql", "tool_text_to_sql",
             "tool_create_forecast_chart", "embed_chart",
             "tool_add_chart_to_dashboard",
         ):
