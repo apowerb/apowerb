@@ -19,6 +19,13 @@ import re
 from logging import getLogger
 from typing import Any
 
+from apowerb.schema.forecast_schema import MAX_DATA_ROWS
+from apowerb.tools_store.portfolio import api_call
+from apowerb.tools_store.portfolio.bi_datasets import (
+    _load_owned_dataset_rows,
+    validate_forecast_columns,
+)
+
 logger = getLogger(__name__)
 
 
@@ -1019,7 +1026,9 @@ def tool_create_chart(
     using tool_add_chart_to_dashboard.
 
     Supported chart_type values: "bar", "line", "pie", "donut", "scatter",
-    "area", "stat", "table", "histogram".
+    "area", "stat", "table", "histogram", "forecast". For "forecast", use
+    tool_create_forecast_chart instead — it builds the CSV source and
+    forecast config this tool does not set up on its own.
 
     The optional config parameter accepts a JSON string for KPI-specific
     settings (e.g. {"kpi_column": "revenue", "kpi_aggregation": "sum"}).
@@ -1055,6 +1064,138 @@ def tool_create_chart(
         ))
     except Exception as e:
         logger.exception("[BI] tool_create_chart failed")
+        return {"success": False, "error": str(e)}
+
+
+async def _async_save_forecast_chart(
+    dataset_id: str,
+    target_var: str,
+    title: str,
+    config: dict,
+    organization_id: str,
+    project_id: str,
+    owner_email: str,
+):
+    from apowerb.bi.charts.core import ChartOrigin, ChartType, SourceType
+    from apowerb.bi.charts.schemas import ChartCreateRequest, DataSourceSchema
+    from apowerb.bi.charts.service import ChartConflictError, ChartService
+    from apowerb.bi.db_stores import DatabaseChartStore
+
+    source_schema = DataSourceSchema(
+        source_type=SourceType.CSV,
+        query=f"csv://{dataset_id}",
+        limit=MAX_DATA_ROWS,
+    )
+
+    async def _create_with_name(chart_name: str):
+        async with _get_session() as db:
+            store = DatabaseChartStore(db, owner=owner_email)
+            svc = ChartService(store, db)
+            req = ChartCreateRequest(
+                name=chart_name, title=title, chart_type=ChartType.FORECAST,
+                source=source_schema, organization_id=organization_id,
+                project_id=project_id, config=config,
+            )
+            return await svc.create(req, created_by=owner_email, origin=ChartOrigin.CHAT)
+
+    machine_name = f"forecast-{dataset_id}-{target_var}"
+    try:
+        return await _create_with_name(machine_name)
+    except ChartConflictError:
+        import uuid
+        return await _create_with_name(f"{machine_name}-{uuid.uuid4().hex[:6]}")
+
+
+def tool_create_forecast_chart(
+    dataset_id: str,
+    date_var: str,
+    target_var: str,
+    horizon: int,
+    title: str,
+    group_var: str = "",
+    frequency: str = "",
+    folder_name: str = "",
+) -> dict:
+    """Creates a forecast widget chart from an imported dataset and computes
+    its forecast summary.
+
+    Use tool_describe_dataset first to pick real date_var/target_var/
+    group_var column names. Call embed_chart(chart_id, title) afterwards to
+    show the widget in the conversation — do not repeat the forecast
+    numbers yourself beyond commenting the summary.
+
+    Args:
+        dataset_id:  The dataset_id (UUID) returned by tool_list_datasets.
+        date_var:    Name of the date column.
+        target_var:  Name of the column to forecast.
+        horizon:     Number of future periods to forecast (1-366).
+        title:       Human-readable title displayed on the chart.
+        group_var:   Optional column to forecast independently per group.
+        frequency:   Optional series frequency (day, week, month, quarter, year).
+        folder_name: Agent folder name (injected automatically).
+
+    Returns:
+        dict with success status; on success, chart_id, title, and summary
+        (the same compact forecast summary tool_thaink2_forecast returns).
+        On failure (unknown owner/dataset, unknown column, dataset too
+        large, or the forecast service failing), no chart is created.
+    """
+    owner_email = _agent_owner()
+    if not owner_email:
+        return {"success": False, "error": "No owner context."}
+    try:
+        loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS))
+        if not loaded["success"]:
+            return {"success": False, "error": loaded["error"]}
+        if loaded["truncated"]:
+            return {
+                "success": False,
+                "error": (
+                    f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes, au-delà du plafond "
+                    "supporté pour la prévision. Il ne peut pas être chargé en entier."
+                ),
+            }
+        column_error = validate_forecast_columns(loaded["columns"], date_var, target_var, group_var)
+        if column_error:
+            return {"success": False, "error": column_error}
+
+        # Hors de _run_async (plafonné à 30 s alors que Chronos peut prendre
+        # une minute) et AVANT l'enregistrement : un graphique n'est créé que
+        # si sa prévision a réussi.
+        forecast_summary = api_call._execute_forecast(
+            date_var=date_var, target_var=target_var, horizon=horizon,
+            data_rows=loaded["rows"], group_var=group_var or None,
+            frequency=frequency or None, models=["auto"],
+        )
+        if forecast_summary.get("status") != "success":
+            return {
+                "success": False,
+                "error": forecast_summary.get("message")
+                or str(forecast_summary.get("errors")),
+            }
+
+        config = {
+            "date_var": date_var,
+            "target_var": target_var,
+            "group_var": group_var,
+            "horizon": horizon,
+            "frequency": frequency,
+            "models": ["auto"],
+            "confidence_levels": [0.8, 0.95],
+        }
+        chart = _run_async(_async_save_forecast_chart(
+            dataset_id=dataset_id, target_var=target_var, title=title, config=config,
+            organization_id=_agent_org(), project_id=_agent_project(),
+            owner_email=owner_email,
+        ))
+        return {
+            "success": True,
+            "chart_id": chart.id,
+            "title": chart.title,
+            "summary": forecast_summary,
+        }
+    except Exception as e:
+        logger.exception("[BI] tool_create_forecast_chart failed")
         return {"success": False, "error": str(e)}
 
 
