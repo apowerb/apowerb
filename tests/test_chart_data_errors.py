@@ -194,7 +194,13 @@ class TestRouterMapsExecutionError:
             side_effect=QueryExecutionError("chart1", "agent", RuntimeError("boom"))
         )
 
-        with patch("apowerb.bi.charts.service.ChartService") as MockChartSvc, patch(
+        from apowerb.auth.dependencies import get_current_user
+
+        app.dependency_overrides[get_current_user] = lambda: MagicMock(email="owner@example.com")
+        with patch(
+            "apowerb.bi.data.router._stored_chart_owner",
+            AsyncMock(return_value="owner@example.com"),
+        ), patch("apowerb.bi.charts.service.ChartService") as MockChartSvc, patch(
             "apowerb.bi.data.service.ChartDataService"
         ) as MockDataSvc:
             MockChartSvc.return_value.get = mock_get

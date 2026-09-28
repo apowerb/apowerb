@@ -1,7 +1,8 @@
 """
 data/router.py
 --------------
-FastAPI router — exposes GET /charts/{chart_id}/data.
+FastAPI router — exposes GET /charts/{chart_id}/data and
+GET /public/charts/{chart_id}/data (published dashboard viewers).
 
 Mount in main.py
 ----------------
@@ -18,6 +19,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.bi.charts.core import FilterOperator, SortOrder
@@ -28,9 +30,11 @@ from apowerb.bi.data.service import (
     QueryExecutionError,
 )
 from apowerb.bi.charts.service import ChartNotFoundError
+from apowerb.bi.dashboards.access import chart_on_visible_dashboard
 from apowerb.bi.dependencies import get_data_service
 from apowerb.auth.dependencies import get_current_user
 from apowerb.helpers.database import get_db
+from apowerb.models import BIItemStatus, BusinessIntelligence
 from apowerb.users import schemas as user_schemas
 
 router = APIRouter(tags=["chart-data"])
@@ -44,18 +48,41 @@ CurrentUser = Annotated[user_schemas.User, Depends(get_current_user)]
 
 
 # ---------------------------------------------------------------------------
-# Public endpoint (no auth)
+# Public endpoint (published dashboards)
 # ---------------------------------------------------------------------------
+
+
+async def _stored_chart_owner(db: AsyncSession, chart_id: str) -> str | None:
+    """Owner column of the chart's row: the canonical owner, unlike the
+    ``created_by`` field of its editable config."""
+    return (
+        await db.execute(
+            select(BusinessIntelligence.owner).where(
+                BusinessIntelligence.id == chart_id,
+                BusinessIntelligence.type == "chart",
+                BusinessIntelligence.status != BIItemStatus.DELETED,
+            )
+        )
+    ).scalar_one_or_none()
 
 
 @router.get(
     "/public/charts/{chart_id}/data",
     response_model=ChartDataResponse,
-    summary="Get chart data (public access)",
-    responses={404: {"description": "Chart not found"}},
+    summary="Get chart data for a published dashboard viewer",
+    description=(
+        "Requires a logged-in user. Serves the chart's owner, or a viewer of a "
+        "published dashboard that displays the chart and whose visibility admits "
+        "them (same rule as /dashboards/public/{slug}). Any other chart is a 404."
+    ),
+    responses={
+        401: {"description": "Authentication required"},
+        404: {"description": "Chart not found or not visible to the caller"},
+    },
 )
 async def get_public_chart_data(
     chart_id: str,
+    user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
     req: DataRequest = Depends(),
 ):
@@ -67,13 +94,19 @@ async def get_public_chart_data(
         QueryExecutionError as _QueryExecutionError,
     )
 
+    owner = await _stored_chart_owner(db, chart_id)
+    if not owner or (
+        owner.lower() != user.email.lower()
+        and not await chart_on_visible_dashboard(db, chart_id, user.email)
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chart not found")
+
     chart_store = DatabaseChartStore(db, owner=None)
     chart_svc = ChartService(chart_store, db)
     data_svc = _ChartDataService(chart_svc)
     try:
-        chart = await chart_svc.get(chart_id)
-        owner_id = chart.created_by
-        return await data_svc.fetch(chart_id, req, user_id=owner_id, db_session=db)
+        # The source runs with the stored owner's credentials, never the viewer's.
+        return await data_svc.fetch(chart_id, req, user_id=owner, db_session=db)
     except ChartNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     except _NoDataSourceError as exc:
