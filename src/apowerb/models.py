@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -523,6 +524,42 @@ class BusinessIntelligence(Base):
         Index("idx_bi_org_project", "organization_id", "project_id"),
         Index("idx_bi_type_org_project", "type", "organization_id", "project_id"),
         Index("idx_bi_owner", "owner"),
+        {"schema": settings.db_schema},
+    )
+
+
+class BIForecastSnapshot(Base):
+    """Instantané d'une réponse de prévision, pour le suivi en boucle fermée
+    (contrat étape 5 §3).
+
+    Un graphique de prévision relié à un `chart_id` voit chacune de ses
+    réponses enregistrées ici ; les réels qui arrivent ensuite (dans une
+    requête ultérieure) sont comparés au point que l'instantané le plus
+    récent, antérieur à leur date, avait prévu. `owner`/`organization_id`
+    reprennent le modèle d'accès de `business_intelligence` (propriétaire du
+    graphique), pas un droit propre à cette table.
+    """
+
+    __tablename__ = "bi_forecast_snapshots"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    chart_id = Column(String(36), nullable=False)
+    owner = Column(String(255), nullable=False)
+    organization_id = Column(String(255), nullable=False)
+    config_hash = Column(String(64), nullable=False)
+    history_end = Column(Date, nullable=False)
+    frequency = Column(String(20), nullable=True)
+    payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "chart_id",
+            "config_hash",
+            "history_end",
+            name="uq_bi_forecast_snapshot_chart_config_history",
+        ),
+        Index("idx_bi_forecast_snapshot_chart", "chart_id"),
         {"schema": settings.db_schema},
     )
 

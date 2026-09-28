@@ -16,8 +16,14 @@ MAX_HORIZON = 366
 # relaying tens of megabytes only for th2forecast to answer 413.
 MAX_DATA_ROWS = 100_000
 
-ALLOWED_MODELS = frozenset({"prophet", "arima", "ets", "snaive", "naive", "auto"})
+ALLOWED_MODELS = frozenset(
+    {"prophet", "arima", "ets", "snaive", "naive", "auto", "croston", "tsb", "imapa"}
+)
 ALLOWED_FREQUENCIES = frozenset({"day", "week", "month", "quarter", "year"})
+# Étape 5 §2 : "mint" par défaut côté moteur quand hierarchy est fournie.
+ALLOWED_RECONCILIATION = frozenset({"mint", "bottom_up", "none"})
+# Cardinalité raisonnable pour une hiérarchie (niveaux au-dessus de group_var).
+MAX_HIERARCHY_LEVELS = 10
 
 
 class ForecastRequestSchema(BaseModel):
@@ -37,6 +43,13 @@ class ForecastRequestSchema(BaseModel):
     # leur contenu est validé par th2forecast, qui répond 400 avec un message clair.
     events: list[dict[str, Any]] | None = Field(None, max_length=20)
     scenarios: list[dict[str, Any]] | None = Field(None, max_length=5)
+    # Étape 5 §2 : hiérarchie et réconciliation MinT, relayées au moteur.
+    hierarchy: list[str] | None = Field(None, max_length=MAX_HIERARCHY_LEVELS)
+    reconciliation: str | None = None
+    # Étape 5 §3 : identifiant du graphique BI à suivre (jamais relayé au
+    # moteur — voir routers/forecast.py). Absent = comportement actuel, rien
+    # n'est stocké ni suivi.
+    chart_id: str | None = None
 
     @field_validator("models")
     @classmethod
@@ -77,6 +90,31 @@ class ForecastRequestSchema(BaseModel):
         for i, row in enumerate(value):
             if not row:
                 raise ValueError(f"data[{i}] est une ligne vide")
+        return value
+
+    @field_validator("hierarchy")
+    @classmethod
+    def _hierarchy_requires_group_var_and_non_empty_names(
+        cls, value: list[str] | None, info
+    ) -> list[str] | None:
+        if value is None:
+            return value
+        # Contrat étape 5 §2 : liste éventuellement vide (Total seul, aucun
+        # niveau intermédiaire) — seul `null` signifie « pas de hiérarchie ».
+        if any(not level for level in value):
+            raise ValueError("hierarchy ne peut pas contenir de colonne vide")
+        if not info.data.get("group_var"):
+            raise ValueError("hierarchy exige group_var")
+        return value
+
+    @field_validator("reconciliation")
+    @classmethod
+    def _reconciliation_in_allowed_set(cls, value: str | None) -> str | None:
+        if value is not None and value not in ALLOWED_RECONCILIATION:
+            raise ValueError(
+                f"reconciliation invalide : {value!r} ; autorisées : "
+                f"{', '.join(sorted(ALLOWED_RECONCILIATION))} ou null"
+            )
         return value
 
 
