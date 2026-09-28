@@ -13,6 +13,7 @@ from apowerb.core.agent_helpers.default_llm_usage import (
     default_llm_usage,
 )
 from apowerb.core.setup_status import SetupStatus, setup_status
+from apowerb.core.forecast_context import interpret_enabled
 from apowerb.core.workflow_suggest import suggest_enabled
 from apowerb.core.extensions.registry import registry as _registry
 from apowerb.helpers.ownership import is_admin
@@ -32,6 +33,8 @@ async def get_public_config():
         "default_llm_model_id": DEFAULT_LLM_MODEL_ID,
         # L'éditeur de workflows n'affiche le bouton ✨ que si c'est vrai.
         "workflow_suggest_enabled": suggest_enabled(),
+        # Le champ « Contexte » d'une prévision n'est interprété que si c'est vrai.
+        "forecast_interpret_enabled": interpret_enabled(),
         # Drapeaux apportes par les briques branchees. `billing_enabled` vivait
         # ici en dur ; c'est desormais la brique de facturation qui l'annonce,
         # donc la cle disparait purement et simplement quand elle n'est pas la.

@@ -389,18 +389,24 @@ def _owner_agents(owner_id: str) -> list[dict]:
     ]
 
 
-def _completion_kwargs(messages: list[dict]) -> dict:
+def _completion_kwargs(
+    messages: list[dict],
+    *,
+    model: Optional[str] = None,
+    max_tokens: int = 800,
+    timeout: Optional[float] = None,
+) -> dict:
     from apowerb.configs.settings import get_settings
 
     settings = get_settings()
-    model = (settings.workflow_suggest_model or settings.default_llm_model).strip()
+    model = (model or settings.workflow_suggest_model or settings.default_llm_model).strip()
     kwargs: dict = {
         "model": model,
         "messages": messages,
         "api_key": settings.default_llm_api_key.strip(),
         "temperature": 0.2,
-        "max_tokens": 800,
-        "timeout": settings.workflow_suggest_timeout_s,
+        "max_tokens": max_tokens,
+        "timeout": timeout or settings.workflow_suggest_timeout_s,
         "num_retries": 0,
         "drop_params": True,
         "response_format": {"type": "json_object"},
@@ -417,7 +423,7 @@ def _completion_kwargs(messages: list[dict]) -> dict:
     return kwargs
 
 
-async def _record_usage(owner_id: str, model: str, usage: Any) -> None:
+async def _record_usage(owner_id: str, model: str, usage: Any, *, agent_name: str = USAGE_AGENT_NAME) -> None:
     from apowerb.core.agent_helpers.usage_recorder import _persist_usage_row
 
     def count(name: str) -> int:
@@ -425,9 +431,9 @@ async def _record_usage(owner_id: str, model: str, usage: Any) -> None:
 
     await _persist_usage_row(
         agent_id=0,
-        agent_name=USAGE_AGENT_NAME,
+        agent_name=agent_name,
         owner_id=owner_id,
-        invocation_source=USAGE_AGENT_NAME,
+        invocation_source=agent_name,
         model=model,
         input_tokens=count("prompt_tokens"),
         output_tokens=count("completion_tokens"),
