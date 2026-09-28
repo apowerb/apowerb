@@ -54,9 +54,11 @@ def registre_vierge(monkeypatch):
 async def base(monkeypatch):
     """Une base reelle : le garde se juge sur une requete, pas sur un mock."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # monkeypatch restaure le schema : le laisser a None casse les tests
+    # suivants qui attachent le schema de production (ordre de collecte).
     for table in Base.metadata.tables.values():
-        table.schema = None
-    Base.metadata.schema = None
+        monkeypatch.setattr(table, "schema", None)
+    monkeypatch.setattr(Base.metadata, "schema", None)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

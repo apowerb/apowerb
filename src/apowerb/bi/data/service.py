@@ -234,6 +234,38 @@ _query_cache = _QueryCache()
 # ---------------------------------------------------------------------------
 
 
+
+async def _chart_data_owner(chart: Chart) -> str:
+    """Propriétaire qui fait foi pour lire le CSV d'un graphique : la colonne
+    ``owner`` de sa ligne, posée à l'enregistrement par l'utilisateur
+    authentifié. ``created_by`` n'est qu'un champ de la config, facultatif et
+    modifiable : il ne sert que si la ligne est absente (magasin en mémoire).
+    Une erreur de lecture ne donne aucun propriétaire (échec fermé).
+    """
+    try:
+        from sqlalchemy import select
+
+        from apowerb.helpers.database import sessionmanager
+        from apowerb.models import BusinessIntelligence
+
+        async with sessionmanager.session() as session:
+            owner = (
+                await session.execute(
+                    select(BusinessIntelligence.owner).where(
+                        BusinessIntelligence.id == chart.id,
+                        BusinessIntelligence.type == "chart",
+                    )
+                )
+            ).scalar_one_or_none()
+        if owner:
+            return owner
+    except Exception as exc:
+        # Fail closed: an unverifiable owner reads nothing.
+        logger.warning("[ChartData] owner lookup failed for chart %s: %s", chart.id, exc)
+        return ""
+    return chart.created_by or ""
+
+
 class ChartDataService:
     """
     Runs the full pipeline for a single data request.
@@ -306,7 +338,9 @@ class ChartDataService:
                     db_session=db_session,
                 )
             elif source_type == SourceType.CSV or (chart.source.query and chart.source.query.startswith("csv://")):
-                executor = CsvQueryExecutor()
+                # Scoped to the chart owner, not the reader: a published
+                # dashboard must stay readable by any viewer.
+                executor = CsvQueryExecutor(owner=await _chart_data_owner(chart))
             elif chart.source.connection_config_id:
                 if not user_id:
                     raise NoDataSourceError(
