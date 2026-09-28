@@ -9,8 +9,15 @@ from apowerb.integrations.th2forecast_client import (
 )
 from apowerb.schema.forecast_schema import (
     ALLOWED_MODELS,
+    MAX_DATA_ROWS,
     MAX_HORIZON,
     ForecastRequestSchema,
+)
+from apowerb.tools_store.portfolio.bi_datasets import (
+    _agent_owner,
+    _load_owned_dataset_rows,
+    _run_async,
+    validate_forecast_columns,
 )
 from apowerb.tools_store.portfolio.database import tool_run_sql
 
@@ -122,6 +129,7 @@ def tool_thaink2_forecast(
     horizon: int,
     sql: str | None = None,
     rows: list[dict] | None = None,
+    dataset_id: str | None = None,
     models: list[str] | None = None,
     group_var: str | None = None,
     frequency: str | None = None,
@@ -129,19 +137,22 @@ def tool_thaink2_forecast(
     """
     Generate a time-series forecast via the th2forecast service.
 
-    Provide the historical data either as a SQL query (`sql`, executed
-    server-side against the connected database — preferred for any dataset
-    the agent did not type by hand) or as inline `rows` (capped, for small
-    ad-hoc series the agent already has in context).
+    Provide the historical data as exactly one of: a SQL query (`sql`,
+    executed server-side against the connected database), inline `rows`
+    (capped, for small ad-hoc series already in context), or `dataset_id`
+    (a CSV dataset previously imported via the BI upload, owner-scoped —
+    see tool_list_datasets / tool_describe_dataset).
 
     Args:
         date_var (str): Name of the date column in the data.
         target_var (str): Name of the column to forecast.
         horizon (int): Number of future periods to forecast (1-366).
         sql (str): SELECT query returning the historical rows (run via the
-            database tool). Preferred over `rows` for any real dataset.
+            database tool). Preferred for a real database dataset.
         rows (list[dict]): Historical rows, provided inline. Capped at
-            2000 rows — use `sql` for anything larger.
+            2000 rows — use `sql` or `dataset_id` for anything larger.
+        dataset_id (str): Identifier of an imported CSV dataset (see
+            tool_list_datasets). Preferred for an imported dataset.
         models (list[str]): Forecast models to try. Default: ["prophet"].
             Allowed: prophet, arima, ets, snaive, naive, auto.
         group_var (str): Column to forecast independently per group
@@ -158,12 +169,13 @@ def tool_thaink2_forecast(
             width) rather than the full curve.
             On failure, {"status": "error", "errors": [{"field", "message"}]}
             or {"status": "error", "message": "..."} for a local validation
-            error (e.g. bad sql, too many rows).
+            error (e.g. bad sql, too many rows, unknown column).
     """
-    if bool(sql) == bool(rows):
+    sources_given = sum(1 for s in (sql, rows, dataset_id) if s)
+    if sources_given != 1:
         return {
             "status": "error",
-            "message": "Fournir exactement une source de données : sql OU rows.",
+            "message": "Fournir exactement une source de données : sql, rows ou dataset_id.",
         }
 
     if sql:
@@ -171,6 +183,27 @@ def tool_thaink2_forecast(
         if "error" in sourced:
             return {"status": "error", "message": sourced["error"]}
         data_rows = sourced["rows"]
+    elif dataset_id:
+        owner = _agent_owner()
+        if not owner:
+            return {"status": "error", "message": "Aucun contexte propriétaire (agent hors contexte BI)."}
+        loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner, MAX_DATA_ROWS))
+        if not loaded["success"]:
+            return {"status": "error", "message": loaded["error"]}
+        if loaded["truncated"]:
+            return {
+                "status": "error",
+                "message": (
+                    f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes, au-delà du plafond "
+                    "supporté pour la prévision. Il ne peut pas être chargé en entier."
+                ),
+            }
+        column_error = validate_forecast_columns(
+            loaded["columns"], date_var, target_var, group_var or ""
+        )
+        if column_error:
+            return {"status": "error", "message": column_error}
+        data_rows = loaded["rows"]
     else:
         data_rows = rows or []
         if len(data_rows) > _MAX_INLINE_ROWS:
@@ -179,10 +212,31 @@ def tool_thaink2_forecast(
                 "message": (
                     f"rows contient {len(data_rows)} lignes, au-delà du plafond de "
                     f"{_MAX_INLINE_ROWS} pour des données passées en ligne. "
-                    f"Utilisez `sql` pour un jeu de données plus large."
+                    f"Utilisez `sql` ou `dataset_id` pour un jeu de données plus large."
                 ),
             }
 
+    return _execute_forecast(
+        date_var=date_var, target_var=target_var, horizon=horizon,
+        data_rows=data_rows, group_var=group_var, frequency=frequency,
+        models=models,
+    )
+
+
+def _execute_forecast(
+    date_var: str,
+    target_var: str,
+    horizon: int,
+    data_rows: list[dict],
+    group_var: str | None = None,
+    frequency: str | None = None,
+    models: list[str] | None = None,
+) -> dict[str, Any]:
+    """Shared tail of tool_thaink2_forecast, once ``data_rows`` is resolved:
+    validation, th2forecast call, compact response. Reused as-is by
+    business_intelligence.tool_create_forecast_chart (same path, no
+    chart_id) so a forecast chart's summary is computed exactly like a
+    standalone forecast call."""
     if not data_rows:
         return {"status": "error", "message": "Aucune donnée historique à prévoir."}
 
