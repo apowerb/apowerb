@@ -212,3 +212,30 @@ class TestChartOwnerComesFromTheStoredRow:
         await _save_chart_row(seeded_db, "chart-forged", OWNER_B, OWNER_A)
         resp = await self._fetch("chart-forged", OWNER_A, OWNER_B)
         assert resp.rows == [{"error": "CSV file not found"}]
+
+
+class _FirstSessionFails:
+    """La lecture du propriétaire (1re session) échoue, la résolution CSV
+    qui suit fonctionne : seul l'échec fermé peut refuser la lecture."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self._calls = 0
+
+    def session(self):
+        self._calls += 1
+        if self._calls == 1:
+            raise RuntimeError("database unavailable")
+        return self._inner.session()
+
+
+@pytest.mark.asyncio
+async def test_owner_lookup_error_fails_closed(db_factory, seeded_db, monkeypatch):
+    """Base illisible au moment du contrôle : created_by=A (forgé) ne suffit pas."""
+    _fake_read_file(monkeypatch)
+    monkeypatch.setattr(
+        "apowerb.helpers.database.sessionmanager",
+        _FirstSessionFails(_FakeSessionManager(db_factory)),
+    )
+    resp = await TestChartOwnerComesFromTheStoredRow()._fetch("chart-db-down", OWNER_A, OWNER_B)
+    assert resp.rows == [{"error": "CSV file not found"}]

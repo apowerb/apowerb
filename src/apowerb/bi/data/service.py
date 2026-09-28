@@ -239,7 +239,8 @@ async def _chart_data_owner(chart: Chart) -> str:
     """Propriétaire qui fait foi pour lire le CSV d'un graphique : la colonne
     ``owner`` de sa ligne, posée à l'enregistrement par l'utilisateur
     authentifié. ``created_by`` n'est qu'un champ de la config, facultatif et
-    modifiable : il ne sert que si la ligne est introuvable (magasin en mémoire).
+    modifiable : il ne sert que si la ligne est absente (magasin en mémoire).
+    Une erreur de lecture ne donne aucun propriétaire (échec fermé).
     """
     try:
         from sqlalchemy import select
@@ -259,7 +260,9 @@ async def _chart_data_owner(chart: Chart) -> str:
         if owner:
             return owner
     except Exception as exc:
+        # Fail closed: an unverifiable owner reads nothing.
         logger.warning("[ChartData] owner lookup failed for chart %s: %s", chart.id, exc)
+        return ""
     return chart.created_by or ""
 
 
