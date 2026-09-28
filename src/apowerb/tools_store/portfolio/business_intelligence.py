@@ -22,6 +22,8 @@ from typing import Any
 from apowerb.schema.forecast_schema import MAX_DATA_ROWS
 from apowerb.tools_store.portfolio import api_call
 from apowerb.tools_store.portfolio.bi_datasets import (
+    _agent_db_connection,
+    _load_agent_sql_rows,
     _load_owned_dataset_rows,
     validate_forecast_columns,
 )
@@ -230,31 +232,16 @@ async def _async_create_chart(
 
     # Auto-detect connection_config_id for SQL queries.
     # When the query looks like SQL (SELECT, WITH, etc.) and no explicit
-    # connection_config_id was given, try to find the agent's DB tool config.
-    if not connection_config_id and query:
-        if _looks_like_sql(query):
-            import os
-            agent_id = os.getenv("ROOT_AGENT_ID", "")
-            if agent_id:
-                try:
-                    from apowerb.core.agent_helpers import get_agent_details
-                    details = get_agent_details(int(agent_id))
-                    tools_raw = details.get("agent_tools", "[]")
-                    tools_list = json.loads(tools_raw) if isinstance(tools_raw, str) else (tools_raw or [])
-                    # Scope the tool_config lookup to the agent's owner so we
-                    # never pick up a foreign tenant's DB config.
-                    agent_owner = details.get("owner_id") or os.getenv("AGENT_OWNER", "")
-                    for t in tools_list:
-                        if isinstance(t, str) and t.startswith("tool_config"):
-                            from apowerb.tools_store.tools_helpers import load_tool_config_params
-                            tname, _ = load_tool_config_params(t, owner_id=agent_owner)
-                            if tname and "database" in str(tname).lower():
-                                connection_config_id = t
-                                _probe_owner = agent_owner or owner_email
-                                logger.info(f"[BI] Auto-detected connection_config_id={t} for SQL query")
-                                break
-                except Exception as e:
-                    logger.warning(f"[BI] Could not auto-detect connection_config_id: {e}")
+    # connection_config_id was given, use the agent's DB tool config, looked
+    # up for the agent's owner so a foreign tenant's config is never picked.
+    if not connection_config_id and query and _looks_like_sql(query):
+        try:
+            found = _agent_db_connection()
+            if found:
+                connection_config_id, _probe_owner = found
+                logger.info(f"[BI] Auto-detected connection_config_id={connection_config_id} for SQL query")
+        except Exception as e:
+            logger.warning(f"[BI] Could not auto-detect connection_config_id: {e}")
 
     # Validate a SQL query BEFORE persisting. A chart whose query errors only
     # surfaces later as an opaque HTTP 502 at render time (and the bad chart
@@ -1068,7 +1055,8 @@ def tool_create_chart(
 
 
 async def _async_save_forecast_chart(
-    dataset_id: str,
+    source_schema,
+    source_label: str,
     target_var: str,
     title: str,
     config: dict,
@@ -1076,16 +1064,10 @@ async def _async_save_forecast_chart(
     project_id: str,
     owner_email: str,
 ):
-    from apowerb.bi.charts.core import ChartOrigin, ChartType, SourceType
-    from apowerb.bi.charts.schemas import ChartCreateRequest, DataSourceSchema
+    from apowerb.bi.charts.core import ChartOrigin, ChartType
+    from apowerb.bi.charts.schemas import ChartCreateRequest
     from apowerb.bi.charts.service import ChartConflictError, ChartService
     from apowerb.bi.db_stores import DatabaseChartStore
-
-    source_schema = DataSourceSchema(
-        source_type=SourceType.CSV,
-        query=f"csv://{dataset_id}",
-        limit=MAX_DATA_ROWS,
-    )
 
     async def _create_with_name(chart_name: str):
         async with _get_session() as db:
@@ -1098,7 +1080,7 @@ async def _async_save_forecast_chart(
             )
             return await svc.create(req, created_by=owner_email, origin=ChartOrigin.CHAT)
 
-    machine_name = f"forecast-{dataset_id}-{target_var}"
+    machine_name = f"forecast-{source_label}-{target_var}"
     try:
         return await _create_with_name(machine_name)
     except ChartConflictError:
@@ -1107,29 +1089,35 @@ async def _async_save_forecast_chart(
 
 
 def tool_create_forecast_chart(
-    dataset_id: str,
     date_var: str,
     target_var: str,
     horizon: int,
     title: str,
+    dataset_id: str = "",
+    sql: str = "",
     group_var: str = "",
     frequency: str = "",
     folder_name: str = "",
 ) -> dict:
-    """Creates a forecast widget chart from an imported dataset and computes
-    its forecast summary.
+    """Creates a forecast widget chart and computes its forecast summary,
+    from exactly one source: an imported dataset (dataset_id) or a SELECT
+    query on this agent's database connection (sql).
 
-    Use tool_describe_dataset first to pick real date_var/target_var/
-    group_var column names. Call embed_chart(chart_id, title) afterwards to
-    show the widget in the conversation — do not repeat the forecast
-    numbers yourself beyond commenting the summary.
+    Use tool_describe_dataset (dataset) or tool_describe_sql (query) first to
+    pick real date_var/target_var/group_var column names. Call
+    embed_chart(chart_id, title) afterwards to show the widget in the
+    conversation — do not repeat the forecast numbers yourself beyond
+    commenting the summary.
 
     Args:
-        dataset_id:  The dataset_id (UUID) returned by tool_list_datasets.
         date_var:    Name of the date column.
         target_var:  Name of the column to forecast.
         horizon:     Number of future periods to forecast (1-366).
         title:       Human-readable title displayed on the chart.
+        dataset_id:  The dataset_id (UUID) returned by tool_list_datasets.
+        sql:         A single SELECT query on the agent's database (write it
+                     with tool_text_to_sql; a query starting with WITH is
+                     refused). The chart re-runs it when displayed.
         group_var:   Optional column to forecast independently per group.
         frequency:   Optional series frequency (day, week, month, quarter, year).
         folder_name: Agent folder name (injected automatically).
@@ -1137,24 +1125,28 @@ def tool_create_forecast_chart(
     Returns:
         dict with success status; on success, chart_id, title, and summary
         (the same compact forecast summary tool_thaink2_forecast returns).
-        On failure (unknown owner/dataset, unknown column, dataset too
-        large, or the forecast service failing), no chart is created.
+        On failure (no or two sources, unknown owner/dataset, no database
+        connection, query error, unknown column, too many rows, or the
+        forecast service failing), no chart is created.
     """
+    from apowerb.bi.charts.core import SourceType
+    from apowerb.bi.charts.schemas import DataSourceSchema
+
     owner_email = _agent_owner()
     if not owner_email:
         return {"success": False, "error": "No owner context."}
+    if bool(dataset_id) == bool(sql):
+        return {"success": False, "error": "Fournir exactement une source : dataset_id ou sql."}
     try:
-        loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS))
+        if sql:
+            loaded = _run_async(_load_agent_sql_rows(sql, owner_email, MAX_DATA_ROWS))
+        else:
+            loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS))
         if not loaded["success"]:
             return {"success": False, "error": loaded["error"]}
         if loaded["truncated"]:
-            return {
-                "success": False,
-                "error": (
-                    f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes, au-delà du plafond "
-                    "supporté pour la prévision. Il ne peut pas être chargé en entier."
-                ),
-            }
+            what = "Le résultat de la requête" if sql else "Le jeu de données"
+            return {"success": False, "error": api_call._too_large_message(what)}
         column_error = validate_forecast_columns(loaded["columns"], date_var, target_var, group_var)
         if column_error:
             return {"success": False, "error": column_error}
@@ -1174,6 +1166,19 @@ def tool_create_forecast_chart(
                 or str(forecast_summary.get("errors")),
             }
 
+        if sql:
+            # Same connection the rows came from: the chart re-runs the query
+            # with its owner's config when displayed.
+            source = DataSourceSchema(
+                source_type=SourceType.DATABASE, query=sql,
+                connection_config_id=loaded["connection_config_id"], limit=MAX_DATA_ROWS,
+            )
+            label = "sql"
+        else:
+            source = DataSourceSchema(
+                source_type=SourceType.CSV, query=f"csv://{dataset_id}", limit=MAX_DATA_ROWS,
+            )
+            label = dataset_id
         config = {
             "date_var": date_var,
             "target_var": target_var,
@@ -1184,7 +1189,8 @@ def tool_create_forecast_chart(
             "confidence_levels": [0.8, 0.95],
         }
         chart = _run_async(_async_save_forecast_chart(
-            dataset_id=dataset_id, target_var=target_var, title=title, config=config,
+            source_schema=source, source_label=label, target_var=target_var,
+            title=title, config=config,
             organization_id=_agent_org(), project_id=_agent_project(),
             owner_email=owner_email,
         ))

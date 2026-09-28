@@ -14,7 +14,7 @@ Security
 - Dangerous keywords (INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE,
   EXEC, EXECUTE, GRANT, REVOKE, CALL, SET, REPLACE, LOAD, COPY, VACUUM,
   ANALYZE, EXPLAIN) are rejected before execution.
-- Row limit is capped at 10 000.
+- Row limit is capped at 10 000 (``max_rows`` raises it for forecast sources).
 """
 
 from __future__ import annotations
@@ -165,17 +165,21 @@ class DatabaseQueryExecutor:
     owner_id : str
         Email of the requesting user. Scopes the tool_config lookup so a
         chart cannot leak another tenant's DB credentials.
+    max_rows : int
+        Row cap, ``MAX_ROWS`` by default. Forecast sources raise it to the
+        forecast cap (``MAX_DATA_ROWS``).
     """
 
-    def __init__(self, tool_config_id: str, owner_id: str) -> None:
+    def __init__(self, tool_config_id: str, owner_id: str, max_rows: int = MAX_ROWS) -> None:
         self._tool_config_id = tool_config_id
         self._owner_id = owner_id
+        self._max_rows = max_rows
 
     async def run(self, source: DataSource) -> list[dict[str, Any]]:
         query = source.query.strip()
         validate_query(query)
 
-        limit = min(source.limit or MAX_ROWS, MAX_ROWS)
+        limit = min(source.limit or self._max_rows, self._max_rows)
         config = self._get_config()
         db_type = self._detect_db_type(config)
 

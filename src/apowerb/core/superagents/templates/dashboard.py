@@ -155,6 +155,7 @@ DASHBOARD_TEMPLATES = [
             "text_to_sql.tool_get_database_schema",
             "bi_datasets.tool_list_datasets",
             "bi_datasets.tool_describe_dataset",
+            "bi_datasets.tool_describe_sql",
             "business_intelligence.tool_create_forecast_chart",
         ],
         "agent_skills": ["dashboard-builder", "data-visualization", "forecasting"],
