@@ -24,12 +24,6 @@ MODELS = [
         "tag": "Default",
     },
     {
-        "id": "anthropic/claude-opus-4-0-20250514",
-        "name": "Claude Opus 4",
-        "provider": "anthropic",
-        "tag": None,
-    },
-    {
         "id": "mistral/mistral-large-latest",
         "name": "Mistral Large 3",
         "provider": "mistral",
