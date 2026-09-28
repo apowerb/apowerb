@@ -381,3 +381,149 @@ async def test_a_blocking_th2forecast_client_does_not_freeze_the_event_loop(monk
     # ~0.3s d'appel bloquant / 0.01s de période : si la boucle était gelée,
     # le ticker n'aurait presque pas progressé (0 ou 1 tick).
     assert ticks["n"] > 5
+
+
+# ---------------------------------------------------------------------------
+# Contrat etape 7 SS2 : feedback relaye, explanation, notification, adjustments.
+# ---------------------------------------------------------------------------
+
+
+class _PatchedS7(_Patched):
+    """Meme contexte que _Patched, plus notify_breach patche (jamais de
+    vraie DB/notification ici -- teste a part dans
+    tests/test_forecast_alert_store.py)."""
+
+    def __enter__(self):
+        super().__enter__()
+        self._notify_patch = patch("apowerb.routers.forecast.notify_breach", new_callable=AsyncMock)
+        self.mock_notify = self._notify_patch.start()
+        self.mock_notify.return_value = True
+        self._link_patch = patch(
+            "apowerb.routers.forecast.dashboard_link_for_chart", new_callable=AsyncMock, return_value="/bi/dash1"
+        )
+        self.mock_link = self._link_patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._link_patch.stop()
+        self._notify_patch.stop()
+        super().__exit__(*exc)
+
+
+def test_feedback_is_built_from_snapshots_and_relayed_to_the_engine():
+    from datetime import date
+
+    from apowerb.bi.forecast_tracking import compute_config_hash
+    from apowerb.routers.forecast import _relay_payload
+    from apowerb.schema.forecast_schema import ForecastRequestSchema
+
+    chart = _fake_chart()
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    real_hash = compute_config_hash(_relay_payload(ForecastRequestSchema(**_VALID_BODY)))
+    prior_snapshot = MagicMock()
+    prior_snapshot.config_hash = real_hash
+    prior_snapshot.history_end = date(2024, 1, 1)
+    prior_snapshot.payload = {
+        "series": [{"group": None, "level": None, "model": "prophet", "forecast": [
+            {"date": "2024-02-01", "value": 12.0, "lower_80": 10.0, "upper_80": 14.0},
+        ]}]
+    }
+
+    with _PatchedS7(chart=chart, snapshots=[prior_snapshot]) as ctx:
+        client.post("/api/v1/forecast", json={**_VALID_BODY, "chart_id": "chart1"})
+
+    sent_payload = ctx.mock_client_instance.forecast.call_args.args[0]
+    assert sent_payload["feedback"] == [
+        {"group": None, "level": None, "points": [
+            {"date": "2024-02-01", "value": 12.0, "lower_80": 10.0, "upper_80": 14.0},
+        ]},
+    ]
+
+
+def test_client_sent_feedback_is_discarded_server_builds_its_own():
+    chart = _fake_chart()
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with _PatchedS7(chart=chart, snapshots=[]) as ctx:
+        client.post(
+            "/api/v1/forecast",
+            json={**_VALID_BODY, "chart_id": "chart1", "feedback": [{"group": "evil", "level": None, "points": []}]},
+        )
+
+    sent_payload = ctx.mock_client_instance.forecast.call_args.args[0]
+    # Pas de snapshot pertinent -> feedback vide -> cle absente, jamais celle du client.
+    assert "feedback" not in sent_payload
+
+
+def test_no_prior_snapshot_means_no_feedback_key():
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+    chart = _fake_chart()
+
+    with _PatchedS7(chart=chart, snapshots=[]) as ctx:
+        client.post("/api/v1/forecast", json={**_VALID_BODY, "chart_id": "chart1"})
+
+    sent_payload = ctx.mock_client_instance.forecast.call_args.args[0]
+    assert "feedback" not in sent_payload
+
+
+def test_planted_breach_gets_an_explanation_and_triggers_one_notification():
+    chart = _fake_chart()
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    from datetime import date
+
+    from apowerb.bi.forecast_tracking import compute_config_hash
+    from apowerb.routers.forecast import _relay_payload
+    from apowerb.schema.forecast_schema import ForecastRequestSchema
+
+    real_hash = compute_config_hash(_relay_payload(ForecastRequestSchema(**_VALID_BODY)))
+    prior_snapshot = MagicMock()
+    prior_snapshot.config_hash = real_hash
+    prior_snapshot.history_end = date(2024, 2, 1)
+    prior_snapshot.payload = {
+        "series": [{"group": None, "level": None, "model": "prophet", "forecast": [
+            {"date": "2024-03-01", "value": 12.0, "lower_80": 10.0, "upper_80": 14.0},
+        ]}]
+    }
+    breach_response = {
+        "status": "success",
+        "series": [{
+            "group": None, "level": None, "model": "prophet",
+            "history": [
+                {"date": "2024-01-01", "value": 10}, {"date": "2024-02-01", "value": 12},
+                {"date": "2024-03-01", "value": 99},
+            ],
+            "forecast": [],
+        }],
+    }
+
+    with _PatchedS7(chart=chart, snapshots=[prior_snapshot], th2forecast_body=breach_response) as ctx:
+        resp = client.post("/api/v1/forecast", json={**_VALID_BODY, "chart_id": "chart1"})
+
+    tracking = resp.json()["tracking"]
+    assert tracking["breaches"][0]["explanation"]["kind"] == "spike"
+    ctx.mock_notify.assert_awaited_once()
+    kwargs = ctx.mock_notify.await_args.kwargs
+    assert kwargs["chart_id"] == "chart1"
+    assert kwargs["group"] is None
+    assert kwargs["date"] == date(2024, 3, 1)
+    # Lien vers le tableau de bord (route UI /bi/<dashboardId>), pas vers le graphique.
+    assert kwargs["link"] == "/bi/dash1"
+
+
+def test_notification_failure_never_drops_the_tracking_field():
+    chart = _fake_chart()
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with _PatchedS7(chart=chart, snapshots=[]) as ctx:
+        ctx.mock_notify.side_effect = RuntimeError("bus down")
+        resp = client.post("/api/v1/forecast", json={**_VALID_BODY, "chart_id": "chart1"})
+
+    assert resp.status_code == 200
+    assert "tracking" in resp.json()
