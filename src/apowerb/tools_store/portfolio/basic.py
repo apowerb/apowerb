@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any, Optional
+from typing import Optional
 import requests
 from pathlib import Path
 
@@ -38,60 +38,6 @@ def tool_advanced(city: str) -> dict:
             "status": "error",
             "error_message": f"Weather information for '{city}' is not available.",
         }
-
-
-def tool_thaink2_forecast(
-    api_url: str = "https://clever.thaink2.fr/app_direct/th2apis/private/",
-    fcast_horizon=30,
-    group_target=None,
-    date_var="date",
-    models_list=["xgboost"],
-    actuals: Any = None,
-    target_var: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Call Thaink² Forecast API.
-
-    Parameters
-    ----------
-    api_url : str
-        Forecast API endpoint
-    payload : dict
-        Forecast request payload
-    token : str
-        Authentication token (Bearer)
-
-    Returns
-    -------
-    Dict[str, Any]
-        API response JSON
-
-    Raises
-    ------
-    RuntimeError
-        If the API call fails
-    """
-    token = os.getenv("THAINK2_API_FORECAST_TOKEN")
-    endpoint = "thaink2/forecasting"
-    url = f"{api_url}{endpoint}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {
-        "actuals": actuals.to_json(orient="records", date_format="iso"),
-        "fcast_horizon": fcast_horizon,
-        "group_target": group_target,
-        "target_var": target_var,
-        "date_var": date_var,
-        "models_list": models_list,
-    }
-
-    # Make the API call
-    response = requests.post(url, json=payload, headers=headers)
-
-    # Handle response
-    if response.status_code == 200:
-        return response.json()  # Return the parsed JSON response
-    else:
-        response.raise_for_status()  # Raise an exception for HTTP errors
 
 
 _BINARY_SNIFF_BYTES = 8192

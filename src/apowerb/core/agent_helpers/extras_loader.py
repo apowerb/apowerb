@@ -133,6 +133,12 @@ def inject_bi_dashboard_tools(
         "business_intelligence.tool_update_chart",
         "business_intelligence.tool_remove_chart_from_dashboard",
         "business_intelligence.tool_list_dashboards",
+        # Prévision : le chat BI d'un tableau de bord sait prévoir, que
+        # l'agent ait ou non ces outils dans sa config (embed_chart est déjà
+        # injecté inconditionnellement pour tout agent chat, cf agent_utils).
+        "bi_datasets.tool_list_datasets",
+        "bi_datasets.tool_describe_dataset",
+        "business_intelligence.tool_create_forecast_chart",
     ]
     new_bi = [t for t in bi_tools if t not in tools_names]
     if not new_bi:
