@@ -20,7 +20,11 @@ from apowerb.integrations.jev_client import (
     JevNotConfigured,
     JevUnavailable,
 )
-from apowerb.tools_store.portfolio.database import tool_run_sql
+from apowerb.tools_store.portfolio.bi_datasets import (
+    _agent_owner,
+    _load_agent_sql_rows,
+    _run_async,
+)
 
 _WORKERS = 8
 _MAX_LABELS = 20
@@ -60,10 +64,22 @@ def _items_from(
     if items:
         raw = [(i, None) for i in items]
     else:
-        result = tool_run_sql(sql)
-        if not result.get("success"):
-            return [], 0, f"La requête SQL a échoué : {result.get('error')}"
-        rows = result.get("data") or []
+        # The agent's own database connection, never the process DB_*
+        # variables (they point at the platform's database).
+        owner = _agent_owner()
+        if not owner:
+            return [], 0, "Aucun contexte propriétaire : requête SQL impossible."
+        cap = _max_items()
+        loaded = _run_async(_load_agent_sql_rows(sql, owner, cap))
+        if not loaded["success"]:
+            return [], 0, loaded["error"]
+        if loaded["truncated"]:
+            return (
+                [],
+                0,
+                f"La requête renvoie plus de {cap} lignes, le plafond par appel : filtrer ou paginer.",
+            )
+        rows = loaded["rows"]
         if text_column and rows and text_column not in rows[0]:
             return (
                 [],
@@ -138,7 +154,8 @@ def tool_jev_classify(
             description of what belongs in it,
             e.g. {"bug": "A defect in the product", "question": "A usage question"}.
         items (list[str]): The texts to classify. Use this OR `sql`.
-        sql (str): SELECT query whose rows are classified (run server-side).
+        sql (str): SELECT query whose rows are classified, run on this
+            agent's database connection (a database Tool Config).
         text_column (str): With `sql`, the column holding the text to classify.
             Omitted: the whole row is judged.
         instructions (str): Extra context for the decision (domain, rules).
@@ -309,7 +326,8 @@ def tool_jev_score(
     Args:
         criterion (str): What a high score means, e.g. "Urgent and blocking".
         items (list[str]): The texts to rank. Use this OR `sql`.
-        sql (str): SELECT query whose rows are ranked (run server-side).
+        sql (str): SELECT query whose rows are ranked, run on this
+            agent's database connection (a database Tool Config).
         text_column (str): With `sql`, the column holding the text to judge.
         top_k (int): How many top items to return. Default 10.
 

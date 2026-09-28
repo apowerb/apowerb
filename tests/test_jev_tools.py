@@ -8,7 +8,7 @@ returned as data rather than raised.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -64,6 +64,24 @@ def fake():
         yield client
 
 
+@pytest.fixture
+def agent_db(monkeypatch):
+    """The agent has a database tool_config; ``agent_db(rows)`` sets what its
+    query returns and yields the patched DatabaseQueryExecutor class."""
+    monkeypatch.setenv("AGENT_OWNER", "owner@example.com")
+    monkeypatch.setattr(
+        "apowerb.tools_store.portfolio.bi_datasets._agent_db_connection",
+        lambda owner=None: ("tool_config7", "owner@example.com"),
+    )
+    with patch("apowerb.bi.data.db_executor.DatabaseQueryExecutor") as cls:
+
+        def returns(rows):
+            cls.return_value.run = AsyncMock(return_value=rows)
+            return cls
+
+        yield returns
+
+
 class TestClassify:
     def test_labels_each_item_and_flags_uncertain(self, fake):
         result = jev.tool_jev_classify(
@@ -99,24 +117,23 @@ class TestClassify:
         )
         assert result["results"][0]["uncertain"] is True
 
-    def test_rows_from_sql_use_the_text_column(self, fake):
+    def test_rows_from_sql_use_the_text_column(self, fake, agent_db):
         rows = [{"id": 1, "body": "crash at login"}, {"id": 2, "body": "how to share?"}]
-        with patch.object(
-            jev, "tool_run_sql", return_value={"success": True, "data": rows}
-        ):
-            result = jev.tool_jev_classify(
-                labels=_LABELS, sql="SELECT id, body FROM tickets", text_column="body"
-            )
+        executor = agent_db(rows)
+        result = jev.tool_jev_classify(
+            labels=_LABELS, sql="SELECT id, body FROM tickets", text_column="body"
+        )
+        executor.assert_called_once_with(
+            "tool_config7", owner_id="owner@example.com", max_rows=jev._max_items() + 1
+        )
         assert [r["label"] for r in result["results"]] == ["bug", "question"]
         assert result["results"][0]["row"] == {"id": 1, "body": "crash at login"}
 
-    def test_missing_text_column_is_an_error(self, fake):
-        with patch.object(
-            jev, "tool_run_sql", return_value={"success": True, "data": [{"id": 1}]}
-        ):
-            result = jev.tool_jev_classify(
-                labels=_LABELS, sql="SELECT id FROM t", text_column="body"
-            )
+    def test_missing_text_column_is_an_error(self, fake, agent_db):
+        agent_db([{"id": 1}])
+        result = jev.tool_jev_classify(
+            labels=_LABELS, sql="SELECT id FROM t", text_column="body"
+        )
         assert result["status"] == "error"
         assert "body" in result["message"]
 
@@ -191,14 +208,11 @@ class TestClassify:
         assert result["counts"]["failed"] == 1
         assert result["counts"]["bug"] == 1
 
-    def test_null_text_is_skipped_not_sent_as_none(self, fake):
-        rows = [{"id": 1, "body": None}, {"id": 2, "body": "crash at login"}]
-        with patch.object(
-            jev, "tool_run_sql", return_value={"success": True, "data": rows}
-        ):
-            result = jev.tool_jev_classify(
-                labels=_LABELS, sql="SELECT id, body FROM tickets", text_column="body"
-            )
+    def test_null_text_is_skipped_not_sent_as_none(self, fake, agent_db):
+        agent_db([{"id": 1, "body": None}, {"id": 2, "body": "crash at login"}])
+        result = jev.tool_jev_classify(
+            labels=_LABELS, sql="SELECT id, body FROM tickets", text_column="body"
+        )
         assert [state["item"] for state, _ in fake.calls] == ["crash at login"]
         assert result["total"] == 1
         assert result["skipped_empty"] == 1
@@ -275,3 +289,50 @@ class TestErrors:
         with patch.object(jev, "JevClient", return_value=client):
             result = jev.tool_jev_decide(question="Q?", context="x")
         assert result == {"status": "error", "message": "Crédit Jev épuisé."}
+
+
+class TestNeverThePlatformDatabase:
+    """A `sql` source runs on the agent's database connection (its owner's
+    tool_config), never through ``database.tool_run_sql`` whose ``DB_*``
+    variables point at the platform's own database."""
+
+    def test_sql_never_reaches_the_process_database(self, fake, monkeypatch):
+        monkeypatch.setenv("AGENT_OWNER", "owner@example.com")
+        monkeypatch.setattr(
+            "apowerb.tools_store.portfolio.bi_datasets._agent_db_connection",
+            lambda owner=None: None,
+        )
+        with patch(
+            "apowerb.tools_store.portfolio.database.tool_run_sql"
+        ) as run_sql, patch(
+            "apowerb.tools_store.portfolio.database._get_connection"
+        ) as get_conn, patch.object(
+            jev,
+            "tool_run_sql",
+            create=True,
+            return_value={"success": False, "error": "platform database"},
+        ) as bound_run_sql:
+            for tool, kwargs in (
+                (jev.tool_jev_classify, {"labels": _LABELS}),
+                (jev.tool_jev_score, {"criterion": "Is it urgent?"}),
+            ):
+                result = tool(sql="SELECT body FROM tickets", text_column="body", **kwargs)
+                assert result["status"] == "error"
+                assert "connexion" in result["message"].lower()
+        assert run_sql.call_count == 0
+        assert bound_run_sql.call_count == 0
+        assert get_conn.call_count == 0
+        assert fake.calls == []
+
+    def test_more_rows_than_the_cap_is_an_error(self, fake, agent_db):
+        agent_db([{"body": "crash"}] * 3)
+        with patch.object(jev, "_max_items", return_value=2):
+            result = jev.tool_jev_classify(
+                labels=_LABELS, sql="SELECT body FROM tickets", text_column="body"
+            )
+        assert result["status"] == "error"
+        assert "2" in result["message"]
+        assert fake.calls == []
+
+    def test_jev_no_longer_imports_the_module_run_sql(self):
+        assert not hasattr(jev, "tool_run_sql")
