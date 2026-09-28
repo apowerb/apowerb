@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apowerb.bi.db_stores import DatabaseDashboardStore
 from apowerb.helpers.notification_bus import notify as push_notification
 from apowerb.models import BIForecastAlert, Notification, User
 
@@ -32,24 +33,39 @@ class ForecastAlertStore:
         self._db = db
 
     async def try_reserve(
-        self, *, chart_id: str, group: Any, level: Any, date: date_type
+        self, *, chart_id: str, group: Any, level: Any, date: date_type, commit: bool = True
     ) -> bool:
         """Insere la reservation si elle n'existe pas deja. Renvoie True si
         c'est une nouvelle alerte (il faut notifier), False si elle a deja
-        ete vue (dedoublonnage)."""
+        ete vue (dedoublonnage). Le conflit est isole dans un point de
+        sauvegarde : il n'annule pas le reste de la transaction. Avec
+        `commit=False`, la reservation attend le commit de l'appelant (elle
+        est alors validee ou annulee avec la notification)."""
         row = BIForecastAlert(
             chart_id=chart_id,
             group_key=str(group) if group is not None else "",
             level_key=str(level) if level is not None else "",
             date=date,
         )
-        self._db.add(row)
         try:
-            await self._db.commit()
-            return True
+            async with self._db.begin_nested():
+                self._db.add(row)
         except IntegrityError:
-            await self._db.rollback()
             return False
+        if commit:
+            await self._db.commit()
+        return True
+
+
+async def dashboard_link_for_chart(db: AsyncSession, *, owner: str, chart_id: str) -> str:
+    """Lien de l'UI (`/bi/<dashboardId>`) vers le tableau de bord le plus
+    recent du proprietaire qui affiche ce graphique ; `/bi` si aucun ne le
+    contient (graphique retire depuis, ou plus de 100 tableaux de bord)."""
+    dashboards, _ = await DatabaseDashboardStore(db, owner=owner).list(page_size=100)
+    for dashboard in dashboards:
+        if any(c.chart is not None and c.chart.chart_id == chart_id for c in dashboard.components):
+            return f"/bi/{dashboard.id}"
+    return "/bi"
 
 
 async def _resolve_user_id(db: AsyncSession, owner_email: str) -> int | None:
@@ -76,14 +92,18 @@ async def notify_breach(
     meme (chart_id, group, level, date). Renvoie True si une notification a
     ete creee.
     """
-    store = ForecastAlertStore(db)
-    is_new = await store.try_reserve(chart_id=chart_id, group=group, level=level, date=date)
-    if not is_new:
-        return False
-
+    # Proprietaire resolu AVANT la reservation : sinon une alerte sans
+    # destinataire serait marquee vue et jamais renvoyee.
     user_id = await _resolve_user_id(db, owner_email)
     if user_id is None:
         logger.warning("forecast alert: no user found for owner %s, notification skipped", owner_email)
+        return False
+
+    # Reservation et notification validees par le MEME commit : un echec
+    # entre les deux annule la reservation, l'alerte repartira au prochain
+    # calcul au lieu d'etre perdue.
+    store = ForecastAlertStore(db)
+    if not await store.try_reserve(chart_id=chart_id, group=group, level=level, date=date, commit=False):
         return False
 
     direction_fr = "au-dessus" if direction == "above" else "en-dessous"

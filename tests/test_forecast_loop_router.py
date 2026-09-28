@@ -398,9 +398,14 @@ class _PatchedS7(_Patched):
         self._notify_patch = patch("apowerb.routers.forecast.notify_breach", new_callable=AsyncMock)
         self.mock_notify = self._notify_patch.start()
         self.mock_notify.return_value = True
+        self._link_patch = patch(
+            "apowerb.routers.forecast.dashboard_link_for_chart", new_callable=AsyncMock, return_value="/bi/dash1"
+        )
+        self.mock_link = self._link_patch.start()
         return self
 
     def __exit__(self, *exc):
+        self._link_patch.stop()
         self._notify_patch.stop()
         super().__exit__(*exc)
 
@@ -507,6 +512,8 @@ def test_planted_breach_gets_an_explanation_and_triggers_one_notification():
     assert kwargs["chart_id"] == "chart1"
     assert kwargs["group"] is None
     assert kwargs["date"] == date(2024, 3, 1)
+    # Lien vers le tableau de bord (route UI /bi/<dashboardId>), pas vers le graphique.
+    assert kwargs["link"] == "/bi/dash1"
 
 
 def test_notification_failure_never_drops_the_tracking_field():

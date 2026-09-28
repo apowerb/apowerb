@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apowerb.auth.dependencies import get_current_user
 from apowerb.bi.charts.service import ChartNotFoundError, ChartService
 from apowerb.bi.db_stores import DatabaseChartStore
-from apowerb.bi.forecast_alerts import notify_breach
+from apowerb.bi.forecast_alerts import dashboard_link_for_chart, notify_breach
 from apowerb.bi.forecast_snapshot_store import ForecastSnapshotStore
 from apowerb.bi.forecast_tracking import (
     build_feedback,
@@ -250,9 +250,12 @@ async def _notify_latest_breaches(db: AsyncSession, *, chart, owner: str, tracki
     if not breaches:
         return
     latest_date = max(b["date"] for b in breaches)
+    link = None
     for b in breaches:
         if b["date"] != latest_date:
             continue
+        if link is None:
+            link = await dashboard_link_for_chart(db, owner=owner, chart_id=chart.id)
         await notify_breach(
             db,
             chart_id=chart.id,
@@ -262,7 +265,7 @@ async def _notify_latest_breaches(db: AsyncSession, *, chart, owner: str, tracki
             date=date_type.fromisoformat(b["date"]),
             direction=b["direction"],
             kind=b["explanation"]["kind"],
-            link=f"/bi/{chart.id}",
+            link=link,
         )
 
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -151,3 +151,105 @@ class TestNotifyBreach:
 
 async def _noop():
     return None
+
+
+class TestReservationIsAtomicWithTheNotification:
+    """Correctifs de relecture : une alerte n'est marquee vue que si sa
+    notification a bien ete enregistree."""
+
+    @pytest.fixture
+    async def full_db(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+        # pysqlite n'ouvre pas de transaction avant un SAVEPOINT : sans ces
+        # deux ecouteurs (recette de la doc SQLAlchemy), le point de sauvegarde
+        # se valide seul et ce test ne verrait pas ce que Postgres garantit.
+        event.listen(engine.sync_engine, "connect", lambda dbapi_conn, _rec: setattr(dbapi_conn, "isolation_level", None))
+        event.listen(engine.sync_engine, "begin", lambda conn: conn.exec_driver_sql("BEGIN"))
+        schema = BIForecastAlert.__table__.schema
+        async with engine.begin() as conn:
+            if schema:
+                await conn.execute(text(f"ATTACH DATABASE ':memory:' AS {schema}"))
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            yield session
+        await engine.dispose()
+
+    async def _make_user(self, db, email="alice@example.com"):
+        from apowerb.models import User, UserRole
+
+        user = User(first_name="Alice", last_name="X", email=email, role=UserRole.USER)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        return user
+
+    _KW = dict(chart_id="chart1", owner_email="alice@example.com", group="A", level="80",
+               date=date(2024, 2, 1), direction="above", kind="spike", link="/bi/d1")
+
+    @pytest.mark.asyncio
+    async def test_unknown_owner_does_not_consume_the_reservation(self, full_db, monkeypatch):
+        from apowerb.bi import forecast_alerts
+
+        monkeypatch.setattr(forecast_alerts, "push_notification", lambda uid, payload: _noop())
+        assert await forecast_alerts.notify_breach(full_db, **self._KW) is False
+        await self._make_user(full_db)
+        assert await forecast_alerts.notify_breach(full_db, **self._KW) is True
+
+    @pytest.mark.asyncio
+    async def test_failed_notification_commit_releases_the_reservation(self, full_db, monkeypatch):
+        from apowerb.bi import forecast_alerts
+
+        monkeypatch.setattr(forecast_alerts, "push_notification", lambda uid, payload: _noop())
+        await self._make_user(full_db)
+        real_commit = full_db.commit
+
+        from apowerb.models import Notification
+
+        async def failing_commit():
+            # Echoue seulement sur le commit qui porte la notification : un
+            # commit anterieur de la seule reservation passerait (ancien bug).
+            if any(isinstance(o, Notification) for o in full_db.new):
+                raise RuntimeError("db down")
+            await real_commit()
+
+        monkeypatch.setattr(full_db, "commit", failing_commit)
+        with pytest.raises(RuntimeError):
+            await forecast_alerts.notify_breach(full_db, **self._KW)
+        await full_db.rollback()
+        monkeypatch.setattr(full_db, "commit", real_commit)
+        assert (await full_db.execute(select(BIForecastAlert))).scalars().all() == []
+        assert await forecast_alerts.notify_breach(full_db, **self._KW) is True
+
+
+class TestDashboardLinkForChart:
+    @pytest.fixture
+    async def full_db(self):
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+        schema = BIForecastAlert.__table__.schema
+        async with engine.begin() as conn:
+            if schema:
+                await conn.execute(text(f"ATTACH DATABASE ':memory:' AS {schema}"))
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            yield session
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_links_to_the_dashboard_that_shows_the_chart(self, full_db):
+        from apowerb.bi.dashboards.core import Dashboard, DashboardComponent
+        from apowerb.bi.db_stores import DatabaseDashboardStore
+        from apowerb.bi.forecast_alerts import dashboard_link_for_chart
+
+        store = DatabaseDashboardStore(full_db, owner="alice@example.com")
+        await store.save(Dashboard.create(title="autre", components=[DashboardComponent.from_chart("chart-x")]))
+        target = await store.save(Dashboard.create(title="ventes", components=[DashboardComponent.from_chart("chart1")]))
+
+        assert await dashboard_link_for_chart(full_db, owner="alice@example.com", chart_id="chart1") == f"/bi/{target.id}"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_the_bi_home_when_no_dashboard_shows_it(self, full_db):
+        from apowerb.bi.forecast_alerts import dashboard_link_for_chart
+
+        assert await dashboard_link_for_chart(full_db, owner="alice@example.com", chart_id="chart1") == "/bi"
