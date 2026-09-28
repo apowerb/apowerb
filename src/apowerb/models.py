@@ -564,6 +564,41 @@ class BIForecastSnapshot(Base):
     )
 
 
+class BIForecastAlert(Base):
+    """Reservation de notification de rupture de prevision (contrat etape 7
+    SS2c) : une ligne par (chart_id, group_key, level_key, date) deja
+    notifiee, pour ne jamais renvoyer deux fois la meme alerte a chaque
+    affichage du widget. `group_key`/`level_key` normalisent `None` en
+    chaine vide -- deux NULL ne sont jamais egaux dans une
+    UniqueConstraint (Postgres comme SQLite), donc les laisser nullable
+    romprait le dedoublonnage pour toute serie sans hierarchie.
+
+    Creation idempotente comme `BIForecastSnapshot`, via
+    `helpers.core_tables.ensure_core_tables` (`create_all(checkfirst=True)`).
+    """
+
+    __tablename__ = "bi_forecast_alerts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chart_id = Column(String(36), nullable=False)
+    group_key = Column(String(255), nullable=False, default="")
+    level_key = Column(String(50), nullable=False, default="")
+    date = Column(Date, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "chart_id",
+            "group_key",
+            "level_key",
+            "date",
+            name="uq_bi_forecast_alert_chart_group_level_date",
+        ),
+        Index("idx_bi_forecast_alert_chart", "chart_id"),
+        {"schema": settings.db_schema},
+    )
+
+
 class OAuthState(Base):
     """One-time CSRF state tokens for OAuth authorisation flows.
 
