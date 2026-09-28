@@ -44,8 +44,10 @@ _CONFIG_HASH_FIELDS = (
     "hierarchy",
     "reconciliation",
     "events",
-    "scenarios",
 )
+# scenarios en est délibérément absent (contrat étape 7 §2d) : le moteur les
+# calcule en tâches séparées de la prévision de base, donc ajouter un
+# scénario ne doit pas faire retomber le suivi (tracking.points) à zéro.
 
 # Nombre de ruptures gardées dans la réponse, la plus récente d'abord.
 _MAX_BREACHES = 20

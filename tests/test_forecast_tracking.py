@@ -260,3 +260,12 @@ class TestCoverageMaseBreaches:
         series = [_series("A", [], history=history)]
         out = compute_tracking(series=series, snapshots=[snap], config_hash="h1")
         assert out["mase"] is None
+
+
+class TestConfigHashExcludesScenarios:
+    def test_adding_a_scenario_does_not_change_the_hash(self):
+        """Contrat étape 7 §2d : les scénarios ne modifient pas la prévision
+        de base (tâches séparées côté moteur), donc `scenarios` sort de
+        `config_hash` — ajouter un scénario ne remet pas le suivi à zéro."""
+        with_scenario = {**BASE_PAYLOAD, "scenarios": [{"name": "Promo +15%"}]}
+        assert compute_config_hash(with_scenario) == compute_config_hash(BASE_PAYLOAD)
