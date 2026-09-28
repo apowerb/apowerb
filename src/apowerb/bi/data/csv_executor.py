@@ -12,7 +12,8 @@ that gets looked up in the ``business_intelligence`` table.
 Both forms are resolved scoped to the **chart's owner**
 (``CsvQueryExecutor(owner=...)``), never the viewer: a dashboard published
 by A must stay readable by a reader B, so the executor is constructed with
-``chart.created_by``, not the requesting user. A dataset that doesn't exist
+the stored chart row's ``owner`` column (see
+``service._chart_data_owner``), not the requesting user. A dataset that doesn't exist
 and a dataset owned by someone else are indistinguishable to the caller —
 same error message either way.
 """

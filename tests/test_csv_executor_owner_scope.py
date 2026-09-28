@@ -173,3 +173,42 @@ class TestPublishedDashboardStillReadableByOthers:
         resp = await data_service.fetch(chart.id, DataRequest(), user_id=OWNER_B)
 
         assert resp.rows == [{"col": "A-secret"}]
+
+
+async def _save_chart_row(db_factory, chart_id: str, row_owner: str, created_by):
+    """Ligne `chart` telle que l'enregistre DatabaseChartStore : la colonne
+    `owner` fait foi, `created_by` n'est qu'un champ de la config."""
+    async with db_factory() as session:
+        session.add(BusinessIntelligence(
+            id=chart_id, name=chart_id, type="chart", owner=row_owner,
+            organization_id="org1", project_id="thaink2",
+            config={"created_by": created_by},
+        ))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+class TestChartOwnerComesFromTheStoredRow:
+    async def _fetch(self, chart_id, created_by, reader):
+        chart_service = ChartService(InMemoryChartStore())
+        chart = Chart.create(
+            name=chart_id, title=chart_id, chart_type=ChartType.BAR,
+            source=DataSource(query="csv://dataset-a", source_type=SourceType.CSV),
+            created_by=created_by, organization_id="org1",
+        ).model_copy(update={"id": chart_id})
+        await chart_service._store.save(chart)
+        return await ChartDataService(chart_service).fetch(chart_id, DataRequest(), user_id=reader)
+
+    async def test_chart_without_created_by_still_reads_its_owner_csv(self, seeded_db, monkeypatch):
+        """created_by est facultatif : sans lui, le propriétaire de la ligne fait foi."""
+        _fake_read_file(monkeypatch)
+        await _save_chart_row(seeded_db, "chart-no-creator", OWNER_A, None)
+        resp = await self._fetch("chart-no-creator", None, OWNER_B)
+        assert resp.rows == [{"col": "A-secret"}]
+
+    async def test_forged_created_by_does_not_grant_access(self, seeded_db, monkeypatch):
+        """Un graphique de B dont la config prétend created_by=A ne lit pas le CSV de A."""
+        _fake_read_file(monkeypatch)
+        await _save_chart_row(seeded_db, "chart-forged", OWNER_B, OWNER_A)
+        resp = await self._fetch("chart-forged", OWNER_A, OWNER_B)
+        assert resp.rows == [{"error": "CSV file not found"}]
