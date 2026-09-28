@@ -1934,60 +1934,6 @@ def make_bi_tools(
     # Dashboard data reading tools
     # -----------------------------------------------------------------------
 
-    async def _async_get_dashboard_data(dashboard_id: str, owner_email: str) -> dict:
-        """Fetch all chart data from a dashboard."""
-        from apowerb.bi.dashboards.service import DashboardService
-        from apowerb.bi.dashboards.db_stores import DatabaseDashboardStore
-        from apowerb.bi.data.service import ChartDataService
-        from apowerb.bi.data.schema import DataRequest
-        from apowerb.bi.charts.db_stores import DatabaseChartStore
-
-        async with _get_session() as session:
-            dash_store = DatabaseDashboardStore(session)
-            chart_store = DatabaseChartStore(session)
-            dash_svc = DashboardService(dash_store, chart_store)
-            data_svc = ChartDataService(chart_store)
-
-            dashboard = await dash_svc.get(dashboard_id)
-            charts_data = []
-
-            for comp in dashboard.components:
-                if comp.chart and comp.chart.chart_id:
-                    try:
-                        req = DataRequest(page=1, page_size=200)
-                        result = await data_svc.fetch(
-                            comp.chart.chart_id, req, user_id=owner_email
-                        )
-                        charts_data.append({
-                            "chart_id": result.chart_id,
-                            "title": result.title,
-                            "chart_type": result.chart_type,
-                            "labels": result.labels,
-                            "rows": result.rows[:200],
-                            "total_rows": result.pagination.total,
-                        })
-                    except Exception as e:
-                        charts_data.append({
-                            "chart_id": comp.chart.chart_id,
-                            "title": comp.chart.title_override or comp.chart.chart_id,
-                            "error": str(e),
-                        })
-
-                elif comp.key_value:
-                    charts_data.append({
-                        "type": "kpi",
-                        "label": comp.key_value.label,
-                        "value": comp.key_value.value,
-                        "unit": comp.key_value.unit,
-                        "trend": comp.key_value.trend.model_dump() if comp.key_value.trend else None,
-                    })
-
-            return {
-                "dashboard_id": dashboard_id,
-                "dashboard_title": dashboard.title,
-                "charts": charts_data,
-            }
-
     def tool_get_dashboard_data(dashboard_id: str = "") -> dict:
         """Reads all chart data and KPIs from a dashboard.
 
@@ -2001,18 +1947,18 @@ def make_bi_tools(
                           dashboard linked to the current agent.
 
         Returns:
-            dict with dashboard_title and a list of charts, each containing
-            title, chart_type, labels, rows, and total_rows.
+            dict with success, dashboard_title and components (list of chart
+            entries with title, chart_type, labels, rows and total_rows, and
+            kpi entries with label, value and unit).
         """
         import os
-        owner = _agent_owner()
         if not dashboard_id:
             dashboard_id = os.getenv("AGENT_DASHBOARD_ID", "")
         if not dashboard_id:
             return {"success": False, "error": "No dashboard_id provided and no linked dashboard found."}
         try:
             return _run_async(_bi_module._async_get_dashboard_data(
-                dashboard_id=dashboard_id, owner_email=owner,
+                dashboard_id=dashboard_id, owner_email=owner_email,
             ))
         except Exception as e:
             logger.exception("[BI] tool_get_dashboard_data failed")
