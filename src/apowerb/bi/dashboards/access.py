@@ -43,20 +43,21 @@ def _shows_chart(config: dict, chart_id: str) -> bool:
 
 async def chart_on_visible_dashboard(db: AsyncSession, chart_id: str, viewer_email: str) -> bool:
     """True when a PUBLISHED dashboard visible to the viewer displays the chart."""
-    configs = (
+    rows = (
         await db.execute(
-            select(BusinessIntelligence.config).where(
+            select(BusinessIntelligence.owner, BusinessIntelligence.config).where(
                 BusinessIntelligence.type == "dashboard",
                 BusinessIntelligence.status != BIItemStatus.DELETED,
                 BusinessIntelligence.config["status"].as_string() == DashboardStatus.PUBLISHED.value,
             )
         )
-    ).scalars()
-    for config in configs:
+    ).all()
+    for owner, config in rows:
         if not config or not _shows_chart(config, chart_id):
             continue
         try:
-            dashboard = Dashboard(**config)
+            # The row's owner column decides the organization, not the config copy.
+            dashboard = Dashboard(**{**config, "created_by": owner})
         except Exception as exc:
             logger.warning("[DashboardAccess] invalid dashboard config skipped: %s", exc)
             continue

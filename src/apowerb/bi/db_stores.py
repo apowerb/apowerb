@@ -190,6 +190,12 @@ class DatabaseChartStore(_BaseBIStore):
 # ---------------------------------------------------------------------------
 
 
+def _dashboard_from_row(row: BusinessIntelligence) -> Dashboard:
+    """Dashboard from its row; ``created_by`` is the row's ``owner`` column,
+    the canonical owner, not the copy kept in the editable config."""
+    return Dashboard(**{**row.config, "created_by": row.owner})
+
+
 class DatabaseDashboardStore(_BaseBIStore):
     """Persists Dashboard objects in the business_intelligence table."""
 
@@ -203,7 +209,7 @@ class DatabaseDashboardStore(_BaseBIStore):
             logger.warning("Dashboard row %s has no config", row.id)
             return None
         try:
-            return Dashboard(**row.config)
+            return _dashboard_from_row(row)
         except Exception as e:
             logger.warning("Dashboard row %s has invalid config: %s", row.id, e)
             return None
@@ -220,7 +226,7 @@ class DatabaseDashboardStore(_BaseBIStore):
         row = (await self._db.execute(q)).scalars().first()
         if row and row.config:
             try:
-                return Dashboard(**row.config)
+                return _dashboard_from_row(row)
             except Exception as e:
                 logger.warning("Dashboard row %s (slug match) has invalid config: %s", row.id, e)
 
@@ -233,7 +239,7 @@ class DatabaseDashboardStore(_BaseBIStore):
                 title_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
                 if title_slug == slug:
                     try:
-                        return Dashboard(**r.config)
+                        return _dashboard_from_row(r)
                     except Exception as e:
                         logger.warning("Dashboard row %s (title-slug match) has invalid config: %s", r.id, e)
 
@@ -244,7 +250,7 @@ class DatabaseDashboardStore(_BaseBIStore):
             row = (await self._db.execute(q_id)).scalars().first()
             if row and row.config:
                 try:
-                    return Dashboard(**row.config)
+                    return _dashboard_from_row(row)
                 except Exception as e:
                     logger.warning("Dashboard row %s (uuid fallback) has invalid config: %s", row.id, e)
 
@@ -284,7 +290,7 @@ class DatabaseDashboardStore(_BaseBIStore):
                 logger.warning("Dashboard row %s has no config, skipping", r.id)
                 continue
             try:
-                dashboards.append(Dashboard(**r.config))
+                dashboards.append(_dashboard_from_row(r))
             except Exception as e:
                 logger.warning("Dashboard row %s has invalid config, skipping: %s", r.id, e)
         return dashboards, total
