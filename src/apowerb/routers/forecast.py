@@ -37,8 +37,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apowerb.auth.dependencies import get_current_user
 from apowerb.bi.charts.service import ChartNotFoundError, ChartService
 from apowerb.bi.db_stores import DatabaseChartStore
+from apowerb.bi.forecast_alerts import notify_breach
 from apowerb.bi.forecast_snapshot_store import ForecastSnapshotStore
-from apowerb.bi.forecast_tracking import compute_config_hash, compute_tracking, prunable_snapshot_payload
+from apowerb.bi.forecast_tracking import (
+    build_feedback,
+    compute_config_hash,
+    compute_tracking,
+    prunable_snapshot_payload,
+)
 from apowerb.helpers.database import get_db
 from apowerb.integrations.th2forecast_client import (
     Th2forecastAPIError,
@@ -116,6 +122,7 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
     fail the forecast — the plain relayed body is returned without `tracking`.
     """
     chart = None
+    prior_snapshots: list[dict] = []
     if body.chart_id:
         chart_store = DatabaseChartStore(db, owner=current_user.email)
         try:
@@ -123,6 +130,14 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
         except ChartNotFoundError:
             # Ne révèle pas si le graphique existe pour quelqu'un d'autre.
             return JSONResponse(status_code=404, content=_error_body("Graphique introuvable."))
+        # Chargés avant l'appel moteur : le feedback (contrat étape 7 §2a) en
+        # a besoin, le suivi après coup réutilise la même liste plutôt que de
+        # requêter deux fois.
+        snapshot_store = ForecastSnapshotStore(db)
+        prior_snapshots = [
+            {"config_hash": s.config_hash, "history_end": s.history_end.isoformat(), "payload": s.payload}
+            for s in await snapshot_store.list_for_chart(chart.id)
+        ]
 
     try:
         client = Th2forecastClient()
@@ -132,8 +147,18 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
             content=_error_body("Service de prévision non configuré (TH2FORECAST_URL)"),
         )
 
+    payload = _relay_payload(body)
+    config_hash = None
+    if chart is not None:
+        # Le hash ignore `feedback` (jamais dans _CONFIG_HASH_FIELDS) : le
+        # calculer avant l'injection ou après donnerait le même résultat,
+        # mais avant évite toute ambiguïté.
+        config_hash = compute_config_hash(payload)
+        feedback = build_feedback(prior_snapshots, config_hash)
+        if feedback:
+            payload["feedback"] = feedback
+
     try:
-        payload = _relay_payload(body)
         # client.forecast() est bloquant (requests + sleep de polling) : hors
         # thread, il gèlerait toute la boucle asyncio pendant tout le calcul.
         result = await asyncio.to_thread(client.forecast, payload)
@@ -155,7 +180,8 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
     if chart is not None:
         try:
             result = await _track_and_store(
-                db, chart=chart, owner=current_user.email, payload=payload, result=result
+                db, chart=chart, owner=current_user.email, payload=payload, result=result,
+                prior_snapshots=prior_snapshots, config_hash=config_hash,
             )
         except Exception:
             # Un échec de stockage/suivi ne casse pas la prévision : on la
@@ -164,31 +190,43 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
                 "forecast tracking/storage failed for chart %s (user %s)",
                 body.chart_id, current_user.user_id, exc_info=True,
             )
+        else:
+            # Notification séparée du suivi (contrat étape 7 §2c) : un échec
+            # ici ne doit jamais faire perdre le `tracking` déjà calculé.
+            try:
+                await _notify_latest_breaches(
+                    db, chart=chart, owner=current_user.email, tracking=result.get("tracking")
+                )
+            except Exception:
+                logger.error(
+                    "forecast breach notification failed for chart %s (user %s)",
+                    body.chart_id, current_user.user_id, exc_info=True,
+                )
 
     return result
 
 
 async def _track_and_store(
-    db: AsyncSession, *, chart, owner: str, payload: dict, result: dict
+    db: AsyncSession, *, chart, owner: str, payload: dict, result: dict,
+    prior_snapshots: list[dict], config_hash: str,
 ) -> dict:
     """Suivi puis instantané (contrat étape 5 §3 : dans cet ordre). Les
     actuels du suivi et `history_end` viennent de `result["series"]`
-    (réponse du moteur, régularisée) — jamais de `data` brut."""
+    (réponse du moteur, régularisée) — jamais de `data` brut. `prior_snapshots`
+    et `config_hash` sont déjà calculés par l'appelant (réutilisés pour le
+    feedback envoyé au moteur, contrat étape 7 §2a) — pas de deuxième requête."""
     series = result.get("series", [])
     history_end = _history_end(series)
     if history_end is None:
         logger.warning("forecast response for chart %s has no series history to track", chart.id)
         return result
 
-    config_hash = compute_config_hash(payload)
-    snapshot_store = ForecastSnapshotStore(db)
-    existing = await snapshot_store.list_for_chart(chart.id)
-    snapshots = [
-        {"config_hash": s.config_hash, "history_end": s.history_end.isoformat(), "payload": s.payload}
-        for s in existing
-    ]
-    tracking = compute_tracking(series=series, snapshots=snapshots, config_hash=config_hash)
+    tracking = compute_tracking(
+        series=series, snapshots=prior_snapshots, config_hash=config_hash,
+        events=payload.get("events") or [],
+    )
 
+    snapshot_store = ForecastSnapshotStore(db)
     await snapshot_store.upsert(
         chart_id=chart.id,
         owner=owner,
@@ -200,6 +238,32 @@ async def _track_and_store(
     )
 
     return {**result, "tracking": tracking}
+
+
+async def _notify_latest_breaches(db: AsyncSession, *, chart, owner: str, tracking: dict | None) -> None:
+    """Une notification par rupture du jour le plus récent (contrat étape 7
+    §2c) — dédoublonnée par `notify_breach` sur (chart_id, group, level,
+    date), donc un rejeu du même appel ne notifie jamais deux fois."""
+    if not tracking or not tracking.get("latest_breach"):
+        return
+    breaches = tracking.get("breaches") or []
+    if not breaches:
+        return
+    latest_date = max(b["date"] for b in breaches)
+    for b in breaches:
+        if b["date"] != latest_date:
+            continue
+        await notify_breach(
+            db,
+            chart_id=chart.id,
+            owner_email=owner,
+            group=b["group"],
+            level=b["level"],
+            date=date_type.fromisoformat(b["date"]),
+            direction=b["direction"],
+            kind=b["explanation"]["kind"],
+            link=f"/bi/{chart.id}",
+        )
 
 
 @router.post("/forecast/interpret")
