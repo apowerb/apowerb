@@ -24,6 +24,7 @@ logger = getLogger(__name__)
 _NOT_FOUND_MESSAGE = "Jeu de données introuvable."
 
 _MAX_LIST_RESULTS = 50
+_DESCRIBE_ROW_CAP = 100_000
 _MAX_DISTINCT = 1000
 _TYPE_INFERENCE_THRESHOLD = 0.9
 
@@ -235,6 +236,9 @@ async def _load_owned_dataset_rows(dataset_id: str, owner: str, limit: int) -> d
     "name": str}`` — ``truncated`` n'est JAMAIS silencieux : c'est à
     l'appelant (l'outil de prévision) de refuser de continuer si True.
     """
+    # Un store sans propriétaire ne filtre rien : un owner vide ne lit rien.
+    if not owner:
+        return {"success": False, "error": _NOT_FOUND_MESSAGE}
     row = await _get_owned_dataset_row(dataset_id, owner)
     if row is None:
         return {"success": False, "error": _NOT_FOUND_MESSAGE}
@@ -322,7 +326,7 @@ def tool_list_datasets(folder_name: str = "") -> dict:
 
 
 async def _async_describe_dataset(dataset_id: str, owner: str) -> dict:
-    loaded = await _load_owned_dataset_rows(dataset_id, owner, 100_000)
+    loaded = await _load_owned_dataset_rows(dataset_id, owner, _DESCRIBE_ROW_CAP)
     if not loaded["success"]:
         return loaded
 
@@ -333,6 +337,8 @@ async def _async_describe_dataset(dataset_id: str, owner: str) -> dict:
         "name": loaded["name"],
         "columns": _describe_columns(rows),
         "sample_rows": rows[:5],
+        # True : statistiques calculées sur les premières lignes seulement.
+        "truncated": loaded["truncated"],
     }
 
 
@@ -351,7 +357,8 @@ def tool_describe_dataset(dataset_id: str, folder_name: str = "") -> dict:
     Returns:
         dict with success status; on success, columns (list of
         {name, type, non_null_count, distinct_count, min, max,
-        suggested_frequency}) and sample_rows (up to 5). On failure, the
+        suggested_frequency}), sample_rows (up to 5) and truncated (True
+        when the stats cover only the first 100000 rows). On failure, the
         same "not found" message whether the dataset belongs to someone
         else or does not exist.
     """

@@ -131,3 +131,52 @@ class TestChartCreation:
 
         assert result["success"] is False
         assert _run(store.list_all()) == []
+
+
+class TestNoOwnerContext:
+    def test_empty_owner_is_refused_before_any_read(self, monkeypatch):
+        monkeypatch.setenv("AGENT_OWNER", "")
+        with patch.object(bi, "_load_owned_dataset_rows") as mock_load:
+            result = bi.tool_create_forecast_chart(
+                dataset_id="ds1", date_var="date", target_var="sales",
+                horizon=3, title="Ventes prévues",
+            )
+        assert result["success"] is False
+        mock_load.assert_not_called()
+
+
+class TestForecastRunsOutsideTheAsyncBridge:
+    """_run_async abandonne au bout de 30 s alors que le fil continue : une
+    prévision lente calculée dedans renverrait une erreur puis créerait
+    quand même le graphique. Elle doit tourner hors du pont async."""
+
+    def test_forecast_call_is_not_made_inside_run_async(self, monkeypatch):
+        store = InMemoryChartStore()
+        monkeypatch.setattr(db_stores, "DatabaseChartStore", lambda db, owner=None: store)
+        inside = {"now": False, "seen": []}
+        real_run_async = bi._run_async
+
+        def tracking_run_async(coro):
+            inside["now"] = True
+            try:
+                return real_run_async(coro)
+            finally:
+                inside["now"] = False
+
+        monkeypatch.setattr(bi, "_run_async", tracking_run_async)
+
+        def forecast(*_a, **_k):
+            inside["seen"].append(inside["now"])
+            return _TH2FORECAST_RESPONSE
+
+        with patch.object(bi, "_load_owned_dataset_rows") as mock_load, \
+             patch.object(bi.api_call, "Th2forecastClient") as mock_ctor:
+            mock_load.return_value = _loaded()
+            mock_ctor.return_value.forecast.side_effect = forecast
+            result = bi.tool_create_forecast_chart(
+                dataset_id="ds1", date_var="date", target_var="sales",
+                horizon=3, title="Ventes prévues",
+            )
+
+        assert result["success"] is True
+        assert inside["seen"] == [False]

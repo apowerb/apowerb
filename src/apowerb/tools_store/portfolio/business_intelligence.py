@@ -1067,62 +1067,20 @@ def tool_create_chart(
         return {"success": False, "error": str(e)}
 
 
-async def _async_create_forecast_chart(
+async def _async_save_forecast_chart(
     dataset_id: str,
-    date_var: str,
     target_var: str,
-    horizon: int,
     title: str,
-    group_var: str,
-    frequency: str,
+    config: dict,
     organization_id: str,
     project_id: str,
     owner_email: str,
-) -> dict:
+):
     from apowerb.bi.charts.core import ChartOrigin, ChartType, SourceType
     from apowerb.bi.charts.schemas import ChartCreateRequest, DataSourceSchema
     from apowerb.bi.charts.service import ChartConflictError, ChartService
     from apowerb.bi.db_stores import DatabaseChartStore
 
-    loaded = await _load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS)
-    if not loaded["success"]:
-        return {"success": False, "error": loaded["error"]}
-    if loaded["truncated"]:
-        return {
-            "success": False,
-            "error": (
-                f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes, au-delà du plafond "
-                "supporté pour la prévision. Il ne peut pas être chargé en entier."
-            ),
-        }
-    column_error = validate_forecast_columns(loaded["columns"], date_var, target_var, group_var)
-    if column_error:
-        return {"success": False, "error": column_error}
-
-    # Même chemin que tool_thaink2_forecast, sans chart_id : la prévision est
-    # calculée AVANT de créer le graphique, pour ne jamais persister un
-    # graphique de prévision dont la prévision a échoué.
-    forecast_summary = api_call._execute_forecast(
-        date_var=date_var, target_var=target_var, horizon=horizon,
-        data_rows=loaded["rows"], group_var=group_var or None,
-        frequency=frequency or None, models=["auto"],
-    )
-    if forecast_summary.get("status") != "success":
-        return {
-            "success": False,
-            "error": forecast_summary.get("message")
-            or str(forecast_summary.get("errors")),
-        }
-
-    config = {
-        "date_var": date_var,
-        "target_var": target_var,
-        "group_var": group_var,
-        "horizon": horizon,
-        "frequency": frequency,
-        "models": ["auto"],
-        "confidence_levels": [0.8, 0.95],
-    }
     source_schema = DataSourceSchema(
         source_type=SourceType.CSV,
         query=f"csv://{dataset_id}",
@@ -1142,17 +1100,10 @@ async def _async_create_forecast_chart(
 
     machine_name = f"forecast-{dataset_id}-{target_var}"
     try:
-        chart = await _create_with_name(machine_name)
+        return await _create_with_name(machine_name)
     except ChartConflictError:
         import uuid
-        chart = await _create_with_name(f"{machine_name}-{uuid.uuid4().hex[:6]}")
-
-    return {
-        "success": True,
-        "chart_id": chart.id,
-        "title": chart.title,
-        "summary": forecast_summary,
-    }
+        return await _create_with_name(f"{machine_name}-{uuid.uuid4().hex[:6]}")
 
 
 def tool_create_forecast_chart(
@@ -1189,13 +1140,60 @@ def tool_create_forecast_chart(
         On failure (unknown owner/dataset, unknown column, dataset too
         large, or the forecast service failing), no chart is created.
     """
+    owner_email = _agent_owner()
+    if not owner_email:
+        return {"success": False, "error": "No owner context."}
     try:
-        return _run_async(_async_create_forecast_chart(
-            dataset_id=dataset_id, date_var=date_var, target_var=target_var,
-            horizon=horizon, title=title, group_var=group_var, frequency=frequency,
+        loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS))
+        if not loaded["success"]:
+            return {"success": False, "error": loaded["error"]}
+        if loaded["truncated"]:
+            return {
+                "success": False,
+                "error": (
+                    f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes, au-delà du plafond "
+                    "supporté pour la prévision. Il ne peut pas être chargé en entier."
+                ),
+            }
+        column_error = validate_forecast_columns(loaded["columns"], date_var, target_var, group_var)
+        if column_error:
+            return {"success": False, "error": column_error}
+
+        # Hors de _run_async (plafonné à 30 s alors que Chronos peut prendre
+        # une minute) et AVANT l'enregistrement : un graphique n'est créé que
+        # si sa prévision a réussi.
+        forecast_summary = api_call._execute_forecast(
+            date_var=date_var, target_var=target_var, horizon=horizon,
+            data_rows=loaded["rows"], group_var=group_var or None,
+            frequency=frequency or None, models=["auto"],
+        )
+        if forecast_summary.get("status") != "success":
+            return {
+                "success": False,
+                "error": forecast_summary.get("message")
+                or str(forecast_summary.get("errors")),
+            }
+
+        config = {
+            "date_var": date_var,
+            "target_var": target_var,
+            "group_var": group_var,
+            "horizon": horizon,
+            "frequency": frequency,
+            "models": ["auto"],
+            "confidence_levels": [0.8, 0.95],
+        }
+        chart = _run_async(_async_save_forecast_chart(
+            dataset_id=dataset_id, target_var=target_var, title=title, config=config,
             organization_id=_agent_org(), project_id=_agent_project(),
-            owner_email=_agent_owner(),
+            owner_email=owner_email,
         ))
+        return {
+            "success": True,
+            "chart_id": chart.id,
+            "title": chart.title,
+            "summary": forecast_summary,
+        }
     except Exception as e:
         logger.exception("[BI] tool_create_forecast_chart failed")
         return {"success": False, "error": str(e)}

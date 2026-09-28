@@ -203,3 +203,26 @@ class TestLoadOwnedDatasetRows:
         assert result["success"] is True
         assert result["truncated"] is False
         assert len(result["rows"]) == 4
+
+
+class TestEmptyOwnerReadsNothing:
+    """Un store sans propriétaire ne filtre plus rien : le helper doit
+    refuser un propriétaire vide au lieu de lire le jeu de n'importe qui."""
+
+    @pytest.mark.asyncio
+    async def test_empty_owner_is_not_found_even_for_an_existing_dataset(self, monkeypatch):
+        _register_dataset("ds-a", OWNER, "a.csv", ["date", "revenue"], 4, "bi/data/x/y/data/ds-a.csv")
+        _patch_read_file(monkeypatch, _CSV_MONTHLY.encode())
+        loaded = await bi_datasets._load_owned_dataset_rows("ds-a", "", 100_000)
+        assert loaded == {"success": False, "error": "Jeu de données introuvable."}
+
+
+class TestDescribeReportsTruncation:
+    def test_describe_flags_a_dataset_beyond_the_cap(self, monkeypatch):
+        _register_dataset("ds-big", OWNER, "big.csv", ["date", "revenue"], 3, "bi/data/x/y/data/ds-big.csv")
+        _patch_read_file(monkeypatch, _CSV_MONTHLY.encode())
+        monkeypatch.setenv("AGENT_OWNER", OWNER)
+        monkeypatch.setattr(bi_datasets, "_DESCRIBE_ROW_CAP", 2)
+        result = bi_datasets.tool_describe_dataset("ds-big")
+        assert result["success"] is True
+        assert result["truncated"] is True
