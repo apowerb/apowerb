@@ -22,7 +22,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apowerb.bi.dashboards.core import DashboardStatus, DashboardVisibility
+from apowerb.bi.dashboards.access import visible_to
+from apowerb.bi.dashboards.core import DashboardStatus
 from apowerb.bi.dashboards.schema import (
     AddComponentRequest,
     UpdateComponentRequest,
@@ -96,31 +97,18 @@ async def list_shared_dashboards(
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> DashboardListResponse:
     from apowerb.bi.db_stores import DatabaseDashboardStore
-    from apowerb.helpers.emails import (
-        get_domain_from_email,
-        get_domain_from_email_or_none,
-    )
 
     # Query all published dashboards (no owner filter)
     store = DatabaseDashboardStore(db, owner=None)
     all_dashboards, _ = await store.list(page=1, page_size=200)
 
-    viewer_domain = get_domain_from_email(user.email)
-    shared = []
-    for d in all_dashboards:
-        # Skip own dashboards
-        if d.created_by == user.email:
-            continue
-        # Must be published
-        if d.status != DashboardStatus.PUBLISHED:
-            continue
-        vis = d.visibility if d.visibility != DashboardVisibility.PRIVATE else DashboardVisibility.PUBLIC
-        if vis == DashboardVisibility.PUBLIC:
-            shared.append(d)
-        elif vis == DashboardVisibility.ORGANIZATION:
-            owner_domain = get_domain_from_email_or_none(d.created_by)
-            if owner_domain is not None and viewer_domain == owner_domain:
-                shared.append(d)
+    shared = [
+        d for d in all_dashboards
+        # Skip own dashboards; must be published and visible to the viewer
+        if d.created_by != user.email
+        and d.status == DashboardStatus.PUBLISHED
+        and visible_to(d, user.email)
+    ]
 
     total = len(shared)
     start = (page - 1) * page_size
@@ -199,10 +187,6 @@ async def get_public_dashboard(
     user: Annotated[user_schemas.User | None, Depends(get_optional_user)],
 ):
     from apowerb.bi.db_stores import DatabaseDashboardStore
-    from apowerb.helpers.emails import (
-        get_domain_from_email,
-        get_domain_from_email_or_none,
-    )
 
     store = DatabaseDashboardStore(db, owner=None)  # no owner filter
     dashboard = await store.get_by_slug(slug)
@@ -214,22 +198,9 @@ async def get_public_dashboard(
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    # Published dashboards default to public visibility (backwards compat)
-    vis = dashboard.visibility if dashboard.visibility != DashboardVisibility.PRIVATE else DashboardVisibility.PUBLIC
-
-    if vis == DashboardVisibility.PUBLIC:
-        # Any logged-in user can view
-        return DashboardResponse.from_domain(dashboard)
-
-    if vis == DashboardVisibility.ORGANIZATION:
-        # Only users from the same email domain
-        viewer_domain = get_domain_from_email(user.email)
-        owner_domain = get_domain_from_email_or_none(dashboard.created_by)
-        if owner_domain is None or viewer_domain != owner_domain:
-            raise HTTPException(status_code=403, detail="Not in the same organization")
-        return DashboardResponse.from_domain(dashboard)
-
-    raise HTTPException(status_code=403, detail="Dashboard is private")
+    if not visible_to(dashboard, user.email):
+        raise HTTPException(status_code=403, detail="Not in the same organization")
+    return DashboardResponse.from_domain(dashboard)
 
 
 @router.patch(
