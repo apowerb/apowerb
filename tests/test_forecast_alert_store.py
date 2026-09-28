@@ -118,6 +118,8 @@ class TestNotifyBreach:
         assert len(rows) == 1
         assert rows[0].type == "warning"
         assert rows[0].link == "/bi/chart1"
+        assert rows[0].title == "Rupture de prévision"
+        assert rows[0].message == "La série « A » est au-dessus de la bande prévue le 01/02/2024."
 
     @pytest.mark.asyncio
     async def test_second_call_for_the_same_breach_does_not_notify_again(self, full_db, monkeypatch):

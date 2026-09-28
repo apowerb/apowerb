@@ -106,10 +106,10 @@ async def notify_breach(
     if not await store.try_reserve(chart_id=chart_id, group=group, level=level, date=date, commit=False):
         return False
 
-    direction_fr = "au-dessus" if direction == "above" else "en-dessous"
-    series_label = str(group) if group else "la serie"
-    title = "Rupture de prevision"
-    message = f"{series_label} est {direction_fr} de la bande prevue le {date.isoformat()}."
+    direction_fr = "au-dessus" if direction == "above" else "en dessous"
+    series_label = f"La série « {group} »" if group else "La série"
+    title = "Rupture de prévision"
+    message = f"{series_label} est {direction_fr} de la bande prévue le {date.strftime('%d/%m/%Y')}."
 
     notification = Notification(
         user_id=user_id,
