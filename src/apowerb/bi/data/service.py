@@ -306,7 +306,9 @@ class ChartDataService:
                     db_session=db_session,
                 )
             elif source_type == SourceType.CSV or (chart.source.query and chart.source.query.startswith("csv://")):
-                executor = CsvQueryExecutor()
+                # Scoped to the chart owner, not the reader: a published
+                # dashboard must stay readable by any viewer (contrat lot B).
+                executor = CsvQueryExecutor(owner=chart.created_by or "")
             elif chart.source.connection_config_id:
                 if not user_id:
                     raise NoDataSourceError(
