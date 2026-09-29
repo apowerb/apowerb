@@ -96,7 +96,8 @@ def _ensure_integration_tokens() -> None:
     """
     global _integration_loaded_for
 
-    owner = os.getenv("AGENT_OWNER")
+    from apowerb.core.invocation_context import get_agent_owner
+    owner = get_agent_owner() or None
     if not owner:
         return
 
@@ -648,7 +649,8 @@ def shared_tracker_key(prefix: str, item_path: str) -> str:
         prefix: Tracker type prefix (e.g. "campaign", "followup", "reply").
         item_path: Path to the file being tracked.
     """
-    owner = os.getenv("AGENT_OWNER", "default")
+    from apowerb.core.invocation_context import get_agent_owner
+    owner = get_agent_owner("default")
     return f"{prefix}::{owner}::{item_path}"
 
 

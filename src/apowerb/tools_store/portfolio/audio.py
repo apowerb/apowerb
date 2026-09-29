@@ -523,7 +523,8 @@ def tool_text_to_speech(
             audio_bytes, content_type = tts_fn(text, voice, output_format)
 
             # Save to uploads folder
-            agent_id = os.getenv("ROOT_AGENT_ID", "")
+            from apowerb.core.invocation_context import get_root_agent_id
+            agent_id = get_root_agent_id()
             folder = str(agent_upload_dir(agent_id))
             os.makedirs(folder, exist_ok=True)
 

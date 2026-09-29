@@ -426,7 +426,8 @@ def tool_available_data() -> dict:
         dict: Success status with list of tables or error message
     """
 
-    agent_owner: str = os.getenv("AGENT_OWNER")  # type: ignore
+    from apowerb.core.invocation_context import get_agent_owner
+    agent_owner: str = get_agent_owner()  # type: ignore
     organization_id = agent_owner.split("@")[1].split(".")[0]
     bucket_name: str = f"th2{organization_id}"
     prefix: str = "thaink2_data_pool"
@@ -467,7 +468,8 @@ def tool_data_loader(data_table: str) -> dict:
         dict: Success status with data or error message
     """
 
-    agent_owner: str = os.getenv("AGENT_OWNER")
+    from apowerb.core.invocation_context import get_agent_owner
+    agent_owner: str = get_agent_owner()
 
     organization_id = agent_owner.split("@")[1].split(".")[0]
     bucket_name: str = f"th2{organization_id}"
@@ -488,8 +490,9 @@ def tool_data_loader(data_table: str) -> dict:
                 "message": f"Data table '{data_table}' does not exist in S3 storage.",
             }
 
-        agent_id = os.getenv("ROOT_AGENT_ID", "")
-        agent_owner: str = os.getenv("AGENT_OWNER", "unknown_user")
+        from apowerb.core.invocation_context import get_root_agent_id
+        agent_id = get_root_agent_id()
+        agent_owner: str = get_agent_owner("unknown_user")
 
         # create subfolder for the agent if it doesn't exist
         agent_folder = str(agent_upload_dir(agent_id))

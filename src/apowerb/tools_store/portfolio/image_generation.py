@@ -250,7 +250,8 @@ def tool_generate_image(
             ext = ".png" if "png" in mime_type else ".jpeg"
 
             # Save to uploads folder
-            agent_id = os.getenv("ROOT_AGENT_ID", "")
+            from apowerb.core.invocation_context import get_root_agent_id
+            agent_id = get_root_agent_id()
             folder = str(agent_upload_dir(agent_id))
             os.makedirs(folder, exist_ok=True)
 

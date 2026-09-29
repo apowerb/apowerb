@@ -26,7 +26,8 @@ def _ensure_integration_tokens() -> None:
     if _integration_loaded:
         return
 
-    owner = os.getenv("AGENT_OWNER")
+    from apowerb.core.invocation_context import get_agent_owner
+    owner = get_agent_owner() or None
     if not owner:
         return
 
