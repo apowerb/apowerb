@@ -103,9 +103,9 @@ async def _get_session():
 
 
 def _agent_owner() -> str:
-    """Return the current agent's owner email from environment."""
-    import os
-    return os.getenv("AGENT_OWNER", "")
+    """Return the owner email of the running agent (per-invocation)."""
+    from apowerb.core.invocation_context import get_agent_owner
+    return get_agent_owner()
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +304,9 @@ def _agent_db_connection(owner: str | None = None) -> tuple[str, str] | None:
     the platform's own database.
     """
     import json
-    import os
 
-    agent_id = os.getenv("ROOT_AGENT_ID", "")
+    from apowerb.core.invocation_context import get_root_agent_id
+    agent_id = get_root_agent_id()
     if not agent_id:
         return None
     from apowerb.core.agent_helpers import get_agent_details

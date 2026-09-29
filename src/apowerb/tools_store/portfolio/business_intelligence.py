@@ -333,13 +333,12 @@ async def _async_create_dashboard(
     slug: str,
     owner_email: str,
 ) -> dict:
-    import os
-
     from apowerb.bi.dashboards.schema import DashboardCreateRequest
     from apowerb.bi.dashboards.service import DashboardService
     from apowerb.bi.db_stores import DatabaseDashboardStore
 
-    agent_id_str = os.getenv("ROOT_AGENT_ID", "")
+    from apowerb.core.invocation_context import get_root_agent_id
+    agent_id_str = get_root_agent_id()
     agent_id = int(agent_id_str) if agent_id_str else None
 
     async with _get_session() as db:
@@ -761,21 +760,21 @@ async def _async_remove_chart_from_dashboard(
 
 
 def _agent_owner() -> str:
-    """Return the current agent's owner email from environment."""
-    import os
-    return os.getenv("AGENT_OWNER", "")
+    """Return the owner email of the running agent (per-invocation)."""
+    from apowerb.core.invocation_context import get_agent_owner
+    return get_agent_owner()
 
 
 def _agent_org() -> str:
-    """Return the current agent's organization_id from environment."""
-    import os
-    return os.getenv("AGENT_ORGANIZATION_ID", "default")
+    """Return the organization_id of the running agent (per-invocation)."""
+    from apowerb.core.invocation_context import get_agent_organization_id
+    return get_agent_organization_id()
 
 
 def _agent_project() -> str:
-    """Return the current agent's project_id from environment."""
-    import os
-    return os.getenv("AGENT_PROJECT_ID", "thaink2")
+    """Return the project_id of the running agent (per-invocation)."""
+    from apowerb.core.invocation_context import get_agent_project_id
+    return get_agent_project_id()
 
 
 # ---------------------------------------------------------------------------

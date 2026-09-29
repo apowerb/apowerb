@@ -407,6 +407,21 @@ def to_agent(agent_name: str) -> LlmAgent:
         "project_id", "thaink2"
     )  # Set AGENT_PROJECT_ID for BI tools
 
+    # Per-invocation identity (async-safe). The env vars above stay as a
+    # fallback for background paths, but at RUN time owner-scoped tools read
+    # these ContextVars, bound below by a before_agent_callback, so two cached
+    # agents of two customers in the same worker no longer cross identities
+    # (measured 2026-09-29). See apowerb.core.invocation_context.
+    from apowerb.core.invocation_context import (
+        make_identity_before_agent_callback,
+    )
+    _identity_before_cb = make_identity_before_agent_callback(
+        owner=owner_id,
+        organization_id=agent_details.get("organization_id", "default"),
+        project_id=agent_details.get("project_id", "thaink2"),
+        agent_id=agent_id,
+    )
+
     tools_ids_raw = agent_details.get("agent_tools")
     logger.info(f"[TO_AGENT] Raw agent_tools from DB: {tools_ids_raw}")
     from apowerb.core.agent_main import _parse_string_list
@@ -507,12 +522,14 @@ def to_agent(agent_name: str) -> LlmAgent:
             name=agent_name,
             description=agent_details["agent_description"],
             sub_agents=sub_agents,
+            before_agent_callback=_identity_before_cb,
         )
     elif agent_type == "parallel":
         agent = ParallelAgent(
             name=agent_name,
             description=agent_details["agent_description"],
             sub_agents=sub_agents,
+            before_agent_callback=_identity_before_cb,
         )
     elif agent_type == "loop":
         # Loop agent: wraps sub-agents using ADK LoopAgent.
@@ -544,6 +561,7 @@ def to_agent(agent_name: str) -> LlmAgent:
             name=agent_name,
             description=agent_details["agent_description"],
             sub_agents=sub_agents,
+            before_agent_callback=_identity_before_cb,
             max_iterations=max_iter,
         )
     else:
@@ -1010,6 +1028,21 @@ def to_agent(agent_name: str) -> LlmAgent:
                 agent_kwargs.get("after_agent_callback")
             )
 
+        # Identity callback runs FIRST so owner-scoped tools see the right
+        # customer before any gate callback or tool executes.
+        _existing_before = agent_kwargs.get("before_agent_callback")
+        if _existing_before is None:
+            agent_kwargs["before_agent_callback"] = _identity_before_cb
+        elif isinstance(_existing_before, list):
+            agent_kwargs["before_agent_callback"] = [
+                _identity_before_cb,
+                *_existing_before,
+            ]
+        else:
+            agent_kwargs["before_agent_callback"] = [
+                _identity_before_cb,
+                _existing_before,
+            ]
         agent = LlmAgent(**agent_kwargs)
 
     logger.info(

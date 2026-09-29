@@ -63,3 +63,124 @@ def resolve_integration_user(prefer_invoker: bool = True) -> Optional[str]:
         if invoker:
             return invoker
     return os.getenv("AGENT_OWNER") or None
+
+
+# ---------------------------------------------------------------------------
+# Owner-scoped identity (owner / organization / project / root agent id).
+#
+# Historically written to ``os.environ`` by ``to_agent`` at BUILD time and read
+# by owner-scoped tools (BI dashboards, S3 buckets, Odoo, MCP) at CALL time.
+# With two customers’ agents cached in one uvicorn worker, the second build
+# overwrote the first, so the first agent’s tools acted as the second customer
+# (cross-customer data exposure, measured 2026-09-29). These are async-safe
+# ContextVars, bound per invocation by a ``before_agent_callback`` (see
+# ``agent_utils.make_identity_before_agent_callback``), so concurrent runs in
+# the same worker never race. Getters fall back to the legacy env var, keeping
+# background/scheduler paths that only set the env unchanged.
+# ---------------------------------------------------------------------------
+
+_agent_owner_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_agent_owner", default=None
+)
+_agent_org_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_agent_organization_id", default=None
+)
+_agent_project_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_agent_project_id", default=None
+)
+_root_agent_id_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_root_agent_id", default=None
+)
+# (invocation_id) for which the root agent id above was recorded. The first
+# agent that runs in an invocation is its root; sub-agents must not overwrite
+# it, so we only set the root when the invocation changes.
+_root_invocation_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_root_invocation", default=None
+)
+
+
+def bind_agent_identity(
+    *,
+    owner: Optional[str],
+    organization_id: Optional[str],
+    project_id: Optional[str],
+    agent_id: Optional[str],
+    invocation_id: Optional[str],
+) -> None:
+    """Bind the running agent’s owner-scoped identity for the current task.
+
+    ``owner`` / ``organization_id`` / ``project_id`` are set for every agent
+    (including sub-agents) so a tool always sees the identity of the agent that
+    invoked it. ``agent_id`` is recorded as the root only for the FIRST agent of
+    an invocation — sub-agents keep the root that started the run.
+    """
+    if owner is not None:
+        _agent_owner_var.set(owner)
+    if organization_id is not None:
+        _agent_org_var.set(organization_id)
+    if project_id is not None:
+        _agent_project_var.set(project_id)
+    if agent_id is not None and _root_invocation_var.get() != invocation_id:
+        _root_agent_id_var.set(str(agent_id))
+        _root_invocation_var.set(invocation_id)
+
+
+def get_agent_owner(default: str = "") -> str:
+    """Owner email of the running agent (ContextVar, else legacy env var)."""
+    val = _agent_owner_var.get()
+    if val is not None:
+        return val
+    return os.getenv("AGENT_OWNER", default)
+
+
+def get_agent_organization_id(default: str = "default") -> str:
+    """Organization id of the running agent (ContextVar, else legacy env var)."""
+    val = _agent_org_var.get()
+    if val is not None:
+        return val
+    return os.getenv("AGENT_ORGANIZATION_ID", default)
+
+
+def get_agent_project_id(default: str = "thaink2") -> str:
+    """Project id of the running agent (ContextVar, else legacy env var)."""
+    val = _agent_project_var.get()
+    if val is not None:
+        return val
+    return os.getenv("AGENT_PROJECT_ID", default)
+
+
+def get_root_agent_id(default: str = "") -> str:
+    """Root agent id of the current invocation (ContextVar, else env var)."""
+    val = _root_agent_id_var.get()
+    if val is not None:
+        return val
+    return os.getenv("ROOT_AGENT_ID", default)
+
+
+def make_identity_before_agent_callback(
+    *,
+    owner: Optional[str],
+    organization_id: Optional[str],
+    project_id: Optional[str],
+    agent_id: Optional[str],
+):
+    """Build a ``before_agent_callback`` that binds this agent identity.
+
+    ADK invokes the callback with the run ``callback_context`` at the start of
+    the agent run, inside the same asyncio task that will call the tools, so the
+    ContextVars it sets are visible to owner-scoped tools without racing other
+    concurrent invocations in the same worker.
+    """
+
+    def _bind_identity(callback_context=None):  # noqa: ANN001 - ADK signature
+        invocation_id = getattr(callback_context, "invocation_id", None)
+        bind_agent_identity(
+            owner=owner,
+            organization_id=organization_id,
+            project_id=project_id,
+            agent_id=agent_id,
+            invocation_id=invocation_id,
+        )
+        return None
+
+    return _bind_identity

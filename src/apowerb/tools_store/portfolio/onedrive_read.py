@@ -494,7 +494,8 @@ def tool_download_file(
         # used by factory-bound tools (pdf_to_images, read_uploaded_file,
         # create_downloadable_file). Otherwise downloaded files are invisible
         # to subsequent tool calls.
-        agent_id = os.getenv("ROOT_AGENT_ID", "unknown_agent")
+        from apowerb.core.invocation_context import get_root_agent_id
+        agent_id = get_root_agent_id("unknown_agent")
         agent_folder = f"agent{agent_id}"
         save_dir = str(uploads_dir() / agent_folder)
         os.makedirs(save_dir, exist_ok=True)

@@ -42,20 +42,37 @@ def _no_encryption(monkeypatch):
 
 def test_builder_uses_env_model_and_key(configured, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    model = builder.build_litellm_model(
+    captured = {}
+
+    def fake_litellm(**kwargs):
+        captured.update(kwargs)
+        return type("Model", (), kwargs)()
+
+    monkeypatch.setattr(builder, "LiteLlm", fake_litellm)
+    builder.build_litellm_model(
         {"agent_model": "thaink2/default", "agent_model_params": {}}, temperature=None
     )
-    assert model.model == "gemini/gemini-2.5-flash"
-    # Gemini passe par l'env var, cf. commentaire du builder
+    assert captured["model"] == "gemini/gemini-2.5-flash"
+    # The shared key now travels as the api_key PARAM, never through os.environ:
+    # writing it there leaked it to other cached agents in the worker
+    # (cross-customer, fixed 2026-09-29).
+    assert captured["api_key"] == "sk-shared"
     import os
 
-    assert os.environ["GEMINI_API_KEY"] == "sk-shared"
+    assert "GEMINI_API_KEY" not in os.environ
 
 
 def test_agent_carried_credentials_are_ignored(configured, monkeypatch):
     """Cle et endpoint plantes sur l'agent ne doivent jamais servir."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    model = builder.build_litellm_model(
+    captured = {}
+
+    def fake_litellm(**kwargs):
+        captured.update(kwargs)
+        return type("Model", (), kwargs)()
+
+    monkeypatch.setattr(builder, "LiteLlm", fake_litellm)
+    builder.build_litellm_model(
         {
             "agent_model": "thaink2/default",
             "agent_model_params": {
@@ -65,11 +82,14 @@ def test_agent_carried_credentials_are_ignored(configured, monkeypatch):
         },
         temperature=None,
     )
-    assert model.model == "gemini/gemini-2.5-flash"
-    assert "evil.example" not in str(getattr(model, "api_base", "") or "")
+    assert captured["model"] == "gemini/gemini-2.5-flash"
+    assert "evil.example" not in str(captured.get("api_base", "") or "")
+    # The shared thaink2 key is used, never the agent-carried attacker key, and
+    # it does not leak through os.environ (fixed 2026-09-29).
+    assert captured["api_key"] == "sk-shared"
     import os
 
-    assert os.environ["GEMINI_API_KEY"] == "sk-shared"
+    assert "GEMINI_API_KEY" not in os.environ
 
 
 def test_builder_honours_configured_api_base(configured_openai_compat):

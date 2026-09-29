@@ -90,10 +90,12 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
             **_litellm_kwargs,
         )
 
-    # For Gemini models, LiteLLM reads API key from env var, not api_key param
-    if model_api_key and agent_details["agent_model"].startswith("gemini/"):
-        os.environ["GEMINI_API_KEY"] = model_api_key
-    elif model_api_key:
+    # Pass the per-agent key as the api_key PARAM for every provider, Gemini
+    # included: litellm routes it to the Gemini provider (verified against the
+    # litellm bundled here). Writing it to os.environ["GEMINI_API_KEY"] was a
+    # cross-customer leak — a cached agent then called the model with the key of
+    # whichever agent was built last in the worker (measured 2026-09-29).
+    if model_api_key:
         _litellm_kwargs["api_key"] = model_api_key
     if model_api_version:
         _litellm_kwargs["api_version"] = model_api_version

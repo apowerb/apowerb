@@ -9,7 +9,6 @@ They are cached in-process so the DB is hit at most once per agent session.
 """
 
 import logging
-import os
 from typing import Any, Optional
 
 import httpx
@@ -27,7 +26,8 @@ _creds_cache: dict[str, dict] = {}
 
 def _load_creds() -> dict:
     """Return decrypted Odoo credentials for the current agent owner, caching them."""
-    owner = os.getenv("AGENT_OWNER") or ""
+    from apowerb.core.invocation_context import get_agent_owner
+    owner = get_agent_owner() or ""
     cached = _creds_cache.get(owner)
     if cached:
         return cached
