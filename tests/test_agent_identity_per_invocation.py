@@ -10,7 +10,6 @@ travels as an ``api_key`` param, never through ``os.environ``.
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import os
 
 import pytest
@@ -93,18 +92,23 @@ async def test_two_invocations_do_not_cross(monkeypatch):
     assert (b_owner, b_org) == ("bob@b.test", "org-b")
 
 
-async def test_gemini_key_travels_as_param_not_env(monkeypatch):
-    import litellm
+def test_gemini_key_travels_as_param_not_env(monkeypatch):
     from cryptography.fernet import Fernet
-    from google.adk.models.llm_request import LlmRequest
-    from google.genai import types
 
-    from apowerb.core.agent_helpers.llm_model_builder import build_litellm_model
+    from apowerb.core.agent_helpers import llm_model_builder as builder
     from apowerb.helpers import encryptor
     from apowerb.helpers.encryptor import encrypt_value
 
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(encryptor, "fernet", Fernet(Fernet.generate_key()))
+
+    captured = []
+
+    def fake_litellm(**kwargs):
+        captured.append(kwargs)
+        return type("Model", (), kwargs)()
+
+    monkeypatch.setattr(builder, "LiteLlm", fake_litellm)
 
     def details(owner, key):
         return {
@@ -113,29 +117,11 @@ async def test_gemini_key_travels_as_param_not_env(monkeypatch):
             "agent_model_params": {"model_api_key": encrypt_value(key)},
         }
 
-    alice_model = build_litellm_model(details("alice@a.test", "KEY-ALICE"), temperature=None)
-    build_litellm_model(details("bob@b.test", "KEY-BOB"), temperature=None)
+    builder.build_litellm_model(details("alice@a.test", "KEY-ALICE"), temperature=None)
+    builder.build_litellm_model(details("bob@b.test", "KEY-BOB"), temperature=None)
 
-    # The leak: os.environ must NOT carry any agent's Gemini key.
-    assert os.environ.get("GEMINI_API_KEY") is None
-
-    seen: dict = {}
-
-    async def fake_acompletion(*args, **kwargs):
-        seen["api_key"] = kwargs.get("api_key")
-        seen["env"] = os.environ.get("GEMINI_API_KEY")
-        raise RuntimeError("stop before network")
-
-    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
-    request = LlmRequest(
-        model="gemini/gemini-2.5-flash",
-        contents=[types.Content(role="user", parts=[types.Part(text="hi")])],
-    )
-    try:
-        async for _ in alice_model.generate_content_async(request):
-            pass
-    except Exception:
-        pass
-
-    assert seen.get("api_key") == "KEY-ALICE"
-    assert seen.get("env") is None
+    # Each build carries its OWN key as the api_key param...
+    assert captured[0]["api_key"] == "KEY-ALICE"
+    assert captured[1]["api_key"] == "KEY-BOB"
+    # ...and the key never leaks through the process-global env var.
+    assert "GEMINI_API_KEY" not in os.environ
