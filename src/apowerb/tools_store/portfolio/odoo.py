@@ -4,8 +4,8 @@ Each tool is a thin wrapper around Odoo's JSON-RPC ``object.execute_kw`` and
 targets any Odoo model (``res.partner``, ``sale.order``, ``crm.lead``, ...).
 
 Credentials are fetched lazily from the per-user ``integrations`` row
-(``provider='odoo'``) based on the AGENT_OWNER env var set by the runner.
-They are cached in-process so the DB is hit at most once per agent session.
+(``provider='odoo'``) of the current invoker. They are cached in-process,
+keyed by that invoker, so the DB is hit at most once per user per process.
 """
 
 import logging
@@ -19,15 +19,21 @@ logger = logging.getLogger(__name__)
 
 _JSONRPC_TIMEOUT = 20.0
 
-# Per-process creds cache, keyed by AGENT_OWNER. Each value is a dict:
+# Per-process creds cache, keyed by the invoker. Each value is a dict:
 #   {"url", "database", "login", "api_key", "uid"} — all plain strings/ints.
 _creds_cache: dict[str, dict] = {}
 
 
 def _load_creds() -> dict:
-    """Return decrypted Odoo credentials for the current agent owner, caching them."""
-    from apowerb.core.invocation_context import get_agent_owner
-    owner = get_agent_owner() or ""
+    """Return decrypted Odoo credentials for the current invoker, caching them.
+
+    Keyed by the invoker (``resolve_integration_user(prefer_invoker=True)``) --
+    the same identity ``fetch_integration_configs`` resolves the row for. Keying
+    by the agent owner instead would hand the first invoker's credentials to
+    every later invoker of a shared agent (cross-tenant leak).
+    """
+    from apowerb.core.invocation_context import resolve_integration_user
+    owner = resolve_integration_user(prefer_invoker=True) or ""
     cached = _creds_cache.get(owner)
     if cached:
         return cached

@@ -71,6 +71,16 @@ def _reset_onedrive_module_state() -> None:
         pass  # Never block the main action
 
 
+def _reset_odoo_module_state() -> None:
+    """Clear the in-memory Odoo creds cache so the next tool call re-fetches
+    from the DB. Called on both disconnect and reconnect."""
+    try:
+        import apowerb.tools_store.portfolio.odoo as odoo_tool
+        odoo_tool.reset_odoo_creds_cache()
+    except Exception:
+        pass  # Never block the main action
+
+
 # ---------------------------------------------------------------------------
 # Google reset helpers
 # ---------------------------------------------------------------------------
@@ -809,6 +819,10 @@ async def odoo_connect(
         uid=uid,
     )
 
+    # Reconnect/update: drop any cached creds so the next tool call re-fetches
+    # the row just saved instead of serving the previous ones.
+    _reset_odoo_module_state()
+
     return {
         "success":  True,
         "provider": odoo_integration.ODOO_PROVIDER,
@@ -949,6 +963,8 @@ async def disconnect_integration(
         _reset_outlook_module_state()
     elif provider_lower == "microsoft_onedrive":
         _reset_onedrive_module_state()
+    elif provider_lower == "odoo":
+        _reset_odoo_module_state()
     else:
         # Handles all Google services via the dispatch map.
         reset_fn = _GOOGLE_RESET_HANDLERS.get(provider_lower)
