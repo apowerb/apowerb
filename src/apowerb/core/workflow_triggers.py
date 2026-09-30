@@ -714,6 +714,17 @@ async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
             workflow_id, active=False, last_status=None, next_run_at=None
         )
         return False
+    except Exception:
+        # Le lancement a échoué (base indisponible, erreur de construction du
+        # run, …). Sans ce filet, ``last_status`` resterait à ``running`` et le
+        # garde de chevauchement sauterait indéfiniment les créneaux suivants.
+        logger.exception(
+            "[triggers] échec du lancement du run schedule workflow=%s — "
+            "statut réarmé",
+            workflow_id,
+        )
+        _update_trigger_row(workflow_id, last_status="error")
+        return False
 
     _update_trigger_row(workflow_id, last_run_id=run_id, last_fired_at=now.isoformat())
 
