@@ -12,6 +12,14 @@ its row and those of its sub-agents, which the runner embeds -- and rebuilds
 when it differs from the one the cached runner was built from. The database
 stays the only source of truth: no broker, no message to lose. The price is
 two indexed reads per level of sub-agents, against seconds of LLM time per run.
+
+Retiring the old runner is deferred. ADK closes a replaced runner on the next
+``get_runner_async`` (via ``runners_to_clean``), which closes its toolsets --
+and any live MCP session -- even while a run started before the edit is still
+iterating that same runner. Closing the session mid-call makes ADK retry the
+tool, so a stdio/remote MCP tool runs twice. Instead, each runner counts its
+in-flight ``run_async`` calls; a replaced or deleted runner is detached from
+the cache at once but closed only once its last run has finished.
 """
 
 from __future__ import annotations
@@ -35,12 +43,88 @@ _SUB_AGENT = re.compile(r"(?:agent)?(\d+)")
 # Fingerprint each cached runner was built from, per ApiServer instance.
 _BUILT_FROM = "_apowerb_built_from"
 
+# Per-runner bookkeeping for deferred close (instance attributes on Runner).
+_ACTIVE = "_apowerb_active_runs"  # in-flight run_async calls
+_RETIRED = "_apowerb_retired"  # detached from cache, close when idle
+_WRAPPED = "_apowerb_run_wrapped"  # run_async already instrumented
+
+
+async def _close_runner_safely(runner: Any) -> None:
+    """Close a retired runner, swallowing and logging any error."""
+    try:
+        await asyncio.wait_for(cleanup.close_runners([runner]), timeout=10)
+    except Exception as exc:
+        logger.warning(
+            "[agent-sync] closing a retired runner raised %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+
+
+def _schedule_close(runner: Any) -> None:
+    """Close ``runner`` now, from sync code, whether or not a loop is running."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        loop.create_task(_close_runner_safely(runner))
+    else:
+        try:
+            asyncio.run(_close_runner_safely(runner))
+        except Exception as exc:
+            logger.warning(
+                "[agent-sync] closing a retired runner failed: %s", exc
+            )
+
+
+def _instrument_runner(runner: Any) -> None:
+    """Count in-flight ``run_async`` calls so a retired runner closes when idle.
+
+    Idempotent: a cached runner handed out again keeps its single wrapper.
+    ``Runner`` is a plain class, so instance-level assignment shadows the
+    method for this object only. ``run_live`` is not wrapped -- a websocket
+    stream cut by a rebuild is a separate, rarer path.
+    """
+    if runner is None or getattr(runner, _WRAPPED, False):
+        return
+    original = runner.run_async
+    setattr(runner, _ACTIVE, 0)
+    setattr(runner, _RETIRED, False)
+
+    @functools.wraps(original)
+    async def _counted_run_async(*args: Any, **kwargs: Any):
+        setattr(runner, _ACTIVE, getattr(runner, _ACTIVE, 0) + 1)
+        try:
+            async for event in original(*args, **kwargs):
+                yield event
+        finally:
+            remaining = getattr(runner, _ACTIVE, 1) - 1
+            setattr(runner, _ACTIVE, remaining)
+            if remaining <= 0 and getattr(runner, _RETIRED, False):
+                await _close_runner_safely(runner)
+
+    runner.run_async = _counted_run_async
+    setattr(runner, _WRAPPED, True)
+
+
+def _retire_runner(runner: Any) -> None:
+    """Detach done: close ``runner`` now if idle, else when its last run ends."""
+    if runner is None:
+        return
+    if getattr(runner, _ACTIVE, 0) > 0:
+        setattr(runner, _RETIRED, True)
+        return
+    _schedule_close(runner)
+
 
 def drop_cached_agent(adk_server: Any, app_name: str) -> None:
     """Drop the cached module and runner of ``app_name`` in this process.
 
     The next ``get_runner_async(app_name)`` re-imports the module, whose
-    ``to_agent()`` reads the definition from the database again.
+    ``to_agent()`` reads the definition from the database again. The old
+    runner is detached from the cache and closed only once no run is still
+    using it (see module docstring).
     """
     try:
         adk_server.agent_loader.remove_agent_from_cache(app_name)
@@ -51,18 +135,21 @@ def drop_cached_agent(adk_server: Any, app_name: str) -> None:
             type(exc).__name__,
             exc,
         )
-    # Only queue the runner for cleanup if one actually exists: ADK's
-    # close_runners([None]) crashes with ``'NoneType' object has no
-    # attribute 'close'`` otherwise. When the agent has never been
-    # instantiated in this process, dropping the module cache is already
-    # enough -- the next request builds a fresh runner from scratch.
+    # Detach and retire the runner ourselves rather than queueing it in
+    # ``runners_to_clean``: ADK would close it on the next get_runner_async,
+    # tearing down the toolsets of a runner a live run may still hold.
     try:
-        runner_dict = getattr(adk_server, "runner_dict", None) or {}
-        if app_name in runner_dict:
-            adk_server.runners_to_clean.add(app_name)
+        runner_dict = getattr(adk_server, "runner_dict", None)
+        if runner_dict and app_name in runner_dict:
+            old = runner_dict.pop(app_name)
+            try:
+                adk_server.runners_to_clean.discard(app_name)
+            except Exception:
+                pass
+            _retire_runner(old)
     except Exception as exc:
         logger.warning(
-            "[agent-reload] could not mark runner %s for cleanup: %s", app_name, exc
+            "[agent-reload] could not retire runner %s: %s", app_name, exc
         )
 
 
@@ -131,17 +218,15 @@ def keep_runners_in_sync(
                 type(exc).__name__,
                 exc,
             )
-            return await get_runner_async(self, app_name)
+            runner = await get_runner_async(self, app_name)
+            _instrument_runner(runner)
+            return runner
 
         built_from = self.__dict__.setdefault(_BUILT_FROM, {})
         if current is None:
             # ADK only closes a stale runner on the next build, which a deleted
-            # agent never gets: close it here.
+            # agent never gets: detach and retire it here (closed once idle).
             drop_cached_agent(self, app_name)
-            self.runners_to_clean.discard(app_name)
-            stale = self.runner_dict.pop(app_name, None)
-            if stale is not None:
-                await cleanup.close_runners([stale])
             built_from.pop(app_name, None)
             raise HTTPException(status_code=404, detail=f"Agent not found: {app_name}")
 
@@ -151,6 +236,7 @@ def keep_runners_in_sync(
         ensure_agent_module(agent_id, self.agent_loader.agents_dir)
 
         runner = await get_runner_async(self, app_name)
+        _instrument_runner(runner)
         built_from[app_name] = current
         return runner
 
