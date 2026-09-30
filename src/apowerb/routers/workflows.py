@@ -372,6 +372,10 @@ def _streaming_run(
             if cancel_event.is_set():
                 outcome = run_main.STATUS_CANCELLED
         except asyncio.CancelledError:
+            # Le client s'est deconnecte : signaler l'annulation aux travaux
+            # que le graphe a pu lancer hors de l'arbre de la task de drive
+            # (sous-workflows, attentes de retry) et qui lisent cancel_event.
+            cancel_event.set()
             outcome = run_main.STATUS_CANCELLED
             yield f"data: {json.dumps({'event': 'cancelled'})}\n\n".encode()
             raise

@@ -397,19 +397,34 @@ async def drive_workflow(
                 outputs.append(ev.output)
 
     task = asyncio.create_task(_drive())
-    while True:
-        getter = asyncio.create_task(queue.get())
-        done, _ = await asyncio.wait(
-            {task, getter}, return_when=asyncio.FIRST_COMPLETED
-        )
-        if getter in done:
-            yield getter.result()
-            continue
-        getter.cancel()
-        break
-    while not queue.empty():
-        yield queue.get_nowait()
-    yield _Finished(exc=task.exception(), outputs=outputs)
+    getter: Optional[asyncio.Task] = None
+    try:
+        while True:
+            getter = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {task, getter}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if getter in done:
+                yield getter.result()
+                continue
+            getter.cancel()
+            getter = None
+            break
+        while not queue.empty():
+            yield queue.get_nowait()
+        yield _Finished(exc=task.exception(), outputs=outputs)
+    finally:
+        # Le consommateur est parti (client deconnecte, flux annule) avant la
+        # fin : arreter le run au lieu de laisser les noeuds suivants s'executer
+        # en fond. Sur le chemin normal, task est deja termine -> sans effet.
+        if getter is not None and not getter.done():
+            getter.cancel()
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 def _sse(payload: dict) -> str:
