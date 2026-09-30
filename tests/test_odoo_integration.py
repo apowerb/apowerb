@@ -165,7 +165,11 @@ class TestSaveAndGet:
 class TestTools:
     def setup_method(self):
         # Clear creds cache and prime with a fake AGENT_OWNER → fake creds so
-        # the tool functions don't hit the DB.
+        # the tool functions don't hit the DB. Also clear any invoker left
+        # bound by an earlier test: _load_creds resolves the invoker first, so
+        # a leaked value would miss the "owner-1" cache key and hit the DB.
+        from apowerb.core.invocation_context import set_current_invoker
+        set_current_invoker(None)
         odoo_tools.reset_odoo_creds_cache()
         odoo_tools._creds_cache["owner-1"] = {
             "url":      "https://acme.odoo.com",
