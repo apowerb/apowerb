@@ -22,6 +22,7 @@ from apowerb.auth.dependencies import get_current_user
 from apowerb.users import schemas as user_schemas
 from apowerb.helpers.emails import get_domain_from_email
 from apowerb.configs.paths import toolbox_dir
+from apowerb.core.agent_helpers.mcp_loader import stdio_transport_enabled
 
 logger = getLogger(__name__)
 router = APIRouter()
@@ -228,6 +229,20 @@ def _refresh_toolbox_if_db(mcp_type: str) -> None:
         logger.exception("MCP Toolbox reload failed: %s", exc)
 
 
+def _reject_disabled_stdio(transport: str) -> None:
+    """403 when a client tries to save an stdio MCP config on a deployment
+    that has not opted into the stdio transport (see stdio_transport_enabled).
+    """
+    if transport == "stdio" and not stdio_transport_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "The stdio MCP transport is disabled on this deployment. "
+                "Set MCP_STDIO_ENABLED=1 to enable local MCP servers."
+            ),
+        )
+
+
 @router.post("/mcp_configs", tags=["tools"])
 async def save_mcp_config(
     mcp_data: dict,
@@ -236,6 +251,7 @@ async def save_mcp_config(
     """Save an MCP server configuration as a reusable tool_config."""
     config_name = mcp_data.get("config_name", mcp_data.get("name", "MCP Server"))
     transport = mcp_data.get("transport", "http")
+    _reject_disabled_stdio(transport)
     mcp_type = mcp_data.get("mcp_type", "")
     tool_params = _build_mcp_tool_params(mcp_data)
 
@@ -262,6 +278,7 @@ async def update_mcp_config(
     """Update an existing MCP config (rebuilds tool_config_params from the
     payload, re-encrypts, and refreshes the toolbox if it is a DB config).
     """
+    _reject_disabled_stdio(mcp_data.get("transport", "http"))
     config_name = mcp_data.get("config_name", mcp_data.get("name", "MCP Server"))
     mcp_type = mcp_data.get("mcp_type", "")
     tool_params = _build_mcp_tool_params(mcp_data)
