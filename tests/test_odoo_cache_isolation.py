@@ -9,9 +9,24 @@ the owner's key and then handed to every later invoker -- a cross-tenant
 credential leak.
 """
 
+import pytest
+
 import apowerb.tools_store.portfolio.odoo as odoo_tool
 from apowerb.core import invocation_context as ic
 from apowerb.integrations import helpers as ih
+
+
+@pytest.fixture(autouse=True)
+def _reset_invoker_after_test():
+    """Keep the invoker ContextVar from leaking out of these tests.
+
+    They call ``set_current_invoker(...)`` and never reset it; a value left
+    bound in the process would make a later test (e.g. ``TestTools`` in
+    ``test_odoo_integration``) resolve the wrong integration user, miss the
+    seeded creds cache and try to reach the DB.
+    """
+    yield
+    ic.set_current_invoker(None)
 
 
 def _fake_fetch(provider="odoo", user=None):
