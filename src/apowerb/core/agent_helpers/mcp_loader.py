@@ -14,6 +14,24 @@ from apowerb.helpers.encryptor import decrypt_value_in_dict
 
 logger = setup_logging(__name__)
 
+_STDIO_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def stdio_transport_enabled() -> bool:
+    """Whether this deployment allows the ``stdio`` MCP transport.
+
+    ``stdio`` makes the server spawn a local subprocess from an
+    agent-supplied ``command``/``args``/``env``. On a shared, multi-tenant
+    deployment that lets any authenticated user run code on the host, so the
+    transport is opt-in and off by default. A single-tenant / self-hosted
+    operator who wants local MCP servers sets ``MCP_STDIO_ENABLED=1``. Read
+    from the environment at call time so the scheduler and other background
+    paths -- which have no request context -- see the same policy as the API.
+    """
+    import os
+
+    return os.getenv("MCP_STDIO_ENABLED", "").strip().lower() in _STDIO_TRUTHY
+
 
 def _patch_toolbox_tool_get_declaration() -> None:
     """Workaround for toolbox-adk: ``ToolboxTool`` does not implement
@@ -252,6 +270,14 @@ def load_mcp_servers(mcp_servers_raw, tools_funcs: list) -> None:
                     continue
 
                 if transport == "stdio":
+                    if not stdio_transport_enabled():
+                        logger.warning(
+                            "[TO_AGENT] MCP server '%s': stdio transport is "
+                            "disabled (set MCP_STDIO_ENABLED=1 to opt in) -- "
+                            "skipping",
+                            mcp_name,
+                        )
+                        continue
                     # Stdio transport: local command (e.g. npx, uvx, python)
                     mcp_command = mcp_cfg.get("command", "")
                     mcp_args = mcp_cfg.get("args", [])
