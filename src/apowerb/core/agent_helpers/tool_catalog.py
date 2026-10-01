@@ -22,7 +22,10 @@ from functools import lru_cache
 from apowerb.tools_store.tool_manager import _category_requires_oauth, get_tools_store
 
 # Client-specific tools registered by an overlay are not offered by name.
-_EXCLUDED_CATEGORIES = frozenset({"overlay"})
+# ``python_script`` runs arbitrary code: even on a self-hosted install where it
+# is enabled, an agent must never find it via ``find_tools`` and add it to
+# itself with ``propose_agent_upgrade``. A human adds it in the Tool Box.
+_EXCLUDED_CATEGORIES = frozenset({"overlay", "python_script"})
 _MAX_DESCRIPTION = 200
 
 
@@ -53,9 +56,7 @@ def catalog_entries() -> dict[str, dict]:
             entries[name] = {
                 "tool_name": name,
                 "category": category,
-                "description": (described.get(name) or "")[
-                    :_MAX_DESCRIPTION
-                ],
+                "description": (described.get(name) or "")[:_MAX_DESCRIPTION],
                 "needs_integration": _category_requires_oauth(category),
                 "needs_tool_config": bool(store.get_tool_expected_params(name)),
             }

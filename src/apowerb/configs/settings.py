@@ -204,7 +204,7 @@ def _warn_duplicate_env_keys(env_path: str = _ENV_FILE) -> None:
                 if not line or line.startswith("#"):
                     continue
                 if line.startswith("export "):
-                    line = line[len("export "):].lstrip()
+                    line = line[len("export ") :].lstrip()
                 if "=" not in line:
                     continue
                 key = line.split("=", 1)[0].strip()
@@ -283,7 +283,7 @@ def _warn_env_keys_dropped_by_the_parser(env_path: str = _ENV_FILE) -> None:
                 if not line or line.startswith("#"):
                     continue
                 if line.startswith("export "):
-                    line = line[len("export "):].lstrip()
+                    line = line[len("export ") :].lstrip()
                 if "=" not in line:
                     continue
                 key, _, value = line.partition("=")
@@ -363,8 +363,8 @@ class Settings(BaseSettings):
     db_agent_store_table_name: str = "th2agents_store"
     # sqlalchemy config
     echo_sql: bool = False
-    #s3 ovh configuration
-    storage_mode : str = "S3"
+    # s3 ovh configuration
+    storage_mode: str = "S3"
     s3_region: str = ""
     s3_access_key: str = ""
     s3_access_key_secret: str = ""
@@ -461,6 +461,30 @@ class Settings(BaseSettings):
     # to disable email/password login, registration and password reset endpoints.
     # OAuth flows (Google/Microsoft/etc.) are unaffected.
     auth_basic_enabled: bool = True
+
+    # ── Python Script tool (self-hosted only, issue #151) ───────────
+    # Arbitrary Python execution for self-hosted single-tenant installs.
+    # OFF by default — the flag being false IS the cloud/multi-tenant guard:
+    # a managed deployment never sets it. When off, the tool is hidden from
+    # the store and the catalogue and refuses with FEATURE_DISABLED if called.
+    # Real isolation still requires a locked-down worker image/namespace; the
+    # in-process confinement only limits blast radius. See python_script.py.
+    enable_python_script_tool: bool = False
+    # Hard ceiling (seconds) on a single call's `timeout` argument.
+    python_script_max_timeout: int = 60
+    # RLIMIT_AS cap for the child interpreter (MiB).
+    python_script_memory_mb: int = 512
+    # RLIMIT_FSIZE cap — largest file the script may write (MiB).
+    python_script_fsize_mb: int = 50
+    # RLIMIT_NPROC cap — guards against fork bombs.
+    python_script_max_processes: int = 64
+    # uid the child drops to IF the host process runs as root. 65534 = nobody.
+    python_script_run_uid: int = 65534
+    # Max captured stdout/stderr kept per stream (KiB). Bounds host memory: the
+    # child writes to files capped by RLIMIT_FSIZE, the parent reads up to this.
+    python_script_max_output_kb: int = 1024
+    # Best-effort in-child network guard (NOT a boundary — see python_script.py).
+    python_script_allow_network: bool = False
 
     # ── Agent evaluation (POC) ──────────────────────────────────────
     # Set EVALUATION_ENABLED=true to allow the evaluation brick's routes
@@ -658,11 +682,15 @@ class Settings(BaseSettings):
     # Google Integration OAuth (single app, scopes vary per service)
     google_integration_client_id: str = ""
     google_integration_client_secret: str = ""
-    google_integration_redirect_uri: str = "http://localhost:3000/integrations/google/callback"
+    google_integration_redirect_uri: str = (
+        "http://localhost:3000/integrations/google/callback"
+    )
 
     # Gmail Pub/Sub webhook settings
     gmail_pubsub_project_id: str = ""  # Google Cloud project ID
-    gmail_pubsub_topic: str = ""       # e.g. "gmail-notifications" (just the topic name, not full path)
+    gmail_pubsub_topic: str = (
+        ""  # e.g. "gmail-notifications" (just the topic name, not full path)
+    )
     # Expected `aud` claim on the OIDC JWT signed by Google Pub/Sub when
     # pushing notifications to our webhook. Must match the audience
     # configured on the Pub/Sub subscription (typically the public webhook
@@ -776,9 +804,7 @@ class Settings(BaseSettings):
                 "notifications are verified against."
             )
         if is_prod and self.webhook_dev_skip_sig:
-            raise ValueError(
-                "WEBHOOK_DEV_SKIP_SIG cannot be enabled in production."
-            )
+            raise ValueError("WEBHOOK_DEV_SKIP_SIG cannot be enabled in production.")
         if self.webhook_dev_skip_sig:
             _logger.warning(
                 "SECURITY: WEBHOOK_DEV_SKIP_SIG=true — Gmail webhook signature "
@@ -941,4 +967,12 @@ def get_settings() -> Settings:
     """Get application settings from environment variables or .env file."""
     _warn_duplicate_env_keys()
     _warn_env_keys_dropped_by_the_parser()
-    return Settings()
+    settings = Settings()
+    if settings.enable_python_script_tool:
+        _logger.warning(
+            "ENABLE_PYTHON_SCRIPT_TOOL is ON: the Python Script tool runs "
+            "arbitrary code. Intended for self-hosted single-tenant deployments "
+            "only — never enable it on a managed/multi-tenant server, and only "
+            "where the worker runs in a locked-down sandbox."
+        )
+    return settings

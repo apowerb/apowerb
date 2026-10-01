@@ -38,6 +38,7 @@ def _integration_markers() -> tuple[str, ...]:
     """
     return ("fetch_integration" + "_configs(", "_ensure_integration" + "_tokens(")
 
+
 # System-level env vars that are injected by the runtime, not user-configurable.
 # This includes both agent-runtime vars and integration-managed vars — any env var
 # that is loaded automatically from the integrations table via _ensure_integration_tokens()
@@ -83,9 +84,7 @@ def _module_source(category: str) -> str | None:
     tools' worth of modules on every call would be wasteful.
     """
     try:
-        module = importlib.import_module(
-            f"apowerb.tools_store.portfolio.{category}"
-        )
+        module = importlib.import_module(f"apowerb.tools_store.portfolio.{category}")
     except ImportError:
         logger.warning("Could not import tool module for category: %s", category)
         return None
@@ -136,13 +135,30 @@ class ToolsStore(BaseModel):
     categories: list[str] = []
 
     def get_categories(self):
-        """Return the list of tool categories."""
+        """Return the list of tool categories.
+
+        ``python_script`` is a feature-flagged category (issue #151): it runs
+        arbitrary code and is hidden entirely unless the self-hosted operator
+        set ``ENABLE_PYTHON_SCRIPT_TOOL=true``. This is the single choke point
+        shared by ``get_all_tools`` (the agent resolver), ``GET /tools`` and
+        the catalogue, so gating it here keeps it off every listing at once.
+        """
         self.categories = [
             name
             for _, name, _ in pkgutil.iter_modules(ts.__path__)
-            if name != "tool_manager"
+            if name != "tool_manager" and name not in self._disabled_categories()
         ]
         return self.categories
+
+    @staticmethod
+    def _disabled_categories() -> frozenset[str]:
+        """Categories hidden by configuration. Read lazily so tests toggling
+        ``settings.enable_python_script_tool`` take effect without a reimport."""
+        from apowerb.configs.settings import get_settings
+
+        if not get_settings().enable_python_script_tool:
+            return frozenset({"python_script"})
+        return frozenset()
 
     def get_tools_in_category(self, category: str):
         """Return the list of functions (tools) available in a specific category."""
@@ -178,6 +194,7 @@ class ToolsStore(BaseModel):
         # surface them so the resolver can find them by name.
         try:
             from apowerb.core.extensions.registry import registry as _ext_registry
+
             _ovl = list(_ext_registry.overlay_tools().keys())
             if _ovl:
                 all_tools["overlay"] = _ovl
@@ -305,9 +322,7 @@ class ToolsStore(BaseModel):
                         "description": description,
                         "full_docstring": doc,
                         "parameters": params,
-                        "env_vars": self.get_tool_expected_params(
-                            f"{category}.{name}"
-                        ),
+                        "env_vars": self.get_tool_expected_params(f"{category}.{name}"),
                     }
                 )
 
