@@ -55,15 +55,16 @@ def _ocr_payload(markdowns: list[str], images_per_page: int = 0) -> dict:
 
 # ── Provider registry sanity ──────────────────────────────────────────────
 class TestProviderRegistry:
-    def test_mistral_registered(self):
+    def test_providers_registered(self):
         assert "mistral" in _PROVIDERS
-        assert _PROVIDER_ORDER == ["mistral"]
+        assert "azure" in _PROVIDERS
+        assert _PROVIDER_ORDER == ["mistral", "azure"]
 
     def test_tuple_structure(self):
         for _key, (name, fn, env_key) in _PROVIDERS.items():
             assert isinstance(name, str)
             assert callable(fn)
-            assert env_key == "MISTRAL_API_KEY"
+            assert isinstance(env_key, str)
 
 
 # ── Input validation ──────────────────────────────────────────────────────
@@ -229,6 +230,105 @@ class TestTruncation:
         assert "[output truncated]" in result["markdown"]
         # Per-page markdown is untouched (only the combined string is capped).
         assert result["pages"][0]["markdown"] == "a" * 30
+
+
+# ── Azure Document Intelligence provider ──────────────────────────────────
+def _azure_accepted(op_location: str = "https://az/op/123") -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = 202
+    resp.headers = {"Operation-Location": op_location}
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+def _azure_result(
+    status: str, pages: list | None = None, error_msg: str = ""
+) -> MagicMock:
+    payload: dict = {"status": status}
+    if pages is not None:
+        payload["analyzeResult"] = {"modelId": "prebuilt-read", "pages": pages}
+    if error_msg:
+        payload["error"] = {"message": error_msg}
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+class TestAzureProvider:
+    def test_azure_success_remote_url(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com/")
+        pages = [
+            {"pageNumber": 1, "lines": [{"content": "Hello"}, {"content": "World"}]}
+        ]
+        with patch("httpx.post", return_value=_azure_accepted()) as mock_post, patch(
+            "httpx.get", return_value=_azure_result("succeeded", pages)
+        ) as mock_get:
+            result = tool_ocr_document("https://ex.com/doc.pdf", provider="azure")
+
+        assert result["status"] == "success"
+        assert result["provider_used"] == "Azure Document Intelligence"
+        assert result["pages"][0]["markdown"] == "Hello\nWorld"
+        assert result["pages"][0]["index"] == 0  # pageNumber 1 → 0-based
+        assert result["page_count"] == 1
+        # analyze URL + auth header + body shape
+        post_args, post_kwargs = mock_post.call_args
+        assert post_args[0] == (
+            "https://my.az.com/documentintelligence/documentModels/"
+            "prebuilt-read:analyze?api-version=2024-11-30"
+        )
+        assert post_kwargs["headers"]["Ocp-Apim-Subscription-Key"] == "az-key"
+        assert post_kwargs["json"] == {"urlSource": "https://ex.com/doc.pdf"}
+        # polled the Operation-Location
+        assert mock_get.call_args.args[0] == "https://az/op/123"
+
+    def test_azure_local_file_uses_base64_source(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        f = tmp_path / "scan.png"
+        f.write_bytes(b"\x89PNG fake")
+        pages = [{"pageNumber": 1, "lines": [{"content": "text"}]}]
+        with patch("httpx.post", return_value=_azure_accepted()) as mock_post, patch(
+            "httpx.get", return_value=_azure_result("succeeded", pages)
+        ):
+            result = tool_ocr_document(str(f), provider="azure")
+
+        assert result["status"] == "success"
+        body = mock_post.call_args.kwargs["json"]
+        assert "base64Source" in body and "urlSource" not in body
+
+    def test_azure_missing_endpoint_errors(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", raising=False)
+        with patch("httpx.post") as mock_post:
+            result = tool_ocr_document("https://ex.com/doc.pdf", provider="azure")
+        assert result["status"] == "error"
+        assert "AZURE_DOC_INTELLIGENCE_ENDPOINT" in result["error_message"]
+        mock_post.assert_not_called()
+
+    def test_azure_failed_status_errors(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        with patch("httpx.post", return_value=_azure_accepted()), patch(
+            "httpx.get", return_value=_azure_result("failed", error_msg="bad doc")
+        ):
+            result = tool_ocr_document("https://ex.com/doc.pdf", provider="azure")
+        assert result["status"] == "error"
+        assert "bad doc" in result["error_message"]
+
+    def test_azure_timeout_errors(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        from apowerb.tools_store.portfolio import ocr
+
+        monkeypatch.setattr(ocr, "_AZURE_POLL_TIMEOUT_S", 0, raising=False)
+        with patch("httpx.post", return_value=_azure_accepted()), patch(
+            "httpx.get", return_value=_azure_result("running")
+        ):
+            result = tool_ocr_document("https://ex.com/doc.pdf", provider="azure")
+        assert result["status"] == "error"
+        assert "did not finish" in result["error_message"]
 
 
 # ── HTTP error becomes an error dict ──────────────────────────────────────
