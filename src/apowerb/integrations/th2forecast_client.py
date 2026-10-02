@@ -41,6 +41,22 @@ _POLL_BACKOFF_FACTOR = 1.7
 # budget without ever giving the poll loop a chance to time out cleanly.
 _HTTP_CALL_TIMEOUT_S = 30
 
+# What only the Python engine (apowerb/th2forecast-py) implements. The R engine
+# (apowerb/th2forecast) answers 200 to a request carrying these fields and
+# simply ignores them -- a "successful" forecast without the hierarchy or the
+# scenarios that were asked for. Measured on 02/10/2026 against
+# apowerb/th2forecast:0.1.0. So with the R engine they are refused here, before
+# any call, with the same error shape the engine uses.
+_ENGINES = ("r", "python")
+_PYTHON_ONLY_FIELDS = ("events", "scenarios", "hierarchy", "reconciliation")
+_PYTHON_ONLY_MODELS = ("croston", "tsb", "imapa")
+# Added by the core itself (closed loop), never by the user: with the R engine
+# it is dropped, not refused -- there is nobody to tell.
+_PYTHON_ONLY_INTERNAL = ("feedback",)
+# The Python engine adds these to every series; the R engine never does. Their
+# presence tells which engine actually answered.
+_PYTHON_SERIES_MARKS = ("calibration", "demand")
+
 
 class Th2forecastNotConfigured(RuntimeError):
     """``TH2FORECAST_URL`` is not set — the caller should answer 503."""
@@ -130,6 +146,7 @@ class Th2forecastClient:
         base_url: str | None = None,
         token: str | None = None,
         timeout_s: float | None = None,
+        engine: str | None = None,
     ) -> None:
         # get_settings() is only called when an argument is left to the
         # server config, so a caller that supplies all three (as tests do)
@@ -142,6 +159,14 @@ class Th2forecastClient:
         self.timeout_s = (
             timeout_s if timeout_s is not None else (settings.th2forecast_timeout_s or _DEFAULT_TIMEOUT_S)
         )
+        if engine is None:
+            # Read from the settings only when they are loaded anyway: a caller
+            # that supplies the three connection arguments (as tests do) keeps
+            # running without a real Settings().
+            engine = getattr(settings, "th2forecast_engine", None) or "r"
+        if engine not in _ENGINES:
+            raise ValueError(f"unknown th2forecast engine {engine!r}: expected one of {_ENGINES}")
+        self.engine = engine
         if not self.base_url:
             raise Th2forecastNotConfigured("TH2FORECAST_URL is not configured")
 
@@ -187,11 +212,12 @@ class Th2forecastClient:
         Tries the job API first (``POST /v1/jobs`` + poll); falls back to the
         synchronous ``POST /v1/forecast`` if ``/v1/jobs`` is not found (404).
         """
+        request_body = self._fit_to_engine(request_body)
         deadline = time.monotonic() + self.timeout_s
 
         submit = self._post("/v1/jobs", request_body)
         if submit.status_code == 404:
-            return self._forecast_sync(request_body)
+            return self._check_engine(self._forecast_sync(request_body))
 
         _raise_for_relayed_error(submit, base_url=self.base_url)
         if submit.status_code != 202:
@@ -208,7 +234,52 @@ class Th2forecastClient:
                 f"not return a job_id"
             )
 
-        return self._poll_job(job_id, deadline=deadline)
+        return self._check_engine(self._poll_job(job_id, deadline=deadline))
+
+    def _fit_to_engine(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Refuses what the configured engine cannot do; never mutates the input."""
+        if self.engine == "python":
+            return request_body
+        errors = [
+            {"field": field, "message": f"« {field} » n'est pas pris en charge par le moteur de prévision R."}
+            for field in _PYTHON_ONLY_FIELDS
+            if request_body.get(field)  # None or empty asks for nothing
+        ]
+        unsupported = [m for m in (request_body.get("models") or []) if m in _PYTHON_ONLY_MODELS]
+        if unsupported:
+            errors.append({
+                "field": "models",
+                "message": f"Modèle(s) non pris en charge par le moteur de prévision R : {', '.join(unsupported)}.",
+            })
+        if errors:
+            raise Th2forecastAPIError(400, {"status": "error", "errors": errors})
+        return {k: v for k, v in request_body.items() if k not in _PYTHON_ONLY_INTERNAL}
+
+    def _check_engine(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Logs when the engine that answered is not the one configured.
+
+        Never blocks: a wrong TH2FORECAST_ENGINE either refuses features the
+        engine has, or lets the R engine drop them silently -- both deserve a
+        loud log, neither should fail a forecast that did succeed."""
+        series = result.get("series") if isinstance(result, dict) else None
+        if not isinstance(series, list) or not series:
+            return result
+        python_marks = any(
+            isinstance(s, dict) and any(mark in s for mark in _PYTHON_SERIES_MARKS) for s in series
+        )
+        if python_marks and self.engine == "r":
+            logger.warning(
+                "th2forecast at %s answered like the Python engine while TH2FORECAST_ENGINE=r: "
+                "events, scenarios and hierarchy are refused for nothing -- set TH2FORECAST_ENGINE=python",
+                _redact(self.base_url),
+            )
+        elif not python_marks and self.engine == "python":
+            logger.warning(
+                "th2forecast at %s answered like the R engine while TH2FORECAST_ENGINE=python: "
+                "events, scenarios and hierarchy are being ignored by the engine -- set TH2FORECAST_ENGINE=r",
+                _redact(self.base_url),
+            )
+        return result
 
     def _forecast_sync(self, request_body: dict[str, Any]) -> dict[str, Any]:
         response = self._post("/v1/forecast", request_body)
