@@ -190,3 +190,93 @@ def test_unparsable_body_raises_unavailable_without_leaking_token(client, fake):
 def test_client_raises_not_configured_without_url():
     with pytest.raises(Th2forecastNotConfigured):
         Th2forecastClient(base_url="", token="", timeout_s=5)
+
+
+# --- Engine: R (apowerb/th2forecast, the default) or Python (th2forecast-py) ---
+#
+# The R engine ignores unknown fields without a word (a request with
+# `hierarchy` answers 200, unreconciled) and rejects unknown models with a 400.
+# The client must therefore refuse what R cannot do BEFORE calling it.
+
+_PYTHON_SERIES = {"status": "success", "series": [{"group": None, "forecast": [], "calibration": None, "demand": {}}]}
+_R_SERIES = {"status": "success", "series": [{"group": None, "forecast": [], "model": "ets"}]}
+
+
+def _client(engine):
+    return Th2forecastClient(base_url="http://th2forecast:18000", token="t", timeout_s=5, engine=engine)
+
+
+@pytest.mark.parametrize("field, value", [
+    ("hierarchy", ["region", "store"]),
+    ("reconciliation", "mint"),
+    ("events", [{"name": "promo", "ranges": []}]),
+    ("scenarios", [{"name": "Sans promo", "without": ["promo"]}]),
+])
+def test_r_engine_refuses_python_only_fields_before_calling(fake, field, value):
+    with pytest.raises(Th2forecastAPIError) as exc_info:
+        _client("r").forecast({**_REQUEST_BODY, field: value})
+    assert exc_info.value.status_code == 400
+    assert [e["field"] for e in exc_info.value.body["errors"]] == [field]
+    assert fake.calls == [], "the engine must not be called: it would ignore the field and answer 200"
+
+
+def test_r_engine_refuses_python_only_models(fake):
+    with pytest.raises(Th2forecastAPIError) as exc_info:
+        _client("r").forecast({**_REQUEST_BODY, "models": ["ets", "croston", "tsb"]})
+    assert exc_info.value.status_code == 400
+    error = exc_info.value.body["errors"][0]
+    assert error["field"] == "models"
+    assert "croston" in error["message"] and "tsb" in error["message"]
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("empty", [None, [], ""])
+def test_r_engine_treats_empty_fields_as_absent(fake, empty):
+    # The agent tool dumps its schema with exclude_none=False (keys set to None),
+    # and an empty list asks for nothing either.
+    fake.queue(_Resp(404, {}), _Resp(200, _R_SERIES))
+    body = {**_REQUEST_BODY, "hierarchy": empty, "events": empty, "scenarios": empty, "reconciliation": empty}
+    assert _client("r").forecast(body) == _R_SERIES
+
+
+def test_r_engine_drops_feedback(fake):
+    fake.queue(_Resp(404, {}), _Resp(200, _R_SERIES))
+    body = {**_REQUEST_BODY, "feedback": [{"date": "2024-02-01", "actual": 12}]}
+    _client("r").forecast(body)
+    assert all("feedback" not in c["json"] for c in fake.calls)
+    assert "feedback" in body, "the caller's payload must not be mutated"
+
+
+def test_python_engine_relays_everything(fake):
+    fake.queue(_Resp(404, {}), _Resp(200, _PYTHON_SERIES))
+    body = {**_REQUEST_BODY, "hierarchy": ["store"], "models": ["croston"], "feedback": [{"x": 1}]}
+    assert _client("python").forecast(body) == _PYTHON_SERIES
+    assert fake.calls[0]["json"] == body
+
+
+def test_engine_defaults_to_r_when_not_given(fake):
+    with pytest.raises(Th2forecastAPIError):
+        Th2forecastClient(base_url="http://th2forecast:18000", token="t", timeout_s=5).forecast(
+            {**_REQUEST_BODY, "hierarchy": ["store"]}
+        )
+
+
+def test_unknown_engine_is_refused():
+    with pytest.raises(ValueError):
+        _client("julia")
+
+
+@pytest.mark.parametrize("engine, answer", [("r", _PYTHON_SERIES), ("python", _R_SERIES)])
+def test_engine_mismatch_is_logged(fake, caplog, engine, answer):
+    fake.queue(_Resp(404, {}), _Resp(200, answer))
+    with caplog.at_level("WARNING"):
+        assert _client(engine).forecast(_REQUEST_BODY) == answer
+    assert "TH2FORECAST_ENGINE" in caplog.text
+
+
+@pytest.mark.parametrize("engine, answer", [("r", _R_SERIES), ("python", _PYTHON_SERIES)])
+def test_matching_engine_logs_nothing(fake, caplog, engine, answer):
+    fake.queue(_Resp(404, {}), _Resp(200, answer))
+    with caplog.at_level("WARNING"):
+        _client(engine).forecast(_REQUEST_BODY)
+    assert "TH2FORECAST_ENGINE" not in caplog.text

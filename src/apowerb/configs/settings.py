@@ -1,5 +1,6 @@
 import os
 import re
+from typing import Literal
 
 from apowerb.configs.th2logger import setup_logging
 
@@ -576,6 +577,13 @@ class Settings(BaseSettings):
     # success/failure or this elapses. th2forecast forecasts can run long
     # (many series x many models), hence the generous default.
     th2forecast_timeout_s: float = 300
+    # Which engine TH2FORECAST_URL points to: "r" (apowerb/th2forecast, the
+    # default since 02/10/2026) or "python" (apowerb/th2forecast-py). They share
+    # the v1 contract, but only the Python engine implements events, scenarios,
+    # hierarchy, reconciliation, feedback and the croston/tsb/imapa models --
+    # and the R engine IGNORES those fields instead of rejecting them. The
+    # client refuses them up front when this says "r".
+    th2forecast_engine: Literal["r", "python"] = "r"
 
     # ── Jev (TypeSafe decision model, 24/09/2026) ───────────────────────
     # Key for the Jev decision tools (tool_jev_classify / decide / score).
