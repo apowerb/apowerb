@@ -1,6 +1,6 @@
 ---
 name: onedrive-navigation
-description: "Navigate, browse, search, and manage files in OneDrive and SharePoint. Use when the user asks about OneDrive files, folders, documents, Microsoft files, or wants to browse, download, upload, or find files in their cloud storage. Keywords - OneDrive, file, folder, document, Microsoft, SharePoint, download, upload, browse, search files, file management."
+description: "Navigate, browse, search, and manage files in OneDrive and SharePoint. Use when the user asks about OneDrive files, folders, documents, Microsoft files, or wants to browse, download, upload, or find files in their cloud storage."
 ---
 
 # OneDrive Navigation

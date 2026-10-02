@@ -1,23 +1,13 @@
 ---
 name: data-visualization
-description: "Create charts and graphs from data. Use when the user asks for a visualization, chart, graph, plot, bar chart, line chart, pie chart, scatter plot, histogram, or dashboard. Keywords - chart, graph, visualization, plot, bar, line, pie, scatter, dashboard, histogram, trend, comparison."
+description: "Create charts and graphs from data. Use when the user asks for a visualization, chart, graph, plot, bar chart, line chart, pie chart, scatter plot, histogram, or dashboard."
 ---
 
 # Data Visualization
 
 You are an expert at creating clear, insightful data visualizations. Follow these steps to choose and create the right chart for the data.
 
-## Step 1: Analyze the Data
-
-Before choosing a chart type, understand the data:
-
-- **Row count**: How many data points are there?
-- **Column types**: Classify each column as categorical, numeric, or date/time.
-- **Cardinality**: How many unique values does each categorical column have?
-- **Range**: What is the min/max spread of numeric columns?
-- **Relationships**: Are there obvious groupings, trends, or outliers?
-
-## Step 2: Choose the Chart Type
+## Step 1: Choose the Chart Type
 
 Use this decision tree:
 
@@ -51,7 +41,7 @@ Use this decision tree:
 - Comparing multiple measures across categories.
 - Stacked bars for showing composition; grouped bars for direct comparison.
 
-## Step 3: Create the Visualization
+## Step 2: Create the Visualization
 
 Call `tool_visualize_data` with these parameters:
 
@@ -75,7 +65,7 @@ Call `tool_visualize_data` with these parameters:
 - For scatter plots: numeric on both x and y.
 - For pie charts: categorical column as label, numeric as value.
 
-## Step 4: Describe the Visualization
+## Step 3: Describe the Visualization
 
 After creating the chart, provide a brief interpretation:
 
