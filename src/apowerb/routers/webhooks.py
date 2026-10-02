@@ -21,9 +21,17 @@ from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import FileResponse
-from pathlib import Path as _Path
 
 from apowerb.storage.filename import sanitize_filename
 from apowerb.storage.webhook_attachments import resolve_attachment_path
@@ -32,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
-from apowerb.helpers.database import get_db, sessionmanager
+from apowerb.helpers.database import get_db
 from apowerb.helpers.emails import get_domain_from_email
 from apowerb.integrations.gmail_webhook import GmailWebhookService
 from apowerb.integrations.outlook_webhook import OutlookWebhookService
@@ -70,9 +78,7 @@ def _subscription_to_response(sub: WebhookSubscription) -> WebhookSubscriptionRe
         expiration_datetime=(
             sub.expiration_datetime.isoformat() if sub.expiration_datetime else None
         ),
-        created_at=(
-            sub.created_at.isoformat() if sub.created_at else None
-        ),
+        created_at=(sub.created_at.isoformat() if sub.created_at else None),
     )
 
 
@@ -241,11 +247,11 @@ async def _create_gmail_subscription(
 
     # 2. Get fresh access token
     try:
-        access_token = await GmailWebhookService.get_access_token_for_user(
-            db, user_id
-        )
+        access_token = await GmailWebhookService.get_access_token_for_user(db, user_id)
     except (RuntimeError, httpx.HTTPError) as exc:
-        logger.error("[GMAIL WEBHOOK] Token refresh failed for user_id=%s: %s", user_id, exc)
+        logger.error(
+            "[GMAIL WEBHOOK] Token refresh failed for user_id=%s: %s", user_id, exc
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
@@ -266,7 +272,11 @@ async def _create_gmail_subscription(
 
     # resource for Gmail = label name (e.g. "INBOX", "SENT")
     # "ALL" means watch all labels → pass empty list to Gmail API
-    label_ids = [] if body.resource == "ALL" else ([body.resource] if body.resource else ["INBOX"])
+    label_ids = (
+        []
+        if body.resource == "ALL"
+        else ([body.resource] if body.resource else ["INBOX"])
+    )
 
     # 4. Register watch with Gmail API
     try:
@@ -287,13 +297,9 @@ async def _create_gmail_subscription(
     exp_ms = watch_result.get("expiration")
     if exp_ms:
         try:
-            expiration_dt = datetime.fromtimestamp(
-                int(exp_ms) / 1000, tz=timezone.utc
-            )
+            expiration_dt = datetime.fromtimestamp(int(exp_ms) / 1000, tz=timezone.utc)
         except (ValueError, TypeError, OSError):
-            logger.warning(
-                "[GMAIL WEBHOOK] Could not parse expiration: %s", exp_ms
-            )
+            logger.warning("[GMAIL WEBHOOK] Could not parse expiration: %s", exp_ms)
 
     # 6. Generate a unique subscription_id (Gmail watch doesn't return one)
     gmail_subscription_id = f"gmail-watch-{uuid.uuid4().hex[:16]}"
@@ -432,6 +438,19 @@ async def delete_subscription(
     # (post-commit lazy-load under asyncpg raises MissingGreenlet).
     sub_provider = subscription.provider
     sub_external_id = subscription.subscription_id
+
+    # Delete child webhook_logs first, in the same transaction. The model
+    # declares ON DELETE CASCADE on webhook_logs.subscription_id, but that
+    # only protects databases whose FK was actually created with it: on an
+    # instance where the table predates the cascade, the constraint has no
+    # cascade and `db.delete(subscription)` fails with a ForeignKeyViolation
+    # at commit() -> HTTP 500 (roadmap#105). Deleting the logs explicitly is
+    # independent of the live constraint and is a no-op harmless duplicate of
+    # the cascade where it does exist. Bulk DELETE, not an ORM relationship
+    # cascade, so we don't load every log row to delete it.
+    await db.execute(
+        delete(WebhookLog).where(WebhookLog.subscription_id == subscription_db_id)
+    )
 
     # Delete from database
     await db.delete(subscription)
@@ -636,9 +655,7 @@ async def _renew_gmail_subscription(
     sub_resource = subscription.resource
 
     try:
-        access_token = await GmailWebhookService.get_access_token_for_user(
-            db, user_id
-        )
+        access_token = await GmailWebhookService.get_access_token_for_user(db, user_id)
     except (RuntimeError, httpx.HTTPError) as exc:
         logger.error("[GMAIL WEBHOOK] Token refresh failed for renew: %s", exc)
         raise HTTPException(
@@ -650,7 +667,9 @@ async def _renew_gmail_subscription(
         f"projects/{settings.gmail_pubsub_project_id}"
         f"/topics/{settings.gmail_pubsub_topic}"
     )
-    label_ids = [] if sub_resource == "ALL" else ([sub_resource] if sub_resource else ["INBOX"])
+    label_ids = (
+        [] if sub_resource == "ALL" else ([sub_resource] if sub_resource else ["INBOX"])
+    )
 
     try:
         watch_result = await GmailWebhookService.watch_mailbox(
@@ -702,7 +721,6 @@ async def _renew_gmail_subscription(
     return response
 
 
-
 # ---------------------------------------------------------------------------
 # 5. POST /api/webhooks/{service}/notifications -- Unified dispatch
 # ---------------------------------------------------------------------------
@@ -747,9 +765,7 @@ async def receive_notification(
 # Statuses a caller may filter on. Anything else is rejected rather than
 # silently returning everything -- a filter that quietly does nothing is worse
 # than one that errors, because the operator trusts the empty-looking result.
-_LOG_STATUSES = frozenset(
-    {"pending", "in_progress", "success", "error", "retrying"}
-)
+_LOG_STATUSES = frozenset({"pending", "in_progress", "success", "error", "retrying"})
 
 # "failed" is what an operator looks for, and it spans two stored states.
 _STATUS_GROUPS = {"failed": ("error", "retrying")}
@@ -966,7 +982,7 @@ async def list_webhook_logs(
                 "attachments": log.attachments or [],
             }
             for log in logs
-        ]
+        ],
     }
 
 
@@ -975,7 +991,9 @@ async def list_webhook_logs(
 # ---------------------------------------------------------------------------
 
 
-async def _load_log_for_read(db: AsyncSession, log_id: int, current_user) -> WebhookLog | None:
+async def _load_log_for_read(
+    db: AsyncSession, log_id: int, current_user
+) -> WebhookLog | None:
     """Load a webhook log the caller is allowed to READ (detail + attachments).
 
     Read access is granted to the log's owner OR to any user in the same
@@ -1042,7 +1060,6 @@ async def get_webhook_log_by_id(
             "attachments": log.attachments or [],
         }
     }
-
 
 
 # ---------------------------------------------------------------------------
@@ -1130,7 +1147,11 @@ async def get_webhook_log_attachment(
         raise HTTPException(status_code=404, detail="attachment file missing")
 
     mime = att.get("content_type") or "application/octet-stream"
-    disposition = "inline" if (mime.startswith("application/pdf") or mime.startswith("image/")) else "attachment"
+    disposition = (
+        "inline"
+        if (mime.startswith("application/pdf") or mime.startswith("image/"))
+        else "attachment"
+    )
 
     return FileResponse(
         path=str(path),

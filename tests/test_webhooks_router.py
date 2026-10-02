@@ -13,7 +13,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -51,16 +50,16 @@ class _FakeSession:
         self._scalar = scalar
         self._added: list = []
         self._deleted: list = []
+        self._statements: list = []
         self.committed = False
 
     async def scalar(self, stmt):
         return self._scalar
 
     async def execute(self, stmt):
+        self._statements.append(stmt)
         res = MagicMock()
-        res.scalar_one_or_none = MagicMock(
-            return_value=self._scalar_one_or_none
-        )
+        res.scalar_one_or_none = MagicMock(return_value=self._scalar_one_or_none)
         res.scalars = MagicMock(
             return_value=MagicMock(all=MagicMock(return_value=self._scalars_all))
         )
@@ -81,7 +80,12 @@ class _FakeSession:
         self._deleted.append(obj)
 
 
-def _build_app(session: _FakeSession, *, user_id: int | None = USER_A_ID, email: str | None = USER_A_EMAIL):
+def _build_app(
+    session: _FakeSession,
+    *,
+    user_id: int | None = USER_A_ID,
+    email: str | None = USER_A_EMAIL,
+):
     from apowerb.auth.dependencies import get_current_user
     from apowerb.helpers.database import get_db
     from apowerb.routers.webhooks import router
@@ -221,9 +225,7 @@ class _TwoLookupsFakeSession:
         res = MagicMock()
         val = self._lookups.pop(0) if self._lookups else None
         res.scalar_one_or_none = MagicMock(return_value=val)
-        res.scalars = MagicMock(
-            return_value=MagicMock(all=MagicMock(return_value=[]))
-        )
+        res.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
         res.scalar_one = MagicMock(return_value=val)
         res.rowcount = 0
         return res
@@ -264,6 +266,47 @@ class TestCrossOwnerDelete:
 
         resp = client.delete("/api/webhooks/subscriptions/5")
         assert resp.status_code == 403, resp.text
+
+
+# ---------------------------------------------------------------------------
+# 3c. Delete happy path — child logs are removed before the subscription
+#     (regression for roadmap#105: a subscription with logs returned 500
+#     because the delete relied on a DB FK cascade that is absent on older
+#     instances. The route now deletes the logs explicitly.)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteSubscriptionHappyPath:
+    def test_delete_removes_child_logs_before_subscription(self):
+        sub = MagicMock()
+        sub.id = 11
+        sub.user_id = USER_A_ID
+        # Neither provider branch runs: not gmail, and no external id -> the
+        # test isolates the DB deletion, which is what the regression is about.
+        sub.provider = "microsoft_outlook"
+        sub.subscription_id = None
+
+        session = _FakeSession(scalar_one_or_none=sub)
+        app = _build_app(session)  # alice owns it
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.delete("/api/webhooks/subscriptions/11")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json().get("success") is True
+        assert session.committed is True
+        assert sub in session._deleted
+        # A bulk DELETE against webhook_logs for this subscription was issued
+        # before the commit — this is the actual fix.
+        deletes = [
+            s
+            for s in session._statements
+            if "delete from" in str(s).lower() and "webhook_logs" in str(s).lower()
+        ]
+        assert deletes, (
+            "expected a DELETE on webhook_logs before removing the subscription; "
+            f"statements seen: {[str(s) for s in session._statements]}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -341,9 +384,7 @@ class _ExpiringSubscription:
             "provider",
             "subscription_id",
         ):
-            raise RuntimeError(
-                "MissingGreenlet: ORM attribute accessed after commit"
-            )
+            raise RuntimeError("MissingGreenlet: ORM attribute accessed after commit")
         try:
             return object.__getattribute__(self, "_attrs")[name]
         except KeyError as exc:
@@ -436,7 +477,6 @@ class TestGmailIncomingSignatureInvalid:
         assert resp.status_code == 401, resp.text
 
 
-
 # ---------------------------------------------------------------------------
 # 6. GET /api/webhooks/logs/{log_id}
 # ---------------------------------------------------------------------------
@@ -503,4 +543,3 @@ class TestGetLogById:
 
         resp = client.get("/api/webhooks/logs/2362")
         assert resp.status_code == 401, resp.text
-
