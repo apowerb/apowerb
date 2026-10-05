@@ -86,6 +86,10 @@ dependencies = [
     "prometheus-client>=0.20.0",
     "pyodbc>=5.1.0",
     "aioodbc>=0.5.0",
+    # TabPFN tabular models via Prior Labs' hosted API (tool: portfolio/tabpfn).
+    # The client talks to https://api.priorlabs.ai and does NOT pull torch, so
+    # inference runs server-side — no heavy model is loaded in the app pod.
+    "tabpfn-client>=0.6.1",
 ]
 
 [project.urls]
