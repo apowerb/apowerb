@@ -162,15 +162,8 @@ async def get_bug_report_screenshot(
     from apowerb.storage.storage_service import StorageService
 
     storage = StorageService()
-    download = getattr(storage, "download_file_from_storage", None) or getattr(
-        storage, "download_file_from_s3", None
-    )
-    if download is None:
-        raise HTTPException(
-            status_code=501, detail="Le stockage configuré ne sait pas relire."
-        )
     try:
-        content = download(report.screenshot_path)
+        content = storage.download_file_from_storage(report.screenshot_path)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Capture introuvable.")
     except Exception as exc:

@@ -116,11 +116,11 @@ def _error_signature(
     Recharts sur la taille d'un graphique s'émet sur toutes les pages)
     donnait la même empreinte à des signalements sans rapport.
     """
-    errors = [entry for entry in console if (entry.get("level") or "").lower() == "error"]
+    errors = [
+        entry for entry in console if (entry.get("level") or "").lower() == "error"
+    ]
     return (
-        failing.get("error")
-        or (errors[-1]["message"] if errors else None)
-        or observed
+        failing.get("error") or (errors[-1]["message"] if errors else None) or observed
     )
 
 
@@ -133,7 +133,9 @@ def _failing_call(calls: list[dict[str, Any]]) -> dict[str, Any]:
     juste avant, un préchargement de page par exemple ; la route de
     l'écran prend alors le relais.
     """
-    failures = [c for c in calls if isinstance(c.get("status"), int) and c["status"] >= 400]
+    failures = [
+        c for c in calls if isinstance(c.get("status"), int) and c["status"] >= 400
+    ]
     if failures:
         return failures[-1]
     no_response = [c for c in calls if c.get("status") is None and c.get("error")]
@@ -193,8 +195,12 @@ async def create_bug_report(
         reporter_email=reporter_email,
         title=(payload.title or "").strip()[:200]
         or render_issue_title(
-            {"title": None, "route": route, "observed": payload.observed,
-             "what_i_did": payload.what_i_did}
+            {
+                "title": None,
+                "route": route,
+                "observed": payload.observed,
+                "what_i_did": payload.what_i_did,
+            }
         ),
         where_i_was=redact_text(payload.where_i_was, max_length=1000),
         what_i_did=redact_text(payload.what_i_did),
@@ -221,9 +227,7 @@ async def create_bug_report(
     elif payload.screenshot and not payload.screenshot_consent:
         # Envoyée sans consentement : on ne la garde pas. Le cas existe —
         # un client tiers peut remplir le champ sans montrer d'aperçu.
-        logger.info(
-            "[BUG-REPORT] Capture reçue sans consentement explicite : ignorée."
-        )
+        logger.info("[BUG-REPORT] Capture reçue sans consentement explicite : ignorée.")
 
     db.add(report)
     # Les deux valeurs du signalement canonique sont lues AVANT le commit,
@@ -247,18 +251,22 @@ async def create_bug_report(
     from apowerb.bug_reports import tracking
 
     tracking.record_events(
-        db, report.id, [tracking.PendingEvent(tracking.EVENT_CREATED)],
+        db,
+        report.id,
+        [tracking.PendingEvent(tracking.EVENT_CREATED)],
         actor_user_id=user_id,
     )
     if duplicate_of:
         tracking.record_events(
             db,
             duplicate_of,
-            [tracking.PendingEvent(
-                tracking.EVENT_DUPLICATE_RECEIVED,
-                to_value=str(report.id),
-                detail=f"{occurrences} occurrence(s)",
-            )],
+            [
+                tracking.PendingEvent(
+                    tracking.EVENT_DUPLICATE_RECEIVED,
+                    to_value=str(report.id),
+                    detail=f"{occurrences} occurrence(s)",
+                )
+            ],
             actor_user_id=user_id,
         )
     await db.commit()
@@ -329,13 +337,7 @@ def _store_screenshot(data_url: str, fingerprint: str) -> Optional[str]:
 
         storage = StorageService()
         path = f"bug-reports/{fingerprint}/{uuid4().hex}.{shot.extension}"
-        upload = getattr(storage, "upload_bytes_to_storage", None) or getattr(
-            storage, "upload_bytes_to_s3", None
-        )
-        if upload is None:  # pragma: no cover - dépend du mode de stockage
-            logger.warning("[BUG-REPORT] Aucun uploader disponible : capture perdue.")
-            return None
-        upload(shot.content, path, shot.content_type)
+        storage.upload_bytes_to_storage(shot.content, path, shot.content_type)
         return path
     except Exception as exc:  # pragma: no cover - dépend de l'infra
         logger.warning("[BUG-REPORT] Capture non stockée : %s", exc)
@@ -479,7 +481,9 @@ def build_sink(posed: Optional[Mapping[str, str]] = None):
     )
 
 
-def issue_payload(report: BugReport, *, app_url: Optional[str] = None) -> dict[str, Any]:
+def issue_payload(
+    report: BugReport, *, app_url: Optional[str] = None
+) -> dict[str, Any]:
     """Le dictionnaire que consomme le rendu Markdown."""
     detail = to_detail(report)
     data = detail.model_dump()
@@ -559,12 +563,14 @@ async def create_issue_for(
     tracking.record_events(
         db,
         report.id,
-        [tracking.PendingEvent(
-            tracking.EVENT_ISSUE_CREATED,
-            from_value=report.status,
-            to_value=f"#{number}",
-            detail=url,
-        )],
+        [
+            tracking.PendingEvent(
+                tracking.EVENT_ISSUE_CREATED,
+                from_value=report.status,
+                to_value=f"#{number}",
+                detail=url,
+            )
+        ],
         actor_user_id=actor_user_id,
     )
     report.issue_url = url
