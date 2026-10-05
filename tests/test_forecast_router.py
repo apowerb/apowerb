@@ -122,7 +122,7 @@ def test_forecast_rejects_unknown_model_before_calling_client():
     app = _build_app()
     client = TestClient(app, raise_server_exceptions=False)
 
-    bad_body = dict(_VALID_BODY, models=["xgboost"])
+    bad_body = dict(_VALID_BODY, models=["lstm"])
     with patch("apowerb.routers.forecast.Th2forecastClient") as mock_ctor:
         resp = client.post("/api/v1/forecast", json=bad_body)
 
@@ -146,3 +146,51 @@ def test_forecast_rejects_oversized_data_payload_before_calling_client():
 
     assert resp.status_code == 422
     mock_ctor.assert_not_called()
+
+
+def test_forecast_relays_r_engine_features():
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    body = dict(
+        _VALID_BODY,
+        models=["random_forest", "ensemble"],
+        preprocessing={"anomalies": True},
+        holidays_country="FR",
+    )
+    with patch("apowerb.routers.forecast.Th2forecastClient") as mock_ctor:
+        mock_instance = MagicMock()
+        mock_instance.forecast.return_value = {"status": "success", "series": []}
+        mock_ctor.return_value = mock_instance
+        resp = client.post("/api/v1/forecast", json=body)
+
+    assert resp.status_code == 200
+    relayed = mock_instance.forecast.call_args.args[0]
+    assert relayed["models"] == ["random_forest", "ensemble"]
+    assert relayed["preprocessing"] == {"anomalies": True}
+    assert relayed["holidays_country"] == "FR"
+
+
+@pytest.mark.parametrize("preprocessing", [{"smoothing": True}, {"anomalies": "yes"}])
+def test_forecast_rejects_invalid_preprocessing_before_calling_client(preprocessing):
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with patch("apowerb.routers.forecast.Th2forecastClient") as mock_ctor:
+        resp = client.post("/api/v1/forecast", json=dict(_VALID_BODY, preprocessing=preprocessing))
+
+    assert resp.status_code == 422
+    mock_ctor.assert_not_called()
+
+
+def test_forecast_omits_preprocessing_when_not_given():
+    app = _build_app()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    with patch("apowerb.routers.forecast.Th2forecastClient") as mock_ctor:
+        mock_instance = MagicMock()
+        mock_instance.forecast.return_value = {"status": "success", "series": []}
+        mock_ctor.return_value = mock_instance
+        client.post("/api/v1/forecast", json=_VALID_BODY)
+
+    assert "preprocessing" not in mock_instance.forecast.call_args.args[0]

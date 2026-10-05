@@ -43,19 +43,48 @@ _HTTP_CALL_TIMEOUT_S = 30
 
 # What only the Python engine (apowerb/th2forecast-py) implements. The R engine
 # (apowerb/th2forecast) answers 200 to a request carrying these fields and
-# simply ignores them -- a "successful" forecast without the hierarchy or the
-# scenarios that were asked for. Measured on 02/10/2026 against
-# apowerb/th2forecast:0.1.0. So with the R engine they are refused here, before
-# any call, with the same error shape the engine uses.
+# simply ignores them -- a "successful" forecast without the hierarchy that was
+# asked for. Measured on 02/10/2026 against apowerb/th2forecast:0.1.0. So with
+# the R engine they are refused here, before any call, with the same error
+# shape the engine uses.
 _ENGINES = ("r", "python")
-_PYTHON_ONLY_FIELDS = ("events", "scenarios", "hierarchy", "reconciliation")
+_PYTHON_ONLY_FIELDS = ("events", "hierarchy", "reconciliation")
 _PYTHON_ONLY_MODELS = ("croston", "tsb", "imapa")
+# Scenarios: the R engine applies `adjustments` (th2forecast#18) and knows
+# nothing else -- an event-based scenario (`without`, `events`) would come back
+# unchanged. Any other key of a scenario is refused with the R engine.
+_R_SCENARIO_KEYS = ("name", "adjustments")
+# What only the R engine implements (th2forecast#19): the package's
+# preprocessing and machine-learning models. Refused with the Python engine.
+_R_ONLY_FIELDS = ("preprocessing",)
+_R_ONLY_MODELS = ("linear", "mars", "random_forest", "xgboost", "ensemble")
 # Added by the core itself (closed loop), never by the user: with the R engine
 # it is dropped, not refused -- there is nobody to tell.
 _PYTHON_ONLY_INTERNAL = ("feedback",)
 # The Python engine adds these to every series; the R engine never does. Their
 # presence tells which engine actually answered.
 _PYTHON_SERIES_MARKS = ("calibration", "demand")
+
+
+def _unsupported(
+    request_body: dict[str, Any], fields: tuple[str, ...], models: tuple[str, ...], engine_label: str
+) -> list[dict[str, str]]:
+    """Errors for the fields and models the configured engine does not implement."""
+    errors = [
+        {"field": field, "message": f"« {field} » n'est pas pris en charge par le moteur de prévision {engine_label}."}
+        for field in fields
+        if request_body.get(field)  # None or empty asks for nothing
+    ]
+    unsupported = [m for m in (request_body.get("models") or []) if m in models]
+    if unsupported:
+        errors.append({
+            "field": "models",
+            "message": (
+                f"Modèle(s) non pris en charge par le moteur de prévision {engine_label} : "
+                f"{', '.join(unsupported)}."
+            ),
+        })
+    return errors
 
 
 class Th2forecastNotConfigured(RuntimeError):
@@ -239,18 +268,23 @@ class Th2forecastClient:
     def _fit_to_engine(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """Refuses what the configured engine cannot do; never mutates the input."""
         if self.engine == "python":
+            errors = _unsupported(request_body, _R_ONLY_FIELDS, _R_ONLY_MODELS, "Python")
+            if errors:
+                raise Th2forecastAPIError(400, {"status": "error", "errors": errors})
             return request_body
-        errors = [
-            {"field": field, "message": f"« {field} » n'est pas pris en charge par le moteur de prévision R."}
-            for field in _PYTHON_ONLY_FIELDS
-            if request_body.get(field)  # None or empty asks for nothing
-        ]
-        unsupported = [m for m in (request_body.get("models") or []) if m in _PYTHON_ONLY_MODELS]
-        if unsupported:
-            errors.append({
-                "field": "models",
-                "message": f"Modèle(s) non pris en charge par le moteur de prévision R : {', '.join(unsupported)}.",
-            })
+        errors = _unsupported(request_body, _PYTHON_ONLY_FIELDS, _PYTHON_ONLY_MODELS, "R")
+        for index, scenario in enumerate(request_body.get("scenarios") or []):
+            if not isinstance(scenario, dict):
+                continue  # malformed: the engine answers its own 400
+            for key, value in scenario.items():
+                if key not in _R_SCENARIO_KEYS and value:
+                    errors.append({
+                        "field": f"scenarios[{index}].{key}",
+                        "message": (
+                            f"« {key} » n'est pas pris en charge dans un scénario par le moteur de "
+                            f"prévision R : seuls les ajustements (« adjustments ») sont appliqués."
+                        ),
+                    })
         if errors:
             raise Th2forecastAPIError(400, {"status": "error", "errors": errors})
         return {k: v for k, v in request_body.items() if k not in _PYTHON_ONLY_INTERNAL}
@@ -270,13 +304,13 @@ class Th2forecastClient:
         if python_marks and self.engine == "r":
             logger.warning(
                 "th2forecast at %s answered like the Python engine while TH2FORECAST_ENGINE=r: "
-                "events, scenarios and hierarchy are refused for nothing -- set TH2FORECAST_ENGINE=python",
+                "events and hierarchy are refused for nothing -- set TH2FORECAST_ENGINE=python",
                 _redact(self.base_url),
             )
         elif not python_marks and self.engine == "python":
             logger.warning(
                 "th2forecast at %s answered like the R engine while TH2FORECAST_ENGINE=python: "
-                "events, scenarios and hierarchy are being ignored by the engine -- set TH2FORECAST_ENGINE=r",
+                "events and hierarchy are being ignored by the engine -- set TH2FORECAST_ENGINE=r",
                 _redact(self.base_url),
             )
         return result

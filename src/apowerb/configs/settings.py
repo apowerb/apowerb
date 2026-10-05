@@ -579,10 +579,12 @@ class Settings(BaseSettings):
     th2forecast_timeout_s: float = 300
     # Which engine TH2FORECAST_URL points to: "r" (apowerb/th2forecast, the
     # default since 02/10/2026) or "python" (apowerb/th2forecast-py). They share
-    # the v1 contract, but only the Python engine implements events, scenarios,
-    # hierarchy, reconciliation, feedback and the croston/tsb/imapa models --
-    # and the R engine IGNORES those fields instead of rejecting them. The
-    # client refuses them up front when this says "r".
+    # the v1 contract, but only the Python engine implements events, event-based
+    # scenarios, hierarchy, reconciliation, feedback and the croston/tsb/imapa
+    # models -- and the R engine IGNORES those fields instead of rejecting them.
+    # Only the R engine implements `preprocessing` and the linear/mars/
+    # random_forest/xgboost/ensemble models. The client refuses up front what
+    # the configured engine cannot run.
     th2forecast_engine: Literal["r", "python"] = "r"
 
     # ── Jev (TypeSafe decision model, 24/09/2026) ───────────────────────

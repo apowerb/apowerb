@@ -68,9 +68,9 @@ class TestArgumentValidation:
         assert "horizon" in result["message"]
 
     def test_rejects_unknown_model(self):
-        result = api_call.tool_thaink2_forecast(**_valid_kwargs(models=["xgboost"]))
+        result = api_call.tool_thaink2_forecast(**_valid_kwargs(models=["lstm"]))
         assert result["status"] == "error"
-        assert "xgboost" in result["message"]
+        assert "lstm" in result["message"]
 
     def test_rejects_empty_data(self):
         result = api_call.tool_thaink2_forecast(**_valid_kwargs(rows=[]))
