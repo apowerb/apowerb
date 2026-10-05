@@ -673,6 +673,11 @@ def _running_is_orphaned(row: dict, *, now: datetime) -> bool:
     try:
         final = run_main.get_run(run_id, owner_id=row.get("owner_id"))
     except Exception:
+        logger.warning(
+            "[triggers] get_run indisponible pour run=%s — garde de "
+            "chevauchement conservée (bascule sur le seul critère d'âge)",
+            run_id,
+        )
         final = None
         lookup_failed = True
     else:
