@@ -191,7 +191,10 @@ class TestHappyPath:
         monkeypatch.setenv("DD_SITE", "us5")
         with patch("httpx.post", return_value=_resp(202)) as mock_post:
             tool_send_datadog_log("hi")
-        assert "us5.datadoghq.com" in mock_post.call_args.args[0]
+        assert (
+            mock_post.call_args.args[0]
+            == "https://http-intake.logs.us5.datadoghq.com/api/v2/logs"
+        )
 
     def test_defaults_to_us1_without_site(self, monkeypatch):
         monkeypatch.delenv("DD_SITE", raising=False)
