@@ -47,7 +47,21 @@ _BUILT_FROM = "_apowerb_built_from"
 _ACTIVE = "_apowerb_active_runs"  # in-flight run_async + run_live calls
 _RETIRED = "_apowerb_retired"  # detached from cache, close when idle
 _WRAPPED = "_apowerb_run_wrapped"  # run_async/run_live already instrumented
+_CLOSED = "_apowerb_closed"  # close already started -- never close twice
 _RUN_METHODS = ("run_async", "run_live")
+
+# A runner retired while idle is not closed at once: the run it was handed out
+# for may not have started yet. ``get_runner_async`` returns the runner, and
+# only its first ``run_async`` iteration bumps ``_ACTIVE`` -- in between, the
+# SSE route awaits ``get_session`` (api_server.py ``/run_sse``) with the runner
+# still at ``_ACTIVE == 0``. Closing it then would tear its toolsets (and any
+# live MCP session) out from under a run about to begin. We wait this long and
+# re-check: by then the run has either started (``_ACTIVE > 0``, its own finally
+# closes it) or it never will (a handout whose caller errored out -- closed to
+# avoid a leak). The window is measured (that one await); the grace covering it
+# is a generous estimate of a session lookup, not a proof. Monkeypatched small
+# in tests.
+_RUNNER_CLOSE_GRACE = 30.0  # seconds
 
 
 async def _close_runner_safely(runner: Any) -> None:
@@ -62,8 +76,23 @@ async def _close_runner_safely(runner: Any) -> None:
         )
 
 
-def _schedule_close(runner: Any) -> None:
-    """Close ``runner`` now, from sync code, whether or not a loop is running."""
+def _claim_close(runner: Any) -> bool:
+    """Set the close-once flag, returning True only for the first caller.
+
+    Both the grace timer and a run's ``finally`` may reach an idle retired
+    runner; on one event loop this check-and-set has no await between the read
+    and the write, so exactly one of them closes it.
+    """
+    if getattr(runner, _CLOSED, False):
+        return False
+    setattr(runner, _CLOSED, True)
+    return True
+
+
+def _close_now(runner: Any) -> None:
+    """Close ``runner`` once, from sync code, whether or not a loop is running."""
+    if not _claim_close(runner):
+        return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -75,6 +104,13 @@ def _schedule_close(runner: Any) -> None:
             asyncio.run(_close_runner_safely(runner))
         except Exception as exc:
             logger.warning("[agent-sync] closing a retired runner failed: %s", exc)
+
+
+def _close_if_idle(runner: Any) -> None:
+    """Grace-timer callback: close the runner only if no run has started."""
+    if getattr(runner, _ACTIVE, 0) > 0:
+        return  # a run began during the grace -- its finally will close it
+    _close_now(runner)  # _claim_close makes this a no-op if already closed
 
 
 def _instrument_runner(runner: Any) -> None:
@@ -109,7 +145,11 @@ def _instrument_runner(runner: Any) -> None:
             finally:
                 remaining = getattr(runner, _ACTIVE, 1) - 1
                 setattr(runner, _ACTIVE, remaining)
-                if remaining <= 0 and getattr(runner, _RETIRED, False):
+                if (
+                    remaining <= 0
+                    and getattr(runner, _RETIRED, False)
+                    and _claim_close(runner)
+                ):
                     await _close_runner_safely(runner)
 
         setattr(runner, method_name, _counted)
@@ -120,13 +160,25 @@ def _instrument_runner(runner: Any) -> None:
 
 
 def _retire_runner(runner: Any) -> None:
-    """Detach done: close ``runner`` now if idle, else when its last run ends."""
-    if runner is None:
+    """Detach done: close ``runner`` once no run holds it, after a grace window.
+
+    Idempotent -- a runner retired twice schedules only one grace timer.
+    """
+    if runner is None or getattr(runner, _RETIRED, False):
         return
+    setattr(runner, _RETIRED, True)
     if getattr(runner, _ACTIVE, 0) > 0:
-        setattr(runner, _RETIRED, True)
+        return  # a run is in flight; its finally closes it when it ends
+    # Idle now, but possibly a runner just handed out whose run has not started
+    # (see _RUNNER_CLOSE_GRACE). Defer the close and re-check after the grace.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop in this thread. All retire paths are async today, so this is
+        # only a defensive fallback: close now, as before the grace existed.
+        _close_now(runner)
         return
-    _schedule_close(runner)
+    loop.call_later(_RUNNER_CLOSE_GRACE, _close_if_idle, runner)
 
 
 def drop_cached_agent(adk_server: Any, app_name: str) -> None:
