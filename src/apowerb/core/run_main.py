@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -62,6 +62,13 @@ _REPLAYABLE = (STATUS_ERROR, STATUS_CANCELLED)
 # Déclencheurs dont le run est un agent ADK, qui agit par ses outils : ceux-là
 # ne sont rejoués sans ``force`` que si leurs outils sont connus et vides.
 AGENT_TRIGGERS = ("schedule", "chat")
+
+# Un run tué en vol (process arrêté, pod redémarré) ne passe jamais par le
+# ``finally`` de ``track_agent_stream`` : il reste ``running`` sans ``finished_at``.
+# Passé ce délai, on le règle pour qu'il reflète la réalité et redevienne
+# rejouable. Généreux pour ne jamais clore un vrai run long (même borne que la
+# réconciliation côté déclencheur schedule).
+RUN_STALE_AFTER = timedelta(hours=6)
 
 
 def _now() -> str:
@@ -328,6 +335,51 @@ def _sse_event(block: str) -> dict | None:
     return event if isinstance(event, dict) else None
 
 
+def _reconcile_if_orphaned(conn, row):
+    """Règle un run resté ``running`` faute d'avoir pu consigner son issue.
+
+    ``settle_run`` vit dans un ``finally`` : un arrêt brutal ne l'exécute
+    jamais, et le run reste ``running`` à vie. Passé ``RUN_STALE_AFTER``, on
+    l'écrit ``error`` (dans ``_REPLAYABLE``, et ``cancelled`` mentirait sur la
+    cause) avec un ``finished_at`` et un message explicite. Le ``WHERE status``
+    rend l'écriture idempotente et sûre entre réplicas ; la ligne est relue
+    pour refléter l'écriture. Sans ``created_at`` lisible, on ne touche rien
+    (repli vers l'inaction). Opère dans la transaction de lecture de l'appelant.
+    """
+    if row is None:
+        return row
+    data = row._asdict()
+    if data.get("status") != STATUS_RUNNING:
+        return row
+    created = data.get("created_at")
+    if not created:
+        return row
+    try:
+        age = datetime.now() - datetime.fromisoformat(created)
+    except ValueError:
+        return row
+    if age < RUN_STALE_AFTER:
+        return row
+    hours = int(RUN_STALE_AFTER.total_seconds() // 3600)
+    message = (
+        "Run settled by reconciliation: no completion was recorded within "
+        f"{hours}h; its actual outcome is unknown."
+    )
+    conn.execute(
+        run_store.run_table.update()
+        .where(
+            run_store.run_table.c.run_id == data["run_id"],
+            run_store.run_table.c.status == STATUS_RUNNING,
+        )
+        .values(status=STATUS_ERROR, error_message=message, finished_at=_now())
+    )
+    return conn.execute(
+        run_store.run_table.select().where(
+            run_store.run_table.c.run_id == data["run_id"]
+        )
+    ).fetchone()
+
+
 def _row_to_dict(row) -> dict:
     run = row._asdict()
     run["agent_ids"] = json.loads(run.get("agent_ids") or "[]")
@@ -363,6 +415,7 @@ def get_run(run_id: str, owner_id: str) -> dict | None:
                 run_store.run_table.c.owner_id == owner_id,
             )
         ).fetchone()
+        row = _reconcile_if_orphaned(conn, row)
     return _row_to_dict(row) if row else None
 
 
@@ -375,6 +428,7 @@ def list_runs(owner_id: str, limit: int = 50) -> list[dict]:
             .order_by(run_store.run_table.c.created_at.desc())
             .limit(limit)
         ).fetchall()
+        rows = [_reconcile_if_orphaned(conn, row) for row in rows]
     return [_row_to_dict(row) for row in rows]
 
 
@@ -414,6 +468,7 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
                 run_store.run_table.c.owner_id == owner_id,
             )
         ).fetchone()
+        row = _reconcile_if_orphaned(conn, row)
 
     if row is None:
         raise HTTPException(
