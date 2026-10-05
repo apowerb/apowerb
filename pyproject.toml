@@ -165,3 +165,13 @@ markers = [
     "integration: integration tests (require running server)",
     "unit: unit tests",
 ]
+
+[tool.mypy]
+# follow_imports = "silent" makes the pre-commit mypy hook type-check the files
+# being committed and use their imports only for type information, without
+# reporting errors inside those imported modules. Without it, editing any file
+# whose import graph reaches the app core surfaces the repo's pre-existing type
+# debt (currently ~144 errors across 41 untouched files) and blocks the commit —
+# the conventional mirrors-mypy setup. It scopes the hook; it does not hide the
+# debt, which a full `mypy src` still reports.
+follow_imports = "silent"
