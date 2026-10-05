@@ -1,12 +1,16 @@
 """``onedrive_core._get_access_token`` must raise ``IntegrationStatusError``
 with the right code so the tools propagate the structured payload to the
-LLM (rather than the previous free-form ``RuntimeError``).
+LLM (rather than a free-form ``RuntimeError``).
+
+The token exchange is now delegated to
+``microsoft_auth.get_microsoft_access_token``; these tests therefore drive
+the scenarios by patching ``microsoft_auth.httpx.post``.
 
 Mapping:
   - missing credentials .................... INTEGRATION_MISSING
-  - ``invalid_grant`` after auto-heal ...... INTEGRATION_EXPIRED
+  - ``invalid_grant`` from the endpoint .... INTEGRATION_EXPIRED
   - non-200 from the Microsoft endpoint .... INTEGRATION_ERROR
-  - 200 OK without ``access_token`` ........ INTEGRATION_ERROR
+  - 200 OK without ``access_token`` ........ RuntimeError (protocol violation)
 
 End-to-end: a tool call (e.g. ``onedrive_read.tool_list_files``) must
 return the structured ``_integration_status`` dict when auth fails.
@@ -31,19 +35,17 @@ PROVIDER = "microsoft_onedrive"
 
 @pytest.fixture(autouse=True)
 def _isolate_token_state(monkeypatch):
-    """Each test starts with a clean cache and no token in env, so behaviour
-    is deterministic (the helper has module-level state)."""
-    from apowerb.tools_store.portfolio import onedrive_core
+    """Each test starts with a clean invoker-scoped cache and no token in env,
+    so behaviour is deterministic."""
+    from apowerb.tools_store.portfolio import microsoft_auth
 
-    onedrive_core._token_cache.clear()
-    onedrive_core._integration_loaded_for = None
+    microsoft_auth._token_cache.clear()
     monkeypatch.delenv("ONEDRIVE_REFRESH_TOKEN", raising=False)
     monkeypatch.delenv("ONEDRIVE_CLIENT_ID", raising=False)
     monkeypatch.delenv("ONEDRIVE_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("AGENT_OWNER", raising=False)
     yield
-    onedrive_core._token_cache.clear()
-    onedrive_core._integration_loaded_for = None
+    microsoft_auth._token_cache.clear()
 
 
 def _fake_post(status_code: int, text: str = "", json_body: dict | None = None) -> MagicMock:
@@ -61,10 +63,11 @@ def _fake_post(status_code: int, text: str = "", json_body: dict | None = None) 
 
 class TestMissingCredentials:
     def test_no_refresh_token_raises_missing(self, monkeypatch):
+        from apowerb.integrations import helpers as ih
         from apowerb.tools_store.portfolio import onedrive_core
 
-        # Force the auto-heal retry to also produce no refresh_token.
-        monkeypatch.setattr(onedrive_core, "_ensure_integration_tokens", lambda: None)
+        # No env token, and the DB integration row has none either.
+        monkeypatch.setattr(ih, "fetch_integration_configs", lambda *a, **k: {})
 
         with pytest.raises(IntegrationStatusError) as ei:
             onedrive_core._get_access_token()
@@ -75,38 +78,24 @@ class TestMissingCredentials:
 
 
 # ---------------------------------------------------------------------------
-# 2. INTEGRATION_EXPIRED — invalid_grant after auto-heal
+# 2. INTEGRATION_EXPIRED — invalid_grant from the token endpoint
 # ---------------------------------------------------------------------------
 
 
 class TestExpiredRefreshToken:
-    def test_invalid_grant_after_retry_raises_expired(self, monkeypatch):
-        """First call → invalid_grant → auto-heal clears env and retries.
-        Auto-heal helper restores the token, second call → invalid_grant
-        again (token is still revoked) → raise EXPIRED."""
-        import os
-        from apowerb.tools_store.portfolio import onedrive_core
+    def test_invalid_grant_raises_expired(self, monkeypatch):
+        """No silent auto-heal retry anymore: the first ``invalid_grant`` from
+        the token endpoint surfaces as EXPIRED immediately."""
+        from apowerb.tools_store.portfolio import microsoft_auth, onedrive_core
 
         monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "stale-token")
         monkeypatch.setenv("ONEDRIVE_CLIENT_ID", "cid")
         monkeypatch.setenv("ONEDRIVE_CLIENT_SECRET", "csec")
 
-        # The auto-heal path pops ONEDRIVE_REFRESH_TOKEN before retrying.
-        # Simulate _ensure_integration_tokens re-loading the same stale
-        # value from DB — that way the retry reaches the HTTP call again
-        # and the second invalid_grant triggers the EXPIRED branch.
-        def _restore_stale_token():
-            os.environ.setdefault("ONEDRIVE_REFRESH_TOKEN", "stale-token")
-
-        monkeypatch.setattr(
-            onedrive_core, "_ensure_integration_tokens", _restore_stale_token
-        )
-
         invalid_grant_resp = _fake_post(
             400, text='{"error":"invalid_grant","error_description":"AADSTS7000215..."}'
         )
-
-        with patch.object(onedrive_core.httpx, "post", return_value=invalid_grant_resp):
+        with patch.object(microsoft_auth.httpx, "post", return_value=invalid_grant_resp):
             with pytest.raises(IntegrationStatusError) as ei:
                 onedrive_core._get_access_token()
 
@@ -122,15 +111,14 @@ class TestExpiredRefreshToken:
 
 class TestGenericTokenEndpointError:
     def test_503_raises_error(self, monkeypatch):
-        from apowerb.tools_store.portfolio import onedrive_core
+        from apowerb.tools_store.portfolio import microsoft_auth, onedrive_core
 
         monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "rt")
         monkeypatch.setenv("ONEDRIVE_CLIENT_ID", "cid")
         monkeypatch.setenv("ONEDRIVE_CLIENT_SECRET", "csec")
-        monkeypatch.setattr(onedrive_core, "_ensure_integration_tokens", lambda: None)
 
         with patch.object(
-            onedrive_core.httpx, "post", return_value=_fake_post(503, text="bad gateway")
+            microsoft_auth.httpx, "post", return_value=_fake_post(503, text="bad gateway")
         ):
             with pytest.raises(IntegrationStatusError) as ei:
                 onedrive_core._get_access_token()
@@ -143,27 +131,27 @@ class TestGenericTokenEndpointError:
 
 
 # ---------------------------------------------------------------------------
-# 4. INTEGRATION_ERROR — 200 OK but no access_token
+# 4. 200 OK but no access_token — protocol violation → RuntimeError
 # ---------------------------------------------------------------------------
 
 
 class TestMalformedTokenResponse:
-    def test_200_without_access_token_raises_error(self, monkeypatch):
-        from apowerb.tools_store.portfolio import onedrive_core
+    def test_200_without_access_token_raises_runtimeerror(self, monkeypatch):
+        """A 200 that omits ``access_token`` is a protocol violation, not an
+        integration-status condition: the shared helper raises a bare
+        ``RuntimeError`` (behaviour delta from the old onedrive-local
+        exchange, which mapped it to INTEGRATION_ERROR)."""
+        from apowerb.tools_store.portfolio import microsoft_auth, onedrive_core
 
         monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "rt")
         monkeypatch.setenv("ONEDRIVE_CLIENT_ID", "cid")
         monkeypatch.setenv("ONEDRIVE_CLIENT_SECRET", "csec")
-        monkeypatch.setattr(onedrive_core, "_ensure_integration_tokens", lambda: None)
 
         # Empty body — no access_token field.
         resp = _fake_post(200, json_body={"token_type": "Bearer"})
-        with patch.object(onedrive_core.httpx, "post", return_value=resp):
-            with pytest.raises(IntegrationStatusError) as ei:
+        with patch.object(microsoft_auth.httpx, "post", return_value=resp):
+            with pytest.raises(RuntimeError):
                 onedrive_core._get_access_token()
-
-        assert ei.value.code == INTEGRATION_ERROR
-        assert ei.value.is_remediable_by_reconnect is False
 
 
 # ---------------------------------------------------------------------------

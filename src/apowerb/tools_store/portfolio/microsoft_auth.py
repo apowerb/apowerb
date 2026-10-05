@@ -13,6 +13,7 @@ Typical usage inside a tool module::
     headers = microsoft_auth_headers("TEAMS", scope="offline_access Chat.Read")
 """
 
+import hashlib
 import os
 import time
 from logging import getLogger
@@ -47,14 +48,38 @@ _CACHE_TTL_SECONDS = 50 * 60  # Microsoft tokens last ~60 min; refresh at 50
 _token_cache: dict[tuple[str, str], dict] = {}
 
 
+def _env_token_fingerprint(service_env_prefix: str) -> str:
+    """Short fingerprint of the env-provided refresh token, or "" when unset.
+
+    Env-first callers (SHAREPOINT, and ONEDRIVE under ``env_scope``) take the
+    refresh token from a process-global the caller sets deliberately, while the
+    invoker ``ContextVar`` may be unset or constant across different users — a
+    background trigger poller enters ``env_scope`` per user without binding the
+    invoker. Folding the token's fingerprint into the cache key keeps those
+    callers isolated by the token itself, so one user's access token is never
+    served to another (incident 2026-07-03). Self-resolving callers (Outlook,
+    Teams) normally leave the env var unset -> "" -> key unchanged.
+    """
+    env_key = _ENV_PREFIX_TO_REFRESH_KEY.get(
+        service_env_prefix, f"{service_env_prefix}_REFRESH_TOKEN"
+    )
+    tok = os.getenv(env_key)
+    if not tok:
+        return ""
+    return hashlib.sha256(tok.encode()).hexdigest()[:16]
+
+
 def _invoker_cache_key(service_env_prefix: str) -> tuple[str, str]:
     """Cache key scoping the access token to the current invoker.
 
     Uses the resolved invoker identity (falls back to ``AGENT_OWNER`` / "" for
-    background runs) so two users on the same worker never share an entry.
+    background runs) so two users on the same worker never share an entry. For
+    env-first callers the env token's fingerprint is folded in as well, so two
+    users sharing an unset/constant invoker under ``env_scope`` stay isolated.
     """
     from apowerb.core.invocation_context import resolve_integration_user
-    return (service_env_prefix, resolve_integration_user(prefer_invoker=True) or "")
+    invoker = resolve_integration_user(prefer_invoker=True) or ""
+    return (service_env_prefix, f"{invoker}:{_env_token_fingerprint(service_env_prefix)}")
 
 
 def clear_integration_cache() -> None:
@@ -318,7 +343,10 @@ def get_microsoft_access_token(
     # Cache the freshly-exchanged access token under the invoker key so the
     # next call on this process is a warm hit (no DB, no HTTP) — and so a
     # failed persist above cannot immediately strand us on a dead token.
-    _token_cache[cache_key] = {
+    # Recompute the key AFTER the env rotation above: for env-first callers the
+    # fingerprint now reflects the rotated token, so the next call in the same
+    # env_scope is a warm hit. Mirrors the old onedrive_core re-keying.
+    _token_cache[_invoker_cache_key(service_env_prefix)] = {
         "access_token": access_token,
         "expires_at": now + _CACHE_TTL_SECONDS,
     }
