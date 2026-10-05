@@ -10,7 +10,6 @@ paths also go through) and the save/update routes -- and never spawn anything.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -62,12 +61,35 @@ def test_stdio_is_skipped_when_disabled():
     assert _FakeToolset.instances == []  # nothing built, nothing spawned
 
 
-def test_stdio_is_built_when_enabled(monkeypatch):
+def test_stdio_is_built_when_enabled_and_owner_is_admin(monkeypatch):
     monkeypatch.setenv("MCP_STDIO_ENABLED", "1")
+    monkeypatch.setattr(mcp_loader, "email_is_admin", lambda email: True)
     tools: list = []
-    mcp_loader.load_mcp_servers(STDIO_CFG, tools)
+    mcp_loader.load_mcp_servers(STDIO_CFG, tools, owner_id="admin@example.com")
     assert len(tools) == 1
     assert len(_FakeToolset.instances) == 1
+
+
+def test_stdio_is_skipped_when_enabled_but_owner_not_admin(monkeypatch):
+    monkeypatch.setenv("MCP_STDIO_ENABLED", "1")
+    monkeypatch.setattr(mcp_loader, "email_is_admin", lambda email: False)
+    tools: list = []
+    mcp_loader.load_mcp_servers(STDIO_CFG, tools, owner_id="user@example.com")
+    assert tools == []
+    assert _FakeToolset.instances == []
+
+
+def test_stdio_disabled_wins_over_admin_owner(monkeypatch):
+    # Disabled deployment: the stdio server is skipped before the role is even
+    # consulted, even for an admin owner.
+    called = {"role": False}
+    monkeypatch.setattr(
+        mcp_loader, "email_is_admin", lambda email: called.__setitem__("role", True) or True
+    )
+    tools: list = []
+    mcp_loader.load_mcp_servers(STDIO_CFG, tools, owner_id="admin@example.com")
+    assert tools == []
+    assert called["role"] is False  # disabled short-circuits the role check
 
 
 # -- routes ------------------------------------------------------------------
@@ -89,7 +111,30 @@ def client(monkeypatch):
     app.include_router(tools_router.router, prefix="/api")
 
     async def _user():
-        return SimpleNamespace(email="tester@example.com", user_id=1)
+        # role stored upper-case, as the DB holds it (see ownership.is_admin)
+        return SimpleNamespace(email="admin@example.com", user_id=1, role="ADMIN")
+
+    app.dependency_overrides[get_current_user] = _user
+    return TestClient(app)
+
+
+@pytest.fixture()
+def nonadmin_client(monkeypatch):
+    from apowerb.auth.dependencies import get_current_user
+    from apowerb.routers import tools as tools_router
+
+    monkeypatch.setattr(
+        tools_router, "register_tool_config", lambda **kw: {"ok": "saved"}
+    )
+    monkeypatch.setattr(
+        tools_router, "update_tool_config", lambda **kw: {"ok": "updated"}
+    )
+
+    app = FastAPI()
+    app.include_router(tools_router.router, prefix="/api")
+
+    async def _user():
+        return SimpleNamespace(email="user@example.com", user_id=2, role="USER")
 
     app.dependency_overrides[get_current_user] = _user
     return TestClient(app)
@@ -120,9 +165,37 @@ def test_save_http_config_is_unaffected(client):
 
 
 def test_save_stdio_is_allowed_when_enabled(client, monkeypatch):
+    # client is an admin user; stdio enabled -> allowed.
     monkeypatch.setenv("MCP_STDIO_ENABLED", "1")
     r = client.post(
         "/api/mcp_configs",
         json={"name": "x", "transport": "stdio", "command": "sh"},
     )
     assert r.status_code == 200
+
+
+def test_save_stdio_forbidden_for_non_admin_when_enabled(nonadmin_client, monkeypatch):
+    monkeypatch.setenv("MCP_STDIO_ENABLED", "1")
+    r = nonadmin_client.post(
+        "/api/mcp_configs",
+        json={"name": "x", "transport": "stdio", "command": "sh"},
+    )
+    assert r.status_code == 403
+
+
+def test_update_stdio_forbidden_for_non_admin_when_enabled(nonadmin_client, monkeypatch):
+    monkeypatch.setenv("MCP_STDIO_ENABLED", "1")
+    r = nonadmin_client.put(
+        "/api/mcp_configs/abc",
+        json={"transport": "stdio", "command": "sh"},
+    )
+    assert r.status_code == 403
+
+
+def test_save_stdio_disabled_wins_over_admin(client):
+    # Admin user, but the deployment has not opted in: still 403.
+    r = client.post(
+        "/api/mcp_configs",
+        json={"name": "x", "transport": "stdio", "command": "sh"},
+    )
+    assert r.status_code == 403

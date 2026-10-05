@@ -9,6 +9,7 @@ import json
 import os
 
 from apowerb.configs.th2logger import setup_logging
+from apowerb.helpers.ownership import email_is_admin
 from apowerb.helpers.encryptor import decrypt_value_in_dict
 
 
@@ -214,7 +215,9 @@ def build_mcp_instruction_preamble(mcp_servers_raw) -> str:
     return "\n".join(lines)
 
 
-def load_mcp_servers(mcp_servers_raw, tools_funcs: list) -> None:
+def load_mcp_servers(
+    mcp_servers_raw, tools_funcs: list, *, owner_id: str | None = None
+) -> None:
     """Parse the agent's ``mcp_servers`` config and append McpToolsets to ``tools_funcs``.
 
     Mutates ``tools_funcs`` in-place to match the legacy behaviour of
@@ -276,6 +279,15 @@ def load_mcp_servers(mcp_servers_raw, tools_funcs: list) -> None:
                             "disabled (set MCP_STDIO_ENABLED=1 to opt in) -- "
                             "skipping",
                             mcp_name,
+                        )
+                        continue
+                    if not email_is_admin(owner_id):
+                        logger.error(
+                            "[TO_AGENT] MCP server '%s': stdio transport is "
+                            "restricted to administrators; owner '%s' is not an "
+                            "administrator -- skipping",
+                            mcp_name,
+                            owner_id,
                         )
                         continue
                     # Stdio transport: local command (e.g. npx, uvx, python)
