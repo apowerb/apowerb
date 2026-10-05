@@ -438,7 +438,7 @@ def to_agent(agent_name: str) -> LlmAgent:
     logger.info(f"[TO_AGENT] Loaded tools: {tools_names}")
 
     # Feature: MCP Servers — dynamically instantiate McpToolset from agent config
-    load_mcp_servers(agent_details.get("mcp_servers"), tools_funcs)
+    load_mcp_servers(agent_details.get("mcp_servers"), tools_funcs, owner_id=owner_id)
 
     # ── Skills ──────────────────────────────────────────────────────────
     load_agent_skills_toolset(agent_name, agent_details.get("agent_skills"), tools_funcs)

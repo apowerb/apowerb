@@ -243,6 +243,25 @@ def _reject_disabled_stdio(transport: str) -> None:
         )
 
 
+def _require_admin_for_stdio(transport: str, current_user) -> None:
+    """403 when a non-administrator tries to save/update an stdio MCP config.
+
+    The stdio transport launches a local command, so it is restricted to
+    administrators even on a deployment that has opted in (see
+    stdio_transport_enabled / _reject_disabled_stdio).
+    """
+    if transport == "stdio":
+        from apowerb.helpers.ownership import is_admin
+
+        if not is_admin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "The stdio MCP transport is restricted to administrators."
+                ),
+            )
+
+
 @router.post("/mcp_configs", tags=["tools"])
 async def save_mcp_config(
     mcp_data: dict,
@@ -252,6 +271,7 @@ async def save_mcp_config(
     config_name = mcp_data.get("config_name", mcp_data.get("name", "MCP Server"))
     transport = mcp_data.get("transport", "http")
     _reject_disabled_stdio(transport)
+    _require_admin_for_stdio(transport, current_user)
     mcp_type = mcp_data.get("mcp_type", "")
     tool_params = _build_mcp_tool_params(mcp_data)
 
@@ -278,7 +298,9 @@ async def update_mcp_config(
     """Update an existing MCP config (rebuilds tool_config_params from the
     payload, re-encrypts, and refreshes the toolbox if it is a DB config).
     """
-    _reject_disabled_stdio(mcp_data.get("transport", "http"))
+    transport = mcp_data.get("transport", "http")
+    _reject_disabled_stdio(transport)
+    _require_admin_for_stdio(transport, current_user)
     config_name = mcp_data.get("config_name", mcp_data.get("name", "MCP Server"))
     mcp_type = mcp_data.get("mcp_type", "")
     tool_params = _build_mcp_tool_params(mcp_data)

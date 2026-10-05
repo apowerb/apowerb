@@ -88,6 +88,61 @@ def is_admin(user) -> bool:
     """
     return str(getattr(user, "role", "") or "").upper() == UserRole.ADMIN.value
 
+
+_sync_admin_engine = None
+
+
+def _admin_lookup_engine():
+    """Lazy, cached synchronous engine for role lookups on paths that cannot
+    await (agent toolset construction). Mirrors default_superadmin's sync URL."""
+    global _sync_admin_engine
+    if _sync_admin_engine is None:
+        from sqlalchemy import create_engine
+
+        from apowerb.helpers.database_connection import DBConfig
+
+        sync_url = (
+            DBConfig().get_db_url().replace("postgresql+asyncpg://", "postgresql://")
+        )
+        _sync_admin_engine = create_engine(sync_url, echo=False)
+    return _sync_admin_engine
+
+
+def email_is_admin(email: str | None) -> bool:
+    """Synchronous "is this user an administrator?" by email.
+
+    For build-time paths that cannot await (e.g. agent toolset construction).
+    Fail-closed: any miss or lookup error returns ``False``. The designated
+    bootstrap administrator counts even before their row exists, mirroring user
+    creation (see ``default_superadmin``).
+    """
+    if not email:
+        return False
+    try:
+        from apowerb.helpers.default_superadmin import is_designated_superadmin
+
+        if is_designated_superadmin(email):
+            return True
+        from sqlalchemy import func, select
+
+        from apowerb.models import User
+
+        with _admin_lookup_engine().begin() as conn:
+            row = conn.execute(
+                select(User.role).where(func.lower(User.email) == email.lower())
+            ).first()
+    except Exception as exc:  # noqa: BLE001 -- fail closed, never crash the build
+        logger.warning(
+            "email_is_admin: role lookup failed for a user, treating as "
+            "non-admin: %s",
+            exc,
+        )
+        return False
+    if row is None:
+        return False
+    role_value = getattr(row[0], "value", row[0])
+    return str(role_value or "").upper() == UserRole.ADMIN.value
+
 async def owned_agent_ids(db: AsyncSession, current_user: user_schemas.User) -> set[int] | None:
     """None means unrestricted (admin). Otherwise the exact set of
     agent_ids this user owns -- callers must apply it when building the
