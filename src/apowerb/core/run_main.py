@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -54,6 +54,25 @@ STATUS_SUCCESS = "success"
 STATUS_ERROR = "error"
 STATUS_CANCELLED = "cancelled"
 
+# Format de ``created_at``/``finished_at`` (voir _now). Partagé pour que le seuil
+# d'orphelin se calcule EXACTEMENT comme la colonne a été écrite : heure locale
+# naïve, pas UTC. Comparer deux chaînes de ce format revient à comparer les
+# instants (il est triable lexicographiquement).
+_TS_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
+
+# Un run laissé à ``running`` au-delà de cet âge est tenu pour orphelin : son
+# processus a été tué avant que ``finish_run`` ne solde la ligne (le verdict ne
+# vit qu'en mémoire jusque-là). Volontairement généreux : sous multi-réplica, un
+# vrai run long ne doit JAMAIS être pris pour mort. Même fenêtre que la garde de
+# chevauchement des triggers (workflow_triggers._RUNNING_STALE_AFTER) ; la
+# centralisation des deux constantes est un suivi séparé.
+_RUNNING_STALE_AFTER = timedelta(hours=6)
+
+_ORPHANED_MESSAGE = (
+    "Run orphaned: the process ended before the run settled "
+    "(no outcome recorded after the stale window)."
+)
+
 # Statuts depuis lesquels un rejeu va de soi. Un run réussi a déjà produit ses
 # effets de bord et un run en vol n'a pas encore rendu son verdict : les deux
 # demandent un geste explicite (``force``) ou un refus.
@@ -73,7 +92,44 @@ def _now() -> str:
     ressortiraient dans un ordre indéterminé. Le format reste triable
     lexicographiquement.
     """
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+    return datetime.now().strftime(_TS_FORMAT)
+
+
+def _reconcile_orphaned_runs(
+    conn, *, run_id: str | None = None, owner_id: str | None = None
+) -> None:
+    """Solde les runs ``running`` qu'aucun processus ne tient plus.
+
+    ``finish_run`` écrit l'issue d'un run depuis le processus qui l'exécute ; si
+    ce processus est tué avant, la ligne reste ``running`` à vie (``finished_at``
+    jamais posé) — ``get_run``/``list_runs`` la montrent en vol pour toujours et
+    ``prepare_replay`` refuse de la rejouer. On la bascule en ``error`` au-delà
+    de ``_RUNNING_STALE_AFTER``.
+
+    Écriture gardée (``WHERE status='running'``) : ``finish_run`` reste le
+    dernier mot. Si un vrai run long se solde après avoir été marqué orphelin,
+    son issue réelle réécrit la ligne ; s'il s'était soldé avant, cette
+    réconciliation ne touche rien. Sûr en multi-réplica pour la même raison.
+    Appelée dans la transaction du lecteur, avant sa lecture.
+    """
+    cutoff = (datetime.now() - _RUNNING_STALE_AFTER).strftime(_TS_FORMAT)
+    table = run_store.run_table
+    stmt = (
+        table.update()
+        .where(
+            table.c.status == STATUS_RUNNING,
+            table.c.finished_at.is_(None),
+            table.c.created_at < cutoff,
+        )
+        .values(
+            status=STATUS_ERROR, error_message=_ORPHANED_MESSAGE, finished_at=_now()
+        )
+    )
+    if run_id is not None:
+        stmt = stmt.where(table.c.run_id == run_id)
+    if owner_id is not None:
+        stmt = stmt.where(table.c.owner_id == owner_id)
+    conn.execute(stmt)
 
 
 def _run_input_dir(run_id: str) -> Path:
@@ -200,7 +256,9 @@ def failure_cause(exc: BaseException) -> str:
     générique, pour ne rien divulguer au client ; la trace, elle, est lue par
     le propriétaire du run et doit dire ce qui s'est passé.
     """
-    origin = exc.__context__ if isinstance(exc, HTTPException) and exc.__context__ else exc
+    origin = (
+        exc.__context__ if isinstance(exc, HTTPException) and exc.__context__ else exc
+    )
     return f"{type(origin).__name__}: {origin}"
 
 
@@ -275,7 +333,11 @@ async def executed_tools_in_session(
         return None
     events = (session or {}).get("events") or []
     last_user_turn = max(
-        (i for i, e in enumerate(events) if isinstance(e, dict) and e.get("author") == "user"),
+        (
+            i
+            for i, e in enumerate(events)
+            if isinstance(e, dict) and e.get("author") == "user"
+        ),
         default=-1,
     )
     return executed_tools(events[last_user_turn + 1 :])
@@ -319,7 +381,9 @@ async def track_agent_stream(
 
 def _sse_event(block: str) -> dict | None:
     data = "".join(
-        line[len("data:") :].strip() for line in block.splitlines() if line.startswith("data:")
+        line[len("data:") :].strip()
+        for line in block.splitlines()
+        if line.startswith("data:")
     )
     try:
         event = json.loads(data) if data else None
@@ -344,8 +408,14 @@ def _row_to_dict(row) -> dict:
         # Un run d'agent garde son entrée dans ``config``, jamais sur disque :
         # c'est ce que relit le rejeu (_agent_replay_runner).
         config = run["config"]
-        run["input_available"] = bool(config.get("agent_name") and config.get("new_message"))
-    elif not run["agent_ids"] and "workflow_id" in run["config"] and "version" in run["config"]:
+        run["input_available"] = bool(
+            config.get("agent_name") and config.get("new_message")
+        )
+    elif (
+        not run["agent_ids"]
+        and "workflow_id" in run["config"]
+        and "version" in run["config"]
+    ):
         # Un run de workflow persisté se rejoue depuis le graphe de sa version
         # (même critère que routers.workflows._is_graph_run).
         run["input_available"] = True
@@ -357,6 +427,7 @@ def _row_to_dict(row) -> dict:
 def get_run(run_id: str, owner_id: str) -> dict | None:
     """Un run donné, à condition qu'il appartienne à ce propriétaire."""
     with run_store.engine.begin() as conn:
+        _reconcile_orphaned_runs(conn, run_id=run_id, owner_id=owner_id)
         row = conn.execute(
             run_store.run_table.select().where(
                 run_store.run_table.c.run_id == run_id,
@@ -369,6 +440,7 @@ def get_run(run_id: str, owner_id: str) -> dict | None:
 def list_runs(owner_id: str, limit: int = 50) -> list[dict]:
     """Les runs d'un propriétaire, du plus récent au plus ancien."""
     with run_store.engine.begin() as conn:
+        _reconcile_orphaned_runs(conn, owner_id=owner_id)
         rows = conn.execute(
             run_store.run_table.select()
             .where(run_store.run_table.c.owner_id == owner_id)
@@ -408,6 +480,7 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
     ``file_bytes`` et ``file_name``. Le run d'origine n'est pas modifié.
     """
     with run_store.engine.begin() as conn:
+        _reconcile_orphaned_runs(conn, run_id=run_id, owner_id=owner_id)
         row = conn.execute(
             run_store.run_table.select().where(
                 run_store.run_table.c.run_id == run_id,
