@@ -25,6 +25,7 @@ from google.genai import types
 from mcp import StdioServerParameters
 
 import apowerb.core.agent_helpers as agent_helpers
+from apowerb.core import agent_runtime_sync
 from tests.test_agent_cache_across_workers import APP_NAME, cluster, synced  # noqa: F401
 
 TOOL_SECONDS = 3
@@ -233,7 +234,14 @@ async def _replace(synced, runner) -> None:  # noqa: F811
     assert await synced.a.get_runner_async(APP_NAME) is not runner
 
 
-async def test_an_idle_replaced_runner_is_closed_at_once(synced, closed):  # noqa: F811
+async def test_an_idle_replaced_runner_is_closed_after_the_grace(
+    synced, closed, monkeypatch  # noqa: F811
+):
+    # An idle runner is not torn down the instant it is replaced: it may have
+    # just been handed out for a run whose first iteration has not bumped the
+    # in-flight counter yet (the handout window, see _RUNNER_CLOSE_GRACE). It is
+    # closed once the grace elapses with no run having claimed it.
+    monkeypatch.setattr(agent_runtime_sync, "_RUNNER_CLOSE_GRACE", 0.05)
     runner = await synced.a.get_runner_async(APP_NAME)
 
     await _replace(synced, runner)
