@@ -1,18 +1,12 @@
-import hashlib
 import io
 import os
 import re
-import time
 from logging import getLogger
 
 import httpx
 
-from apowerb.configs.settings import get_settings
 from apowerb.tools_store.portfolio.integration_status import (
     INTEGRATION_BLOCKED_BY_TENANT,
-    INTEGRATION_ERROR,
-    INTEGRATION_EXPIRED,
-    INTEGRATION_MISSING,
     IntegrationStatusError,
 )
 
@@ -20,13 +14,6 @@ logger = getLogger(__name__)
 
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
-# ---------------------------------------------------------------------------
-# Module-level token cache  (keyed by credential hash, no external dependency)
-# ---------------------------------------------------------------------------
-_token_cache: dict[str, dict] = {}
-_CACHE_TTL_SECONDS = 50 * 60  # access tokens last ~60 min, we refresh at 50
-
-_integration_loaded_for: str | None = None  # tracks WHICH invoker's tokens are loaded
 
 # Text-based MIME types we can safely decode and return as a string
 _READABLE_MIME_TYPES: set[str] = {
@@ -88,197 +75,33 @@ _TYPE_KEYWORD_TO_EXTENSIONS: dict[str, set[str]] = {
 # ---------------------------------------------------------------------------
 
 
-def _ensure_integration_tokens() -> None:
-    """Lazily load OneDrive integration tokens from DB into env vars.
-
-    Tracks which invoker's tokens are loaded. If the invoker changes
-    (a different user runs the agent), tokens are re-fetched automatically.
-    """
-    global _integration_loaded_for
-
-    from apowerb.core.invocation_context import resolve_integration_user
-    invoker = resolve_integration_user(prefer_invoker=True) or None
-    if not invoker:
-        return
-
-    # Already loaded for this invoker — skip
-    if _integration_loaded_for == invoker:
-        return
-
-    # Different invoker or first load — clear stale tokens and reload
-    if _integration_loaded_for is not None:
-        os.environ.pop("ONEDRIVE_REFRESH_TOKEN", None)
-        _token_cache.clear()
-        logger.info("OneDrive invoker changed (%s → %s) — clearing cached tokens",
-                     _integration_loaded_for, invoker)
-
-    try:
-        from apowerb.integrations.helpers import fetch_integration_configs
-        configs = fetch_integration_configs("microsoft_onedrive")
-        refresh_token = configs.get("refresh_token")
-        if refresh_token:
-            os.environ["ONEDRIVE_REFRESH_TOKEN"] = refresh_token
-            logger.info("OneDrive integration tokens loaded for invoker=%s", invoker)
-        else:
-            logger.warning(
-                "OneDrive integration found but refresh_token is empty for invoker=%s",
-                invoker,
-            )
-    except Exception as e:
-        logger.warning("Could not load OneDrive integration tokens: %s", e)
-    finally:
-        _integration_loaded_for = invoker
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _get_token_url() -> str:
-    """Build the Microsoft token endpoint URL using the configured tenant."""
-    tenant = os.getenv("ONEDRIVE_TENANT_ID") or get_settings().microsoft_integration_tenant_id
-    return f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+def _get_access_token() -> str:
+    """Return a fresh Microsoft Graph access token for OneDrive.
 
-
-def _get_access_token(_retry_with_fresh_tokens: bool = False) -> str:
-    """Exchange the stored refresh token for a fresh access token.
-
-    Uses a module-level cache (~50 min TTL) keyed by a hash of the
-    credentials, so multiple users with different tokens are isolated.
-
-    Auto-heals when tokens are revoked (e.g. user reconnected OneDrive):
-    resets the loaded flag, re-fetches from DB, and retries once.
-
-    Returns:
-        A valid Microsoft Graph access token.
+    Delegates to the invoker-scoped :mod:`microsoft_auth` helper: the token is
+    resolved and cached per invoker (never via a shared process-global), which
+    closes the concurrent-invocation race on ``ONEDRIVE_REFRESH_TOKEN``
+    (incident 2026-07-03). ``env_scope`` callers that set the global
+    deliberately are still honoured (ONEDRIVE resolves env-first).
 
     Raises:
-        IntegrationStatusError: With ``code=INTEGRATION_MISSING`` when the
-            user has not connected OneDrive, ``INTEGRATION_EXPIRED`` when
-            the refresh token has been revoked, and ``INTEGRATION_ERROR``
-            for transient failures from the Microsoft token endpoint.
+        IntegrationStatusError: ``INTEGRATION_MISSING`` when OneDrive is not
+            connected, ``INTEGRATION_EXPIRED`` when the refresh token is
+            revoked, ``INTEGRATION_ERROR`` for transient token-endpoint
+            failures.
     """
-    global _integration_loaded_for
-    _ensure_integration_tokens()
+    from apowerb.tools_store.portfolio.microsoft_auth import get_microsoft_access_token
 
-    refresh_token = os.getenv("ONEDRIVE_REFRESH_TOKEN")
-    client_id     = os.getenv("ONEDRIVE_CLIENT_ID")     or get_settings().microsoft_integration_client_id
-    client_secret = os.getenv("ONEDRIVE_CLIENT_SECRET") or get_settings().microsoft_integration_client_secret
-
-    if not refresh_token or not client_id or not client_secret:
-        # Auto-heal: user may have just connected OneDrive after server started.
-        if not _retry_with_fresh_tokens and not refresh_token:
-            _integration_loaded_for = None
-            logger.info("No refresh_token in env — re-fetching tokens from DB")
-            _ensure_integration_tokens()
-            return _get_access_token(_retry_with_fresh_tokens=True)
-        raise IntegrationStatusError(
-            code=INTEGRATION_MISSING,
-            provider="microsoft_onedrive",
-            message=(
-                "OneDrive credentials are not configured. The user must "
-                "connect their OneDrive account via the integrations "
-                "settings page."
-            ),
-        )
-
-    cache_key = hashlib.sha256(f"{client_id}:{refresh_token}".encode()).hexdigest()
-    now = time.time()
-    cached = _token_cache.get(cache_key)
-    if cached and now < cached["expires_at"]:
-        return cached["access_token"]
-
-    resp = httpx.post(
-        _get_token_url(),
-        data={
-            "client_id":     client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "grant_type":    "refresh_token",
-            "scope":         "offline_access Files.ReadWrite",
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=30,
+    return get_microsoft_access_token(
+        "ONEDRIVE",
+        scope="offline_access Files.ReadWrite",
+        service_label="OneDrive",
     )
-
-    if resp.status_code != 200:
-        body = resp.text
-        logger.error("OneDrive token refresh failed: %s - %s", resp.status_code, body)
-        if "invalid_grant" in body.lower():
-            # Auto-heal: user may have reconnected OneDrive (new refresh_token in DB).
-            if not _retry_with_fresh_tokens:
-                _integration_loaded_for = None
-                _token_cache.clear()
-                os.environ.pop("ONEDRIVE_REFRESH_TOKEN", None)
-                logger.info("invalid_grant detected — re-fetching tokens from DB and retrying")
-                _ensure_integration_tokens()
-                return _get_access_token(_retry_with_fresh_tokens=True)
-            raise IntegrationStatusError(
-                code=INTEGRATION_EXPIRED,
-                provider="microsoft_onedrive",
-                message=(
-                    "The OneDrive refresh token has expired or been "
-                    "revoked. The user must reconnect their OneDrive "
-                    "account."
-                ),
-            )
-        raise IntegrationStatusError(
-            code=INTEGRATION_ERROR,
-            provider="microsoft_onedrive",
-            message=(
-                f"Failed to refresh OneDrive access token "
-                f"(HTTP {resp.status_code} from Microsoft token endpoint)."
-            ),
-        )
-
-    data = resp.json()
-    access_token = data.get("access_token")
-    if not access_token:
-        raise IntegrationStatusError(
-            code=INTEGRATION_ERROR,
-            provider="microsoft_onedrive",
-            message="Microsoft token endpoint did not return an access_token.",
-        )
-
-    # Microsoft rotates the refresh_token on every exchange — if we don't
-    # persist the new one AND update the env var, the next refresh will use
-    # a stale refresh_token and fail with invalid_grant. That's the root
-    # cause of the "my OneDrive keeps expiring" issue.
-    new_refresh_token = data.get("refresh_token")
-    new_scope = data.get("scope")
-    if new_refresh_token:
-        os.environ["ONEDRIVE_REFRESH_TOKEN"] = new_refresh_token
-    if new_refresh_token or access_token:
-        try:
-            from apowerb.integrations.helpers import persist_refreshed_tokens
-
-            persist_refreshed_tokens(
-                "microsoft_onedrive",
-                access_token=access_token,
-                refresh_token=new_refresh_token,
-                scope=new_scope,
-            )
-        except Exception as exc:
-            logger.warning(
-                "OneDrive: persist of rotated refresh_token failed (non-fatal): %s",
-                exc,
-            )
-
-    # Re-key the in-memory cache on the NEW refresh token so the next call
-    # on this process finds the freshly-exchanged access token.
-    cache_source = new_refresh_token or refresh_token
-    fresh_cache_key = hashlib.sha256(
-        f"{client_id}:{cache_source}".encode()
-    ).hexdigest()
-    _token_cache[fresh_cache_key] = {
-        "access_token": access_token,
-        "expires_at":   now + _CACHE_TTL_SECONDS,
-    }
-    if fresh_cache_key != cache_key:
-        _token_cache.pop(cache_key, None)
-
-    return access_token
 
 
 def _graph_headers() -> dict[str, str]:
@@ -633,12 +456,11 @@ def shared_ensure_col(df: "pd.DataFrame", col: str) -> None:
 
 
 def shared_graph_headers() -> dict[str, str]:
-    """Return Graph API headers after ensuring integration tokens are loaded.
+    """Return Graph API headers for Microsoft Graph calls.
 
-    Combines _ensure_integration_tokens() + _graph_headers() in a single call.
+    Token resolution is handled per-invoker inside _graph_headers().
     Used by campaign_tracker and followup_tracker.
     """
-    _ensure_integration_tokens()
     return _graph_headers()
 
 

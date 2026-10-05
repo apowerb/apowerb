@@ -62,9 +62,6 @@ def _reset_onedrive_module_state() -> None:
     re-fetches tokens from the DB. Called on both disconnect and reconnect."""
     try:
         import os
-        import apowerb.tools_store.portfolio.onedrive_core as oc
-        oc._integration_loaded_for = None
-        oc._token_cache.clear()
         import apowerb.tools_store.portfolio.microsoft_auth as ma
         ma._token_cache.clear()
         os.environ.pop("ONEDRIVE_REFRESH_TOKEN", None)
