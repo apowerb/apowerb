@@ -135,12 +135,29 @@ def start_run(
                 exc,
             )
 
+    # Audit « quelle définition d'agent a produit ce run » (demande Dipankar) :
+    # on épingle l'empreinte des agents dans config, comme un run de workflow y
+    # épingle déjà sa version. Dans config (JSON), pas en colonne : create_all
+    # n'ajoute pas de colonne à une table existante (jamais en prod). Best-effort
+    # et jamais bloquant ; on écrase toujours la clé pour qu'un rejeu n'hérite
+    # pas des versions du run d'origine.
+    cfg = dict(config or {})
+    cfg.pop("_agent_versions", None)
+    try:
+        from apowerb.core.agent_runtime_sync import agent_version_records
+
+        versions = agent_version_records(agent_ids or [])
+    except Exception:  # l'audit ne doit jamais empêcher un run de partir
+        versions = {}
+    if versions:
+        cfg["_agent_versions"] = versions
+
     values = dict(
         trigger=trigger,
         owner_id=owner_id,
         organization_id=organization_id,
         agent_ids=json.dumps(agent_ids or []),
-        config=json.dumps(config or {}),
+        config=json.dumps(cfg),
         input_file_name=file_name,
         input_file_path=input_file_path,
         status=STATUS_RUNNING,
@@ -207,7 +224,9 @@ def failure_cause(exc: BaseException) -> str:
     générique, pour ne rien divulguer au client ; la trace, elle, est lue par
     le propriétaire du run et doit dire ce qui s'est passé.
     """
-    origin = exc.__context__ if isinstance(exc, HTTPException) and exc.__context__ else exc
+    origin = (
+        exc.__context__ if isinstance(exc, HTTPException) and exc.__context__ else exc
+    )
     return f"{type(origin).__name__}: {origin}"
 
 
@@ -282,7 +301,11 @@ async def executed_tools_in_session(
         return None
     events = (session or {}).get("events") or []
     last_user_turn = max(
-        (i for i, e in enumerate(events) if isinstance(e, dict) and e.get("author") == "user"),
+        (
+            i
+            for i, e in enumerate(events)
+            if isinstance(e, dict) and e.get("author") == "user"
+        ),
         default=-1,
     )
     return executed_tools(events[last_user_turn + 1 :])
@@ -326,7 +349,9 @@ async def track_agent_stream(
 
 def _sse_event(block: str) -> dict | None:
     data = "".join(
-        line[len("data:") :].strip() for line in block.splitlines() if line.startswith("data:")
+        line[len("data:") :].strip()
+        for line in block.splitlines()
+        if line.startswith("data:")
     )
     try:
         event = json.loads(data) if data else None
@@ -396,8 +421,14 @@ def _row_to_dict(row) -> dict:
         # Un run d'agent garde son entrée dans ``config``, jamais sur disque :
         # c'est ce que relit le rejeu (_agent_replay_runner).
         config = run["config"]
-        run["input_available"] = bool(config.get("agent_name") and config.get("new_message"))
-    elif not run["agent_ids"] and "workflow_id" in run["config"] and "version" in run["config"]:
+        run["input_available"] = bool(
+            config.get("agent_name") and config.get("new_message")
+        )
+    elif (
+        not run["agent_ids"]
+        and "workflow_id" in run["config"]
+        and "version" in run["config"]
+    ):
         # Un run de workflow persisté se rejoue depuis le graphe de sa version
         # (même critère que routers.workflows._is_graph_run).
         run["input_available"] = True

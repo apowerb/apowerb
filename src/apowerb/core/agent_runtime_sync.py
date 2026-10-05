@@ -28,7 +28,7 @@ import asyncio
 import functools
 import re
 from logging import getLogger
-from typing import Any, Callable, Hashable
+from typing import Any, Callable, Hashable, cast
 
 from fastapi import HTTPException
 from google.adk.cli.utils import cleanup
@@ -204,6 +204,64 @@ def agent_fingerprint(agent_id: int) -> Hashable | None:
                     if match and int(match[1]) not in seen:
                         level.add(int(match[1]))
     return tuple(sorted(fingerprint, key=lambda entry: entry[0]))
+
+
+def _as_agent_id(entry: Any) -> int | None:
+    """The numeric agent id behind a run's ``agent_ids`` entry, or None.
+
+    Entries are heterogeneous: a chat run stores the app name (``agent3``), a
+    scheduled one the id itself. ``_SUB_AGENT`` accepts both ``agent3`` and
+    ``3``; anything else (a free-form name, an overlay tool) yields None.
+    """
+    if isinstance(entry, bool):
+        return None
+    if isinstance(entry, int):
+        return entry
+    match = _SUB_AGENT.fullmatch(str(entry))
+    return int(match[1]) if match else None
+
+
+def agent_version_records(agent_ids: Any) -> dict[str, list]:
+    """Each run agent's definition fingerprint, for the run-log audit trail.
+
+    Answers "which agent definition produced this run": for every entry of
+    ``agent_ids`` that resolves to an agent, records what ``agent_fingerprint``
+    captures (each agent and sub-agent's ``updated_at`` and max ``revision_id``),
+    made JSON-serialisable. Because ``keep_runners_in_sync`` rebuilds a runner
+    whose fingerprint changed *before* handing it out, this DB fingerprint taken
+    at run start is the definition the run actually executes.
+
+    Best-effort and side-effect-free: an unresolvable entry or an unreadable
+    fingerprint is skipped, a total failure returns ``{}``. It never raises, so
+    recording a version can never break or stall a run.
+    """
+    records: dict[str, list] = {}
+    try:
+        entries = list(agent_ids or [])
+    except TypeError:
+        return records
+    for entry in entries:
+        agent_id = _as_agent_id(entry)
+        if agent_id is None:
+            continue
+        try:
+            fingerprint = agent_fingerprint(agent_id)
+        except Exception as exc:  # noqa: BLE001 - audit must not break the run
+            logger.warning(
+                "[agent-version] fingerprint for agent %s unavailable: %s",
+                agent_id,
+                exc,
+            )
+            continue
+        if fingerprint is None:
+            continue
+        # agent_fingerprint is typed Hashable (used as a cache key); at runtime
+        # it is the tuple of (agent_id, updated_at, revision_id) rows built above.
+        records[str(agent_id)] = [
+            [aid, str(updated_at), revision_id]
+            for (aid, updated_at, revision_id) in cast("tuple", fingerprint)
+        ]
+    return records
 
 
 def keep_runners_in_sync(
