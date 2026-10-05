@@ -645,6 +645,60 @@ def _update_trigger_row(workflow_id: str, **values: Any) -> None:
         )
 
 
+# Un schedule laissé à ``last_status="running"`` au-delà de cet âge est traité
+# comme orphelin : son processus a été tué avant que le done-callback en mémoire
+# ne solde le statut (run_main n'a pas de réconciliation propre). Au-delà, la
+# garde de chevauchement est levée pour que les créneaux suivants refirent.
+# Volontairement généreux : sous multi-réplica, un vrai run long ne doit JAMAIS
+# être pris pour mort (sinon double lancement).
+_RUNNING_STALE_AFTER = timedelta(hours=6)
+
+
+def _running_is_orphaned(row: dict, *, now: datetime) -> bool:
+    """Un trigger à ``last_status="running"`` est-il un orphelin à réarmer ?
+
+    Le done-callback qui solde ``running`` vit en mémoire : un redémarrage le
+    perd et fige le trigger (toutes les échéances suivantes sont sautées).
+
+    Vrai si le run référencé est terminal/absent (le callback a été perdu), ou
+    si le ``running`` dure depuis plus de ``_RUNNING_STALE_AFTER`` (run tué en
+    vol, dont la ligne n'a jamais été soldée). Faux quand un run est réellement
+    en cours dans la fenêtre normale — la garde de chevauchement est préservée.
+    """
+    run_id = row.get("last_run_id")
+    if not run_id:
+        return True  # résidu pré-#255 / référence perdue : rien à attendre
+    from apowerb.core import run_main
+
+    try:
+        final = run_main.get_run(run_id, owner_id=row.get("owner_id"))
+    except Exception:
+        final = None
+        lookup_failed = True
+    else:
+        lookup_failed = False
+    if not lookup_failed:
+        status = (final or {}).get("status")
+        if final is None or status in (
+            run_main.STATUS_SUCCESS,
+            run_main.STATUS_ERROR,
+            run_main.STATUS_CANCELLED,
+        ):
+            return True  # run soldé : le done-callback a été perdu (redémarrage)
+    # Run encore "running" (ou lookup indisponible) : vrai run en vol OU run tué
+    # en vol jamais soldé. On tranche par l'âge pour rester sûr en multi-réplica.
+    fired_at = row.get("last_fired_at")
+    if not fired_at:
+        return False
+    try:
+        started = datetime.fromisoformat(fired_at)
+    except (TypeError, ValueError):
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return (now - started) > _RUNNING_STALE_AFTER
+
+
 async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
     """Un tick pour UN trigger ``schedule`` échu. Renvoie si un run a démarré.
 
@@ -672,14 +726,24 @@ async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
     cfg = json.loads(row["config"] or "{}")
 
     if row.get("last_status") == "running":
-        logger.info(
-            "[triggers] tick sauté (run précédent en cours) workflow=%s",
-            workflow_id,
-        )
-        _update_trigger_row(
-            workflow_id, next_run_at=_iso_or_none(compute_next_run(cfg, after=now))
-        )
-        return False
+        if _running_is_orphaned(row, now=now):
+            logger.warning(
+                "[triggers] run précédent orphelin (processus arrêté en cours ?) "
+                "workflow=%s run=%s — trigger réarmé",
+                workflow_id,
+                row.get("last_run_id"),
+            )
+            # Orphelin : on NE saute PAS, on retombe sur la réservation + le
+            # lancement ci-dessous pour refaire repartir le trigger figé.
+        else:
+            logger.info(
+                "[triggers] tick sauté (run précédent en cours) workflow=%s",
+                workflow_id,
+            )
+            _update_trigger_row(
+                workflow_id, next_run_at=_iso_or_none(compute_next_run(cfg, after=now))
+            )
+            return False
 
     next_at = _iso_or_none(compute_next_run(cfg, after=now))
     t = workflow_trigger_store.trigger_table
