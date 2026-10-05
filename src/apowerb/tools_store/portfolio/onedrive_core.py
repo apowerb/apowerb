@@ -26,7 +26,7 @@ _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 _token_cache: dict[str, dict] = {}
 _CACHE_TTL_SECONDS = 50 * 60  # access tokens last ~60 min, we refresh at 50
 
-_integration_loaded_for: str | None = None  # tracks WHICH owner's tokens are loaded
+_integration_loaded_for: str | None = None  # tracks WHICH invoker's tokens are loaded
 
 # Text-based MIME types we can safely decode and return as a string
 _READABLE_MIME_TYPES: set[str] = {
@@ -91,26 +91,26 @@ _TYPE_KEYWORD_TO_EXTENSIONS: dict[str, set[str]] = {
 def _ensure_integration_tokens() -> None:
     """Lazily load OneDrive integration tokens from DB into env vars.
 
-    Tracks which AGENT_OWNER's tokens are loaded. If the owner changes
-    (different user runs the agent), tokens are re-fetched automatically.
+    Tracks which invoker's tokens are loaded. If the invoker changes
+    (a different user runs the agent), tokens are re-fetched automatically.
     """
     global _integration_loaded_for
 
-    from apowerb.core.invocation_context import get_agent_owner
-    owner = get_agent_owner() or None
-    if not owner:
+    from apowerb.core.invocation_context import resolve_integration_user
+    invoker = resolve_integration_user(prefer_invoker=True) or None
+    if not invoker:
         return
 
-    # Already loaded for this owner — skip
-    if _integration_loaded_for == owner:
+    # Already loaded for this invoker — skip
+    if _integration_loaded_for == invoker:
         return
 
-    # Different owner or first load — clear stale tokens and reload
+    # Different invoker or first load — clear stale tokens and reload
     if _integration_loaded_for is not None:
         os.environ.pop("ONEDRIVE_REFRESH_TOKEN", None)
         _token_cache.clear()
-        logger.info("AGENT_OWNER changed (%s → %s) — clearing cached OneDrive tokens",
-                     _integration_loaded_for, owner)
+        logger.info("OneDrive invoker changed (%s → %s) — clearing cached tokens",
+                     _integration_loaded_for, invoker)
 
     try:
         from apowerb.integrations.helpers import fetch_integration_configs
@@ -118,16 +118,16 @@ def _ensure_integration_tokens() -> None:
         refresh_token = configs.get("refresh_token")
         if refresh_token:
             os.environ["ONEDRIVE_REFRESH_TOKEN"] = refresh_token
-            logger.info("OneDrive integration tokens loaded for AGENT_OWNER=%s", owner)
+            logger.info("OneDrive integration tokens loaded for invoker=%s", invoker)
         else:
             logger.warning(
-                "OneDrive integration found but refresh_token is empty for AGENT_OWNER=%s",
-                owner,
+                "OneDrive integration found but refresh_token is empty for invoker=%s",
+                invoker,
             )
     except Exception as e:
         logger.warning("Could not load OneDrive integration tokens: %s", e)
     finally:
-        _integration_loaded_for = owner
+        _integration_loaded_for = invoker
 
 
 # ---------------------------------------------------------------------------

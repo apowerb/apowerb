@@ -62,11 +62,25 @@ def _reset_onedrive_module_state() -> None:
     re-fetches tokens from the DB. Called on both disconnect and reconnect."""
     try:
         import os
-        import apowerb.tools_store.portfolio.onedrive as od
-        od._integration_loaded = False
+        import apowerb.tools_store.portfolio.onedrive_core as oc
+        oc._integration_loaded_for = None
+        oc._token_cache.clear()
         import apowerb.tools_store.portfolio.microsoft_auth as ma
         ma._token_cache.clear()
         os.environ.pop("ONEDRIVE_REFRESH_TOKEN", None)
+    except Exception:
+        pass  # Never block the main action
+
+
+def _reset_teams_module_state() -> None:
+    """Clear the invoker-scoped Teams access-token cache and any process-global
+    refresh token so the next tool call re-resolves from the DB. Called on both
+    disconnect and reconnect."""
+    try:
+        import os
+        import apowerb.tools_store.portfolio.microsoft_auth as ma
+        ma._token_cache.clear()
+        os.environ.pop("TEAMS_REFRESH_TOKEN", None)
     except Exception:
         pass  # Never block the main action
 
@@ -408,6 +422,8 @@ async def microsoft_service_callback(
         _reset_outlook_module_state()
     elif service == "onedrive":
         _reset_onedrive_module_state()
+    elif service == "teams":
+        _reset_teams_module_state()
 
     return {
         "success":  True,
@@ -963,6 +979,8 @@ async def disconnect_integration(
         _reset_outlook_module_state()
     elif provider_lower == "microsoft_onedrive":
         _reset_onedrive_module_state()
+    elif provider_lower == "microsoft_teams":
+        _reset_teams_module_state()
     elif provider_lower == "odoo":
         _reset_odoo_module_state()
     else:

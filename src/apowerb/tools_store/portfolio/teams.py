@@ -1,4 +1,3 @@
-import os
 import re
 from logging import getLogger
 
@@ -17,36 +16,9 @@ _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 _TEAMS_SCOPE = "offline_access Chat.Read Chat.ReadWrite ChatMessage.Send"
 _TEAMS_LABEL = "Microsoft Teams"
 
-_integration_loaded: bool = False
-
-
-def _ensure_integration_tokens() -> None:
-    """Lazily load Microsoft Teams integration tokens from DB into env vars."""
-    global _integration_loaded
-    if _integration_loaded:
-        return
-
-    from apowerb.core.invocation_context import get_agent_owner
-    owner = get_agent_owner() or None
-    if not owner:
-        return
-
-    try:
-        from apowerb.integrations.helpers import fetch_integration_configs
-        configs = fetch_integration_configs("microsoft_teams")
-        refresh_token = configs.get("refresh_token")
-        if refresh_token:
-            os.environ["TEAMS_REFRESH_TOKEN"] = refresh_token
-            logger.info("Microsoft Teams tokens loaded for AGENT_OWNER=%s", owner)
-        else:
-            logger.warning(
-                "Microsoft Teams integration found but refresh_token is empty for AGENT_OWNER=%s",
-                owner,
-            )
-    except Exception as e:
-        logger.warning("Could not load Microsoft Teams integration tokens: %s", e)
-    finally:
-        _integration_loaded = True
+# Teams tokens are the invoker's own resource: microsoft_auth resolves them
+# per-invoker from the DB (TEAMS is in _SELF_RESOLVE_PREFIXES), so there is no
+# module-level loader writing a shared process-global here.
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +28,6 @@ def _ensure_integration_tokens() -> None:
 
 def _graph_headers() -> dict[str, str]:
     """Return Authorization header dict for Microsoft Graph calls."""
-    _ensure_integration_tokens()
     return microsoft_auth_headers(
         "TEAMS", scope=_TEAMS_SCOPE, service_label=_TEAMS_LABEL,
     )
