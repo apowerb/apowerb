@@ -167,3 +167,33 @@ def test_onedrive_disconnect_actually_clears_token_state():
 
     assert ma._token_cache == {}, "reset left the access-token cache populated"
     assert "ONEDRIVE_REFRESH_TOKEN" not in os.environ, "reset left the env token set"
+
+
+def test_onedrive_env_scope_isolates_by_token_when_invoker_unset(monkeypatch):
+    """Under env_scope the token comes from the process-global and the invoker
+    may be unset/constant across different users (background trigger poller).
+    The access-token cache must still isolate them by the token itself — one
+    user's access token must never be served to the next."""
+    monkeypatch.setattr(ih, "persist_refreshed_tokens", lambda *a, **k: None)
+    monkeypatch.setenv("ONEDRIVE_CLIENT_ID", "cid")
+    monkeypatch.setenv("ONEDRIVE_CLIENT_SECRET", "csec")
+    ic.set_current_invoker(None)  # background run: invoker ContextVar unset
+
+    sent = []
+
+    def _post(url, data=None, **k):
+        sent.append(data["refresh_token"])
+        resp = _post_ok(refresh=None)
+        resp.json.return_value = {"access_token": f"AT-{data['refresh_token']}", "refresh_token": None}
+        return resp
+
+    with patch.object(ma.httpx, "post", side_effect=_post):
+        monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "rt-A")
+        tok_a = oc._get_access_token()
+        monkeypatch.setenv("ONEDRIVE_REFRESH_TOKEN", "rt-B")
+        tok_b = oc._get_access_token()
+
+    assert sent == ["rt-A", "rt-B"], f"a second env token reused the first's cache entry: {sent}"
+    assert tok_a == "AT-rt-A" and tok_b == "AT-rt-B", (
+        f"env_scope caller got the wrong user's access token: {tok_a!r} / {tok_b!r}"
+    )
