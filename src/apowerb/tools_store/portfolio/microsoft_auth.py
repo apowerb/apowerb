@@ -83,9 +83,10 @@ _ENV_PREFIX_TO_REFRESH_KEY: dict[str, str] = {
 # Services whose token is ALWAYS the invoker's own personal resource, resolved
 # from the DB and never trusted from a process-global env var — a concurrent
 # caller (e.g. a mass campaign under ``env_scope``) could poison that global and
-# make us cross tenants (incident 2026-07-03). Other Microsoft services (Teams)
-# stay env-first for backward-compat with their own owner-scoped loaders.
-_SELF_RESOLVE_PREFIXES = frozenset({"OUTLOOK"})
+# make us cross tenants (incident 2026-07-03). The remaining prefixes
+# (e.g. SHAREPOINT) stay env-first: they have no self-resolving loader and
+# depend on an env_scope caller setting the token deliberately.
+_SELF_RESOLVE_PREFIXES = frozenset({"OUTLOOK", "TEAMS"})
 
 
 def _db_refresh_token(service_env_prefix: str) -> str | None:
@@ -137,9 +138,11 @@ def _resolve_refresh_token(service_env_prefix: str) -> str | None:
       (legacy single-account deploys). We deliberately do NOT trust the env var
       over the DB, so a concurrent caller that poisons the global (a mass
       campaign under ``env_scope``) can never make us send from their mailbox.
-    * Other services (``TEAMS`` …): resolved env-first, because their own
-      owner-scoped loaders / ``env_scope`` callers set the env var deliberately
-      and expect us to honour it. Their pre-existing behaviour is untouched.
+    * ``TEAMS`` is also the invoker's own resource, so it self-resolves the
+      same way (DB first, env only as a last-resort legacy fallback).
+    * Remaining services (``SHAREPOINT``): resolved env-first, because their
+      ``env_scope`` callers set the env var deliberately and expect us to
+      honour it. Their pre-existing behaviour is untouched.
     """
     env_key = _ENV_PREFIX_TO_REFRESH_KEY.get(
         service_env_prefix, f"{service_env_prefix}_REFRESH_TOKEN"
