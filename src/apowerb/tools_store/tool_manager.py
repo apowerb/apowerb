@@ -104,22 +104,32 @@ def _category_requires_oauth(category: str) -> bool:
     fill a value for: the tool bootstraps its refresh token from the
     ``integrations`` DB table into an env var that ``_SYSTEM_ENV_VARS``
     deliberately hides from ``get_tool_expected_params``. So this looks for
-    an integration lookup in the category's own module source, and — one
-    import away — in any same-package helper module it imports from (covers
-    google_gmail/google_calendar/google_docs/google_drive/google_sheets ->
-    google_auth, outlook_mail/teams -> microsoft_auth, onedrive_read/
-    onedrive_write -> onedrive_core; github and odoo look it up directly).
+    an integration lookup in the category's own module source, then follows
+    its same-package helper imports — transitively — until it finds one
+    (covers google_gmail/google_calendar/google_docs/google_drive/
+    google_sheets -> google_auth, outlook_mail/teams -> microsoft_auth, and
+    onedrive_read/onedrive_write -> onedrive_core -> microsoft_auth, a
+    two-hop chain since #274 delegated the token exchange to microsoft_auth;
+    github and odoo look it up directly).
+
+    The walk follows the whole portfolio import graph rather than a single
+    hop: a ``seen`` set makes it terminate on import cycles and bounds it to
+    the finite set of portfolio modules.
     """
     markers = _integration_markers()
-    source = _module_source(category)
-    if source is None:
-        return False
-    if any(marker in source for marker in markers):
-        return True
-    for helper_category in _PORTFOLIO_IMPORT_PATTERN.findall(source):
-        helper_source = _module_source(helper_category)
-        if helper_source and any(marker in helper_source for marker in markers):
+    seen: set[str] = set()
+    stack = [category]
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        source = _module_source(name)
+        if source is None:
+            continue
+        if any(marker in source for marker in markers):
             return True
+        stack.extend(_PORTFOLIO_IMPORT_PATTERN.findall(source))
     return False
 
 
