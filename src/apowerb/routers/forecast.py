@@ -66,7 +66,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 # Champs relayés au moteur uniquement s'ils sont fournis — même piège que
 # events/scenarios : Pydantic jette un champ inconnu en silence, donc un
 # champ absent doit rester absent plutôt que passer `null`.
-_OMIT_WHEN_NONE = ("events", "scenarios", "hierarchy", "reconciliation")
+_OMIT_WHEN_NONE = ("events", "scenarios", "hierarchy", "reconciliation", "preprocessing")
 # Jamais relayé : le cœur seul en a besoin (boucle fermée, contrat étape 5 §3).
 _NEVER_RELAYED = ("chart_id",)
 

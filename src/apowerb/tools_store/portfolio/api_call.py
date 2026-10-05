@@ -157,7 +157,9 @@ def tool_thaink2_forecast(
         dataset_id (str): Identifier of an imported CSV dataset (see
             tool_list_datasets). Preferred for an imported dataset.
         models (list[str]): Forecast models to try. Default: ["prophet"].
-            Allowed: prophet, arima, ets, snaive, naive, auto.
+            Always available: prophet, arima, ets, snaive, naive, auto.
+            R engine (the default) adds linear, mars, random_forest, xgboost
+            and ensemble; the Python engine adds croston, tsb and imapa.
         group_var (str): Column to forecast independently per group
             (e.g. one forecast per store). Optional.
         frequency (str): Series frequency: day, week, month, quarter, year.

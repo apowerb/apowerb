@@ -210,7 +210,6 @@ def _client(engine):
     ("hierarchy", ["region", "store"]),
     ("reconciliation", "mint"),
     ("events", [{"name": "promo", "ranges": []}]),
-    ("scenarios", [{"name": "Sans promo", "without": ["promo"]}]),
 ])
 def test_r_engine_refuses_python_only_fields_before_calling(fake, field, value):
     with pytest.raises(Th2forecastAPIError) as exc_info:
@@ -237,6 +236,74 @@ def test_r_engine_treats_empty_fields_as_absent(fake, empty):
     fake.queue(_Resp(404, {}), _Resp(200, _R_SERIES))
     body = {**_REQUEST_BODY, "hierarchy": empty, "events": empty, "scenarios": empty, "reconciliation": empty}
     assert _client("r").forecast(body) == _R_SERIES
+
+
+_ADJUSTMENT_SCENARIO = {
+    "name": "Promo +15 %",
+    "adjustments": [{"start": "2024-03-01", "end": "2024-03-31", "percent": 15}],
+}
+
+
+def test_r_engine_relays_adjustment_scenarios(fake):
+    # apowerb/th2forecast >= 0.1.2 applies scenario adjustments (th2forecast#18).
+    fake.queue(_Resp(404, {}), _Resp(200, _R_SERIES))
+    body = {**_REQUEST_BODY, "scenarios": [_ADJUSTMENT_SCENARIO]}
+    assert _client("r").forecast(body) == _R_SERIES
+    assert fake.calls[-1]["json"]["scenarios"] == [_ADJUSTMENT_SCENARIO]
+
+
+@pytest.mark.parametrize("key, value", [
+    ("without", ["promo"]),
+    ("events", [{"name": "promo", "ranges": []}]),
+])
+def test_r_engine_refuses_event_based_scenarios(fake, key, value):
+    # The R engine only knows `name` and `adjustments`: anything else in a
+    # scenario would be dropped while the forecast still answers 200.
+    scenario = {**_ADJUSTMENT_SCENARIO, key: value}
+    with pytest.raises(Th2forecastAPIError) as exc_info:
+        _client("r").forecast({**_REQUEST_BODY, "scenarios": [_ADJUSTMENT_SCENARIO, scenario]})
+    assert exc_info.value.status_code == 400
+    assert [e["field"] for e in exc_info.value.body["errors"]] == [f"scenarios[1].{key}"]
+    assert fake.calls == []
+
+
+def test_r_engine_relays_package_features(fake):
+    # th2forecast#19: preprocessing, French holidays and the package's ML models.
+    fake.queue(_Resp(404, {}), _Resp(200, _R_SERIES))
+    body = {
+        **_REQUEST_BODY,
+        "models": ["random_forest", "xgboost", "linear", "mars", "ensemble", "prophet"],
+        "preprocessing": {"anomalies": True, "outliers": False},
+        "holidays_country": "FR",
+    }
+    assert _client("r").forecast(body) == _R_SERIES
+    assert fake.calls[-1]["json"] == body
+
+
+@pytest.mark.parametrize("field, value", [
+    ("preprocessing", {"anomalies": True}),
+])
+def test_python_engine_refuses_r_only_fields_before_calling(fake, field, value):
+    with pytest.raises(Th2forecastAPIError) as exc_info:
+        _client("python").forecast({**_REQUEST_BODY, field: value})
+    assert exc_info.value.status_code == 400
+    assert [e["field"] for e in exc_info.value.body["errors"]] == [field]
+    assert fake.calls == []
+
+
+def test_python_engine_refuses_r_only_models(fake):
+    with pytest.raises(Th2forecastAPIError) as exc_info:
+        _client("python").forecast({**_REQUEST_BODY, "models": ["ets", "random_forest", "ensemble"]})
+    error = exc_info.value.body["errors"][0]
+    assert error["field"] == "models"
+    assert "random_forest" in error["message"] and "ensemble" in error["message"]
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("empty", [None, {}])
+def test_python_engine_treats_empty_preprocessing_as_absent(fake, empty):
+    fake.queue(_Resp(404, {}), _Resp(200, _PYTHON_SERIES))
+    assert _client("python").forecast({**_REQUEST_BODY, "preprocessing": empty}) == _PYTHON_SERIES
 
 
 def test_r_engine_drops_feedback(fake):

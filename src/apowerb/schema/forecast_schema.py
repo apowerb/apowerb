@@ -5,7 +5,7 @@ malformed request never reaches th2forecast at all."""
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
 # th2forecast's own MAX_HORIZON default (see contract); the route validates
 # against this ceiling too so an oversized horizon fails fast, locally, with
@@ -16,9 +16,16 @@ MAX_HORIZON = 366
 # relaying tens of megabytes only for th2forecast to answer 413.
 MAX_DATA_ROWS = 100_000
 
-ALLOWED_MODELS = frozenset(
-    {"prophet", "arima", "ets", "snaive", "naive", "auto", "croston", "tsb", "imapa"}
-)
+# Union of both engines: croston/tsb/imapa exist only in the Python engine,
+# linear/mars/random_forest/xgboost/ensemble only in the R engine. The
+# th2forecast client refuses what TH2FORECAST_ENGINE cannot run.
+ALLOWED_MODELS = frozenset({
+    "prophet", "arima", "ets", "snaive", "naive", "auto",
+    "croston", "tsb", "imapa",
+    "linear", "mars", "random_forest", "xgboost", "ensemble",
+})
+# R engine only (th2forecast#19): cleaning steps applied before training.
+ALLOWED_PREPROCESSING = frozenset({"anomalies", "outliers"})
 ALLOWED_FREQUENCIES = frozenset({"day", "week", "month", "quarter", "year"})
 # Étape 5 §2 : "mint" par défaut côté moteur quand hierarchy est fournie.
 ALLOWED_RECONCILIATION = frozenset({"mint", "bottom_up", "none"})
@@ -38,6 +45,9 @@ class ForecastRequestSchema(BaseModel):
     models: list[str] = Field(default_factory=lambda: ["prophet"], min_length=1)
     confidence_levels: list[float] | None = Field(default_factory=lambda: [0.8, 0.95])
     holidays_country: str | None = None
+    # R engine only: {"anomalies": true, "outliers": true}. The engine keeps
+    # the original values in `history` and lists every correction.
+    preprocessing: dict[str, StrictBool] | None = None
     # Contexte métier (th2forecast : événements appris comme covariables et
     # scénarios « et si »). Sans ces champs, Pydantic les jetterait en silence ;
     # leur contenu est validé par th2forecast, qui répond 400 avec un message clair.
@@ -59,6 +69,19 @@ class ForecastRequestSchema(BaseModel):
             raise ValueError(
                 f"modèle(s) inconnu(s) : {', '.join(unknown)} ; autorisés : "
                 f"{', '.join(sorted(ALLOWED_MODELS))}"
+            )
+        return value
+
+    @field_validator("preprocessing")
+    @classmethod
+    def _preprocessing_in_allowed_set(cls, value: dict[str, bool] | None) -> dict[str, bool] | None:
+        if value is None:
+            return value
+        unknown = sorted(set(value) - ALLOWED_PREPROCESSING)
+        if unknown:
+            raise ValueError(
+                f"option(s) de prétraitement inconnue(s) : {', '.join(unknown)} ; autorisées : "
+                f"{', '.join(sorted(ALLOWED_PREPROCESSING))}"
             )
         return value
 
