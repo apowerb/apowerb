@@ -94,10 +94,57 @@ async def test_run_async_and_run_live_share_one_counter():
     assert runner.closed == 1
 
 
-async def test_idle_retire_closes_at_once_and_wrap_is_idempotent():
+async def test_idle_retire_closes_after_grace_and_wrap_is_idempotent(monkeypatch):
+    monkeypatch.setattr(sync, "_RUNNER_CLOSE_GRACE", 0.02)
     runner = _FakeRunner()
     sync._instrument_runner(runner)
     sync._instrument_runner(runner)  # idempotent: no second wrapper
 
     sync._retire_runner(runner)
-    assert await _eventually(lambda: runner.closed == 1)
+    await asyncio.sleep(0)
+    assert runner.closed == 0, "idle retire must defer, not close in the handout window"
+    assert await _eventually(lambda: runner.closed == 1)  # swept after the grace
+
+
+async def test_a_run_starting_in_the_handout_window_is_not_closed(monkeypatch):
+    # Gap B: get_runner_async hands out the runner, but _ACTIVE stays 0 until the
+    # run's first iteration. A retire in that window must not close it.
+    monkeypatch.setattr(sync, "_RUNNER_CLOSE_GRACE", 0.1)
+    runner = _FakeRunner()
+    sync._instrument_runner(runner)
+
+    sync._retire_runner(runner)  # retired while idle (the vulnerable window)
+    await asyncio.sleep(0)
+    assert runner.closed == 0, "RED without the grace: closed before the run started"
+
+    gate = asyncio.Event()
+    run = runner.run_async(gate)
+    assert await run.__anext__() == "a-start"  # the run starts inside the grace
+
+    await asyncio.sleep(0.2)  # let the grace timer fire while the run is active
+    assert runner.closed == 0, "the grace timer closed a runner with a live run"
+
+    gate.set()
+    assert await run.__anext__() == "a-end"
+    await _exhaust(run)
+    assert runner.closed == 1  # the run's finally closes it, exactly once
+
+
+async def test_grace_timer_and_run_finally_close_exactly_once(monkeypatch):
+    # The run ends before the grace timer fires: the finally closes it, and the
+    # later timer must find it already claimed and do nothing.
+    monkeypatch.setattr(sync, "_RUNNER_CLOSE_GRACE", 0.3)
+    runner = _FakeRunner()
+    sync._instrument_runner(runner)
+    sync._retire_runner(runner)
+
+    gate = asyncio.Event()
+    run = runner.run_async(gate)
+    await run.__anext__()
+    gate.set()
+    await run.__anext__()
+    await _exhaust(run)
+    assert runner.closed == 1
+
+    await asyncio.sleep(0.4)  # the grace timer now fires on an already-closed runner
+    assert runner.closed == 1, "grace timer double-closed after the finally"
