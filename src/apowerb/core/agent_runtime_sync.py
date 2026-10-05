@@ -18,8 +18,8 @@ Retiring the old runner is deferred. ADK closes a replaced runner on the next
 and any live MCP session -- even while a run started before the edit is still
 iterating that same runner. Closing the session mid-call makes ADK retry the
 tool, so a stdio/remote MCP tool runs twice. Instead, each runner counts its
-in-flight ``run_async`` calls; a replaced or deleted runner is detached from
-the cache at once but closed only once its last run has finished.
+in-flight ``run_async`` and ``run_live`` calls; a replaced or deleted runner is
+detached from the cache at once but closed only once its last run has finished.
 """
 
 from __future__ import annotations
@@ -44,9 +44,10 @@ _SUB_AGENT = re.compile(r"(?:agent)?(\d+)")
 _BUILT_FROM = "_apowerb_built_from"
 
 # Per-runner bookkeeping for deferred close (instance attributes on Runner).
-_ACTIVE = "_apowerb_active_runs"  # in-flight run_async calls
+_ACTIVE = "_apowerb_active_runs"  # in-flight run_async + run_live calls
 _RETIRED = "_apowerb_retired"  # detached from cache, close when idle
-_WRAPPED = "_apowerb_run_wrapped"  # run_async already instrumented
+_WRAPPED = "_apowerb_run_wrapped"  # run_async/run_live already instrumented
+_RUN_METHODS = ("run_async", "run_live")
 
 
 async def _close_runner_safely(runner: Any) -> None:
@@ -73,38 +74,48 @@ def _schedule_close(runner: Any) -> None:
         try:
             asyncio.run(_close_runner_safely(runner))
         except Exception as exc:
-            logger.warning(
-                "[agent-sync] closing a retired runner failed: %s", exc
-            )
+            logger.warning("[agent-sync] closing a retired runner failed: %s", exc)
 
 
 def _instrument_runner(runner: Any) -> None:
-    """Count in-flight ``run_async`` calls so a retired runner closes when idle.
+    """Count in-flight runs so a retired runner closes when idle.
+
+    Both ``run_async`` (HTTP/SSE) and ``run_live`` (the ``/run_live``
+    WebSocket) are wrapped and share one ``_ACTIVE`` counter, so a runner with
+    either kind of run still streaming is closed only once the last one ends --
+    a rebuild must not tear a live MCP session out from under a WebSocket any
+    more than from under an HTTP run.
 
     Idempotent: a cached runner handed out again keeps its single wrapper.
     ``Runner`` is a plain class, so instance-level assignment shadows the
-    method for this object only. ``run_live`` is not wrapped -- a websocket
-    stream cut by a rebuild is a separate, rarer path.
+    method for this object only.
     """
     if runner is None or getattr(runner, _WRAPPED, False):
         return
-    original = runner.run_async
     setattr(runner, _ACTIVE, 0)
     setattr(runner, _RETIRED, False)
 
-    @functools.wraps(original)
-    async def _counted_run_async(*args: Any, **kwargs: Any):
-        setattr(runner, _ACTIVE, getattr(runner, _ACTIVE, 0) + 1)
-        try:
-            async for event in original(*args, **kwargs):
-                yield event
-        finally:
-            remaining = getattr(runner, _ACTIVE, 1) - 1
-            setattr(runner, _ACTIVE, remaining)
-            if remaining <= 0 and getattr(runner, _RETIRED, False):
-                await _close_runner_safely(runner)
+    def _wrap(method_name: str) -> None:
+        original = getattr(runner, method_name, None)
+        if original is None:  # a stand-in without this run method
+            return
 
-    runner.run_async = _counted_run_async
+        @functools.wraps(original)
+        async def _counted(*args: Any, **kwargs: Any):
+            setattr(runner, _ACTIVE, getattr(runner, _ACTIVE, 0) + 1)
+            try:
+                async for event in original(*args, **kwargs):
+                    yield event
+            finally:
+                remaining = getattr(runner, _ACTIVE, 1) - 1
+                setattr(runner, _ACTIVE, remaining)
+                if remaining <= 0 and getattr(runner, _RETIRED, False):
+                    await _close_runner_safely(runner)
+
+        setattr(runner, method_name, _counted)
+
+    for method_name in _RUN_METHODS:
+        _wrap(method_name)
     setattr(runner, _WRAPPED, True)
 
 
@@ -148,9 +159,7 @@ def drop_cached_agent(adk_server: Any, app_name: str) -> None:
                 pass
             _retire_runner(old)
     except Exception as exc:
-        logger.warning(
-            "[agent-reload] could not retire runner %s: %s", app_name, exc
-        )
+        logger.warning("[agent-reload] could not retire runner %s: %s", app_name, exc)
 
 
 def agent_fingerprint(agent_id: int) -> Hashable | None:
@@ -172,8 +181,9 @@ def agent_fingerprint(agent_id: int) -> Hashable | None:
         while level:
             seen |= level
             rows = conn.execute(
-                select(agents.c.agent_id, agents.c.updated_at, agents.c.sub_agents)
-                .where(agents.c.agent_id.in_(level))
+                select(
+                    agents.c.agent_id, agents.c.updated_at, agents.c.sub_agents
+                ).where(agents.c.agent_id.in_(level))
             ).all()
             if agent_id in level and all(r.agent_id != agent_id for r in rows):
                 return None
@@ -186,7 +196,9 @@ def agent_fingerprint(agent_id: int) -> Hashable | None:
             )
             level = set()
             for row in rows:
-                fingerprint.append((row.agent_id, row.updated_at, latest.get(row.agent_id)))
+                fingerprint.append(
+                    (row.agent_id, row.updated_at, latest.get(row.agent_id))
+                )
                 for name in _parse_string_list(row.sub_agents):
                     match = _SUB_AGENT.fullmatch(str(name))
                     if match and int(match[1]) not in seen:
@@ -231,7 +243,9 @@ def keep_runners_in_sync(
             raise HTTPException(status_code=404, detail=f"Agent not found: {app_name}")
 
         if app_name in built_from and built_from[app_name] != current:
-            logger.info("[agent-sync] %s changed in the database -- rebuilding", app_name)
+            logger.info(
+                "[agent-sync] %s changed in the database -- rebuilding", app_name
+            )
             drop_cached_agent(self, app_name)
         ensure_agent_module(agent_id, self.agent_loader.agents_dir)
 
