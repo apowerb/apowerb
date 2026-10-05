@@ -182,7 +182,21 @@ async def test_tick_fires_a_due_schedule_trigger(monkeypatch):
 async def test_tick_is_skipped_when_the_previous_run_is_still_running(monkeypatch):
     wid = await _publish_schedule()
     past = datetime(2000, 1, 1, tzinfo=timezone.utc)
-    _set_row(wid, next_run_at=past.isoformat(), last_status="running")
+    # Un run réellement en cours porte toujours son run id et son instant de
+    # départ (posés par fire_schedule_trigger juste après le lancement). La
+    # réconciliation ne lève la garde que pour les orphelins, donc ce tick
+    # reste sauté.
+    _set_row(
+        wid,
+        next_run_at=past.isoformat(),
+        last_status="running",
+        last_run_id="in-flight",
+        last_fired_at="2026-03-01T11:59:00+00:00",
+    )
+    monkeypatch.setattr(
+        "apowerb.core.run_main.get_run",
+        lambda run_id, owner_id: {"status": "running"},
+    )
 
     rec = _Recorder()
     monkeypatch.setattr(wt, "launch_triggered_run", rec)
