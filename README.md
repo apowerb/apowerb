@@ -105,6 +105,12 @@ Tokens, calls and cache hits per agent
 
 Walkthroughs are on our [YouTube channel](https://www.youtube.com/@thaink2).
 
+### How it works
+
+<p align="center">
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow.webp" alt="Step 1, build: define the agent in the UI or the database. Step 2, equip: give it knowledge and tools. Step 3, run: watch every step." width="100%" />
+</p>
+
 ---
 
 ## Quick start
