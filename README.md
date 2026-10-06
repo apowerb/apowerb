@@ -121,7 +121,7 @@ See exactly what it did
 
 <div align="center">
 
-<a href="https://github.com/apowerb/apowerb/blob/main/.github/assets/readme/jev-demo.mp4"><img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/jev-demo-poster.jpg" alt="Watch the 75-second demo: a decision workflow powered by Jev" width="80%"></a>
+<a href="https://cdn.jsdelivr.net/gh/apowerb/apowerb@main/.github/assets/readme/jev-demo.mp4"><img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/jev-demo-poster.jpg" alt="Watch the 75-second demo: a decision workflow powered by Jev" width="80%"></a>
 
 <sub>Build a decision workflow in a few clicks: trigger, classify, route.</sub>
 
