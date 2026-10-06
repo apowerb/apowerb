@@ -336,3 +336,21 @@ def test_tools_discovered():
         "DYNAMICS365_TENANT_ID",
         "DYNAMICS365_CLIENT_SECRET",
     } <= keys
+
+
+def test_auth_hint_matches_token_host_not_substring():
+    # A Dataverse error whose URL merely *contains* the login host must not be
+    # reported as an authentication failure (CodeQL py/incomplete-url-substring).
+    url = "https://contoso.crm4.dynamics.com/api/data/v9.2/accounts?x=login.microsoftonline.com"
+    result = dynamics365._error_result(_http_error(400, url))
+    assert "Authentication failed" not in result["error_message"]
+    login = "https://login.microsoftonline.com/tenant-1/oauth2/v2.0/token"
+    assert (
+        "Authentication failed"
+        in dynamics365._error_result(_http_error(400, login))["error_message"]
+    )
+    sf = "https://acme.my.salesforce.com/services/data/v62.0/query?q=oauth2/token"
+    assert (
+        "SALESFORCE_CLIENT_ID"
+        not in salesforce._error_result(_http_error(400, sf))["error_message"]
+    )

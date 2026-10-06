@@ -155,7 +155,7 @@ def _error_result(exc: Exception) -> dict:
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
         detail = exc.response.text[:500]
-        if code in (400, 401) and "oauth2/token" in str(exc.request.url):
+        if code in (400, 401) and exc.request.url.path == "/services/oauth2/token":
             detail = (
                 "Authentication failed (check SALESFORCE_CLIENT_ID / "
                 f"SALESFORCE_CLIENT_SECRET and the client credentials flow). {detail}"

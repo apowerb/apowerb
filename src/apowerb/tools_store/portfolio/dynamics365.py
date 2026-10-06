@@ -148,7 +148,7 @@ def _error_result(exc: Exception) -> dict:
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
         detail = exc.response.text[:500]
-        if code in (401, 403) or "login.microsoftonline.com" in str(exc.request.url):
+        if code in (401, 403) or exc.request.url.host == "login.microsoftonline.com":
             detail = (
                 "Authentication failed (check DYNAMICS365_TENANT_ID / CLIENT_ID / "
                 f"CLIENT_SECRET and the Dataverse application user). {detail}"
