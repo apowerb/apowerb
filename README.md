@@ -79,6 +79,10 @@ Bring your own model key.
 
 ### See it in action
 
+<p align="center">
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/tour.gif" alt="Demo tour: build an agent, talk to your data, adapt the BI dashboard by asking" width="100%" />
+</p>
+
 <table>
 <tr>
 <td width="33%" align="center">
