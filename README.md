@@ -38,6 +38,14 @@ The open-source agentic framework to build, orchestrate, and operate production 
   <img alt="RAG, Text-to-SQL, Orchestration, Email triggers, Multi-LLM, REST API + UI" src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/features-light.png" width="100%">
 </picture>
 
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-light.png">
+  <img alt="Step 1, build: define the agent in the UI or the database. Step 2, equip: give it knowledge and tools. Step 3, run: watch every step." src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-light.png" width="100%">
+</picture>
+
 </div>
 
 ---
@@ -89,18 +97,6 @@ Bring your own model key.
   API, stored in PostgreSQL and run on Google ADK — scriptable, reviewable and
   reproducible.
 
-### How it works
-
-<div align="center">
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-light.png">
-  <img alt="Step 1, build: define the agent in the UI or the database. Step 2, equip: give it knowledge and tools. Step 3, run: watch every step." src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-light.png" width="100%">
-</picture>
-
-</div>
-
 ### See it in action
 
 <table>
@@ -125,7 +121,11 @@ See exactly what it did
 
 <div align="center">
 
-[▶ Watch the full demo on YouTube](https://www.youtube.com/@thaink2)
+<a href="https://github.com/apowerb/apowerb/blob/main/.github/assets/readme/jev-demo.mp4"><img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/jev-demo-poster.jpg" alt="Watch the 75-second demo: a decision workflow powered by Jev" width="80%"></a>
+
+<sub>Build a decision workflow in a few clicks: trigger, classify, route.</sub>
+
+[▶ More demos on YouTube](https://www.youtube.com/@thaink2)
 
 </div>
 
