@@ -12,8 +12,6 @@
 [![Join our Discord](https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/channels/1470717940075597896)
 [![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-6E56CF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.apowerb.com)
 
-<br><br>
-
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/hero-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/hero-light.png">
