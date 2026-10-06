@@ -601,6 +601,7 @@ only their own account — which is what this build already did.
 | `outlook_mail` | List, search, read, send emails, list folders, download attachments |
 | `onedrive_read`, `onedrive_write` | List, search, read, download, upload, update files, create folders, delete, shared files |
 | `teams` | List chats, get/send messages, reply, search, create group chats, list members |
+| `sharepoint` | Find sites, browse and search document libraries, read files (text, CSV, Excel, Word, PDF) — read-only, `Sites.Read.All` |
 
 ### Developer & Business Apps
 | Tool Module | Functions |
