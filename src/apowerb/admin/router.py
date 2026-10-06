@@ -9,6 +9,7 @@ group holds no data of its own beyond its memberships.
 from __future__ import annotations
 
 from apowerb.configs.settings import get_settings
+from apowerb.core.extensions.registry import registry as _registry
 from apowerb.helpers.database import get_db
 from apowerb.helpers.security import get_password_hash
 from apowerb.models import User, UserRole
@@ -950,11 +951,17 @@ async def set_mfa_required(
     administrator knows is not a second factor. What an administrator can
     do is refuse them the product until they have one, which is what this
     sets. The core lets them reach the enrolment routes and nothing else.
+
+    Those routes come with the MFA brick. Without it they answer 404, so the
+    demand could never be met and the account would be locked out: it is
+    refused instead. Stopping a demand stays possible either way.
     """
     await _assert_may_act_on(db, _, user_id)
     row = (await db.execute(select(User).where(User.user_id == user_id))).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such user.")
+    if payload.required and _registry.second_factor() is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="mfa_not_available")
 
     identity = {
         "user_id": row.user_id,
