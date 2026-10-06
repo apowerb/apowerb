@@ -4,12 +4,13 @@
 
 # apowerb
 
+**Build, run and govern AI agents that work while you don't.**
 
-**The open-source agentic framework to build, orchestrate, and operate production AI agents.**
+The open-source agentic framework to build, orchestrate, and operate production AI agents.
 
 [![Documentation](https://img.shields.io/badge/docs-apowerb.com-blue?style=for-the-badge&logo=googledocs&logoColor=white)](https://docs.apowerb.com/)
 [![PyPI version](https://img.shields.io/pypi/v/apowerb?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/apowerb/)
-[![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](LICENSE)
 [![Discord](https://img.shields.io/badge/Community-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/channels/1470717940075597896)
 
@@ -25,19 +26,52 @@
 
 ---
 
-This repository is the **open-source core**. Some capabilities named in the product —
-billing, the consumption analysis screen, prospection, identity-provider sign-in,
-multi-factor authentication, agent evaluation, the supervision screen, organisation
-management — ship as separate commercial bricks and are **absent here**. Where the
-core holds a hook for one, it is documented as such. A `404` on those routes means
-"not in this edition", not "object not found".
+apowerb is an open-source platform to build, run and govern AI agents in
+production. It covers multi-agent orchestration, RAG and Text-to-SQL, MCP servers
+and built-in business tools, email- and schedule-triggered runs, token quotas and
+session audit. You can self-host it with Docker Compose or Helm. The core is
+Apache-2.0; a few enterprise modules (billing, identity-provider sign-in, MFA,
+agent evaluation, the supervision screen) are sold separately by thaink².
 
-The **administration panel is part of this edition**: users, groups, permissions, MFA
-enforcement. Only the management of *organisations* is sold separately — deciding which
-tenant a person belongs to governs other people's reach, rather than serving whoever runs
-the install.
+- **Build agents** from the web interface or the REST API — instructions, model,
+  tools, knowledge bases — and compose them: sequential, parallel, loop, sub-agents.
+- **Connect them to your systems**: any MCP server, plus built-in tools for Google
+  Workspace, Microsoft 365, GitHub, HubSpot, Pipedrive, Odoo, SQL databases, S3,
+  web search, OCR, speech and sandboxed Python.
+- **Ground them in your data** with built-in RAG (files, URLs, databases, S3)
+  and Text-to-SQL.
+- **Run them without you**: on a schedule, or triggered by a new Gmail or
+  Outlook message.
+- **Operate them in production**: streaming responses, auditable session
+  traces, per-user token quotas, revocable sessions, encrypted secrets, users,
+  groups and permissions.
 
-Full documentation: [docs.apowerb.com](https://docs.apowerb.com).
+Built on **FastAPI**, **Google ADK** and **LiteLLM**, so it works with Anthropic,
+OpenAI, Mistral, Gemini, Azure AI Foundry, OVHcloud and any other LiteLLM provider.
+Bring your own model key.
+
+### What people build with it
+
+- **Inbox triage**: a new Outlook or Gmail message triggers an agent that reads it,
+  classifies it, looks up the customer in the CRM and drafts the reply.
+- **Morning reports**: a scheduled agent asks the database in plain language
+  (Text-to-SQL), turns the result into a chart and mails the summary.
+- **Document assistants**: agents answer from your contracts, procedures or
+  SharePoint files through RAG.
+- **Back-office automation**: create deals in HubSpot or Pipedrive, update Odoo
+  records, file documents in OneDrive or Drive — from a conversation or unattended.
+
+### How it differs
+
+- **Unattended by design**: webhooks and schedules start agents without anyone in
+  the chat, and every run leaves an auditable session trace.
+- **Business systems first**: Microsoft 365, Google Workspace, ERPs, CRMs and SQL
+  databases are built-in tools, not a plugin hunt.
+- **Production controls in the open-source core**: users, groups, permissions,
+  per-user token quotas, revocable sessions, encrypted secrets.
+- **Not a canvas**: agents are defined in the web interface or through the REST
+  API, stored in PostgreSQL and run on Google ADK — scriptable, reviewable and
+  reproducible.
 
 ---
 
@@ -69,6 +103,7 @@ it wants your own PostgreSQL.
 
 - [Quick start](#quick-start)
 - [Features](#features)
+- [Open-source core and commercial bricks](#open-source-core-and-commercial-bricks)
 - [Prerequisites](#prerequisites)
 - [Installation from source](#installation-from-source)
 - [Configuration](#configuration)
@@ -82,9 +117,10 @@ it wants your own PostgreSQL.
 - [RAG (Retrieval-Augmented Generation)](#rag-retrieval-augmented-generation)
 - [Text-to-SQL](#text-to-sql)
 - [SSE Streaming](#sse-streaming)
-- [Credits and billing](#credits-and-billing)
+- [Token metering and quotas](#token-metering-and-quotas)
 - [Scheduled runs](#scheduled-runs)
 - [Agent Hub](#agent-hub)
+- [Supported Models](#supported-models)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 
@@ -92,30 +128,64 @@ it wants your own PostgreSQL.
 
 ## Features
 
-- **REST API** based on FastAPI with automatic OpenAPI documentation
-- **Google ADK** (Agent Development Kit) for agent management and execution
-- **LiteLLM** for multi-model compatibility (Anthropic, OpenAI, Mistral, Google, OVHcloud, etc.)
+**Agents**
+- **Google ADK** (Agent Development Kit) for agent definition and execution
+- **LiteLLM** for multi-model compatibility (Anthropic, OpenAI, Mistral, Google, Azure AI Foundry, OVHcloud, and more)
 - **Multi-pattern orchestration**: base, parallel, sequential, loop
-- **Sub-agents**: hierarchical agent composition
-- **Modular tool system** with 31 tool modules (Google Workspace, Microsoft 365, databases, RAG, etc.)
-- **RAG as a Service**: index files, URLs, databases, and S3 into knowledge bases
-- **Text-to-SQL**: natural language to SQL query conversion
-- **Webhooks**: Gmail (Pub/Sub) and Outlook (Graph API) push notifications to trigger agents
-- **OAuth integrations**: GitHub, Google, Microsoft, LinkedIn
-- **SSE streaming**: real-time agent responses, RAG progress, and notifications
+- **Sub-agents** for hierarchical composition, and **skills** and **workflows** for reusable steps
+- **Persistent sessions** with conversation context and history compaction
+- **Guardrails** on inputs and outputs, and admission control for runs
 - **Artifact generation**: agents can create and execute code files
 - **Agent Hub**: publish and clone agents across organizations
+
+**Data and integrations**
+- **MCP servers**: attach your own over HTTP; the `stdio` transport is opt-in (`MCP_STDIO_ENABLED=1`) because it runs a command on the host
+- **Modular tool system**: Google Workspace, Microsoft 365, GitHub, CRMs, databases, RAG, and more — see [Available Tools](#available-tools)
+- **RAG as a Service**: index files, URLs, databases, and S3 into knowledge bases
+- **Text-to-SQL**: natural language to SQL query conversion
+- **BI**: charts, dashboards and datasets built from agent results
+- **OAuth workspace integrations**: Google, Microsoft, GitHub
+
+**Automation**
+- **Webhooks**: Gmail (Pub/Sub) and Outlook (Graph API) push notifications trigger agents
 - **Scheduled runs**: cron-based agent execution, driven by an external orchestrator
+- **SSE streaming**: real-time agent responses, RAG progress, and notifications
+
+**Operations and security**
+- **REST API** based on FastAPI, with a CLI for agent and server management
+- **Administration panel**: users, groups, permissions, and a per-user MFA requirement once the MFA brick is loaded
+- **Session audit**: an auditable session list and traces, scoped to what the caller may read
+- **Token metering** with a monthly per-user quota on the shared model
+- **Revocable sessions**: a per-account cut-off that refuses tokens minted before it
+- **Encryption** for API keys, tokens, and sensitive data
 - **Bug reports**: any user files a defect from the app; the server attaches the server
   log lines of the failing request (correlated by `X-Request-ID`), where the user was,
   and an optional consented screenshot. Reviewed in a triage screen before any issue
   is created — and the GitHub sink refuses a public repository
-- **Supervision**: an auditable session list, scoped to what the caller may read
-- **Revocable sessions**: a per-account cut-off that refuses tokens minted before it
-- **Persistent sessions** with conversation context
 - **PostgreSQL database** with auto-migrations
-- **Encryption** for API keys, tokens, and sensitive data
-- **Full CLI** for agent and server management
+
+---
+
+## Open-source core and commercial bricks
+
+This repository is the **open-source core**, and everything listed above is in it.
+thaink² sells a few additional capabilities as separate **bricks** that plug into
+the core through documented hooks:
+
+| Brick | What it adds on top of the core |
+|-------|--------------------------------|
+| Billing | Credit packages, Stripe checkout, crediting logic |
+| Consumption analysis | Usage broken down per agent, per tool and per user (the metering itself is in the core) |
+| Supervision screen | The supervision UI (session list and traces are served by the core) |
+| Agent evaluation | Evaluation of agents |
+| Prospection | Prospection and campaigns |
+| Identity-provider sign-in | Sign-in with GitHub, Google, Microsoft, LinkedIn |
+| Multi-factor authentication | MFA enrolment and challenge (`/api/auth/mfa/*`). The core stores and enforces the per-user requirement, and refuses it (`409 mfa_not_available`) while no second factor can be enrolled |
+| Organisation management | Creating, renaming, deleting organisations and moving people between them |
+
+On a core-only install, the routes of an absent brick answer `404`: that means
+"not in this edition", not "object not found". Bricks are loaded through
+`TH2_EXTENSIONS` (see [Extensions](#extensions)).
 
 ---
 
@@ -124,7 +194,7 @@ it wants your own PostgreSQL.
 The [quick start](#quick-start) above needs **Docker and Docker Compose**, and
 nothing else. What follows is for running the core from its sources:
 
-- Python 3.13+
+- Python 3.10+ (CI runs on 3.13)
 - PostgreSQL
 - UV (package manager)
 
@@ -247,7 +317,7 @@ origin and sends it with the code exchange. Setting them changes nothing.
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | The origin whitelist CORS actually uses (comma-separated) |
 | `FRONTEND_URLS` | `http://localhost:3000` | Despite the name, **not** read by CORS — only used to derive the Outlook mail OAuth callback |
 
-#### OAuth — User Login
+#### OAuth — User Login (identity-provider brick)
 
 | Variable | Description |
 |----------|-------------|
@@ -282,13 +352,14 @@ origin and sends it with the code exchange. Setting them changes nothing.
 | `GMAIL_PUBSUB_PROJECT_ID` | Google Cloud project ID |
 | `GMAIL_PUBSUB_TOPIC` | Pub/Sub topic name (just the name, not the full path) |
 
-#### RAG & Webhooks
+#### RAG
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PUBLIC_BASE_URL` | `http://localhost:8000` | Public URL of this apowerb instance |
 | `RAG_WEBHOOK_SECRET` | `th2-webhook-default-secret` | HMAC-SHA256 secret for RAG webhooks (change in production!) |
 | `RAG_BASE_URL` | — | RAG API base URL (th2llm) |
+
+The RAG service calls back on `PUBLIC_BASE_URL` (see [Public URLs](#public-urls)).
 
 #### Stripe (billing brick)
 
@@ -438,10 +509,8 @@ apowerb/
 └── pyproject.toml
 ```
 
-Routers not to look for here — they arrive with the bricks: billing, usage analytics,
-prospection, identity-provider sign-in, MFA, evaluation, organisation management
-(`/api/admin/organizations*`). The rest of `/api/admin` is here. Session listing and
-traces are served here; only the supervision screen is a brick.
+Routers that arrive with the bricks are not in this tree — see
+[Open-source core and commercial bricks](#open-source-core-and-commercial-bricks).
 
 ### Startup Sequence
 
@@ -467,6 +536,7 @@ Route families in this edition, all under `/api` unless noted:
 |--------|----------------|
 | `auth` | Email/password login, refresh, logout, password reset, email verification |
 | `users` | User CRUD, `me` |
+| `admin` | Users, groups, permissions, MFA requirement |
 | `bug-reports` | In-app defect reports, triage, and the reviewed GitHub issue sink |
 | `agents` | Agent CRUD, reload, status, template resync, run |
 | `adk` | ADK execution: run, streaming (`run_sse`), sessions, titles, traces |
@@ -489,13 +559,14 @@ Route families in this edition, all under `/api` unless noted:
 | `api-keys` | Saved provider keys |
 | `config`, `health` | Public configuration, liveness |
 
-Absent from this edition, provided by bricks: `billing`, `usage`, `prospection`,
-`campaigns`, MFA (`/api/auth/mfa/*`), identity-provider sign-in (`/api/users/{github,google,microsoft,linkedin}`),
-evaluation, and organisation management (`/api/admin/organizations*`). They
-answer `404` here. The rest of `/api/admin` — users, groups, permissions — is served here.
-Supervision is split: the session list and traces are served here, and the core answers on
-its own who may read another account's session (`register_supervision_scope`, wired to the
-superadmin check); the supervision **screen** is what a brick provides.
+Served by bricks, and answering `404` here: `billing`, `usage`, `prospection`,
+`campaigns`, MFA (`/api/auth/mfa/*`), identity-provider sign-in
+(`/api/users/{github,google,microsoft,linkedin}`), evaluation, and organisation
+management (`/api/admin/organizations*`).
+
+Who may read another account's session is answered by the core
+(`register_supervision_scope`, wired to the superadmin check); the supervision
+**screen** is what the brick provides.
 
 ### Upgrading: organisation management left the core
 
@@ -504,14 +575,14 @@ served by a brick rather than by the core. **The mechanism stayed**, deliberatel
 
 - the `admin_organization` and `admin_org_member` tables are still created here, and
   existing rows are left untouched;
-- an administrator is still bounded by the organisation he belongs to, so a boundary
+- an administrator is still bounded by the organisation they belong to, so a boundary
   drawn before the upgrade keeps being enforced after it;
 - a user's organisation is still reported by `/api/admin/users` and `/api/admin/me`.
 
 What an install without the brick loses is the ability to **create, rename, delete** an
 organisation or to move somebody between two. If you never created one, nothing changes:
 with no organisation to belong to, an administrator who is not a superadmin administers
-only himself — which is what this build already did.
+only their own account — which is what this build already did.
 
 ## Available Tools
 
@@ -528,38 +599,54 @@ only himself — which is what this build already did.
 | Tool Module | Functions |
 |-------------|-----------|
 | `outlook_mail` | List, search, read, send emails, list folders, download attachments |
-| `onedrive` | List, search, read, download, upload files, create folders, delete, shared files |
+| `onedrive_read`, `onedrive_write` | List, search, read, download, upload, update files, create folders, delete, shared files |
 | `teams` | List chats, get/send messages, reply, search, create group chats, list members |
+
+### Developer & Business Apps
+| Tool Module | Functions |
+|-------------|-----------|
+| `github` | List repositories, read files, search code, read pull requests, index repository docs |
+| `hubspot`, `marketing` | HubSpot contacts and deals, sales leads |
+| `pipedrive` | Create and search Pipedrive deals and people |
+| `odoo` | Search, read, create and update Odoo records |
+| `datadog` | Send application logs to Datadog |
 
 ### Data & Database
 | Tool Module | Functions |
 |-------------|-----------|
-| `database` | Generic database queries, SQL execution |
+| `database`, `database_mcp` | Generic database queries, SQL execution |
 | `text_to_sql` | Natural language to SQL, schema introspection |
 | `db_to_rag` | Index database query results into RAG |
 | `data_handler` | Data filtering, aggregation, transformation |
+| `business_intelligence`, `bi_datasets` | Charts, dashboards and datasets |
+| `tabpfn` | Tabular classification and regression (Prior Labs API) |
 
 ### RAG & Knowledge
 | Tool Module | Functions |
 |-------------|-----------|
 | `rag` | Create, list, search, delete knowledge bases |
 | `memory` | Save/search user memory, tool usage patterns |
+| `ocr` | Extract text (markdown) from documents and images |
 
 ### Communication
 | Tool Module | Functions |
 |-------------|-----------|
 | `emailing` | Send emails (SMTP) |
-| `marketing` | HubSpot integration, sales leads |
+| `audio` | Speech-to-text, text-to-speech, audio analysis and generation |
 
 ### Utilities
 | Tool Module | Functions |
 |-------------|-----------|
 | `basic` | Read files, data loader, image conversion, bearer tokens |
 | `api_call` | Generic API calls, Thaink² forecast |
+| `python_script` | Run Python in a confined subprocess |
+| `image_generation` | Generate images (multi-provider) |
 | `s3_tools` | Read S3 PDFs, search S3 files |
 | `visualization` | Chart generation, CSV to chart export |
 | `web_search_mcp` | Web search via MCP |
 | `thaink2` | Custom Thaink² RAG tools |
+
+`apowerb tools list` prints the registry of the running install.
 
 ---
 
@@ -569,8 +656,8 @@ only himself — which is what this build already did.
 
 apowerb supports two categories of OAuth:
 
-1. **User Login** — Sign up / log in via OAuth (GitHub, Google, Microsoft, LinkedIn)
-2. **Workspace Integrations** — Connect external services as tools for agents
+1. **User Login** — Sign up / log in via OAuth (GitHub, Google, Microsoft, LinkedIn). Provided by the identity-provider brick.
+2. **Workspace Integrations** — Connect external services as tools for agents. In the core.
 
 #### Connecting a Workspace Integration
 
@@ -814,19 +901,13 @@ Three SSE streaming channels are available:
 
 ---
 
-## Credits and billing
+## Token metering and quotas
 
-Not in this edition. The `user` row carries a credit balance and `transactions` /
-`credit_purchases` exist in the schema, but the packages, the Stripe checkout and the
-crediting logic belong to the **billing brick**. `/api/billing/*` answers `404` here.
+Token metering is in the core. `register_core_usage()` is wired when the app is built,
+**before** `load_overlay()`, and the recorder writes one `llm_usage` row per completed
+model turn. `GET /api/config/default-llm/usage` serves the caller their own gauge.
 
-Token metering, by contrast, is in the core since 09/09/26. `register_core_usage()` is
-wired when the app is built, **before** `load_overlay()`, and the recorder writes one
-`llm_usage` row per completed model turn. `GET /api/config/default-llm/usage` serves the
-caller their own gauge. What stays commercial is the **consumption analysis screen** —
-usage broken down per agent, per tool and per user.
-
-The cap came with the counter, and it covers **only the shared `thaink2/default` model**
+The cap covers **only the shared `thaink2/default` model**
 (`llm_usage.billed_to_thaink2`): a personal API key is paid for by whoever supplies it, so
 it is never capped. A run over the cap is refused with a `402` before the answer starts,
 never cut mid-stream. `DEFAULT_LLM_MONTHLY_TOKEN_QUOTA` is the per-user allowance for the
@@ -836,6 +917,12 @@ without a redeploy if the guard blocks wrongly. `DEFAULT_LLM_USER_TOKEN_CAP` and
 unlimited) are the fallback cap, per account and for the whole deployment; they apply only
 when no scale is registered on `register_default_llm_cap`, and the core registers one, so
 a standard install is capped by the monthly quota.
+
+Credits and payments are not in this edition. The `user` row carries a credit balance and
+`transactions` / `credit_purchases` exist in the schema, but the packages, the Stripe
+checkout and the crediting logic belong to the **billing brick**, and `/api/billing/*`
+answers `404` here. The per-agent, per-tool and per-user breakdown is the **consumption
+analysis** brick.
 
 ---
 
@@ -903,23 +990,20 @@ Sessions, events and ADK artifacts live in the tables Google ADK owns (`sessions
 agent.
 
 Some columns here serve bricks rather than the core: `credits`, `stripe_customer_id`,
-`mfa_*` and the `transactions` / `credit_purchases` tables are declared so a brick can use
-them, and stay untouched without one. `llm_usage` is no longer one of them: the core writes
-to it itself (see [Credits and billing](#credits-and-billing)).
+`mfa_enabled` and the `transactions` / `credit_purchases` tables are declared so a brick
+can use them, and stay untouched without one. `mfa_required` is set by the core's admin
+panel, and `llm_usage` is written by the core itself (see
+[Token metering and quotas](#token-metering-and-quotas)).
 
 ---
 
 ## Supported Models
 
-Via LiteLLM, all major model providers are supported:
-
-- **Anthropic**: `anthropic/claude-sonnet-4-5-20250929`, `anthropic/claude-3-haiku-20240307`
-- **OpenAI**: `openai/gpt-4o`, `openai/gpt-4`, `openai/gpt-3.5-turbo`
-- **Mistral**: `mistral/mistral-large-latest`
-- **Google**: `gemini/gemini-pro`
-- **Azure AI Foundry**: `azure_ai/llama-3-3-70b-instruct`
-- **OVHcloud**: `ovhcloud/DeepSeek-R1-Distill-Llama-70B`
-- And more...
+apowerb calls models through [LiteLLM](https://docs.litellm.ai/docs/providers), so any
+provider LiteLLM supports works: Anthropic, OpenAI, Mistral, Google Gemini, Azure AI
+Foundry, OVHcloud, and more. A model is named with its LiteLLM provider prefix, for
+example `anthropic/<model>`, `openai/<model>`, `mistral/<model>`, `gemini/<model>`,
+`azure_ai/<deployment>` or `ovhcloud/<model>`.
 
 ### Azure AI Foundry
 
@@ -969,8 +1053,9 @@ ruff format .
 |------|---------|
 | `400` | Bad request — check your request body |
 | `401` | Unauthorized — missing or invalid token |
+| `402` | The monthly token quota on the shared model is exhausted |
 | `403` | Forbidden — you don't own this resource |
-| `404` | Not found — agent, session, or document doesn't exist |
+| `404` | Not found — or a route served by a brick this install does not load |
 | `413` | File too large — max 50 MB per file |
 | `422` | Unprocessable — e.g., query returned no data |
 | `500` | Internal server error |
@@ -995,19 +1080,19 @@ not open a public issue for one.
 
 ## Support
 
-For questions, contact the thaink² team or open an issue.
+Ask on [Discord](https://discord.com/channels/1470717940075597896), or open an
+issue on this repository.
 
 ## License
 
 apowerb is distributed under the [Apache License 2.0](./LICENSE).
 Copyright 2025-2026 thaink².
 
-This repository holds the **open-source core**. The commercial bricks — billing,
-the consumption analysis screen, prospection, identity-provider sign-in,
-multi-factor authentication, agent evaluation, the supervision screen and
-organisation management — are distributed separately under commercial terms and
-are not covered by this licence. The token metering and the cap themselves live in
-this repository, so they are covered by it.
+The commercial bricks listed in
+[Open-source core and commercial bricks](#open-source-core-and-commercial-bricks)
+are distributed separately under commercial terms and are not covered by this
+licence. The token metering and the cap live in this repository, so they are
+covered by it.
 
 "apowerb" and the apowerb logo are trademarks of thaink². The licence covers the
 code, not the marks — see [TRADEMARK.md](./TRADEMARK.md).
