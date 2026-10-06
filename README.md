@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://avatars.githubusercontent.com/u/310538280?v=4&s=160" alt="apowerb" width="96" />
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/hero.webp" alt="apowerb, the open-source runtime for humans and AI agents" width="100%" />
 
 # apowerb
 
@@ -13,6 +13,10 @@ The open-source agentic framework to build, orchestrate, and operate production 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](LICENSE)
 [![Discord](https://img.shields.io/badge/Community-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/channels/1470717940075597896)
+
+[![YouTube](https://img.shields.io/badge/YouTube-@thaink2-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/@thaink2)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-thaink%C2%B2-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/company/thaink2)
+[![GitHub stars](https://img.shields.io/github/stars/apowerb/apowerb?style=social)](https://github.com/apowerb/apowerb/stargazers)
 
 <p align="center">
   <a href="https://docs.apowerb.com/">Documentation</a> •
@@ -72,6 +76,30 @@ Bring your own model key.
 - **Not a canvas**: agents are defined in the web interface or through the REST
   API, stored in PostgreSQL and run on Google ADK — scriptable, reviewable and
   reproducible.
+
+### See it in action
+
+<table>
+<tr>
+<td width="33%" align="center">
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/text-to-sql-chat.webp" alt="Chat with a Text-to-SQL agent that answers with a chart" width="100%" /><br>
+<b>Ask in plain language</b><br>
+A Text-to-SQL agent answers with a chart
+</td>
+<td width="33%" align="center">
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/bi-reporting.webp" alt="BI and reporting dashboard built from the chat" width="100%" /><br>
+<b>Build the dashboard</b><br>
+Charts from the chat land in BI &amp; Reporting
+</td>
+<td width="33%" align="center">
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/usage.webp" alt="Usage screen with token consumption per day" width="100%" /><br>
+<b>Watch what it costs</b><br>
+Tokens, calls and cache hits per agent
+</td>
+</tr>
+</table>
+
+Walkthroughs are on our [YouTube channel](https://www.youtube.com/@thaink2).
 
 ---
 
