@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("ENCRYPT_KEY", "test-only-key-not-used-anywhere-else")
 
 from apowerb.admin import router as router_module  # noqa: E402
+from apowerb.core.extensions.registry import registry as extension_registry  # noqa: E402
 
 
 class ExpiringRow:
@@ -68,6 +69,15 @@ def _admin():
     return u
 
 
+def _mfa_brick(*, loaded: bool):
+    """The MFA brick announces itself by registering the second factor."""
+    return patch.object(
+        extension_registry,
+        "second_factor",
+        return_value=(lambda user: None) if loaded else None,
+    )
+
+
 def _session_with_row(**over):
     db = FakeSession()
     fields = {
@@ -101,7 +111,7 @@ async def test_requiring_a_second_factor_can_be_undone():
         db = _session_with_row()
         with patch(
             "apowerb.admin.router.administered_user_ids", new=AsyncMock(return_value=None)
-        ):
+        ), _mfa_brick(loaded=True):
             out = await router_module.set_mfa_required(
                 user_id=7,
                 payload=router_module.MfaDemand(required=demanded),
@@ -126,3 +136,44 @@ async def test_both_refuse_a_target_outside_the_organisation(route):
             await getattr(router_module, route)(**kwargs)
 
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_requiring_a_second_factor_is_refused_without_the_mfa_brick():
+    """Without the brick, nobody can enrol: `/api/auth/mfa/*` answers 404.
+    Demanding a second factor would then lock the account out of everything
+    but `/me` and logout. Refuse the demand, and write nothing."""
+    db = _session_with_row()
+    with patch(
+        "apowerb.admin.router.administered_user_ids", new=AsyncMock(return_value=None)
+    ), _mfa_brick(loaded=False):
+        with pytest.raises(HTTPException) as exc:
+            await router_module.set_mfa_required(
+                user_id=7,
+                payload=router_module.MfaDemand(required=True),
+                db=db,
+                _=_admin(),
+            )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "mfa_not_available"
+    assert db.writes == []
+    assert not db.committed
+
+
+@pytest.mark.asyncio
+async def test_stop_requiring_stays_reachable_without_the_mfa_brick():
+    """An account locked before the brick was unloaded must stay recoverable."""
+    db = _session_with_row()
+    with patch(
+        "apowerb.admin.router.administered_user_ids", new=AsyncMock(return_value=None)
+    ), _mfa_brick(loaded=False):
+        out = await router_module.set_mfa_required(
+            user_id=7,
+            payload=router_module.MfaDemand(required=False),
+            db=db,
+            _=_admin(),
+        )
+
+    assert out.mfa_required is False
+    assert any("mfa_required" in w for w in db.writes), db.writes

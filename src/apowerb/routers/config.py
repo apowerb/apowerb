@@ -35,6 +35,9 @@ async def get_public_config():
         "workflow_suggest_enabled": suggest_enabled(),
         # Le champ « Contexte » d'une prévision n'est interprété que si c'est vrai.
         "forecast_interpret_enabled": interpret_enabled(),
+        # Un second facteur ne s'enrole qu'avec la brique MFA. Sans elle,
+        # l'admin n'affiche pas « Exiger la MFA » : la demande serait refusee.
+        "mfa_available": _registry.second_factor() is not None,
         # Drapeaux apportes par les briques branchees. `billing_enabled` vivait
         # ici en dur ; c'est desormais la brique de facturation qui l'annonce,
         # donc la cle disparait purement et simplement quand elle n'est pas la.
