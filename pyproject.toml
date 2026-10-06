@@ -90,6 +90,11 @@ dependencies = [
     # The client talks to https://api.priorlabs.ai and does NOT pull torch, so
     # inference runs server-side — no heavy model is loaded in the app pod.
     "tabpfn-client>=0.6.1",
+    # Oracle and MongoDB tools (portfolio/oracle, portfolio/mongodb). Both are
+    # pure-Python drivers (oracledb in its default "thin" mode needs no Oracle
+    # client libraries), ~1-2 MB each: no heavy runtime in the app pod.
+    "oracledb>=3.0",
+    "pymongo>=4.10",
 ]
 
 [project.urls]
