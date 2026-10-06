@@ -79,6 +79,10 @@ Bring your own model key.
 
 ### See it in action
 
+<p align="center">
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/tour.gif" alt="Demo tour: build an agent, talk to your data, adapt the BI dashboard by asking" width="100%" />
+</p>
+
 <table>
 <tr>
 <td width="33%" align="center">
@@ -100,6 +104,12 @@ Tokens, calls and cache hits per agent
 </table>
 
 Walkthroughs are on our [YouTube channel](https://www.youtube.com/@thaink2).
+
+### How it works
+
+<p align="center">
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow.webp" alt="Step 1, build: define the agent in the UI or the database. Step 2, equip: give it knowledge and tools. Step 3, run: watch every step." width="100%" />
+</p>
 
 ---
 
