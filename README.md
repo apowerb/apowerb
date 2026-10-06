@@ -36,8 +36,8 @@ agent evaluation, the supervision screen) are sold separately by thaink².
 - **Build agents** from the web interface or the REST API — instructions, model,
   tools, knowledge bases — and compose them: sequential, parallel, loop, sub-agents.
 - **Connect them to your systems**: any MCP server, plus built-in tools for Google
-  Workspace, Microsoft 365, GitHub, HubSpot, Pipedrive, Odoo, SQL databases, S3,
-  web search, OCR, speech and sandboxed Python.
+  Workspace, Microsoft 365, GitHub, HubSpot, Pipedrive, Odoo, SQL databases,
+  Oracle, MongoDB, S3, web search, OCR, speech and sandboxed Python.
 - **Ground them in your data** with built-in RAG (files, URLs, databases, S3)
   and Text-to-SQL.
 - **Run them without you**: on a schedule, or triggered by a new Gmail or
@@ -601,6 +601,7 @@ only their own account — which is what this build already did.
 | `outlook_mail` | List, search, read, send emails, list folders, download attachments |
 | `onedrive_read`, `onedrive_write` | List, search, read, download, upload, update files, create folders, delete, shared files |
 | `teams` | List chats, get/send messages, reply, search, create group chats, list members |
+| `sharepoint` | Find sites, browse and search document libraries, read files (text, CSV, Excel, Word, PDF) — read-only, `Sites.Read.All` |
 
 ### Developer & Business Apps
 | Tool Module | Functions |
@@ -615,6 +616,8 @@ only their own account — which is what this build already did.
 | Tool Module | Functions |
 |-------------|-----------|
 | `database`, `database_mcp` | Generic database queries, SQL execution |
+| `oracle` | Read-only SQL on Oracle Database (single `SELECT` / `WITH`, read-only transaction), list tables |
+| `mongodb` | List collections, find, count and aggregate documents — read-only (`$out` / `$merge` refused) |
 | `text_to_sql` | Natural language to SQL, schema introspection |
 | `db_to_rag` | Index database query results into RAG |
 | `data_handler` | Data filtering, aggregation, transformation |
