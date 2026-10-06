@@ -1,22 +1,30 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/hero.webp" alt="apowerb, the open-source runtime for humans and AI agents" width="100%" />
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-thaink%C2%B2-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/company/thaink2)
+[![YouTube](https://img.shields.io/badge/YouTube-@thaink2-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/@thaink2)
+[![GitHub stars](https://img.shields.io/github/stars/apowerb/apowerb?style=social)](https://github.com/apowerb/apowerb/stargazers)
+[![PyPI version](https://img.shields.io/pypi/v/apowerb?logo=pypi&logoColor=white)](https://pypi.org/project/apowerb/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-# apowerb
+<br>
+
+[![Join our Discord](https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/channels/1470717940075597896)
+[![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-6E56CF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.apowerb.com)
+
+<br><br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/hero-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/hero-light.png">
+  <img alt="apowerb, the open-source runtime for humans and AI agents" src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/hero-light.png" width="100%">
+</picture>
+
+<br>
 
 **Build, run and govern AI agents that work while you don't.**
 
 The open-source agentic framework to build, orchestrate, and operate production AI agents.
-
-[![Documentation](https://img.shields.io/badge/docs-apowerb.com-blue?style=for-the-badge&logo=googledocs&logoColor=white)](https://docs.apowerb.com/)
-[![PyPI version](https://img.shields.io/pypi/v/apowerb?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/apowerb/)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](LICENSE)
-[![Discord](https://img.shields.io/badge/Community-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/channels/1470717940075597896)
-
-[![YouTube](https://img.shields.io/badge/YouTube-@thaink2-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/@thaink2)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-thaink%C2%B2-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/company/thaink2)
-[![GitHub stars](https://img.shields.io/github/stars/apowerb/apowerb?style=social)](https://github.com/apowerb/apowerb/stargazers)
 
 <p align="center">
   <a href="https://docs.apowerb.com/">Documentation</a> •
@@ -25,6 +33,12 @@ The open-source agentic framework to build, orchestrate, and operate production 
   <a href="https://docs.apowerb.com/deployment/dockercompose">Deployment</a> •
   <a href="https://thaink2.com">thaink2</a>
 </p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/features-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/features-light.png">
+  <img alt="RAG, Text-to-SQL, Orchestration, Email triggers, Multi-LLM, REST API + UI" src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/features-light.png" width="100%">
+</picture>
 
 </div>
 
@@ -77,39 +91,45 @@ Bring your own model key.
   API, stored in PostgreSQL and run on Google ADK — scriptable, reviewable and
   reproducible.
 
-### See it in action
+### How it works
 
-<p align="center">
-<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/tour.gif" alt="Demo tour: build an agent, talk to your data, adapt the BI dashboard by asking" width="100%" />
-</p>
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-light.png">
+  <img alt="Step 1, build: define the agent in the UI or the database. Step 2, equip: give it knowledge and tools. Step 3, run: watch every step." src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow-light.png" width="100%">
+</picture>
+
+</div>
+
+### See it in action
 
 <table>
 <tr>
 <td width="33%" align="center">
-<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/text-to-sql-chat.webp" alt="Chat with a Text-to-SQL agent that answers with a chart" width="100%" /><br>
-<b>Ask in plain language</b><br>
-A Text-to-SQL agent answers with a chart
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/gif-build.gif" alt="Creating an agent in the Agent Factory" width="100%"><br>
+<b>Build an agent</b><br>
+Define it in the UI or through the REST API
 </td>
 <td width="33%" align="center">
-<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/bi-reporting.webp" alt="BI and reporting dashboard built from the chat" width="100%" /><br>
-<b>Build the dashboard</b><br>
-Charts from the chat land in BI &amp; Reporting
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/gif-knowledge.gif" alt="Connecting a database and asking it questions" width="100%"><br>
+<b>Add tools and knowledge</b><br>
+RAG, Text-to-SQL, 44 tool modules
 </td>
 <td width="33%" align="center">
-<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/usage.webp" alt="Usage screen with token consumption per day" width="100%" /><br>
-<b>Watch what it costs</b><br>
-Tokens, calls and cache hits per agent
+<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/gif-run.gif" alt="Running the agent and turning answers into a dashboard" width="100%"><br>
+<b>Run and watch</b><br>
+See exactly what it did
 </td>
 </tr>
 </table>
 
-Walkthroughs are on our [YouTube channel](https://www.youtube.com/@thaink2).
+<div align="center">
 
-### How it works
+[▶ Watch the full demo on YouTube](https://www.youtube.com/@thaink2)
 
-<p align="center">
-<img src="https://raw.githubusercontent.com/apowerb/apowerb/main/.github/assets/readme/workflow.webp" alt="Step 1, build: define the agent in the UI or the database. Step 2, equip: give it knowledge and tools. Step 3, run: watch every step." width="100%" />
-</p>
+</div>
 
 ---
 
