@@ -10,6 +10,7 @@ import asyncio
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
 
 import pytest
 from google.adk.models.llm_request import LlmRequest
@@ -157,4 +158,6 @@ def test_ovh_mistral_model_without_url_keeps_the_ovh_endpoint():
         temperature=None,
     )
     assert llm.model == "openai/Mistral-Small-3.2-24B-Instruct-2506"
-    assert "kepler.ai.cloud.ovh.net" in llm._additional_args["api_base"]
+    assert urlparse(llm._additional_args["api_base"]).hostname == (
+        "mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net"
+    )
