@@ -62,8 +62,12 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
         f"[TO_AGENT] model_api_base={'set' if model_api_base else 'not set'}, model_api_key={'set' if model_api_key else 'not set'}"
     )
 
-    # Default OVH Mistral endpoint
-    if not model_api_base and agent_details["agent_model"].startswith("mistral/"):
+    # Default OVH Mistral endpoint, only for OVH catalog names
+    # (`mistral/Mistral-Small-3.2-24B-Instruct-2506`). Mistral API ids are
+    # lowercase (`mistral/mistral-large-latest`) and go to Mistral with the
+    # agent's key: routing them to OVH sent every Mistral model to OVH's
+    # Mistral Small (found 2026-10-08).
+    if not model_api_base and agent_details["agent_model"].startswith("mistral/Mistral-"):
         model_api_base = "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1"
         logger.info(
             f"[TO_AGENT] Using default OVH Mistral endpoint: {model_api_base}"

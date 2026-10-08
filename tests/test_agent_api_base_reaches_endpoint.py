@@ -130,3 +130,31 @@ def test_without_url_default_provider_keeps_its_own_endpoint():
     )
     assert llm.model == "anthropic/claude-sonnet-4-5"
     assert "api_base" not in llm._additional_args
+
+
+def test_mistral_api_model_without_url_goes_to_mistral():
+    """Un id de l'API Mistral (catalogue : ``mistral-large-latest``...) part chez
+    Mistral avec la cle de l'agent, pas sur l'endpoint OVH Mistral-Small."""
+    llm = builder.build_litellm_model(
+        {
+            "agent_model": "mistral/mistral-large-latest",
+            "agent_model_params": {"model_api_key": "k"},
+        },
+        temperature=None,
+    )
+    assert llm.model == "mistral/mistral-large-latest"
+    assert "api_base" not in llm._additional_args
+
+
+def test_ovh_mistral_model_without_url_keeps_the_ovh_endpoint():
+    """Les noms du catalogue OVH (``Mistral-Small-3.2-24B-Instruct-2506``)
+    gardent l'endpoint OVH par defaut, en OpenAI-compat."""
+    llm = builder.build_litellm_model(
+        {
+            "agent_model": "mistral/Mistral-Small-3.2-24B-Instruct-2506",
+            "agent_model_params": {"model_api_key": "k"},
+        },
+        temperature=None,
+    )
+    assert llm.model == "openai/Mistral-Small-3.2-24B-Instruct-2506"
+    assert "kepler.ai.cloud.ovh.net" in llm._additional_args["api_base"]
