@@ -1,43 +1,75 @@
+# Catalogue proposé dans le sélecteur de modèle. Le PREMIER modèle de
+# chaque fournisseur est celui qu'on obtient en cliquant sur le fournisseur :
+# c'est le choix recommandé. Toute autre référence passe par « Custom model ».
+#
+# Relevé le 2026-10-08 sur la doc officielle de chaque fournisseur
+# (platform.claude.com, developers.openai.com, docs.mistral.ai,
+# ai.google.dev, api-docs.deepseek.com, console.groq.com). Retirés ce jour-là :
+# Claude 4.x, o3/o4-mini/GPT-4.1 (absents de la doc OpenAI), Devstral Small et
+# Mistral Nemo (dépréciés), deepseek-chat/-reasoner (alias éteints le
+# 2026-07-24), Llama 4, Qwen 3 32B et Llama 3.3 70B (arrêtés chez Groq).
+# Gemini : gemini-3-pro, gemini-2.0-flash et gemini-2.0-pro avaient déjà été
+# retirés le 2026-09-25 après des 404 sur agent-dev.
 MODELS = [
     {
-        "id": "anthropic/claude-sonnet-4-6",
-        "name": "Claude Sonnet 4.6",
+        "id": "anthropic/claude-opus-5-5",
+        "name": "Claude Opus 5.5",
         "provider": "anthropic",
-        "tag": "Latest",
+        "tag": "Recommended",
     },
     {
-        "id": "anthropic/claude-opus-4-6",
-        "name": "Claude Opus 4.6",
+        "id": "anthropic/claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5",
         "provider": "anthropic",
-        "tag": "Powerful",
+        "tag": "Balanced",
     },
     {
-        "id": "anthropic/claude-haiku-4-5-20251001",
-        "name": "Claude Haiku 4.5",
+        "id": "anthropic/claude-haiku-5-5",
+        "name": "Claude Haiku 5.5",
         "provider": "anthropic",
         "tag": "Fast",
     },
     {
-        "id": "anthropic/claude-sonnet-4-5-20250929",
-        "name": "Claude Sonnet 4.5",
+        "id": "anthropic/claude-fable-5-1",
+        "name": "Claude Fable 5.1",
         "provider": "anthropic",
-        "tag": "Default",
+        "tag": "Most capable",
     },
     {
+        "id": "openai/gpt-6.1-sol",
+        "name": "GPT-6.1 Sol",
+        "provider": "openai",
+        "tag": "Recommended",
+    },
+    {
+        "id": "openai/gpt-6-astra",
+        "name": "GPT-6 Astra",
+        "provider": "openai",
+        "tag": "Most capable",
+    },
+    {
+        "id": "openai/gpt-6-luna",
+        "name": "GPT-6 Luna",
+        "provider": "openai",
+        "tag": "Fast",
+    },
+    # Alias `-latest` : Mistral les fait suivre la dernière version stable,
+    # d'où des noms sans numéro de version.
+    {
         "id": "mistral/mistral-large-latest",
-        "name": "Mistral Large 3",
+        "name": "Mistral Large",
         "provider": "mistral",
         "tag": "Recommended",
     },
     {
-        "id": "mistral/devstral-small-latest",
-        "name": "Devstral Small 2",
+        "id": "mistral/mistral-medium-latest",
+        "name": "Mistral Medium",
         "provider": "mistral",
-        "tag": "Code",
+        "tag": "Balanced",
     },
     {
         "id": "mistral/mistral-small-latest",
-        "name": "Mistral Small 3",
+        "name": "Mistral Small",
         "provider": "mistral",
         "tag": "Fast",
     },
@@ -47,103 +79,54 @@ MODELS = [
         "provider": "mistral",
         "tag": "Code",
     },
+    # Google : 3.8 Flash est le modèle stable recommandé ; 3.1 Pro n'existe
+    # qu'en preview.
     {
-        "id": "mistral/open-mistral-nemo",
-        "name": "Mistral Nemo",
-        "provider": "mistral",
-        "tag": "Open",
-    },
-    {
-        "id": "openai/o3",
-        "name": "o3",
-        "provider": "openai",
-        "tag": "Reasoning",
-    },
-    {
-        "id": "openai/o4-mini",
-        "name": "o4-mini",
-        "provider": "openai",
-        "tag": "Fast reasoning",
-    },
-    {
-        "id": "openai/o3-pro",
-        "name": "o3 Pro",
-        "provider": "openai",
-        "tag": "Deep reasoning",
-    },
-    {
-        "id": "openai/gpt-4.1",
-        "name": "GPT-4.1",
-        "provider": "openai",
-        "tag": "Coding",
-    },
-    {
-        "id": "openai/gpt-4.1-mini",
-        "name": "GPT-4.1 Mini",
-        "provider": "openai",
-        "tag": "Fast",
-    },
-    {
-        "id": "openai/gpt-4.1-nano",
-        "name": "GPT-4.1 Nano",
-        "provider": "openai",
-        "tag": "Fastest",
+        "id": "gemini/gemini-3.8-flash",
+        "name": "Gemini 3.8 Flash",
+        "provider": "gemini",
+        "tag": "Recommended",
     },
     {
         "id": "gemini/gemini-3.1-pro-preview",
         "name": "Gemini 3.1 Pro",
         "provider": "gemini",
-        "tag": "Latest",
+        "tag": "Preview",
     },
-    # gemini-3-pro, gemini-2.0-flash and gemini-2.0-pro were removed on
-    # 2026-09-25: Google answered 404 (or the run failed) for each on
-    # agent-dev, and gemini-2.0-flash's 404 names gemini-3.8-flash instead.
     {
-        "id": "gemini/gemini-3.8-flash",
-        "name": "Gemini 3.8 Flash",
+        "id": "gemini/gemini-3.5-flash-lite",
+        "name": "Gemini 3.5 Flash-Lite",
         "provider": "gemini",
-        "tag": "Fast",
+        "tag": "Fastest",
     },
     {
-        "id": "deepseek/deepseek-chat",
-        "name": "DeepSeek V3.2",
+        "id": "deepseek/deepseek-flash",
+        "name": "DeepSeek V4.1 Flash",
         "provider": "deepseek",
         "tag": "Recommended",
     },
     {
-        "id": "deepseek/deepseek-reasoner",
-        "name": "DeepSeek V3.2 R1",
+        "id": "deepseek/deepseek-v4-pro",
+        "name": "DeepSeek V4 Pro",
         "provider": "deepseek",
-        "tag": "Reasoning",
-    },
-    {
-        "id": "groq/meta-llama/llama-4-maverick-17b-128e-instruct",
-        "name": "Llama 4 Maverick",
-        "provider": "groq",
         "tag": "Powerful",
-    },
-    {
-        "id": "groq/meta-llama/llama-4-scout-17b-16e-instruct",
-        "name": "Llama 4 Scout",
-        "provider": "groq",
-        "tag": "Fast",
     },
     {
         "id": "groq/openai/gpt-oss-120b",
         "name": "GPT-OSS 120B",
         "provider": "groq",
-        "tag": "Open",
+        "tag": "Recommended",
     },
     {
-        "id": "groq/qwen/qwen-3-32b",
-        "name": "Qwen 3 32B",
+        "id": "groq/openai/gpt-oss-20b",
+        "name": "GPT-OSS 20B",
         "provider": "groq",
-        "tag": "Preview",
+        "tag": "Fast",
     },
     {
-        "id": "groq/llama-3.3-70b-versatile",
-        "name": "Llama 3.3 70B",
+        "id": "groq/llama-3.1-8b-instant",
+        "name": "Llama 3.1 8B",
         "provider": "groq",
-        "tag": None,
+        "tag": "Fastest",
     },
 ]
