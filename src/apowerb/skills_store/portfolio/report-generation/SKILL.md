@@ -1,6 +1,6 @@
 ---
 name: report-generation
-description: "Generate structured reports, summaries, and analyses from data and findings. Use when the user asks for a report, summary, analysis document, executive briefing, export, or downloadable document with findings and recommendations. Keywords - report, summary, analysis, document, export, download, findings, recommendations, executive summary, briefing."
+description: "Generate structured reports, summaries, and analyses from data and findings. Use when the user asks for a report, summary, analysis document, executive briefing, export, or downloadable document with findings and recommendations."
 ---
 
 # Report Generation
