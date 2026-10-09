@@ -49,6 +49,7 @@ Using the `summary` returned by `tool_create_forecast_chart`, comment in plain l
 - The **reliability badge** (good / fair / poor / unknown).
 - Whether the model **beats the naive baseline** or not.
 - The width of the confidence bands, in words: an 80% band contains roughly 8 out of 10 real values.
+- The **trend** as given by `summary.trend`, with what it is compared to (`trend_basis`) and by how much (`change_pct`), e.g. "+7 % on the same weeks last year". Never call it a rise or a fall from the first and last forecast points: on seasonal data they only follow the season.
 
 Never promise more than the numbers show. If reliability is poor or the model does not beat the naive baseline, say so plainly.
 

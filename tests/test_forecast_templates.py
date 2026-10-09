@@ -44,6 +44,13 @@ class TestForecastingAgentTemplate:
         assert ds_pos != -1
         assert ds_pos < sql_pos
 
+    def test_instructions_take_the_trend_from_the_summary(self):
+        # Reading the trend off the first and last forecast points called a
+        # +7 % year-on-year seasonal horizon a "baisse" in a live demo.
+        instruction = _template("forecasting_agent")["agent_instruction"]
+        assert "summary.trend" in instruction
+        assert "trend_basis" in instruction
+
 
 class TestLegacyForecastToolRemoval:
     def test_basic_module_no_longer_defines_the_legacy_tool(self):
