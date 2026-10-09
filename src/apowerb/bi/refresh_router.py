@@ -9,7 +9,6 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-import requests
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
@@ -19,7 +18,7 @@ from apowerb.bi.dependencies import get_dashboard_service
 from apowerb.configs.th2logger import setup_logging
 from apowerb.core.agent_main import fetch_agents, get_agent_by_id
 from apowerb.configs.settings import get_settings
-from apowerb.scheduler.mage import MageAPIClient, get_orchestrator
+from apowerb.scheduler.mage import get_orchestrator
 from apowerb.scheduler.outage import outage_response
 from apowerb.scheduler.th2etl_client import OrchestratorUnavailable
 from apowerb.scheduler.run_agent_background import schedule_agent_run
@@ -332,34 +331,14 @@ async def delete_dashboard_schedule(
         )
 
     # Delete the schedule via Mage API
-    url = (
-        f"{client.base_url}/api/pipeline_schedules/{schedule_id}"
-        f"?project={client.project_name}"
-    )
-
+    # #93: Route schedule deletion through the client so the DELETE request
+    # goes through the shared orchestrator classification point.
     try:
-        response = await asyncio.to_thread(
-            requests.delete, url, headers=client._get_headers(), timeout=15
-        )
-        if response.status_code not in (200, 204):
-            logger.error(
-                f"[REFRESH] Mage returned {response.status_code} deleting schedule {schedule_id}: "
-                f"{response.text}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Mage failed to delete schedule: {response.status_code}",
-            )
-    except requests.RequestException as exc:
-        logger.error(
-            f"[REFRESH] Failed to delete schedule {schedule_id}: {exc}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to contact Mage API: {exc}",
-        )
-
+        client.delete_schedule(int(schedule_id))
+    except OrchestratorUnavailable as exc:
+        raise outage_response(
+            exc, "deleting a dashboard schedule", get_settings(), logger
+        ) from exc
     logger.info(
         f"[REFRESH] Deleted schedule {schedule_id} for dashboard {dashboard_id}"
     )
