@@ -17,6 +17,7 @@ from apowerb.tools_store.portfolio.bi_datasets import (
     _agent_owner,
     _load_agent_sql_rows,
     _load_owned_dataset_rows,
+    _load_uploaded_file_rows,
     _run_async,
     validate_forecast_columns,
 )
@@ -130,6 +131,8 @@ def tool_thaink2_forecast(
     sql: str | None = None,
     rows: list[dict] | None = None,
     dataset_id: str | None = None,
+    file_id: str | None = None,
+    sheet: str | None = None,
     models: list[str] | None = None,
     group_var: str | None = None,
     frequency: str | None = None,
@@ -139,9 +142,10 @@ def tool_thaink2_forecast(
 
     Provide the historical data as exactly one of: a SQL query (`sql`,
     executed server-side against the connected database), inline `rows`
-    (capped, for small ad-hoc series already in context), or `dataset_id`
+    (capped, for small ad-hoc series already in context), `dataset_id`
     (a CSV dataset previously imported via the BI upload, owner-scoped —
-    see tool_list_datasets / tool_describe_dataset).
+    see tool_list_datasets / tool_describe_dataset), or `file_id` (a file the
+    user attached to the conversation).
 
     Args:
         date_var (str): Name of the date column in the data.
@@ -156,6 +160,13 @@ def tool_thaink2_forecast(
             2000 rows — use `sql` or `dataset_id` for anything larger.
         dataset_id (str): Identifier of an imported CSV dataset (see
             tool_list_datasets). Preferred for an imported dataset.
+        file_id (str): Name of a file attached to the chat, exactly as shown
+            in the `[Uploaded files: ...]` line of the user's message (csv,
+            tsv, txt, xlsx, xlsm, xls, ods, json, parquet). Read server-side,
+            never copy its content into `rows`. Preferred whenever the user
+            attached the data.
+        sheet (str): Sheet name for a spreadsheet `file_id` (first sheet when
+            omitted). Ignored for other formats.
         models (list[str]): Forecast models to try. Default: ["prophet"].
             Always available: prophet, arima, ets, snaive, naive, auto.
             R engine (the default) adds linear, mars, random_forest, xgboost
@@ -176,14 +187,14 @@ def tool_thaink2_forecast(
             or {"status": "error", "message": "..."} for a local validation
             error (e.g. bad sql, too many rows, unknown column).
     """
-    sources_given = sum(1 for s in (sql, rows, dataset_id) if s)
+    sources_given = sum(1 for s in (sql, rows, dataset_id, file_id) if s)
     if sources_given != 1:
         return {
             "status": "error",
-            "message": "Fournir exactement une source de données : sql, rows ou dataset_id.",
+            "message": "Fournir exactement une source de données : sql, rows, dataset_id ou file_id.",
         }
 
-    if sql or dataset_id:
+    if sql or dataset_id or file_id:
         owner = _agent_owner()
         if not owner:
             return {"status": "error", "message": "Aucun contexte propriétaire (agent hors contexte BI)."}
@@ -191,6 +202,8 @@ def tool_thaink2_forecast(
             # The agent's own database connection, never the process DB_*
             # variables (they point at the platform's database).
             loaded = _run_async(_load_agent_sql_rows(sql, owner, MAX_DATA_ROWS))
+        elif file_id:
+            loaded = _load_uploaded_file_rows(file_id, owner, MAX_DATA_ROWS, sheet or None)
         else:
             loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner, MAX_DATA_ROWS))
         if not loaded["success"]:

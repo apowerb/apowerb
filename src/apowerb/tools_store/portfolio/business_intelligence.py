@@ -25,6 +25,8 @@ from apowerb.tools_store.portfolio.bi_datasets import (
     _agent_db_connection,
     _load_agent_sql_rows,
     _load_owned_dataset_rows,
+    _load_uploaded_file_rows,
+    _materialize_uploaded_file_dataset,
     validate_forecast_columns,
 )
 
@@ -1097,10 +1099,13 @@ def tool_create_forecast_chart(
     group_var: str = "",
     frequency: str = "",
     folder_name: str = "",
+    file_id: str = "",
+    sheet: str = "",
 ) -> dict:
     """Creates a forecast widget chart and computes its forecast summary,
-    from exactly one source: an imported dataset (dataset_id) or a SELECT
-    query on this agent's database connection (sql).
+    from exactly one source: an imported dataset (dataset_id), a SELECT
+    query on this agent's database connection (sql), or a file the user
+    attached to the chat (file_id).
 
     Use tool_describe_dataset (dataset) or tool_describe_sql (query) first to
     pick real date_var/target_var/group_var column names. Call
@@ -1120,6 +1125,13 @@ def tool_create_forecast_chart(
         group_var:   Optional column to forecast independently per group.
         frequency:   Optional series frequency (day, week, month, quarter, year).
         folder_name: Agent folder name (injected automatically).
+        file_id:     Name of a file attached to the chat, exactly as shown in
+                     the `[Uploaded files: ...]` line of the user's message
+                     (csv, tsv, txt, xlsx, xlsm, xls, ods, json, parquet). No
+                     need to import it first: it is stored as a dataset of the
+                     agent's owner so the chart can re-forecast when displayed.
+                     Never copy its rows anywhere.
+        sheet:       Sheet name for a spreadsheet file_id (first sheet if omitted).
 
     Returns:
         dict with success status; on success, chart_id, title, and summary
@@ -1134,11 +1146,13 @@ def tool_create_forecast_chart(
     owner_email = _agent_owner()
     if not owner_email:
         return {"success": False, "error": "No owner context."}
-    if bool(dataset_id) == bool(sql):
-        return {"success": False, "error": "Fournir exactement une source : dataset_id ou sql."}
+    if sum(1 for s in (dataset_id, sql, file_id) if s) != 1:
+        return {"success": False, "error": "Fournir exactement une source : dataset_id, sql ou file_id."}
     try:
         if sql:
             loaded = _run_async(_load_agent_sql_rows(sql, owner_email, MAX_DATA_ROWS))
+        elif file_id:
+            loaded = _load_uploaded_file_rows(file_id, owner_email, MAX_DATA_ROWS, sheet or None)
         else:
             loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS))
         if not loaded["success"]:
@@ -1174,6 +1188,14 @@ def tool_create_forecast_chart(
             )
             label = "sql"
         else:
+            if file_id:
+                # Après la prévision : un échec ne laisse ni graphique ni jeu orphelin.
+                stored = _run_async(_materialize_uploaded_file_dataset(
+                    file_id, owner_email, _agent_org(), _agent_project(), sheet or None,
+                ))
+                if not stored["success"]:
+                    return {"success": False, "error": stored["error"]}
+                dataset_id = stored["dataset_id"]
             source = DataSourceSchema(
                 source_type=SourceType.CSV, query=f"csv://{dataset_id}", limit=MAX_DATA_ROWS,
             )
