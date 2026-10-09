@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import uuid as _uuid
 from logging import getLogger
 
@@ -25,9 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.artifacts.upload_mirror import mirror_as_input_artifact
 from apowerb.bi.data._bi_storage import bi_artifact_app_name, save_file
+from apowerb.bi.data.tabular_import import store_tabular_as_csv
 from apowerb.bi.db_stores import DatabaseDataStore
 from apowerb.tools_store.tools_helpers import list_user_tool_configs
 from apowerb.helpers.database import get_db
+from apowerb.helpers.tabular_loader import SUPPORTED_EXTENSIONS, TabularLoadError, load_tabular
+from apowerb.schema.forecast_schema import MAX_DATA_ROWS
 
 logger = getLogger(__name__)
 
@@ -62,12 +66,15 @@ def _detect_separator(text: str) -> str:
 
 @router.post(
     "/bi/upload-csv",
-    summary="Upload a CSV file for BI analysis",
+    summary="Upload a tabular file for BI analysis",
     description=(
         "Accepts a CSV file, validates the content, parses headers and row count, "
         "stores the file in S3, and returns metadata including the first 5 rows "
         "as a sample. Separator is auto-detected or can be set explicitly via "
-        "the 'separator' form field (comma, semicolon, tab, pipe, or auto)."
+        "the 'separator' form field (comma, semicolon, tab, pipe, or auto). "
+        "Other tabular formats (tsv, txt, xlsx, xlsm, xls, ods, json, parquet) "
+        "are read with the shared tabular loader and stored as CSV; "
+        "'sheet' picks the sheet of a spreadsheet (first sheet by default)."
     ),
 )
 async def upload_csv(
@@ -77,13 +84,18 @@ async def upload_csv(
     organization_id: str = Form(...),
     project_id: str = Form(default="thaink2"),
     separator: str = Form(default="auto"),
+    sheet: str | None = Form(default=None),
 ) -> dict:
     filename = file.filename or "upload.csv"
+    extension = os.path.splitext(filename)[1].lower()
 
-    if not filename.lower().endswith(".csv"):
+    if extension != ".csv" and extension not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only CSV files are accepted. The file must have a .csv extension.",
+            detail=(
+                f"Format « {extension or filename} » non pris en charge. "
+                f"Formats acceptés : {', '.join(SUPPORTED_EXTENSIONS)}."
+            ),
         )
 
     organization_id = organization_id.strip()
@@ -106,6 +118,12 @@ async def upload_csv(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded CSV file is empty.",
+        )
+
+    if extension != ".csv":
+        return await _import_tabular(
+            raw_bytes, filename, file.content_type, sheet or None,
+            organization_id, project_id, current_user, db,
         )
 
     try:
@@ -169,6 +187,26 @@ async def upload_csv(
             detail="A data source with this name already exists in this organization/project.",
         )
 
+    await _mirror_upload(organization_id, filename, raw_bytes, content_type)
+
+    return {
+        "file_id": file_id,
+        "filename": filename,
+        "content_type": content_type,
+        "organization_id": organization_id,
+        "project_id": project_id,
+        "key": s3_key,
+        "columns": columns,
+        "row_count": row_count,
+        "sample_rows": sample_rows,
+        "separator": delim,
+        "uploaded_by": str(current_user.email),
+    }
+
+
+async def _mirror_upload(
+    organization_id: str, filename: str, raw_bytes: bytes, content_type: str
+) -> None:
     # Additive mirror into the artifact chain so the upload shows up in the
     # Artifacts tab (kind=input) -- bi/data storage above is unaffected and
     # stays the source csv_executor reads. Never fails the upload: caught
@@ -190,17 +228,62 @@ async def upload_csv(
             filename, organization_id, exc_info=True,
         )
 
+
+async def _import_tabular(
+    raw_bytes: bytes,
+    filename: str,
+    content_type: str | None,
+    sheet: str | None,
+    organization_id: str,
+    project_id: str,
+    current_user: user_schemas.User,
+    db: AsyncSession,
+) -> dict:
+    """Non-CSV import: read with the shared loader, store as canonical CSV."""
+    try:
+        data = load_tabular(raw_bytes, filename, sheet=sheet, max_rows=MAX_DATA_ROWS)
+    except TabularLoadError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    file_id = str(_uuid.uuid4())
+    data_store = DatabaseDataStore(db, owner=str(current_user.email))
+    try:
+        s3_key = await store_tabular_as_csv(
+            data_store,
+            organization_id=organization_id,
+            project_id=project_id,
+            file_id=file_id,
+            name=filename,
+            data=data,
+            uploaded_by=str(current_user.email),
+            extra_metadata={
+                "source_file": filename,
+                "source_content_type": content_type,
+                "source_sheet": data.sheet,
+            },
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A data source with this name already exists in this organization/project.",
+        )
+
+    await _mirror_upload(
+        organization_id, filename, raw_bytes, content_type or "application/octet-stream"
+    )
+
     return {
         "file_id": file_id,
         "filename": filename,
-        "content_type": content_type,
+        "content_type": "text/csv",
         "organization_id": organization_id,
         "project_id": project_id,
         "key": s3_key,
-        "columns": columns,
-        "row_count": row_count,
-        "sample_rows": sample_rows,
-        "separator": delim,
+        "columns": data.columns,
+        "row_count": len(data.rows),
+        "sample_rows": data.rows[:5],
+        "separator": ",",
+        "sheet": data.sheet,
         "uploaded_by": str(current_user.email),
     }
 

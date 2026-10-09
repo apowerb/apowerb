@@ -11,14 +11,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import csv
+import hashlib
 import io
+import os
 import re
+import uuid
 import threading
 from datetime import date, datetime
 from decimal import Decimal
 from logging import getLogger
 from typing import Any
 
+from apowerb.configs.paths import agent_upload_dir
+from apowerb.helpers.tabular_loader import TabularLoadError, load_tabular
 from apowerb.schema.forecast_schema import MAX_DATA_ROWS
 
 logger = getLogger(__name__)
@@ -270,6 +275,167 @@ async def _load_owned_dataset_rows(dataset_id: str, owner: str, limit: int) -> d
         "columns": columns,
         "name": row.name,
     }
+
+
+# ---------------------------------------------------------------------------
+# Pièce jointe du chat (file_id) : lecture limitée à l'agent et à son propriétaire
+# ---------------------------------------------------------------------------
+
+
+def _is_s3_storage() -> bool:
+    from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+    from apowerb.configs.settings import get_settings
+
+    return is_s3_artifact_storage_configured(get_settings())
+
+
+def _agent_record_owner(agent_id: str) -> str | None:
+    from apowerb.core.agent_helpers import get_agent_details
+
+    return get_agent_details(int(agent_id)).get("owner_id")
+
+
+def _attachment_not_found(name: str, available: list[str]) -> dict:
+    listing = f" Fichiers disponibles : {', '.join(available)}." if available else ""
+    return {"success": False, "error": f"Fichier joint introuvable : « {name} ».{listing}"}
+
+
+def _resolve_attachment(file_id: str, owner: str) -> tuple[dict | None, dict | None]:
+    """``(pièce, None)`` ou ``(None, erreur)``.
+
+    ``file_id`` est le nom de fichier de ``[Uploaded files: …]``, rangé sous
+    ``uploads/agent{id}/``. Deux gardes : le nom est un simple nom de fichier
+    (aucun chemin), et le dossier est celui de l'agent racine de l'invocation
+    dont le propriétaire est ``owner`` — un sous-agent d'un autre propriétaire
+    ne lit pas les fichiers de l'agent racine.
+    """
+    from apowerb.core.invocation_context import get_root_agent_id
+
+    if not owner:
+        return None, {"success": False, "error": "Aucun contexte propriétaire (agent hors contexte BI)."}
+    root = get_root_agent_id()
+    if not root.isdigit():
+        return None, {"success": False, "error": "Aucun agent actif : pièce jointe inaccessible."}
+
+    name = (file_id or "").strip()
+    if not name or name in {".", ".."} or name != os.path.basename(name) or "\\" in name:
+        return None, {"success": False, "error": "Nom de fichier joint invalide : indiquez le nom tel qu'affiché dans [Uploaded files: …]."}
+
+    try:
+        folder_owner = _agent_record_owner(root)
+    except Exception:
+        logger.exception("[BI_DATASETS] agent owner lookup failed")
+        folder_owner = None
+    if not folder_owner or str(folder_owner).lower() != owner.lower():
+        return None, _attachment_not_found(name, [])
+
+    folder = f"agent{root}"
+    if _is_s3_storage():
+        from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
+
+        content = read_file_bytes(folder, name)
+        available = [] if content is not None else available_filenames(folder)
+    else:
+        base = agent_upload_dir(root).resolve()
+        path = (base / name).resolve()
+        if path.parent == base and path.is_file():
+            content, available = path.read_bytes(), []
+        else:
+            content = None
+            available = sorted(p.name for p in base.iterdir() if p.is_file()) if base.is_dir() else []
+    if content is None:
+        return None, _attachment_not_found(name, available)
+    return {"name": name, "folder": folder, "content": content}, None
+
+
+def _load_uploaded_file_rows(file_id: str, owner: str, limit: int, sheet: str | None = None) -> dict:
+    """Pendant de ``_load_owned_dataset_rows`` pour une pièce jointe du chat.
+
+    Même forme de retour. ``truncated`` vaut toujours False : un fichier au-delà
+    de ``limit`` lignes est refusé par le chargeur, pas tronqué.
+    """
+    attachment, error = _resolve_attachment(file_id, owner)
+    if error:
+        return error
+    try:
+        data = load_tabular(attachment["content"], attachment["name"], sheet=sheet, max_rows=limit)
+    except TabularLoadError as exc:
+        return {"success": False, "error": str(exc)}
+    return {
+        "success": True,
+        "rows": data.rows,
+        "truncated": False,
+        "columns": data.columns,
+        "name": attachment["name"],
+        "sheet": data.sheet,
+    }
+
+
+async def _materialize_uploaded_file_dataset(
+    file_id: str,
+    owner: str,
+    organization_id: str,
+    project_id: str,
+    sheet: str | None = None,
+) -> dict:
+    """Range la pièce jointe comme jeu de données BI de ``owner`` (CSV), pour
+    qu'un graphique de prévision puisse la relire à l'affichage.
+
+    Idempotent : l'identifiant du jeu dérive du propriétaire, de la portée, du
+    fichier, de la feuille et du contenu (SHA-256). Relancer sur le même
+    fichier réutilise le jeu ; un contenu modifié en crée un nouveau.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from apowerb.bi.data._bi_storage import read_file
+    from apowerb.bi.data.tabular_import import store_tabular_as_csv
+    from apowerb.bi.db_stores import DatabaseDataStore
+
+    attachment, error = _resolve_attachment(file_id, owner)
+    if error:
+        return error
+    try:
+        data = load_tabular(attachment["content"], attachment["name"], sheet=sheet)
+    except TabularLoadError as exc:
+        return {"success": False, "error": str(exc)}
+
+    digest = hashlib.sha256(attachment["content"]).hexdigest()
+    dataset_id = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        "|".join([owner.lower(), organization_id, project_id, attachment["folder"],
+                  attachment["name"], data.sheet or "", digest]),
+    ))
+    label = attachment["name"][:200] + (f" [{data.sheet}]" if data.sheet and sheet else "")
+    display_name = f"{label} #{digest[:8]}"
+    provenance = {
+        "source": "chat_attachment",
+        "source_file": attachment["name"],
+        "source_sheet": data.sheet,
+        "source_sha256": digest,
+    }
+
+    async with _get_session() as db:
+        store = DatabaseDataStore(db, owner=owner)
+        existing = await store.get(dataset_id)
+        if existing is not None:
+            key = (existing.config or {}).get("s3_key")
+            if key and read_file(key) is not None:
+                return {"success": True, "dataset_id": dataset_id, "reused": True}
+        try:
+            await store_tabular_as_csv(
+                store, organization_id=organization_id, project_id=project_id,
+                file_id=dataset_id, name=display_name, data=data,
+                uploaded_by=owner, extra_metadata=provenance,
+            )
+        except IntegrityError:
+            # Fiche supprimée (soft delete) qui occupe encore l'identifiant ou le nom.
+            dataset_id = str(uuid.uuid4())
+            await store_tabular_as_csv(
+                store, organization_id=organization_id, project_id=project_id,
+                file_id=dataset_id, name=f"{display_name}-{dataset_id[:4]}", data=data,
+                uploaded_by=owner, extra_metadata=provenance,
+            )
+    return {"success": True, "dataset_id": dataset_id, "reused": False}
 
 
 def validate_forecast_columns(
