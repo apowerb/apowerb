@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from typing import Any
 
 from apowerb.integrations.th2forecast_client import (
@@ -67,6 +68,37 @@ def _interval_width(point: dict) -> float | None:
     return max(widths) if widths else None
 
 
+def _parse_date(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _same_period_last_year(series: dict, values: list[float]) -> float | None:
+    """Mean of the history points dated one year before the horizon, or None
+    when the history does not cover at least half of that window. Comparing
+    the horizon with its first point instead reads a seasonal peak as a
+    decline (forecast starting right after the autumn peak)."""
+    dates = [_parse_date(p.get("date")) for p in series.get("forecast") or []]
+    dates = [d for d in dates if d is not None]
+    if not dates:
+        return None
+    # 4 days of slack: 52 weeks are 364 days, not 365.
+    low = min(dates) - timedelta(days=369)
+    high = max(dates) - timedelta(days=361)
+    past = [
+        p["value"]
+        for p in series.get("history") or []
+        if isinstance(p.get("value"), (int, float))
+        and (d := _parse_date(p.get("date"))) is not None
+        and low <= d <= high
+    ]
+    if len(past) * 2 < len(values):
+        return None
+    return sum(past) / len(past)
+
+
 def _summarize_series(series: dict) -> dict:
     """Turn one th2forecast `series` entry into a compact, factual summary:
     trend, min/max forecast, interval width — no claim beyond what the
@@ -75,15 +107,22 @@ def _summarize_series(series: dict) -> dict:
     values = [p.get("value") for p in forecast if isinstance(p.get("value"), (int, float))]
 
     trend = "inconnue"
+    trend_basis = None
+    change_pct = None
     if len(values) >= 2:
-        delta = values[-1] - values[0]
-        # A flat threshold relative to the starting value avoids calling
-        # noise-level drift a trend.
-        ref = abs(values[0]) or 1.0
-        if abs(delta) / ref < 0.02:
+        last_year = _same_period_last_year(series, values)
+        if last_year:
+            trend_basis = "même période l'an dernier"
+            ref, current = last_year, sum(values) / len(values)
+        else:
+            trend_basis = "début et fin de l'horizon"
+            ref, current = values[0], values[-1]
+        change_pct = (current - ref) / (abs(ref) or 1.0) * 100
+        # A flat threshold avoids calling noise-level drift a trend.
+        if abs(change_pct) < 2:
             trend = "stable"
         else:
-            trend = "hausse" if delta > 0 else "baisse"
+            trend = "hausse" if change_pct > 0 else "baisse"
 
     widths = [w for w in (_interval_width(p) for p in forecast) if w is not None]
 
@@ -99,6 +138,8 @@ def _summarize_series(series: dict) -> dict:
         "forecast_sample": _sample_points(forecast),
         "summary": {
             "trend": trend,
+            "trend_basis": trend_basis,
+            "change_pct": round(change_pct, 1) if change_pct is not None else None,
             "forecast_min": min(values) if values else None,
             "forecast_max": max(values) if values else None,
             "avg_interval_width": (sum(widths) / len(widths)) if widths else None,

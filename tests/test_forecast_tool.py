@@ -131,6 +131,44 @@ class TestCompactSummary:
         # The full curve is not dumped: sampled points, not the raw series.
         assert len(series["forecast_sample"]) <= 6
 
+    def test_trend_compares_with_the_same_period_last_year(self):
+        # Seasonal weekly series: the horizon starts right after the autumn
+        # peak and drifts down within itself, yet sits ~7 % above the same
+        # weeks last year. First vs last forecast point said "baisse".
+        from datetime import date, timedelta
+
+        start = date(2025, 1, 6)
+        history = [
+            {"date": (start + timedelta(weeks=i)).isoformat(), "value": 6000.0 + (2500.0 if i >= 40 else 0.0)}
+            for i in range(52)
+        ]
+        fc_start = start + timedelta(weeks=52)
+        forecast = [
+            {"date": (fc_start + timedelta(weeks=i)).isoformat(), "value": 6670.0 - 20.0 * i}
+            for i in range(26)
+        ]
+        summary = api_call._summarize_series({"history": history, "forecast": forecast})["summary"]
+
+        assert summary["trend"] == "hausse"
+        assert summary["trend_basis"] == "même période l'an dernier"
+        assert 6.0 < summary["change_pct"] < 8.0
+
+    def test_trend_falls_back_to_the_horizon_without_a_year_of_history(self):
+        series = dict(_TH2FORECAST_RESPONSE["series"][0])
+        series["history"] = [{"date": "2024-12-01", "value": 95.0}]
+        summary = api_call._summarize_series(series)["summary"]
+
+        assert summary["trend"] == "hausse"
+        assert summary["trend_basis"] == "début et fin de l'horizon"
+
+    def test_unparsable_history_dates_do_not_break_the_summary(self):
+        series = dict(_TH2FORECAST_RESPONSE["series"][0])
+        series["history"] = [{"date": "not a date", "value": 1.0}, {"date": None, "value": 2.0}]
+        summary = api_call._summarize_series(series)["summary"]
+
+        assert summary["trend"] == "hausse"
+        assert summary["trend_basis"] == "début et fin de l'horizon"
+
     def test_th2forecast_api_error_is_reported_with_errors(self):
         from apowerb.integrations.th2forecast_client import Th2forecastAPIError
 
