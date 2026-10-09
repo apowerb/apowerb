@@ -31,6 +31,7 @@ _MAX_INLINE_ROWS = 2000
 # series (up to `horizon` points, possibly per group/model) can be large;
 # an agent needs a handful of representative points, not the whole curve.
 _MAX_SAMPLE_POINTS = 6
+_MAX_CORRECTIONS_SHOWN = 5
 
 # Metrics worth surfacing to the LLM as-is; th2forecast returns more, but the
 # rest is redundant for a summary (mase already tells beats_baseline's story).
@@ -90,7 +91,7 @@ def _summarize_series(series: dict) -> dict:
     metrics = series.get("metrics") or {}
     key_metrics = {k: metrics[k] for k in _KEY_METRICS if k in metrics}
 
-    return {
+    summary = {
         "group": series.get("group"),
         "model": series.get("model"),
         "reliability": series.get("reliability", "unknown"),
@@ -105,6 +106,14 @@ def _summarize_series(series: dict) -> dict:
         },
         "warnings": series.get("warnings") or [],
     }
+    preprocessing = series.get("preprocessing")
+    if isinstance(preprocessing, dict):
+        summary["preprocessing"] = {
+            "outliers_corrected": preprocessing.get("outliers_corrected"),
+            "anomalies_corrected": preprocessing.get("anomalies_corrected"),
+            "corrections": (preprocessing.get("corrections") or [])[:_MAX_CORRECTIONS_SHOWN],
+        }
+    return summary
 
 
 def _compact_response(th2forecast_response: dict) -> dict:
@@ -136,6 +145,7 @@ def tool_thaink2_forecast(
     models: list[str] | None = None,
     group_var: str | None = None,
     frequency: str | None = None,
+    correct_outliers: bool = False,
 ) -> dict[str, Any]:
     """
     Generate a time-series forecast via the th2forecast service.
@@ -175,6 +185,10 @@ def tool_thaink2_forecast(
             (e.g. one forecast per store). Optional.
         frequency (str): Series frequency: day, week, month, quarter, year.
             Optional — detected automatically when omitted.
+        correct_outliers (bool): R engine only. Detect and correct outliers
+            in the history before training. The returned history keeps the
+            original values; corrections are listed in each series'
+            `preprocessing` block. Default: False.
 
     Returns:
         dict: On success, {"status": "success", "frequency", "warnings",
@@ -182,7 +196,10 @@ def tool_thaink2_forecast(
             "metrics", "forecast_sample", "summary", "warnings"}, ...]} — one
             entry per (group, model) pair, with a compact forecast sample and
             a factual summary (trend, forecast min/max, average interval
-            width) rather than the full curve.
+            width) rather than the full curve. When outliers were corrected
+            (R engine), each series also carries "preprocessing":
+            {"outliers_corrected", "anomalies_corrected", "corrections"
+            (the first 5: date, original, corrected, kind)}.
             On failure, {"status": "error", "errors": [{"field", "message"}]}
             or {"status": "error", "message": "..."} for a local validation
             error (e.g. bad sql, too many rows, unknown column).
@@ -233,6 +250,7 @@ def tool_thaink2_forecast(
         date_var=date_var, target_var=target_var, horizon=horizon,
         data_rows=data_rows, group_var=group_var, frequency=frequency,
         models=models,
+        preprocessing={"outliers": True} if correct_outliers else None,
     )
 
 
@@ -244,6 +262,7 @@ def _execute_forecast(
     group_var: str | None = None,
     frequency: str | None = None,
     models: list[str] | None = None,
+    preprocessing: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     """Shared tail of tool_thaink2_forecast, once ``data_rows`` is resolved:
     validation, th2forecast call, compact response. Reused as-is by
@@ -279,6 +298,7 @@ def _execute_forecast(
             horizon=horizon,
             frequency=frequency,
             models=chosen_models,
+            preprocessing=preprocessing,
         )
     except Exception as exc:  # noqa: BLE001 -- pydantic ValidationError plus any construction error, all reported the same way
         return {"status": "error", "message": f"Requête de prévision invalide : {exc}"}
