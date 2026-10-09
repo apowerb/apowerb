@@ -191,3 +191,57 @@ class TestCompactSummary:
 
         assert result["status"] == "error"
         assert "TH2FORECAST_URL" in result["message"]
+
+
+def _sent_body(mock_instance) -> dict:
+    return mock_instance.forecast.call_args.args[0]
+
+
+class TestOutlierCorrection:
+    def _run(self, **overrides):
+        with patch.object(api_call, "Th2forecastClient") as mock_ctor:
+            mock_instance = MagicMock()
+            mock_instance.forecast.return_value = _TH2FORECAST_RESPONSE
+            mock_ctor.return_value = mock_instance
+            result = api_call.tool_thaink2_forecast(**_valid_kwargs(**overrides))
+        return result, mock_instance
+
+    def test_correct_outliers_sends_preprocessing_outliers_true(self):
+        result, client = self._run(correct_outliers=True)
+        assert result["status"] == "success"
+        assert _sent_body(client)["preprocessing"] == {"outliers": True}
+
+    def test_default_sends_no_preprocessing(self):
+        _, client = self._run()
+        assert not _sent_body(client).get("preprocessing")
+
+    def test_explicit_false_sends_no_preprocessing(self):
+        _, client = self._run(correct_outliers=False)
+        assert not _sent_body(client).get("preprocessing")
+
+    def test_summary_exposes_preprocessing_counts_and_caps_corrections_at_five(self):
+        corrections = [
+            {"date": f"2022-0{i}-01", "original": 400 + i, "corrected": 100.0 + i, "kind": "anomaly"}
+            for i in range(1, 8)
+        ]
+        response = {
+            **_TH2FORECAST_RESPONSE,
+            "series": [{
+                **_TH2FORECAST_RESPONSE["series"][0],
+                "preprocessing": {
+                    "anomalies_corrected": 7, "outliers_corrected": 2, "corrections": corrections,
+                },
+            }],
+        }
+        with patch.object(api_call, "Th2forecastClient") as mock_ctor:
+            mock_ctor.return_value = MagicMock(forecast=MagicMock(return_value=response))
+            result = api_call.tool_thaink2_forecast(**_valid_kwargs(correct_outliers=True))
+
+        block = result["series"][0]["preprocessing"]
+        assert block["anomalies_corrected"] == 7
+        assert block["outliers_corrected"] == 2
+        assert block["corrections"] == corrections[:5]
+
+    def test_summary_omits_preprocessing_key_when_response_has_none(self):
+        result, _ = self._run()
+        assert "preprocessing" not in result["series"][0]

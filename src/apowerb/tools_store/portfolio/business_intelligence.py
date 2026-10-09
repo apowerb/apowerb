@@ -1101,6 +1101,7 @@ def tool_create_forecast_chart(
     folder_name: str = "",
     file_id: str = "",
     sheet: str = "",
+    correct_outliers: bool = False,
 ) -> dict:
     """Creates a forecast widget chart and computes its forecast summary,
     from exactly one source: an imported dataset (dataset_id), a SELECT
@@ -1132,6 +1133,9 @@ def tool_create_forecast_chart(
                      agent's owner so the chart can re-forecast when displayed.
                      Never copy its rows anywhere.
         sheet:       Sheet name for a spreadsheet file_id (first sheet if omitted).
+        correct_outliers: R engine only. Detect and correct outliers before
+                     training; the widget forecasts the same way when displayed.
+                     Default: False.
 
     Returns:
         dict with success status; on success, chart_id, title, and summary
@@ -1164,6 +1168,7 @@ def tool_create_forecast_chart(
         if column_error:
             return {"success": False, "error": column_error}
 
+        preprocessing = {"outliers": True} if correct_outliers else None
         # Hors de _run_async (plafonné à 30 s alors que Chronos peut prendre
         # une minute) et AVANT l'enregistrement : un graphique n'est créé que
         # si sa prévision a réussi.
@@ -1171,6 +1176,7 @@ def tool_create_forecast_chart(
             date_var=date_var, target_var=target_var, horizon=horizon,
             data_rows=loaded["rows"], group_var=group_var or None,
             frequency=frequency or None, models=["auto"],
+            preprocessing=preprocessing,
         )
         if forecast_summary.get("status") != "success":
             return {
@@ -1209,6 +1215,8 @@ def tool_create_forecast_chart(
             "models": ["auto"],
             "confidence_levels": [0.8, 0.95],
         }
+        if preprocessing:
+            config["preprocessing"] = preprocessing
         chart = _run_async(_async_save_forecast_chart(
             source_schema=source, source_label=label, target_var=target_var,
             title=title, config=config,

@@ -115,6 +115,35 @@ class TestChartCreation:
         assert chart.origin is ChartOrigin.CHAT
         assert result["summary"]["status"] == "success"
 
+    def _create(self, monkeypatch, **extra):
+        store = InMemoryChartStore()
+        monkeypatch.setattr(db_stores, "DatabaseChartStore", lambda db, owner=None: store)
+        with patch.object(bi, "_load_owned_dataset_rows") as mock_load, \
+             patch.object(bi.api_call, "Th2forecastClient") as mock_ctor:
+            mock_load.return_value = _loaded()
+            mock_instance = MagicMock()
+            mock_instance.forecast.return_value = _TH2FORECAST_RESPONSE
+            mock_ctor.return_value = mock_instance
+            result = bi.tool_create_forecast_chart(
+                dataset_id="ds1", date_var="date", target_var="sales",
+                horizon=3, title="Ventes prévues", **extra,
+            )
+        return result, store, mock_instance
+
+    def test_correct_outliers_is_sent_and_stored_in_config(self, monkeypatch):
+        result, store, client = self._create(monkeypatch, correct_outliers=True)
+        assert result["success"] is True
+        assert client.forecast.call_args.args[0]["preprocessing"] == {"outliers": True}
+        chart = _run(store.get(result["chart_id"]))
+        assert chart.config["preprocessing"] == {"outliers": True}
+
+    def test_default_sends_no_preprocessing_and_config_omits_key(self, monkeypatch):
+        result, store, client = self._create(monkeypatch)
+        assert result["success"] is True
+        assert not client.forecast.call_args.args[0].get("preprocessing")
+        chart = _run(store.get(result["chart_id"]))
+        assert "preprocessing" not in chart.config
+
     def test_forecast_failure_creates_no_chart(self, monkeypatch):
         store = InMemoryChartStore()
         monkeypatch.setattr(db_stores, "DatabaseChartStore", lambda db, owner=None: store)
