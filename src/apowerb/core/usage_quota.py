@@ -162,6 +162,40 @@ def build_status(
     )
 
 
+async def usage_counted_since(db, owner_id: str, start: datetime) -> datetime:
+    """Start of the counted window, moved forward by an administrator's reset.
+
+    A reset never moves it back: an old reset cannot reopen a window. Every
+    reader of the counter goes through here -- guard, gauge and sliding cap --
+    so what the gauge shows is what the guard applies.
+
+    Best-effort: an unreadable reset leaves *start* as it was, so the quota
+    can only count too much, never vanish.
+    """
+    from sqlalchemy import select
+
+    from apowerb.models import User
+
+    try:
+        # Savepoint: on Postgres a failed query aborts the whole transaction,
+        # and the caller's SUM on this same session would fail with it.
+        async with db.begin_nested():
+            reset_at = (
+                await db.execute(
+                    select(User.token_usage_reset_at).where(User.email == owner_id)
+                )
+            ).scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[QUOTA] unreadable reset for %s: %s", owner_id, exc)
+        return start
+    if reset_at is None:
+        return start
+    # SQLite returns naive datetimes where Postgres returns aware ones.
+    if reset_at.tzinfo is None:
+        reset_at = reset_at.replace(tzinfo=timezone.utc)
+    return max(start, reset_at)
+
+
 async def get_quota_status(db, owner_id: str, plan: Optional[str]) -> QuotaStatus:
     """Quota status for *owner_id*, computed over the current month.
 
@@ -180,7 +214,8 @@ async def get_quota_status(db, owner_id: str, plan: Optional[str]) -> QuotaStatu
     stmt = select(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).where(
         LlmUsage.owner_id == owner_id,
         LlmUsage.billed_to_thaink2.is_(True),
-        LlmUsage.created_at >= month_start(now),
+        LlmUsage.created_at
+        >= await usage_counted_since(db, owner_id, month_start(now)),
     )
     used = (await db.execute(stmt)).scalar() or 0
     return build_status(

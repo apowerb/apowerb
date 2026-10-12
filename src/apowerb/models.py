@@ -88,6 +88,10 @@ class User(Base):
     # Tokens minted before this instant are refused. NULL means never
     # revoked, which is every account until an administrator says otherwise.
     sessions_valid_from = Column(DateTime(timezone=True), nullable=True)
+    # Shared-model consumption before this instant no longer counts against
+    # the quota or the cap. NULL means never reset. The `llm_usage` history
+    # itself is never deleted.
+    token_usage_reset_at = Column(DateTime(timezone=True), nullable=True)
     mfa_secret = Column(String(255), nullable=True)
     onboarding_completed = Column(Boolean, default=False, nullable=False, server_default="false")
     email_verified = Column(Boolean, default=True, nullable=False, server_default="true")

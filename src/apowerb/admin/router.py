@@ -933,6 +933,41 @@ async def force_relogin(
     return UserOut(**identity)
 
 
+@router.post("/users/{user_id}/reset-token-usage", response_model=UserOut)
+async def reset_token_usage(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: user_schemas.User = Depends(require_admin),
+):
+    """Put this account's shared-model token counter back to zero.
+
+    Writes a cut-off, deletes nothing: `llm_usage` stays the consumption
+    history, and the `tokens` column of this panel keeps summing it. The
+    monthly quota, the user's gauge and the sliding cap all count from the
+    cut-off onwards. The deployment-wide cap is not reset.
+    """
+    await _assert_may_act_on(db, _, user_id)
+    row = (await db.execute(select(User).where(User.user_id == user_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such user.")
+
+    identity = {
+        "user_id": row.user_id,
+        "email": row.email,
+        "first_name": row.first_name,
+        "last_name": row.last_name,
+        "role": row.role.value if hasattr(row.role, "value") else str(row.role),
+    }
+
+    await db.execute(
+        update(User)
+        .where(User.user_id == user_id)
+        .values(token_usage_reset_at=datetime.now(timezone.utc))
+    )
+    await db.commit()
+    return UserOut(**identity)
+
+
 class MfaDemand(BaseModel):
     required: bool
 

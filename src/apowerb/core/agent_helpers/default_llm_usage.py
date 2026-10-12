@@ -101,12 +101,14 @@ async def used_tokens_this_month(
     """
     from sqlalchemy import func, select
 
+    from apowerb.core.usage_quota import usage_counted_since
     from apowerb.models import LlmUsage
 
     stmt = select(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).where(
         LlmUsage.owner_id == owner_id,
         LlmUsage.billed_to_thaink2.is_(True),
-        LlmUsage.created_at >= month_start(now),
+        LlmUsage.created_at
+        >= await usage_counted_since(db, owner_id, month_start(now)),
         LlmUsage.created_at < next_reset(now),
     )
     return max(0, int((await db.execute(stmt)).scalar() or 0))

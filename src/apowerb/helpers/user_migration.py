@@ -64,6 +64,9 @@ def ensure_user_columns():
             # on every existing account, so nobody is signed out by the
             # migration itself.
             "sessions_valid_from": "TIMESTAMPTZ",
+            # Token counter reset by an administrator. NULL on every
+            # existing account: the migration resets nobody.
+            "token_usage_reset_at": "TIMESTAMPTZ",
             # Onboarding
             "onboarding_completed": "BOOLEAN DEFAULT FALSE",
             # Email verification (B-notif): DEFAULT TRUE => backfill atomique des comptes existants

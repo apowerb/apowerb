@@ -180,7 +180,14 @@ async def _core_token_cap(*, agent_name: str, owner_id: str) -> None:
                 return max(1, int(delta.total_seconds()))
 
             if per_user and owner_id:
-                used, oldest = await consomme(LlmUsage.owner_id == owner_id)
+                from apowerb.core.usage_quota import usage_counted_since
+
+                # Une remise a zero par un administrateur ne vaut que pour
+                # ce compte : le plafond global continue de tout compter.
+                depuis = await usage_counted_since(db, owner_id, since)
+                used, oldest = await consomme(
+                    LlmUsage.owner_id == owner_id, LlmUsage.created_at >= depuis
+                )
                 if used >= per_user:
                     logger.warning(
                         "[RUN GATE] %s a atteint son plafond de jetons "
