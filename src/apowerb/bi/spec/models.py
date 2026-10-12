@@ -292,6 +292,9 @@ class ColumnSpec(BaseModel):
     label: str | None = None
     format: str | None = None
     use_thresholds: bool = False
+    # Measure evaluated for the table's total row instead of ``key`` — for
+    # per-group measures whose overall value has another definition.
+    total_measure: Ident | None = None
 
 
 class WaterfallStep(BaseModel):

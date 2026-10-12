@@ -310,6 +310,8 @@ def _validate_visual(
             add(f"{name} : champ x inconnu « {v.x} » dans la source « {source.name} ».")
         for col in v.columns:
             need_key(col.key, "colonne")
+            if col.total_measure:
+                need_measure(col.total_measure, "colonne (total_measure)")
     elif v.type in ("text", "note") and not v.text:
         add(f"{name} : `text` manquant.")
 

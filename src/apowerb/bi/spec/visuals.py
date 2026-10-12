@@ -495,6 +495,7 @@ class VisualBuilder:
         if not cols:
             raise SpecError("Aucune colonne à afficher.")
         defs: list[tuple[str, str]] = []
+        total_defs: list[tuple[str, str]] = []
         for c in cols:
             if c.key == v.x:
                 continue
@@ -509,6 +510,10 @@ class VisualBuilder:
                 defs.append((c.key, f"SUM({q})" if numeric else f"ANY_VALUE({q})"))
             else:
                 raise SpecError(f"Colonne « {c.key} » : ni mesure ni champ de la source « {v.source} ».")
+            if c.total_measure:
+                total_defs.append((c.total_measure, self.measure(c.total_measure).expr))
+            else:
+                total_defs.append(defs[-1])
         value_col = "_c0" if defs else None
 
         def make_row(x_value: Any, res_row: Any, total: bool = False) -> dict[str, Any]:
@@ -522,7 +527,7 @@ class VisualBuilder:
                 val = _num(res_row[f"_c{offset}"]) if _is_num(res_row[f"_c{offset}"]) else to_python(res_row[f"_c{offset}"])
                 offset += 1
                 row[c.key] = val
-                m = self.measures.get(c.key)
+                m = self.measures.get(c.total_measure if total and c.total_measure else c.key)
                 if c.use_thresholds and m is not None and m.thresholds is not None and isinstance(val, (int, float)):
                     status = status_of(float(val), m.thresholds)
                     if status:
@@ -546,8 +551,10 @@ class VisualBuilder:
             parts = ", ".join(f"({sql_guard.check_expression(e, 'Expression')}) AS _c{i}" for i, (_, e) in enumerate(defs))
             res = self.ctx.runner.run(f"SELECT {parts} FROM frame", {"frame": self.df})
             rows = [make_row(None, r) for _, r in res.iterrows()]
-        if v.total_row and defs:
-            parts = ", ".join(f"({sql_guard.check_expression(e, 'Expression')}) AS _c{i}" for i, (_, e) in enumerate(defs))
+        if v.total_row and total_defs:
+            parts = ", ".join(
+                f"({sql_guard.check_expression(e, 'Expression')}) AS _c{i}" for i, (_, e) in enumerate(total_defs)
+            )
             res = self.ctx.runner.run(f"SELECT {parts} FROM frame", {"frame": self.df})
             if len(res):
                 rows.append(make_row(TOTAL_LABEL, res.iloc[0], total=True))

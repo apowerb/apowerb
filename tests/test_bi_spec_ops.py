@@ -239,3 +239,13 @@ def test_kpi_sparkline_must_name_a_measure():
     with pytest.raises(SpecError, match="kpi.sparkline"):
         apply_ops(d, [AddVisualOp(visual=VisualSpec(type="kpi", source="ventes",
                                                      kpi=KpiSpec(measure="ventes_tot", sparkline="fantome")))])
+
+
+def test_table_total_measure_must_name_a_measure():
+    from apowerb.bi.spec.models import ColumnSpec
+
+    d = with_source()
+    table = VisualSpec(type="table", source="ventes", x="famille", total_row=True,
+                       columns=[ColumnSpec(key="ventes_tot", total_measure="fantome")])
+    with pytest.raises(SpecError, match="total_measure"):
+        apply_ops(d, [AddVisualOp(visual=table)])

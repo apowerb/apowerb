@@ -222,3 +222,33 @@ def test_kpi_sparkline_sur_la_periode_reelle(monkeypatch):
     assert stock.spark[-1] == pytest.approx(stock.value)
     sans = [v for v, val in by_title.values() if not v.kpi.sparkline]
     assert all(by_title[v.title][1].spark is None for v in sans)
+
+
+@pytest.mark.skipif(not HAS_ENGINE, reason="moteur pas encore livré")
+def test_ligne_toutes_du_tableau_egale_aux_kpi(monkeypatch):
+    """La ligne « Toutes » reprend la définition globale, pas la somme des familles."""
+    import asyncio
+
+    import apowerb.bi.spec.sources as sources
+    from apowerb.bi.spec.engine import compute_dashboard
+    from apowerb.bi.spec.models import DashboardDataRequest
+
+    async def fake_load(dataset_id, owner, sheet=None):
+        df = _synthetic_sales()
+        # Une famille en rupture sur une semaine, compensée par les autres : sous sécu
+        # pour la famille, pas pour le total.
+        df.loc[(df["famille"] == df["famille"].iloc[0]) & (df.index % 156 == 150), "ventes"] *= 6
+        return df
+
+    monkeypatch.setattr(sources, "load_dataset", fake_load)
+    dash = _dashboard(stock_pilotage("ds-1", with_engine_forecast=False))
+    resp = asyncio.run(compute_dashboard(dash, DashboardDataRequest(), owner="alice@example.com"))
+    kpis = {c.visual.kpi.measure: resp.components[c.id].value.value for c in dash.components
+            if c.visual.type == "kpi"}
+    table = next(c for c in dash.components if c.visual.type == "table")
+    rows = resp.components[table.id].rows
+    total = next(r for r in rows if r.get("_total"))
+    familles = [r for r in rows if not r.get("_total")]
+    assert max(r["semaines_sous_secu_famille"] for r in familles) > kpis["semaines_sous_secu"]
+    assert total["semaines_sous_secu_famille"] == kpis["semaines_sous_secu"]
+    assert total["stock_fin_semaine"] == pytest.approx(kpis["stock_fin_semaine"])
