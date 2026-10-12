@@ -238,6 +238,13 @@ class TestPublicData:
         assert self.post(env, COLLEAGUE).status_code == 200
         assert self.post(env, OUTSIDER).status_code == 403
 
+    def test_private_dashboard_is_served_to_its_owner_only(self, env):
+        self.publish(env, visibility=DashboardVisibility.PRIVATE)
+        assert self.post(env, OUTSIDER).status_code == 403
+        assert self.post(env, COLLEAGUE).status_code == 403
+        assert env.owners_seen == []  # nothing computed with the owner access
+        assert self.post(env, OWNER).status_code == 200
+
 
 class TestSpecPatch:
     ops = [

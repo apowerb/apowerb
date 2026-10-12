@@ -158,6 +158,11 @@ class TestChartOnVisibleDashboard:
         assert await self._check(cfg, COLLEAGUE)
         assert not await self._check(cfg, OUTSIDER)
 
+    async def test_private_dashboard_admits_its_owner_only(self):
+        cfg = [_dashboard_config(["chart1"], visibility=DashboardVisibility.PRIVATE)]
+        assert await self._check(cfg, OWNER)
+        assert not await self._check(cfg, OUTSIDER)
+
     async def test_invalid_dashboard_config_grants_nothing(self):
         assert not await self._check([{"status": "published", "components": [{"chart": {"chart_id": "chart1"}}]}], OUTSIDER)
 
@@ -171,8 +176,10 @@ class TestVisibleTo:
             return Dashboard.model_validate(_dashboard_config([], visibility=visibility, created_by=created_by))
 
         assert visible_to(dash(DashboardVisibility.PUBLIC), OUTSIDER)
-        # Published dashboards default to public visibility (backwards compat).
-        assert visible_to(dash(DashboardVisibility.PRIVATE), OUTSIDER)
+        assert not visible_to(dash(DashboardVisibility.PRIVATE), OUTSIDER)
+        assert not visible_to(dash(DashboardVisibility.PRIVATE), COLLEAGUE)
+        assert visible_to(dash(DashboardVisibility.PRIVATE), OWNER.upper())
+        assert not visible_to(dash(DashboardVisibility.PRIVATE, created_by=""), "")
         assert visible_to(dash(DashboardVisibility.ORGANIZATION), "Colleague@EXAMPLE.com")
         assert not visible_to(dash(DashboardVisibility.ORGANIZATION), OUTSIDER)
         assert not visible_to(dash(DashboardVisibility.ORGANIZATION, created_by="no-domain"), OUTSIDER)

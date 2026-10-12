@@ -23,9 +23,12 @@ logger = logging.getLogger(__name__)
 
 def visible_to(dashboard: Dashboard, viewer_email: str) -> bool:
     """Visibility rule of a PUBLISHED dashboard for a logged-in viewer."""
-    # Published dashboards default to public visibility (backwards compat)
-    if dashboard.visibility in (DashboardVisibility.PUBLIC, DashboardVisibility.PRIVATE):
+    if dashboard.visibility == DashboardVisibility.PUBLIC:
         return True
+    if dashboard.visibility == DashboardVisibility.PRIVATE:
+        # Owner only: the agent tools publish private dashboards for their creator.
+        owner = (dashboard.created_by or "").lower()
+        return bool(owner) and owner == (viewer_email or "").lower()
     if dashboard.visibility == DashboardVisibility.ORGANIZATION:
         owner_domain = get_domain_from_email_or_none(dashboard.created_by)
         viewer_domain = get_domain_from_email_or_none(viewer_email)
