@@ -546,6 +546,12 @@ def _replenishment_plan_step(state: TransformState, step: ReplenishmentPlanStep,
             "Prévision moteur absente pour " + ", ".join(fallback)
             + " : plan calculé avec la moyenne des 4 dernières semaines de ventes.",
         ]
+        if step.forecast in new.failed_columns:
+            # the column is filled now: the visuals say how, not that it is missing
+            new.failed_columns = {
+                **new.failed_columns,
+                step.forecast: "plan calculé avec la moyenne des 4 dernières semaines de ventes",
+            }
     return new
 
 

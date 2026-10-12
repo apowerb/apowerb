@@ -143,3 +143,7 @@ def test_moteur_indisponible_plan_quand_meme_avec_avertissement(computed):
     kpis = {c.visual.kpi.measure: resp.components[c.id].value.value for c in dash.components if c.visual.type == "kpi"}
     assert kpis["prevision_semaine"] is not None and kpis["prevision_semaine"] > 0
     assert any("moyenne des 4 dernières semaines" in w for w in resp.sources["plan"].warnings)
+    prevision = next(c for c in dash.components if c.visual.type == "kpi" and c.visual.kpi.measure == "prevision_semaine")
+    assert resp.components[prevision.id].meta.warnings == [
+        "Prévision indisponible : plan calculé avec la moyenne des 4 dernières semaines de ventes."
+    ]
