@@ -13,6 +13,7 @@ def test_dashboard_context_injects_dataset_and_forecast_tools(monkeypatch):
     assert "bi_datasets.tool_describe_dataset" in names
     assert "bi_datasets.tool_describe_sql" in names
     assert "business_intelligence.tool_create_forecast_chart" in names
+    assert "business_intelligence.tool_create_forecast_dashboard" in names
 
 
 def test_no_dashboard_context_injects_nothing(monkeypatch):

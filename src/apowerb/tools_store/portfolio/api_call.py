@@ -310,6 +310,30 @@ def _execute_forecast(
     business_intelligence.tool_create_forecast_chart (same path, no
     chart_id) so a forecast chart's summary is computed exactly like a
     standalone forecast call."""
+    response = _forecast_raw(
+        date_var=date_var, target_var=target_var, horizon=horizon,
+        data_rows=data_rows, group_var=group_var, frequency=frequency,
+        models=models, preprocessing=preprocessing,
+    )
+    if response.get("status") == "error":
+        return response
+    return _compact_response(response)
+
+
+def _forecast_raw(
+    date_var: str,
+    target_var: str,
+    horizon: int,
+    data_rows: list[dict],
+    group_var: str | None = None,
+    frequency: str | None = None,
+    models: list[str] | None = None,
+    preprocessing: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    """Validation and th2forecast call; returns th2forecast's full response
+    (every history and forecast point) or ``{"status": "error", ...}``.
+    The forecast dashboard needs the whole curve, which the compact
+    response samples down to a few points."""
     if not data_rows:
         return {"status": "error", "message": "Aucune donnée historique à prévoir."}
 
@@ -365,4 +389,4 @@ def _execute_forecast(
     except Th2forecastUnavailable as exc:
         return {"status": "error", "message": f"Service de prévision indisponible : {exc}"}
 
-    return _compact_response(response)
+    return {"status": "success", **response}

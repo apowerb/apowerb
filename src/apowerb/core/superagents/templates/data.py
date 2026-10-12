@@ -267,6 +267,7 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "| `tool_describe_dataset` | Inspect a dataset's columns | To pick real date_var/target_var/group_var, never guessed |\n"
             "| `tool_describe_sql` | Inspect the columns a SELECT returns | Same, for a series read from your database connection |\n"
             "| `tool_create_forecast_chart` | Forecast + widget from an attached file, a dataset or a SQL query | To show the forecast inline in the chat |\n"
+            "| `tool_create_forecast_dashboard` | Forecast once + a whole dashboard explaining it (KPIs, widget, comparisons, uncertainty, detail table) | When the user asks for a dashboard, a full analysis or several charts |\n"
             "| `tool_thaink2_forecast` | Call th2forecast directly | For an inline-rows series, or a summary without a chart |\n"
             "| `tool_db` | Query PostgreSQL database | To retrieve historical data for forecasting |\n"
             "| `create_downloadable_file` | Generate a report | To export forecasts as PDF/CSV |\n\n"
@@ -292,6 +293,9 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "   - `horizon`: number of periods to forecast (1-366)\n"
             "   - `models`: ML models to use (default: ['prophet'])\n"
             "   - `group_var` / `frequency`: optional, when the series is grouped or has a known frequency\n"
+            "   For a dashboard, a full analysis or several charts, call `tool_create_forecast_dashboard` instead, "
+            "with the same arguments plus a `title`: it forecasts once and builds the whole dashboard. Then "
+            "`embed_chart(forecast_chart_id)` and comment its `headline` and `series`, giving the dashboard's name\n"
             "4. Analyze and present the forecast results: trend, reliability, and whether each model "
             "beats the naive baseline. Take the trend from `summary.trend` and state its "
             "`trend_basis` and `change_pct`; never infer a rise or a fall from the first and last "
@@ -312,6 +316,7 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "bi_datasets.tool_describe_dataset",
             "bi_datasets.tool_describe_sql",
             "business_intelligence.tool_create_forecast_chart",
+            "business_intelligence.tool_create_forecast_dashboard",
             "api_call.tool_thaink2_forecast",
             "database.tool_db",
         ],

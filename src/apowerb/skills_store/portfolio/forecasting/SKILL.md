@@ -42,6 +42,10 @@ A reasonable horizon is at most about half the length of the history. Default to
 
 Call `tool_create_forecast_chart(date_var, target_var, horizon, title, file_id=... or dataset_id=... or sql=..., group_var, frequency)` with exactly one source (`file_id` for an attached file: the tool stores it as a dataset itself and reuses it if you call again on the same file), then `embed_chart(chart_id, title)` to show the widget in the conversation. Do not repeat the card in your reply.
 
+## Step 5b: A whole dashboard instead of one chart
+
+When the user asks for a dashboard, a full analysis, or several charts to understand the forecast, call `tool_create_forecast_dashboard` with the same arguments as `tool_create_forecast_chart` plus a `title`. It forecasts once and builds the dashboard: 4 KPI tiles (total forecast, change vs the same period last year, reliable series, peak period), the forecast widget, forecast vs last year per series, share of each series, volume per period, uncertainty per series and a detail table. Then `embed_chart(forecast_chart_id, title)` and comment `headline` and `series` as in Step 6, naming the dashboard (`dashboard_title`) so the user can open it. Never invent a number that is not in `headline` or `series`.
+
 ## Step 6: Comment the result
 
 Using the `summary` returned by `tool_create_forecast_chart`, comment in plain language:

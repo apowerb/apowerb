@@ -105,13 +105,12 @@ def _get_connection():
     else:
         # Default: PostgreSQL
         import psycopg2
-        from psycopg2.extras import RealDictCursor
         port = int(os.getenv("DB_PORT", "5432"))
-        conn = psycopg2.connect(
+        # The dict cursor is chosen per cursor (_get_cursor): psycopg2's
+        # connection type has no __dict__, so it cannot carry extra attributes.
+        return psycopg2.connect(
             host=host, port=port, database=database, user=user, password=password
         )
-        conn._cursor_factory = RealDictCursor  # store for later use
-        return conn
 
 
 def _get_cursor(conn):
@@ -406,14 +405,11 @@ def make_database_tools(
                 return pyodbc.connect(conn_str)
             else:
                 import psycopg2
-                from psycopg2.extras import RealDictCursor
                 port = int(db_params.get("DB_PORT", "5432"))
-                conn = psycopg2.connect(
+                return psycopg2.connect(
                     host=host, port=port, database=database,
                     user=user, password=password,
                 )
-                conn._cursor_factory = RealDictCursor
-                return conn
 
         def _bound_get_cursor(conn):
             if bound_db_type == "mysql":

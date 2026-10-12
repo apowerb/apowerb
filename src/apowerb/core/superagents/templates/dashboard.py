@@ -165,6 +165,7 @@ DASHBOARD_TEMPLATES = [
             "bi_datasets.tool_describe_dataset",
             "bi_datasets.tool_describe_sql",
             "business_intelligence.tool_create_forecast_chart",
+            "business_intelligence.tool_create_forecast_dashboard",
             "bi_dashboard_tools.tool_bi_create_dashboard",
             "bi_dashboard_tools.tool_bi_create_stock_dashboard",
             "bi_dashboard_tools.tool_bi_patch_dashboard",
