@@ -9,8 +9,9 @@ the DashboardStore protocol — nothing else in the stack changes.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from sqlalchemy.exc import IntegrityError
 
@@ -108,6 +109,45 @@ class SlugConflictError(Exception):
 class DashboardNameConflictError(Exception):
     def __init__(self, title: str) -> None:
         super().__init__(f"A dashboard named '{title}' already exists in this organization.")
+
+
+T = TypeVar("T")
+
+MAX_TITLE_ATTEMPTS = 20
+_MAX_TITLE_LENGTH = 120
+
+
+def _is_name_conflict(exc: Exception) -> bool:
+    return isinstance(exc, DashboardNameConflictError)
+
+
+def numbered_title(title: str, attempt: int) -> str:
+    """``title`` for attempt 1, then ``title (2)``, ``title (3)``... within the title limit."""
+    if attempt <= 1:
+        return title
+    suffix = f" ({attempt})"
+    return title[: _MAX_TITLE_LENGTH - len(suffix)].rstrip() + suffix
+
+
+async def create_with_unique_title(
+    title: str,
+    create: Callable[[str], Awaitable[T]],
+    *,
+    is_duplicate: Callable[[Exception], bool] = _is_name_conflict,
+) -> tuple[T, str]:
+    """Run ``create(candidate)`` with ``title``, then ``title (2)``... while the title is taken.
+
+    Returns the created value and the title it was created under. Any other error
+    propagates; after ``MAX_TITLE_ATTEMPTS`` names, raises ``DashboardNameConflictError``.
+    """
+    for attempt in range(1, MAX_TITLE_ATTEMPTS + 1):
+        candidate = numbered_title(title, attempt)
+        try:
+            return await create(candidate), candidate
+        except Exception as exc:
+            if not is_duplicate(exc):
+                raise
+    raise DashboardNameConflictError(title)
 
 
 def _check_spec(dashboard: Dashboard) -> None:
@@ -216,6 +256,9 @@ class DashboardService:
         try:
             return await self._store.save(dashboard)
         except IntegrityError as exc:
+            db = getattr(self._store, "_db", None)
+            if db is not None:
+                await db.rollback()
             raise DashboardNameConflictError(dashboard.title) from exc
 
     async def update(self, dashboard_id: str, req: DashboardUpdateRequest) -> Dashboard:

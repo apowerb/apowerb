@@ -276,21 +276,37 @@ async def _async_create(title: str, description: str, spec: dict, owner: str) ->
             "error": "The spec is invalid, nothing was created. Fix these problems and retry.",
             "issues": issues[:20],
         }
-    async with _dashboard_store(owner) as store:
-        saved = await store.save(dashboard)
-    dashboard = saved or dashboard
+    from apowerb.bi.dashboards.service import create_with_unique_title
+
+    requested = dashboard.title
+
+    async def save(candidate: str):
+        async with _dashboard_store(owner) as store:
+            return await store.save(dashboard.model_copy(update={"title": candidate}))
+
+    saved, final_title = await create_with_unique_title(requested, save, is_duplicate=_is_duplicate)
+    dashboard = saved or dashboard.model_copy(update={"title": final_title})
     preview = await _preview(dashboard, owner)
+    renamed = (
+        {"renamed_from": requested} if dashboard.title != requested else {}
+    )
+    message = f"Dashboard '{dashboard.title}' created. Open it at /bi/{dashboard.id}."
+    if renamed:
+        message += (
+            f" A dashboard named '{requested}' already existed, so this one is named"
+            f" '{dashboard.title}': tell the user."
+        )
+    if preview["errors"]:
+        message += " Some components have errors: see 'errors'."
     return {
         "success": True,
         "dashboard_id": dashboard.id,
         "url": f"/bi/{dashboard.id}",
         "title": dashboard.title,
+        **renamed,
         "component_count": len(dashboard.components),
         **preview,
-        "message": (
-            f"Dashboard '{dashboard.title}' created. Open it at /bi/{dashboard.id}."
-            + (" Some components have errors: see 'errors'." if preview["errors"] else "")
-        ),
+        "message": message,
     }
 
 
