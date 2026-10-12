@@ -51,6 +51,18 @@ async def _dashboard_store(owner: str):
         yield DatabaseDashboardStore(db, owner=owner)
 
 
+def _run_tool(coro):
+    """``_run_async`` with dataset lookups on a tool-owned session: the tool's
+    loop cannot use the shared pool, bound to the FastAPI loop."""
+    from apowerb.bi.data.csv_executor import use_session_factory
+
+    async def scoped():
+        with use_session_factory(lambda: _get_session()):
+            return await coro
+
+    return _run_async(scoped())
+
+
 async def _compute(dashboard, filters: dict | None, owner: str, components: list[str] | None = None):
     from apowerb.bi.spec.engine import compute_dashboard
     from apowerb.bi.spec.models import DashboardDataRequest
@@ -467,7 +479,7 @@ def _create(title: str, description: str, spec: dict, tool: str) -> dict:
     if not (title or "").strip():
         return {"success": False, "error": "title is required."}
     try:
-        return _run_async(_async_create(title.strip(), description, spec, owner))
+        return _run_tool(_async_create(title.strip(), description, spec, owner))
     except Exception as exc:
         return _fail(tool, exc, title)
 
@@ -637,7 +649,7 @@ def tool_bi_patch_dashboard(dashboard_id: str, ops_json: str, dry_run: bool = Fa
     except ValidationError as exc:
         return {"success": False, "error": f"Invalid operations: {_fmt_validation(exc)}"}
     try:
-        return _run_async(_async_patch(dashboard_id.strip(), ops, bool(dry_run), owner))
+        return _run_tool(_async_patch(dashboard_id.strip(), ops, bool(dry_run), owner))
     except Exception as exc:
         return _fail("tool_bi_patch_dashboard", exc)
 
@@ -666,7 +678,7 @@ def tool_bi_query_dashboard(dashboard_id: str, filters_json: str = "{}") -> dict
     if error:
         return {"success": False, "error": error}
     try:
-        return _run_async(_async_query(dashboard_id.strip(), filters, owner))
+        return _run_tool(_async_query(dashboard_id.strip(), filters, owner))
     except Exception as exc:
         return _fail("tool_bi_query_dashboard", exc)
 
@@ -686,6 +698,6 @@ def tool_bi_describe_dashboard(dashboard_id: str) -> dict:
     if not owner:
         return {"success": False, "error": "No owner context."}
     try:
-        return _run_async(_async_describe(dashboard_id.strip(), owner))
+        return _run_tool(_async_describe(dashboard_id.strip(), owner))
     except Exception as exc:
         return _fail("tool_bi_describe_dashboard", exc)

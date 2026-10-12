@@ -20,10 +20,12 @@ same error message either way.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import logging
-from typing import Any
+from contextvars import ContextVar
+from typing import Any, AsyncContextManager, Callable, Iterator
 
 from apowerb.bi.charts.core import DataSource
 from apowerb.bi.data._bi_storage import read_file
@@ -31,6 +33,33 @@ from apowerb.bi.data._bi_storage import read_file
 logger = logging.getLogger(__name__)
 
 _S3_KEY_PREFIX = "bi/data/"
+
+# The shared ``sessionmanager`` pool is bound to the FastAPI event loop. Agent
+# tools compute in a thread with their own loop (``_run_async``), where that pool
+# raises "attached to a different loop" -- which the lookup below would report as
+# "not found". Such callers install their own session factory for the lookup.
+_session_factory: ContextVar[Callable[[], AsyncContextManager[Any]] | None] = ContextVar(
+    "bi_dataset_session_factory", default=None
+)
+
+
+@contextlib.contextmanager
+def use_session_factory(factory: Callable[[], AsyncContextManager[Any]]) -> Iterator[None]:
+    """Resolve datasets through ``factory()`` sessions in the current context."""
+    token = _session_factory.set(factory)
+    try:
+        yield
+    finally:
+        _session_factory.reset(token)
+
+
+def _open_session() -> AsyncContextManager[Any]:
+    factory = _session_factory.get()
+    if factory is not None:
+        return factory()
+    from apowerb.helpers.database import sessionmanager
+
+    return sessionmanager.session()
 _NOT_FOUND_ERROR = "CSV file not found"
 
 
@@ -42,11 +71,10 @@ async def _resolve_s3_key(raw_key: str, owner: str) -> str | None:
     is_full_key = raw_key.startswith(_S3_KEY_PREFIX)
 
     try:
-        from apowerb.helpers.database import sessionmanager
         from apowerb.models import BusinessIntelligence
         from sqlalchemy import func, select
 
-        async with sessionmanager.session() as session:
+        async with _open_session() as session:
             clauses = [
                 BusinessIntelligence.type == "data",
                 func.lower(BusinessIntelligence.owner) == owner.lower(),
