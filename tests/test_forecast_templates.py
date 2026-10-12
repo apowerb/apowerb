@@ -54,6 +54,25 @@ class TestForecastingAgentTemplate:
         assert "trend_basis" in instruction
 
 
+class TestForecastDashboardByDefault:
+    # A forecast request used to give one chart unless the user said
+    # "dashboard"; the product asks for the whole dashboard by default.
+    def test_forecasting_agent_builds_the_dashboard_by_default(self):
+        instruction = _template("forecasting_agent")["agent_instruction"]
+        assert "By default, call `tool_create_forecast_dashboard`" in instruction
+        assert "only when the user explicitly asks for a single chart" in instruction
+
+    def test_forecasting_skill_builds_the_dashboard_by_default(self):
+        from pathlib import Path
+
+        import apowerb
+
+        skill = Path(apowerb.__file__).parent / "skills_store/portfolio/forecasting/SKILL.md"
+        text = skill.read_text(encoding="utf-8")
+        assert "By default, call `tool_create_forecast_dashboard(" in text
+        assert text.index("tool_create_forecast_dashboard(") < text.index("tool_create_forecast_chart(")
+
+
 class TestLegacyForecastToolRemoval:
     def test_basic_module_no_longer_defines_the_legacy_tool(self):
         from apowerb.tools_store.portfolio import basic

@@ -1,6 +1,6 @@
 ---
 name: forecasting
-description: "Forecast a time series from imported data and show the forecast widget in the chat. Use when the user asks to predict, forecast, or anticipate a future trend from their data. Keywords - prévision, prédire, anticiper, tendance future, mois prochains, forecast, predict, prediction, trend."
+description: "Forecast a time series from imported data and build a dashboard explaining it, with the forecast widget in the chat. Use when the user asks to predict, forecast, or anticipate a future trend from their data. Keywords - prévision, prédire, anticiper, tendance future, mois prochains, forecast, predict, prediction, trend."
 ---
 
 # Forecasting
@@ -38,17 +38,17 @@ Using the sample rows and the date column's min/max from `tool_describe_dataset`
 
 A reasonable horizon is at most about half the length of the history. Default to 3 periods for a monthly series when the user does not specify one.
 
-## Step 5: Create and embed the chart
+## Step 5: Build the forecast dashboard (default)
 
-Call `tool_create_forecast_chart(date_var, target_var, horizon, title, file_id=... or dataset_id=... or sql=..., group_var, frequency)` with exactly one source (`file_id` for an attached file: the tool stores it as a dataset itself and reuses it if you call again on the same file), then `embed_chart(chart_id, title)` to show the widget in the conversation. Do not repeat the card in your reply.
+By default, call `tool_create_forecast_dashboard(date_var, target_var, horizon, title, file_id=... or dataset_id=... or sql=..., group_var, frequency)` with exactly one source (`file_id` for an attached file: the tool stores it as a dataset itself and reuses it if you call again on the same file). It forecasts once and builds the whole dashboard: 4 KPI tiles (total forecast, change vs the same period last year, reliable series, peak period), the forecast widget, forecast vs last year per series, share of each series, volume per period, uncertainty per series and a detail table. Then `embed_chart(forecast_chart_id, title)` and comment `headline` and `series` as in Step 6, naming the dashboard (`dashboard_title`) so the user can open it. Never invent a number that is not in `headline` or `series`.
 
-## Step 5b: A whole dashboard instead of one chart
+## Step 5b: One chart only, when asked
 
-When the user asks for a dashboard, a full analysis, or several charts to understand the forecast, call `tool_create_forecast_dashboard` with the same arguments as `tool_create_forecast_chart` plus a `title`. It forecasts once and builds the dashboard: 4 KPI tiles (total forecast, change vs the same period last year, reliable series, peak period), the forecast widget, forecast vs last year per series, share of each series, volume per period, uncertainty per series and a detail table. Then `embed_chart(forecast_chart_id, title)` and comment `headline` and `series` as in Step 6, naming the dashboard (`dashboard_title`) so the user can open it. Never invent a number that is not in `headline` or `series`.
+Only when the user explicitly asks for a single chart or a quick look, call `tool_create_forecast_chart(...)` with the same arguments, then `embed_chart(chart_id, title)` to show the widget in the conversation. Do not repeat the card in your reply.
 
 ## Step 6: Comment the result
 
-Using the `summary` returned by `tool_create_forecast_chart`, comment in plain language:
+Using the `summary` returned by the tool, comment in plain language:
 
 - The **reliability badge** (good / fair / poor / unknown).
 - Whether the model **beats the naive baseline** or not.
