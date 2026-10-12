@@ -7,6 +7,7 @@ per series, or one row per forecast period). Pure functions, no I/O.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from apowerb.tools_store.portfolio.api_call import _same_period_last_year, _summarize_series
@@ -119,6 +120,24 @@ def period_table(response: dict, table: list[dict]) -> list[dict[str, Any]]:
         {"periode": day, **{c: round(v, 2) for c, v in cells.items()}}
         for day, cells in sorted(by_date.items())
     ]
+
+
+def format_period(day: str, frequency: str | None) -> str:
+    """A forecast period as a reader says it ("Semaine du 12/01/2026"),
+    from its ISO start date; anything else is returned unchanged."""
+    try:
+        start = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return str(day)
+    if frequency == "week":
+        return f"Semaine du {start:%d/%m/%Y}"
+    if frequency == "month":
+        return f"{start:%m/%Y}"
+    if frequency == "quarter":
+        return f"T{(start.month - 1) // 3 + 1} {start.year}"
+    if frequency == "year":
+        return str(start.year)
+    return f"{start:%d/%m/%Y}"
 
 
 def headline(table: list[dict], periods: list[dict]) -> dict[str, Any]:

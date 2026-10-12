@@ -1353,8 +1353,8 @@ def tool_create_forecast_dashboard(
         periods = fd.period_table(response, table)
         headline = fd.headline(table, periods)
         built = _run_async(_async_build_forecast_dashboard(
-            title=title, target_var=target_var, forecast_chart_id=forecast_chart.id,
-            table=table, shares=fd.share_table(table), periods=periods,
+            title=title, target_var=target_var, frequency=response.get("frequency") or frequency,
+            forecast_chart_id=forecast_chart.id, table=table, shares=fd.share_table(table), periods=periods,
             headline=headline, owner_email=owner_email,
             organization_id=_agent_org(), project_id=_agent_project(),
         ))
@@ -1445,7 +1445,7 @@ def _format_number(value: float) -> str:
 
 
 async def _async_build_forecast_dashboard(
-    title: str, target_var: str, forecast_chart_id: str, table: list[dict],
+    title: str, target_var: str, frequency: str | None, forecast_chart_id: str, table: list[dict],
     shares: list[dict], periods: list[dict], headline: dict, owner_email: str,
     organization_id: str, project_id: str,
 ) -> dict:
@@ -1453,7 +1453,7 @@ async def _async_build_forecast_dashboard(
     charts on small datasets computed from the same forecast."""
     from datetime import datetime
 
-    from apowerb.bi.forecast_dashboard import displayed_series
+    from apowerb.bi.forecast_dashboard import displayed_series, format_period
 
     snapshot = f"Instantané de la prévision du {datetime.now().strftime('%d/%m/%Y %H:%M')}."
     dashboard_id = None
@@ -1464,8 +1464,8 @@ async def _async_build_forecast_dashboard(
         multi = len(table) > 1
         change = headline["change_pct"]
         kpis = [
-            dict(label=f"{target_var} prévu sur l'horizon", value=_format_number(headline["total"]),
-                 description="Somme des valeurs prévues, toutes séries."),
+            dict(label="Total prévu sur l'horizon", value=_format_number(headline["total"]),
+                 description=f"Somme des valeurs prévues de « {target_var} », toutes séries."),
             dict(label="Écart vs même période N-1",
                  value=f"{change:+.1f}" if change is not None else "n/d",
                  unit="%" if change is not None else "",
@@ -1475,7 +1475,8 @@ async def _async_build_forecast_dashboard(
                  trend_direction="up" if (change or 0) > 0 else "down" if (change or 0) < 0 else "neutral"),
             dict(label="Séries fiables", value=f"{headline['reliable']} / {headline['series']}",
                  description="Séries dont le modèle est jugé fiable au test sur le passé."),
-            dict(label="Pic prévu", value=headline["peak_period"] or "n/d",
+            dict(label="Pic prévu",
+                 value=format_period(headline["peak_period"], frequency) if headline["peak_period"] else "n/d",
                  description=f"Période la plus chargée : {_format_number(headline['peak_value'])}."
                  if headline["peak_value"] is not None else ""),
         ]

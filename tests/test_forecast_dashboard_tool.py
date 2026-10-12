@@ -89,6 +89,20 @@ class TestTables:
         assert (headline["reliable"], headline["series"]) == (1, 2)
         assert (headline["peak_period"], headline["peak_value"]) == ("2026-01-19", 170)
 
+    @pytest.mark.parametrize("frequency, expected", [
+        ("week", "Semaine du 12/01/2026"),
+        ("month", "01/2026"),
+        ("quarter", "T1 2026"),
+        ("year", "2026"),
+        ("day", "12/01/2026"),
+        (None, "12/01/2026"),
+    ])
+    def test_period_is_shown_for_a_reader(self, frequency, expected):
+        assert fd.format_period("2026-01-12", frequency) == expected
+
+    def test_unparsable_period_is_kept_as_is(self):
+        assert fd.format_period("W12", "week") == "W12"
+
     def test_small_series_are_folded_into_others(self):
         many = {"series": [_series(f"S{i}", [], [100 - i]) for i in range(12)]}
         table = fd.series_table(many)
@@ -165,7 +179,11 @@ class TestTool:
         assert board.visibility.value == "private"
         kpis = [c for c in board.components if c.component_type.value == "key_value"]
         assert [(c.position.row, c.position.col) for c in kpis] == [(0, 0), (0, 3), (0, 6), (0, 9)]
-        assert [c.key_value.label for c in kpis][1:] == ["Écart vs même période N-1", "Séries fiables", "Pic prévu"]
+        assert [c.key_value.label for c in kpis] == [
+            "Total prévu sur l'horizon", "Écart vs même période N-1", "Séries fiables", "Pic prévu",
+        ]
+        assert "« ventes »" in kpis[0].key_value.description
+        assert kpis[3].key_value.value == "Semaine du 19/01/2026"
         widgets = [c for c in board.components if c.component_type.value == "chart"]
         assert widgets[0].chart.chart_id == result["forecast_chart_id"]
         assert (widgets[0].position.row, widgets[0].position.width) == (2, 12)
