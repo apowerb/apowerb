@@ -289,6 +289,8 @@ def _validate_visual(
             add(f"{name} : bloc `kpi` manquant.")
         else:
             need_measure(v.kpi.measure, "kpi.measure")
+            if v.kpi.sparkline:
+                need_measure(v.kpi.sparkline, "kpi.sparkline")
     elif v.type in _CHART_TYPES:
         if not v.x:
             add(f"{name} : `x` manquant.")

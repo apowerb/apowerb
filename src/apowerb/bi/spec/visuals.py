@@ -390,8 +390,22 @@ class VisualBuilder:
             delta_formatted=delta_text,
             secondary=self.render(k.secondary),
             target_label=k.target_label,
+            spark=self._spark(k.sparkline) if k.sparkline else None,
         )
         return ComponentResult(type="kpi", value=kpi_value)
+
+    def _spark(self, measure: str) -> list[float] | None:
+        """Measure per date, up to the last real date of the active period filter."""
+        col = self._date_column()
+        if col is None or self.mat is None:
+            return None
+        res = self.grouped(col, [(measure, self.measure(measure).expr)])
+        lasts = [f.last for f in self.ctx.active.values()
+                 if f.is_period and f.last is not None and self.mat.name in f.sources]
+        if lasts:
+            res = res[pd.to_datetime(res["_x"], errors="coerce") <= min(lasts)]
+        points = [x for x in (_num(v) for v in res["_c0"]) if x is not None]
+        return points if len(points) >= 2 else None
 
     def _date_column(self) -> str | None:
         if self.mat is None:

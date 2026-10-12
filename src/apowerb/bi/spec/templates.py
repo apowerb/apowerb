@@ -265,8 +265,8 @@ def stock_pilotage(
         source="stocks",
         x=d,
         series=[
-            SeriesSpec(key="stock_total", label="Stock fin de semaine", mark="bar", color="good"),
-            SeriesSpec(key="prevision_totale", label="Prévision", mark="bar", color=BROWN),
+            SeriesSpec(key="stock_total", label="Stock fin de semaine", mark="area", color="good"),
+            SeriesSpec(key="prevision_totale", label="Prévision", mark="line", color=BROWN),
             SeriesSpec(key="appro_total", label="Approvisionnements", mark="bar", color=BLUE),
             SeriesSpec(key="securite_totale", label="Stock de sécurité", mark="line", color="muted", dash=True),
         ],
@@ -411,12 +411,12 @@ def stock_pilotage(
 
     grid: list[tuple[VisualSpec, dict[str, int]]] = [(synthese, dict(row=0, col=0, width=12, height=2))]
     kpis = [
-        kpi("Stock fin de semaine", "stock_fin_semaine", secondary="{{variation_stock|percent}} vs semaine précédente"),
-        kpi("Couverture", "couverture", secondary="Stock ÷ prévision de la semaine"),
-        kpi("Taux de service", "taux_service", target_label="cible ≥ 99 %"),
+        kpi("Stock fin de semaine", "stock_fin_semaine", sparkline="stock_total", secondary="{{variation_stock|percent}} vs semaine précédente"),
+        kpi("Couverture", "couverture", sparkline="couverture_hebdo", secondary="Stock ÷ prévision de la semaine"),
+        kpi("Taux de service", "taux_service", sparkline="taux_service", target_label="cible ≥ 99 %"),
         kpi("Fiabilité de la prévision", "fiabilite", secondary="Biais : {{biais|percent}}", target_label="cible ≥ 90 %"),
         kpi("Semaines sous sécu", "semaines_sous_secu", secondary="risque de rupture"),
-        kpi("Approvisionnements reçus", "appro_recus", secondary="Ventes : {{ventes_totales|compact}}"),
+        kpi("Approvisionnements reçus", "appro_recus", sparkline="appro_total", secondary="Ventes : {{ventes_totales|compact}}"),
     ]
     for i, k in enumerate(kpis):
         grid.append((k, dict(row=2, col=2 * i, width=2, height=3)))

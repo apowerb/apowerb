@@ -185,3 +185,40 @@ def test_integration_moteur_sans_mock(monkeypatch, site):
     kpis = {c.visual.title: resp.components[c.id].value for c in dash.components if c.visual.type == "kpi"}
     assert len(kpis) == 6 and all(v.value is not None for v in kpis.values())
     print({k: v.formatted for k, v in kpis.items()})
+
+
+def test_combo_lisible_stock_en_aire_prevision_en_ligne(spec):
+    """26 semaines × 3 séries de barres sont illisibles : une seule série en barres."""
+    combo = next(c["visual"] for c in spec["components"] if c["visual"]["type"] == "combo")
+    marks = {s["key"]: (s["mark"], s.get("dash", False)) for s in combo["series"]}
+    assert marks == {
+        "stock_total": ("area", False),
+        "prevision_totale": ("line", False),
+        "appro_total": ("bar", False),
+        "securite_totale": ("line", True),
+    }
+
+
+@pytest.mark.skipif(not HAS_ENGINE, reason="moteur pas encore livré")
+def test_kpi_sparkline_sur_la_periode_reelle(monkeypatch):
+    """La mini-courbe suit la période filtrée (26 semaines) sans les semaines prévues."""
+    import asyncio
+
+    import apowerb.bi.spec.sources as sources
+    from apowerb.bi.spec.engine import compute_dashboard
+    from apowerb.bi.spec.models import DashboardDataRequest
+
+    async def fake_load(dataset_id, owner, sheet=None):
+        return _synthetic_sales()
+
+    monkeypatch.setattr(sources, "load_dataset", fake_load)
+    dash = _dashboard(stock_pilotage("ds-1", with_engine_forecast=False))
+    resp = asyncio.run(compute_dashboard(dash, DashboardDataRequest(), owner="alice@example.com"))
+    by_title = {c.visual.title: (c.visual, resp.components[c.id].value) for c in dash.components
+                if c.visual.type == "kpi"}
+    visual, stock = by_title["Stock fin de semaine"]
+    assert visual.kpi.sparkline == "stock_total"
+    assert stock.spark is not None and len(stock.spark) == 26
+    assert stock.spark[-1] == pytest.approx(stock.value)
+    sans = [v for v, val in by_title.values() if not v.kpi.sparkline]
+    assert all(by_title[v.title][1].spark is None for v in sans)

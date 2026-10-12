@@ -232,3 +232,10 @@ class TestValidate:
         })
         errors = validate_spec(d)
         assert len(errors) >= 5
+
+
+def test_kpi_sparkline_must_name_a_measure():
+    d = with_source()
+    with pytest.raises(SpecError, match="kpi.sparkline"):
+        apply_ops(d, [AddVisualOp(visual=VisualSpec(type="kpi", source="ventes",
+                                                     kpi=KpiSpec(measure="ventes_tot", sparkline="fantome")))])

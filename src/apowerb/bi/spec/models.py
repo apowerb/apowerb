@@ -284,6 +284,7 @@ class KpiSpec(BaseModel):
     compare: Literal["previous_period", "previous_point"] | None = None
     target_label: str | None = None  # e.g. "cible ≥ 99 %"
     secondary: str | None = None  # text template, see VisualSpec.text
+    sparkline: Ident | None = None  # measure plotted per date over the real period
 
 
 class ColumnSpec(BaseModel):
@@ -350,6 +351,7 @@ class KpiValue(BaseModel):
     delta_formatted: str | None = None
     secondary: str | None = None
     target_label: str | None = None
+    spark: list[float] | None = None  # kpi.sparkline: oldest first
 
 
 class MeasureTrace(BaseModel):
