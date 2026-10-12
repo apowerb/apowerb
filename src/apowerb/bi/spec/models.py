@@ -184,6 +184,46 @@ class InventorySimStep(BaseModel):
     seed: int = 42
 
 
+class ReplenishmentPlanStep(BaseModel):
+    """Projected stock and orders to place over the forecast horizon, from the
+    REAL stock of each ``by`` group.
+
+    Starts from the last row with a ``stock`` value. The future rows are the
+    following rows with a ``forecast`` value (e.g. appended by a ``forecast``
+    step); without any, ``horizon`` periods are appended with the mean of the
+    last 4 periods of ``demand`` and a warning. For each future period t:
+      reception(t) = orders placed at t - lead time
+      stock(t)     = max(0, stock(t-1) + reception(t) - forecast(t))
+      order at t if stock(t + lead time) would fall under the threshold:
+      quantity = threshold + target_cover x forecast - stock(t + lead time),
+      rounded up to the lot; no order that would land after the horizon.
+    Threshold and lead time come from ``safety_column``/``lead_time_column``
+    (last real value of the group), else ``safety_weeks`` x mean forecast and
+    ``lead_time``. Pending orders are unknown: nothing arrives during the
+    first lead-time periods.
+    Output columns: stock_projete (real stock on the kept history rows),
+    stock_sans_commande, reception, commande, seuil_plan, delai_plan,
+    risque (2 = under the threshold despite the orders, 1 = order placed,
+    0 = fine) and semaine_plan (0 = last real period, 1..H = horizon).
+    """
+
+    op: Literal["replenishment_plan"] = "replenishment_plan"
+    date: Ident
+    by: list[Ident] = Field(default_factory=list)
+    stock: Ident
+    demand: Ident = "ventes"
+    forecast: Ident = "prevision_moteur"
+    safety_column: Ident | None = None
+    lead_time_column: Ident | None = None
+    safety_weeks: float = Field(default=1.0, ge=0)
+    lead_time: int = Field(default=1, ge=1, le=12)
+    target_cover: int = Field(default=4, ge=0, le=26)
+    horizon: int = Field(default=8, ge=1, le=104)
+    keep_history: int = Field(default=12, ge=0, le=520)
+    lot_sizes: dict[str, int] = Field(default_factory=dict)  # group key -> lot
+    default_lot: int = Field(default=1, ge=1)
+
+
 TransformStep = Annotated[
     Union[
         FilterStep,
@@ -194,6 +234,7 @@ TransformStep = Annotated[
         NaiveForecastStep,
         ForecastStep,
         InventorySimStep,
+        ReplenishmentPlanStep,
     ],
     Field(discriminator="op"),
 ]

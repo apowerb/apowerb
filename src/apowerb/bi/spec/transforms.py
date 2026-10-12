@@ -41,6 +41,7 @@ from apowerb.bi.spec.models import (
     JoinStep,
     NaiveForecastStep,
     Provenance,
+    ReplenishmentPlanStep,
     SqlStep,
     TransformStep,
 )
@@ -60,6 +61,17 @@ INVENTORY_COLUMNS = (
     "stock_fin",
     "stock_securite",
     "commande",
+)
+
+PLAN_COLUMNS = (
+    "stock_projete",
+    "stock_sans_commande",
+    "reception",
+    "commande",
+    "seuil_plan",
+    "delai_plan",
+    "risque",
+    "semaine_plan",
 )
 
 
@@ -121,6 +133,8 @@ async def apply_transforms(
             state = await asyncio.to_thread(_inventory_sim_step, state, step, what)
         elif isinstance(step, ForecastStep):
             state = await _forecast_step(state, step, what)
+        elif isinstance(step, ReplenishmentPlanStep):
+            state = await asyncio.to_thread(_replenishment_plan_step, state, step, what)
         else:  # pragma: no cover - the union is closed
             raise SpecError(f"{what} : opération inconnue.")
     return state
@@ -366,6 +380,173 @@ def _inventory_sim_step(state: TransformState, step: InventorySimStep, what: str
         out[name] = arr
         prov[name] = Provenance.SIMULATED
     return _with(state, out, prov)
+
+
+# ---------------------------------------------------------------------------
+# replenishment_plan
+# ---------------------------------------------------------------------------
+
+
+def plan_replenishment(
+    stock0: float, forecast: np.ndarray, *, seuil: float, lead_time: int, target_cover: int, lot: int
+) -> dict[str, np.ndarray]:
+    """Projected stock and orders of one group over its future periods."""
+    h = len(forecast)
+    fc = np.where(np.isfinite(forecast), np.maximum(forecast, 0.0), 0.0)
+
+    def cover(start: int) -> float:
+        # forecast after the horizon: the last period is repeated
+        last = fc[-1] if h else 0.0
+        return float(sum(fc[k] if k < h else last for k in range(start, start + target_cover)))
+
+    reception = np.zeros(h)
+    orders = np.zeros(h)
+
+    def project() -> np.ndarray:
+        out = np.zeros(h)
+        prev = stock0
+        for k in range(h):
+            prev = max(0.0, prev + reception[k] - fc[k])
+            out[k] = prev
+        return out
+
+    for k in range(h):
+        arrival = k + lead_time
+        if arrival >= h:
+            break
+        at_arrival = project()[arrival]
+        if at_arrival < seuil:
+            need = seuil + cover(arrival + 1) - at_arrival
+            qty = math.ceil(need / lot - 1e-9) * lot if need > 1e-9 else 0
+            orders[k] = qty
+            reception[arrival] += qty
+
+    stock = project()
+    without = np.maximum(0.0, stock0 - np.cumsum(fc))
+    risque = np.where(stock < seuil, 2, np.where(orders > 0, 1, 0))
+    return {
+        "stock_projete": stock,
+        "stock_sans_commande": without,
+        "reception": reception,
+        "commande": orders,
+        "risque": risque.astype(float),
+    }
+
+
+def _last_finite(values: pd.Series) -> float | None:
+    numeric = pd.to_numeric(values, errors="coerce").dropna()
+    return float(numeric.iloc[-1]) if len(numeric) else None
+
+
+def _future_dates(dates: pd.Series, n: int) -> list[pd.Timestamp]:
+    known = pd.to_datetime(dates, errors="coerce").dropna().sort_values()
+    steps = known.diff().dropna()
+    step = steps.median() if len(steps) else pd.Timedelta(weeks=1)
+    if pd.isna(step) or step <= pd.Timedelta(0):
+        step = pd.Timedelta(weeks=1)
+    return [known.iloc[-1] + step * (i + 1) for i in range(n)]
+
+
+def _replenishment_plan_step(state: TransformState, step: ReplenishmentPlanStep, what: str) -> TransformState:
+    needed = [step.date, step.stock, step.demand, *step.by]
+    needed += [c for c in (step.safety_column, step.lead_time_column) if c]
+    _need(state.df, needed, what)
+    df = state.df.copy()
+    if step.forecast not in df.columns:
+        df[step.forecast] = np.nan
+    df[step.date] = pd.to_datetime(df[step.date], errors="coerce")
+    out, groups = _sorted_groups(df, step.by, step.date)
+    stock = pd.to_numeric(out[step.stock], errors="coerce")
+    fc_all = pd.to_numeric(out[step.forecast], errors="coerce")
+
+    keep: list[np.ndarray] = []
+    appended: list[dict[str, Any]] = []
+    fallback: list[str] = []
+    results = {name: np.full(len(out), np.nan) for name in PLAN_COLUMNS}
+    future_rows: list[tuple[str, np.ndarray, np.ndarray, int]] = []  # key, idx, forecast, real position
+
+    for key, idx in groups:
+        real = idx[stock.iloc[idx].notna().to_numpy()]
+        if not len(real):
+            continue
+        last = int(real[-1])
+        history = real[-step.keep_history:] if step.keep_history else real[-1:]
+        keep.append(history)
+        after = idx[idx > last]
+        future = after[fc_all.iloc[after].notna().to_numpy()][: step.horizon]
+        if len(future):
+            future_rows.append((key, future, fc_all.iloc[future].to_numpy(dtype=float), last))
+        else:
+            recent = pd.to_numeric(out[step.demand].iloc[idx[idx <= last]], errors="coerce").dropna().tail(4)
+            mean = float(recent.mean()) if len(recent) else 0.0
+            base = {b: out[b].iloc[last] for b in step.by}
+            fallback.append(key or "total")
+            for ts in _future_dates(out[step.date].iloc[idx[idx <= last]], step.horizon):
+                appended.append({step.date: ts, **base, step.forecast: mean, "_key": key, "_last": last})
+        results["stock_projete"][history] = stock.iloc[history].to_numpy(dtype=float)
+        results["semaine_plan"][last] = 0
+
+    lots = {k: v for k, v in step.lot_sizes.items() if v >= 1}
+
+    def settings(last: int, fc: np.ndarray) -> tuple[float, int]:
+        seuil = _last_finite(out[step.safety_column].iloc[[last]]) if step.safety_column else None
+        if seuil is None:
+            seuil = step.safety_weeks * (float(np.nanmean(fc)) if len(fc) else 0.0)
+        delai = _last_finite(out[step.lead_time_column].iloc[[last]]) if step.lead_time_column else None
+        lead = step.lead_time if delai is None else int(min(12, max(1, round(delai))))
+        return float(seuil), lead
+
+    def fill(target: dict[str, np.ndarray], pos: np.ndarray, key: str, fc: np.ndarray, last: int) -> None:
+        seuil, lead = settings(last, fc)
+        lot = lots.get(key, step.default_lot)
+        plan = plan_replenishment(float(stock.iloc[last]), fc, seuil=seuil, lead_time=lead,
+                                  target_cover=step.target_cover, lot=lot)
+        for name, arr in plan.items():
+            target[name][pos] = arr
+        target["seuil_plan"][pos] = seuil
+        target["delai_plan"][pos] = lead
+        target["semaine_plan"][pos] = np.arange(1, len(pos) + 1)
+
+    for key, future, fc, last in future_rows:
+        keep.append(future)
+        fill(results, future, key, fc, last)
+
+    kept = np.sort(np.concatenate(keep)) if keep else np.array([], dtype=int)
+    frame = out.iloc[kept].copy()
+    for name, arr in results.items():
+        frame[name] = arr[kept]
+
+    if appended:
+        extra = pd.DataFrame(appended)
+        extra_results = {name: np.full(len(extra), np.nan) for name in PLAN_COLUMNS}
+        for key, part in extra.groupby("_key", sort=False):
+            pos = part.index.to_numpy()
+            fill(extra_results, pos, key, part[step.forecast].to_numpy(dtype=float), int(part["_last"].iloc[0]))
+        extra = extra.drop(columns=["_key", "_last"])
+        for name, arr in extra_results.items():
+            extra[name] = arr
+        frame = pd.concat([frame, extra], ignore_index=True, sort=False)
+        frame = frame.sort_values([*step.by, step.date], kind="stable")
+    frame = frame.reset_index(drop=True)
+
+    prov = dict(state.prov)
+    for name in ("stock_projete", "stock_sans_commande", "risque"):
+        prov[name] = Provenance.FORECAST
+    for name in ("reception", "commande"):
+        prov[name] = Provenance.SIMULATED
+    prov["seuil_plan"] = Provenance.REAL if step.safety_column else Provenance.SIMULATED
+    prov["delai_plan"] = Provenance.REAL if step.lead_time_column else Provenance.SIMULATED
+    prov["semaine_plan"] = Provenance.REAL
+    if fallback:
+        prov[step.forecast] = Provenance.FORECAST
+    new = _with(state, frame, prov)
+    if fallback:
+        new.warnings = [
+            *new.warnings,
+            "Prévision moteur absente pour " + ", ".join(fallback)
+            + " : plan calculé avec la moyenne des 4 dernières semaines de ventes.",
+        ]
+    return new
 
 
 # ---------------------------------------------------------------------------

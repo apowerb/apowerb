@@ -188,6 +188,19 @@ def test_create_stock_dashboard(env):
     assert any(c["type"] == "text" for c in res["components"])
 
 
+def test_create_stock_dashboard_with_real_stock(env):
+    res = t.tool_bi_create_stock_dashboard(
+        "ds-9", stock="stock", safety_column="seuil_securite", lead_time_column="delai_fournisseur_sem"
+    )
+    assert res["success"] is True and res["component_count"] == 12
+    dash = env.db.rows[res["dashboard_id"]][1]
+    assert [s.name for s in dash.sources] == ["stocks", "plan"]
+    plan = dash.sources[1].transforms[-1]
+    assert plan.op == "replenishment_plan" and plan.stock == "stock"
+    assert plan.safety_column == "seuil_securite" and plan.lead_time_column == "delai_fournisseur_sem"
+    assert plan.target_cover == 4 and plan.horizon == 8
+
+
 def test_create_stock_dashboard_bad_column(env):
     res = t.tool_bi_create_stock_dashboard("ds-9", date="Semaine")
     assert res["success"] is False and "not a valid column name" in res["error"]

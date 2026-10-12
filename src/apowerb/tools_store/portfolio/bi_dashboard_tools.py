@@ -375,6 +375,8 @@ def _describe_transform(step) -> str:
         return f"{op} of {step.value} -> {step.output}"
     if op == "inventory_sim":
         return f"inventory_sim (safety {step.safety_factor}, order {step.order_factor}, lead time {step.lead_time})"
+    if op == "replenishment_plan":
+        return f"replenishment_plan from {step.stock} over {step.horizon} periods (cover {step.target_cover})"
     return op
 
 
@@ -553,14 +555,27 @@ def tool_bi_create_stock_dashboard(
     lead_time: int = 1,
     default_period: str = "26w",
     horizon: int = 8,
+    stock: str = "",
+    safety_column: str = "",
+    lead_time_column: str = "",
+    target_cover: int = 4,
 ) -> dict:
     """Creates a complete "Pilotage stocks" dashboard from a weekly sales dataset.
+
+    When the dataset has a stock column, pass it as ``stock`` (and the safety
+    threshold / supplier lead time columns when they exist): the dashboard then
+    plans the orders from the REAL stock — engine forecast over ``horizon``
+    weeks, order placed in the week where the stock would fall under the
+    threshold on arrival, quantity = threshold + ``target_cover`` weeks of
+    forecast — with 4 KPIs (current stock, next week's forecast, quantity to
+    order this week, families at risk), a stock/forecast/replenishment chart,
+    the orders week by week and a per-family table.
 
     Use it when the user wants to steer inventory (stock coverage, service
     rate, forecast reliability, weeks under safety stock) from a dataset of
     weekly sales per product family. It builds a transparent naive forecast
-    and a SIMULATED stock and replenishment loop (the real data is only the
-    sales), 6 KPIs with traffic-light thresholds, a combined chart, coverage,
+    and a SIMULATED stock and replenishment loop when the data has no stock
+    column (the real data is then only the sales), 6 KPIs with traffic-light thresholds, a combined chart, coverage,
     a per-family table, a waterfall, a forecast-error ranking, five notes, a
     family filter and a period filter.
 
@@ -579,6 +594,12 @@ def tool_bi_create_stock_dashboard(
         lead_time:      Delivery lead time in weeks.
         default_period: Initial period: 13w, 26w, 52w or all.
         horizon:        Weeks of engine forecast ahead.
+        stock:          Real stock column name, lowercase. Empty: the stock is simulated.
+        safety_column:  Safety threshold column (units), with ``stock``. Empty:
+                        ``safety_factor`` weeks of forecast.
+        lead_time_column: Supplier lead time column (weeks), with ``stock``.
+                        Empty: ``lead_time``.
+        target_cover:   Weeks of forecast an order covers above the threshold.
 
     Returns the dashboard id, url (/bi/<id>), computed KPIs and the text
     summary, and an "errors" map for components that failed.
@@ -597,6 +618,10 @@ def tool_bi_create_stock_dashboard(
             lead_time=lead_time,
             default_period=default_period,
             horizon=horizon,
+            stock=stock.strip() or None,
+            safety_column=safety_column.strip() or None,
+            lead_time_column=lead_time_column.strip() or None,
+            target_cover=target_cover,
         )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}

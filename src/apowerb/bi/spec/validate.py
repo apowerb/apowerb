@@ -27,6 +27,7 @@ from apowerb.bi.spec.models import (
     InventorySimStep,
     JoinStep,
     NaiveForecastStep,
+    ReplenishmentPlanStep,
     SourceSpec,
     SqlStep,
     VisualSpec,
@@ -39,6 +40,10 @@ _CHART_TYPES = ("combo", "bar", "hbar", "line", "area", "diverging_bar", "pie")
 _INVENTORY_OUTPUTS = (
     "stock_debut", "appro", "ventes_servies", "demande_non_servie",
     "stock_fin", "stock_securite", "commande",
+)
+_PLAN_OUTPUTS = (
+    "stock_projete", "stock_sans_commande", "reception", "commande",
+    "seuil_plan", "delai_plan", "risque", "semaine_plan",
 )
 
 
@@ -116,6 +121,9 @@ def _schema_of(
             schema.columns.add(step.output)
         elif isinstance(step, InventorySimStep):
             schema.columns.update(_INVENTORY_OUTPUTS)
+        elif isinstance(step, ReplenishmentPlanStep):
+            schema.columns.update(_PLAN_OUTPUTS)
+            schema.columns.add(step.forecast)
         elif isinstance(step, JoinStep) and step.source in by_name:
             other = _schema_of(by_name[step.source], by_name, memo, visiting)
             if step.columns is not None:
@@ -203,6 +211,9 @@ def validate_spec(dashboard: Dashboard) -> list[str]:
                 needed = [step.date, step.value, *step.by]
             elif isinstance(step, InventorySimStep):
                 needed = [step.date, *step.by]
+            elif isinstance(step, ReplenishmentPlanStep):
+                needed = [step.date, step.stock, step.demand, *step.by]
+                needed += [c for c in (step.safety_column, step.lead_time_column) if c]
             elif isinstance(step, AggregateStep):
                 needed = list(step.group_by)
             else:

@@ -6,7 +6,9 @@ Ready-made dashboard specs (v2) built from the models in ``bi/spec/models.py``.
 ``stock_pilotage`` reproduces the "Pilotage stocks" dashboard: one dataset of
 weekly sales per product family, a transparent naive forecast, a simulated
 stock/replenishment loop, six traffic-light KPIs, charts, a per-family table,
-a waterfall and five explanatory notes.
+a waterfall and five explanatory notes. Given a ``stock`` column it builds the
+replenishment plan instead: real stock, engine forecast over the horizon and
+the orders to place, family by family (``replenishment_plan`` step).
 
 The result is plain JSON-serialisable data ``{"sources", "filters",
 "components"}`` so it can be stored in a dashboard or passed to the tools.
@@ -33,6 +35,7 @@ from apowerb.bi.spec.models import (
     MeasureSpec,
     NaiveForecastStep,
     Provenance,
+    ReplenishmentPlanStep,
     ReferenceLine,
     SeriesSpec,
     SourceSpec,
@@ -82,11 +85,20 @@ def stock_pilotage(
     default_period: str = "26w",
     horizon: int = 8,
     with_engine_forecast: bool = True,
+    stock: str | None = None,
+    safety_column: str | None = None,
+    lead_time_column: str | None = None,
+    target_cover: int = 4,
+    keep_history: int = 12,
 ) -> dict:
     """Build the "Pilotage stocks" spec for a weekly sales dataset.
 
     ``date``/``family``/``sales`` name the dataset columns; ``site`` is the
     optional column to sum over when the data has one row per site and week.
+    ``stock`` names the real stock column: the dashboard then plans the
+    orders from it (``safety_column``/``lead_time_column`` per family, else
+    ``safety_factor`` weeks of forecast and ``lead_time``) instead of
+    simulating the stock.
     """
     d = _check_ident("date", date)
     f = _check_ident("family", family)
@@ -95,6 +107,22 @@ def stock_pilotage(
         _check_ident("site", site)
     if not dataset_id:
         raise ValueError("dataset_id is required.")
+    if stock:
+        return _replenishment_spec(
+            dataset_id, d, f, s,
+            stock=_check_ident("stock", stock),
+            site=site,
+            safety_column=_check_ident("safety_column", safety_column) if safety_column else None,
+            lead_time_column=_check_ident("lead_time_column", lead_time_column) if lead_time_column else None,
+            safety_weeks=safety_factor,
+            lead_time=lead_time,
+            target_cover=target_cover,
+            keep_history=keep_history,
+            lot_sizes=lot_sizes,
+            default_period=default_period,
+            horizon=horizon,
+            with_engine_forecast=with_engine_forecast,
+        )
 
     last_week = f"{d} = (SELECT MAX({d}) FROM frame)"
     first_week = f"{d} = (SELECT MIN({d}) FROM frame)"
@@ -438,6 +466,289 @@ def stock_pilotage(
 
     return {
         "sources": [_dump(src) for src in sources],
+        "filters": [_dump(flt) for flt in filters],
+        "components": [{"visual": _dump(v), "position": pos} for v, pos in grid],
+    }
+
+
+def _replenishment_spec(
+    dataset_id: str,
+    d: str,
+    f: str,
+    s: str,
+    *,
+    stock: str,
+    site: str | None,
+    safety_column: str | None,
+    lead_time_column: str | None,
+    safety_weeks: float,
+    lead_time: int,
+    target_cover: int,
+    keep_history: int,
+    lot_sizes: dict | None,
+    default_period: str,
+    horizon: int,
+    with_engine_forecast: bool,
+) -> dict:
+    """Real stock + orders to place over the horizon (see ``stock_pilotage``)."""
+    lots = {str(k): int(v) for k, v in (lot_sizes or {}).items()}
+    real = Provenance.REAL
+    fc = Provenance.FORECAST
+    sim = Provenance.SIMULATED
+
+    # ---- history: the dataset as imported --------------------------------
+    hist_transforms: list[Any] = []
+    if site:
+        aggregates = {s: f"SUM({s})", stock: f"SUM({stock})"}
+        if safety_column:
+            aggregates[safety_column] = f"SUM({safety_column})"
+        if lead_time_column:
+            aggregates[lead_time_column] = f"MAX({lead_time_column})"
+        hist_transforms.append(AggregateStep(group_by=[d, f], aggregates=aggregates))
+    hist_fields = [
+        FieldSpec(name=d, label=d.replace("_", " ").capitalize(), type="date", role="date"),
+        FieldSpec(name=f, label=f.replace("_", " ").capitalize(), role="dimension"),
+        FieldSpec(name=s, label="Ventes", type="number", role="measure", provenance=real, format="compact"),
+        FieldSpec(name=stock, label="Stock", type="number", role="measure", provenance=real, format="compact"),
+    ]
+    hist_measures = [
+        MeasureSpec(name="stock_hebdo", label="Stock", expr=f"SUM({stock})", format="compact", unit="unités"),
+        MeasureSpec(name="ventes_hebdo", label="Ventes", expr=f"SUM({s})", format="compact", unit="unités"),
+    ]
+    if safety_column:
+        hist_fields.append(FieldSpec(name=safety_column, label="Seuil de sécurité", type="number", role="measure",
+                                     provenance=real, format="compact"))
+        hist_measures.append(MeasureSpec(name="seuil_hebdo", label="Seuil de sécurité", expr=f"SUM({safety_column})",
+                                         format="compact", unit="unités"))
+    historique = SourceSpec(name="stocks", label="Historique des stocks", kind="dataset", dataset_id=dataset_id,
+                            transforms=hist_transforms, fields=hist_fields, measures=hist_measures)
+
+    # ---- plan: engine forecast, then the orders ---------------------------
+    plan_transforms: list[Any] = []
+    if with_engine_forecast:
+        plan_transforms.append(ForecastStep(date=d, value=s, by=[f], horizon=horizon, output="prevision_moteur"))
+    plan_transforms.append(
+        ReplenishmentPlanStep(
+            date=d, by=[f], stock=stock, demand=s, forecast="prevision_moteur",
+            safety_column=safety_column, lead_time_column=lead_time_column,
+            safety_weeks=safety_weeks, lead_time=lead_time, target_cover=target_cover,
+            horizon=horizon, keep_history=keep_history, lot_sizes=lots,
+        )
+    )
+    now = "semaine_plan = 0"
+    first = "semaine_plan = 1"
+    future = "semaine_plan >= 1"
+    weeks = f"COUNT(DISTINCT {d}) FILTER (WHERE {future})"
+    stock_now = f"SUM({stock}) FILTER (WHERE {now})"
+    plan_fields = [
+        FieldSpec(name="prevision_moteur", label="Prévision", type="number", role="measure", provenance=fc,
+                  format="compact"),
+        FieldSpec(name="stock_projete", label="Stock (réel puis projeté)", type="number", role="measure",
+                  provenance=fc, format="compact"),
+        FieldSpec(name="stock_sans_commande", label="Stock sans commande", type="number", role="measure",
+                  provenance=fc, format="compact"),
+        FieldSpec(name="reception", label="Approvisionnements", type="number", role="measure", provenance=sim,
+                  format="compact"),
+        FieldSpec(name="commande", label="Commande à passer", type="number", role="measure", provenance=sim,
+                  format="compact"),
+        FieldSpec(name="seuil_plan", label="Seuil de sécurité", type="number", role="measure",
+                  provenance=real if safety_column else sim, format="compact"),
+        FieldSpec(name="delai_plan", label="Délai fournisseur", type="number", role="measure",
+                  provenance=real if lead_time_column else sim, format="integer"),
+        FieldSpec(name="risque", label="Risque", type="number", role="measure", provenance=fc, format="integer"),
+        FieldSpec(name="semaine_plan", label="Semaine du plan", type="number", role="dimension", format="integer"),
+    ]
+    no_risk = ThresholdSpec(direction="lower_is_better", good=0, warn=0)
+    plan_measures = [
+        MeasureSpec(name="stock_actuel", label="Stock actuel", expr=stock_now, format="compact", unit="unités",
+                    description="Stock de la dernière semaine connue."),
+        MeasureSpec(name="couverture_actuelle", label="Couverture",
+                    expr=f"{stock_now} / NULLIF(SUM(prevision_moteur) FILTER (WHERE {future}) / NULLIF({weeks}, 0), 0)",
+                    format="weeks", thresholds=ThresholdSpec(direction="higher_is_better", good=4, warn=2),
+                    description="Stock actuel ÷ prévision moyenne d'une semaine de l'horizon."),
+        MeasureSpec(name="prevision_semaine", label="Prévision de la semaine",
+                    expr=f"SUM(prevision_moteur) FILTER (WHERE {first})", format="compact", unit="unités"),
+        MeasureSpec(name="prevision_horizon", label="Prévision sur l'horizon",
+                    expr=f"SUM(prevision_moteur) FILTER (WHERE {future})", format="compact", unit="unités"),
+        MeasureSpec(name="commande_semaine", label="À commander cette semaine",
+                    expr=f"COALESCE(SUM(commande) FILTER (WHERE {first}), 0)", format="compact", unit="unités"),
+        MeasureSpec(name="familles_a_commander", label="Familles à commander cette semaine",
+                    expr=f"COUNT(DISTINCT {f}) FILTER (WHERE {first} AND commande > 0)", format="integer"),
+        MeasureSpec(name="commandes_horizon", label="Commandes sur l'horizon",
+                    expr=f"COALESCE(SUM(commande) FILTER (WHERE {future}), 0)", format="compact", unit="unités"),
+        MeasureSpec(name="prochaine_commande", label="Prochaine commande",
+                    expr=f"MIN(semaine_plan) FILTER (WHERE {future} AND commande > 0)", format="integer",
+                    unit="semaine", description="Semaine du plan où passer la prochaine commande (1 = cette semaine)."),
+        MeasureSpec(name="familles_a_risque", label="Familles à risque",
+                    expr=f"COUNT(DISTINCT {f}) FILTER (WHERE risque = 2)", format="integer", thresholds=no_risk,
+                    description="Familles qui passent sous le seuil avant qu'une commande puisse arriver."),
+        MeasureSpec(name="semaines_sous_seuil", label="Semaines sous le seuil",
+                    expr="COUNT(*) FILTER (WHERE risque = 2)", format="integer", unit="semaines", thresholds=no_risk,
+                    description="Semaines de l'horizon sous le seuil malgré les commandes."),
+        MeasureSpec(name="semaines_avant_rupture", label="Semaines avant rupture sans commande",
+                    expr=f"COUNT(*) FILTER (WHERE {future} AND stock_sans_commande > 0)", format="integer",
+                    unit="semaines", thresholds=ThresholdSpec(direction="higher_is_better", good=4, warn=2),
+                    description=f"Semaines couvertes par le stock actuel sans commande (au plus {horizon})."),
+        MeasureSpec(name="semaines_avant_rupture_min", label="Semaines avant rupture sans commande",
+                    expr=(f"(SELECT MIN(n) FROM (SELECT COUNT(*) FILTER (WHERE {future} AND stock_sans_commande > 0) "
+                          f"AS n FROM frame GROUP BY {f}))"),
+                    format="integer", unit="semaines"),
+        MeasureSpec(name="stock_plan", label="Stock (réel puis projeté)", expr="SUM(stock_projete)",
+                    format="compact", unit="unités"),
+        MeasureSpec(name="prevision_plan", label="Prévision", expr="SUM(prevision_moteur)", format="compact",
+                    unit="unités"),
+        MeasureSpec(name="ventes_plan", label="Ventes", expr=f"SUM({s})", format="compact", unit="unités"),
+        MeasureSpec(name="appro_plan", label="Approvisionnements", expr="SUM(reception)", format="compact",
+                    unit="unités"),
+        MeasureSpec(name="seuil_total", label="Seuil de sécurité", expr="SUM(seuil_plan)", format="compact",
+                    unit="unités"),
+    ]
+    plan = SourceSpec(name="plan", label="Plan d'approvisionnement", kind="source", parent="stocks",
+                      transforms=plan_transforms, fields=plan_fields, measures=plan_measures)
+
+    filters = [
+        FilterSpec(id="famille", label="Famille", field=f, type="select", default=None, applies_to=None),
+        FilterSpec(id="periode", label="Période", field=d, type="relative_period", default=default_period,
+                   applies_to=["stocks"], presets=["13w", "26w", "52w", "all"]),
+    ]
+
+    def kpi(title: str, measure: str, **kw: Any) -> VisualSpec:
+        return VisualSpec(type="kpi", title=title, source="plan", kpi=KpiSpec(measure=measure, **kw))
+
+    synthese = VisualSpec(
+        type="text",
+        source="plan",
+        text=(
+            "{{filters.famille}} : stock actuel de {{stock_actuel|compact}} unités, soit {{couverture_actuelle|weeks}} "
+            "de ventes prévues. À commander cette semaine : {{commande_semaine|compact}} unités "
+            "({{familles_a_commander|integer}} famille(s)). {{familles_a_risque|integer}} famille(s) passent sous le "
+            "seuil de sécurité avant qu'une commande puisse arriver."
+        ),
+    )
+    kpis = [
+        kpi("Stock actuel", "stock_actuel", secondary="Couverture : {{couverture_actuelle|weeks}}"),
+        kpi("Prévision de la semaine", "prevision_semaine",
+            secondary=f"{{{{prevision_horizon|compact}}}} sur {horizon} semaines"),
+        kpi("À commander cette semaine", "commande_semaine",
+            secondary="{{familles_a_commander|integer}} famille(s) concernée(s)"),
+        kpi("Familles à risque", "familles_a_risque", secondary="sous le seuil avant l'arrivée d'une commande"),
+    ]
+    combo = VisualSpec(
+        type="combo",
+        title="Stock, prévision et approvisionnements",
+        subtitle=f"Stock réel jusqu'à aujourd'hui, puis projeté sur {horizon} semaines avec les commandes recommandées.",
+        source="plan",
+        x=d,
+        series=[
+            SeriesSpec(key="stock_plan", label="Stock", mark="area", color="good"),
+            SeriesSpec(key="ventes_plan", label="Ventes", mark="line", color="muted"),
+            SeriesSpec(key="prevision_plan", label="Prévision", mark="line", color=BROWN),
+            SeriesSpec(key="appro_plan", label="Approvisionnements", mark="bar", color=BLUE),
+            SeriesSpec(key="seuil_total", label="Seuil de sécurité", mark="line", color="bad", dash=True),
+        ],
+        sort="x_asc",
+    )
+    commandes = VisualSpec(
+        type="bar",
+        title="Commandes à passer, semaine par semaine",
+        subtitle="Quantité à commander chaque semaine pour ne pas passer sous le seuil.",
+        source="plan",
+        x=d,
+        series=[SeriesSpec(key="commandes_horizon", label="Commande", mark="bar", color=BLUE)],
+        sort="x_asc",
+    )
+    table = VisualSpec(
+        type="table",
+        title="Plan par famille",
+        subtitle="Cliquer sur une famille pour filtrer le tableau de bord.",
+        source="plan",
+        x=f,
+        columns=[
+            ColumnSpec(key=f, label=f.replace("_", " ").capitalize()),
+            ColumnSpec(key="stock_actuel", label="Stock actuel"),
+            ColumnSpec(key="couverture_actuelle", label="Couverture", use_thresholds=True),
+            ColumnSpec(key="semaines_avant_rupture", label="Semaines avant rupture sans commande",
+                       use_thresholds=True, total_measure="semaines_avant_rupture_min"),
+            ColumnSpec(key="commande_semaine", label="À commander cette semaine"),
+            ColumnSpec(key="prochaine_commande", label="Prochaine commande (semaine)"),
+            ColumnSpec(key="commandes_horizon", label=f"Commandes sur {horizon} semaines"),
+            ColumnSpec(key="semaines_sous_seuil", label="Semaines sous le seuil", use_thresholds=True),
+        ],
+        total_row=True,
+        click_filters={"famille": f},
+        ignore_filters=["famille"],
+        highlight_filter="famille",
+    )
+    hist_series = [
+        SeriesSpec(key="stock_hebdo", label="Stock", mark="area", color="good"),
+        SeriesSpec(key="ventes_hebdo", label="Ventes", mark="line", color=BROWN),
+    ]
+    if safety_column:
+        hist_series.append(SeriesSpec(key="seuil_hebdo", label="Seuil de sécurité", mark="line", color="bad",
+                                      dash=True))
+    historique_visual = VisualSpec(
+        type="combo",
+        title="Historique : stock réel et ventes",
+        source="stocks",
+        x=d,
+        series=hist_series,
+        sort="x_asc",
+    )
+
+    seuil_src = f"la colonne `{safety_column}`" if safety_column else f"{_fr(safety_weeks)} semaine(s) de prévision"
+    delai_src = f"la colonne `{lead_time_column}`" if lead_time_column else f"{lead_time} semaine(s)"
+    seuil_txt = f"Seuil de sécurité : {seuil_src}. Délai fournisseur : {delai_src}, famille par famille."
+    forecast_txt = (
+        "La prévision vient du moteur th2forecast ; s'il ne répond pas, le plan utilise la moyenne des 4 dernières "
+        "semaines de ventes et un avertissement l'indique."
+        if with_engine_forecast
+        else "La prévision est la moyenne des 4 dernières semaines de ventes."
+    )
+    notes = [
+        VisualSpec(
+            type="note",
+            title="Origine des données",
+            badges=[real, fc, sim],
+            text=(
+                f"Les ventes (`{s}`) et le stock (`{stock}`) sont les données réelles du fichier. Le stock des semaines "
+                "à venir est une projection ; les commandes et les approvisionnements sont des recommandations."
+            ),
+        ),
+        VisualSpec(
+            type="note",
+            title="Règle de commande",
+            badges=[sim],
+            text=(
+                "On commande une semaine donnée si, à l'arrivée de cette commande (après le délai fournisseur), le "
+                f"stock passerait sous le seuil de sécurité. Quantité : de quoi revenir au seuil plus {target_cover} "
+                f"semaines de prévision. {seuil_txt} {forecast_txt}"
+            ),
+        ),
+        VisualSpec(
+            type="note",
+            title="Limites",
+            text=(
+                "Les commandes déjà passées ne sont pas connues : rien n'arrive pendant le premier délai. Une famille "
+                "« à risque » passe sous le seuil avant qu'une commande puisse arriver : il faut une action immédiate "
+                "(commande urgente, transfert)."
+            ),
+        ),
+    ]
+
+    grid: list[tuple[VisualSpec, dict[str, int]]] = [(synthese, dict(row=0, col=0, width=12, height=2))]
+    for i, k in enumerate(kpis):
+        grid.append((k, dict(row=2, col=3 * i, width=3, height=3)))
+    grid += [
+        (combo, dict(row=5, col=0, width=12, height=6)),
+        (table, dict(row=11, col=0, width=12, height=5)),
+        (commandes, dict(row=16, col=0, width=6, height=5)),
+        (historique_visual, dict(row=16, col=6, width=6, height=5)),
+        (notes[0], dict(row=21, col=0, width=4, height=4)),
+        (notes[1], dict(row=21, col=4, width=4, height=4)),
+        (notes[2], dict(row=21, col=8, width=4, height=4)),
+    ]
+    return {
+        "sources": [_dump(historique), _dump(plan)],
         "filters": [_dump(flt) for flt in filters],
         "components": [{"visual": _dump(v), "position": pos} for v, pos in grid],
     }
