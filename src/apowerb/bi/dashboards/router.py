@@ -37,6 +37,7 @@ from apowerb.bi.dashboards.schema import (
 )
 from apowerb.bi.dashboards.service import (
     ComponentNotFoundError,
+    DashboardNameConflictError,
     DashboardNotFoundError,
     DashboardPermissionError,
     DashboardService,
@@ -133,7 +134,7 @@ async def create_dashboard(
 ) -> DashboardResponse:
     try:
         dashboard = await svc.create(body, created_by=user.email)
-    except SlugConflictError as exc:
+    except (SlugConflictError, DashboardNameConflictError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except SpecError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors)
@@ -222,7 +223,7 @@ async def update_dashboard(
         dashboard = await svc.update(dashboard_id, body)
     except DashboardNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-    except SlugConflictError as exc:
+    except (SlugConflictError, DashboardNameConflictError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return DashboardResponse.from_domain(dashboard)
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Protocol
 
+from sqlalchemy.exc import IntegrityError
+
 from apowerb.bi.dashboards.core import (
     Dashboard,
     DashboardStatus,
@@ -101,6 +103,11 @@ class ComponentNotFoundError(Exception):
 class SlugConflictError(Exception):
     def __init__(self, slug: str) -> None:
         super().__init__(f"Slug '{slug}' is already in use")
+
+
+class DashboardNameConflictError(Exception):
+    def __init__(self, title: str) -> None:
+        super().__init__(f"A dashboard named '{title}' already exists in this organization.")
 
 
 def _check_spec(dashboard: Dashboard) -> None:
@@ -202,7 +209,14 @@ class DashboardService:
             filters=req.filters,
         )
         _check_spec(dashboard)
-        return await self._store.save(dashboard)
+        return await self._save_named(dashboard)
+
+    async def _save_named(self, dashboard: Dashboard) -> Dashboard:
+        """Save; the (name, type, organization, project) unique key becomes a conflict."""
+        try:
+            return await self._store.save(dashboard)
+        except IntegrityError as exc:
+            raise DashboardNameConflictError(dashboard.title) from exc
 
     async def update(self, dashboard_id: str, req: DashboardUpdateRequest) -> Dashboard:
         dashboard = await self._store.get(dashboard_id)
@@ -229,7 +243,7 @@ class DashboardService:
                 updates[field] = val
 
         updated = dashboard.model_copy(update=updates)
-        return await self._store.save(updated)
+        return await self._save_named(updated)
 
     async def publish(self, dashboard_id: str, visibility: DashboardVisibility = DashboardVisibility.PRIVATE) -> Dashboard:
         dashboard = await self.get(dashboard_id)
