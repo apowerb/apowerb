@@ -33,6 +33,22 @@ class TestForecastingAgentTemplate:
         assert "business_intelligence.tool_create_forecast_dashboard" in tools
         assert "api_call.tool_thaink2_forecast" in tools
 
+    def test_has_bi_dashboard_tools_and_they_resolve(self):
+        from apowerb.tools_store.tool_manager import ToolsStore
+
+        names = [
+            "tool_bi_create_dashboard",
+            "tool_bi_create_stock_dashboard",
+            "tool_bi_patch_dashboard",
+            "tool_bi_query_dashboard",
+            "tool_bi_describe_dashboard",
+        ]
+        paths = [f"bi_dashboard_tools.{n}" for n in names]
+        tools = _template("forecasting_agent")["recommended_tools"]
+        assert set(paths) <= set(tools)
+        registered = set(ToolsStore().get_tools_in_category("bi_dashboard_tools"))
+        assert set(paths) <= registered
+
     def test_has_both_skills(self):
         tpl = _template("forecasting_agent")
         assert "forecasting" in tpl["agent_skills"]
