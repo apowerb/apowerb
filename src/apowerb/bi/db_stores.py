@@ -334,7 +334,12 @@ class DatabaseDashboardStore(_BaseBIStore):
                 status="active",
             )
             self._db.add(row)
-        await self._db.commit()
+        try:
+            await self._db.commit()
+        except IntegrityError:
+            # Name taken: leave the session usable for the caller's next attempt.
+            await self._db.rollback()
+            raise
         return dashboard
 
     async def delete(self, dashboard_id: str) -> bool:

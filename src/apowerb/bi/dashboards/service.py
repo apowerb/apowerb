@@ -256,9 +256,6 @@ class DashboardService:
         try:
             return await self._store.save(dashboard)
         except IntegrityError as exc:
-            db = getattr(self._store, "_db", None)
-            if db is not None:
-                await db.rollback()
             raise DashboardNameConflictError(dashboard.title) from exc
 
     async def update(self, dashboard_id: str, req: DashboardUpdateRequest) -> Dashboard:
