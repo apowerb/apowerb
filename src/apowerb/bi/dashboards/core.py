@@ -23,6 +23,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
+from apowerb.bi.spec.models import FilterSpec, SourceSpec, VisualSpec
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -33,6 +35,7 @@ class ComponentType(str, Enum):
     CHART = "chart"
     KEY_VALUE = "key_value"
     TABLE = "table"
+    VISUAL = "visual"  # spec v2: inline visual bound to a dashboard source
 
 
 class TrendDirection(str, Enum):
@@ -235,7 +238,7 @@ class DashboardComponent(BaseModel):
     """
     One slot in a dashboard grid.
 
-    Exactly one of chart / key_value / table must be set.
+    Exactly one of chart / key_value / table / visual must be set.
     component_type is derived automatically by the validator.
     """
 
@@ -247,11 +250,14 @@ class DashboardComponent(BaseModel):
     chart: ChartWidget | None = None
     key_value: KeyValue | None = None
     table: TableWidget | None = None
+    visual: VisualSpec | None = None  # spec v2
 
     @model_validator(mode="after")
     def exactly_one_component(self) -> "DashboardComponent":
         populated = [
-            f for f in ("chart", "key_value", "table") if getattr(self, f) is not None
+            f
+            for f in ("chart", "key_value", "table", "visual")
+            if getattr(self, f) is not None
         ]
         if len(populated) != 1:
             raise ValueError(
@@ -261,6 +267,7 @@ class DashboardComponent(BaseModel):
             "chart": ComponentType.CHART,
             "key_value": ComponentType.KEY_VALUE,
             "table": ComponentType.TABLE,
+            "visual": ComponentType.VISUAL,
         }
         if expected[populated[0]] != self.component_type:
             raise ValueError(
@@ -353,6 +360,12 @@ class Dashboard(BaseModel):
     # content
     components: list[DashboardComponent] = Field(default_factory=list)
 
+    # spec v2: the dashboard owns its data (sources, measures, global filters).
+    # Old JSON without these fields loads unchanged (spec_version 1, empty lists).
+    spec_version: int = Field(default=1, ge=1)
+    sources: list[SourceSpec] = Field(default_factory=list)
+    filters: list[FilterSpec] = Field(default_factory=list)
+
     # layout
     columns: int = Field(default=12, ge=1, le=24, description="Grid column count")
 
@@ -393,7 +406,15 @@ class Dashboard(BaseModel):
         permissions: list[str] | None = None,
         created_by: str | None = None,
         agent_id: int | None = None,
+        sources: list[SourceSpec] | None = None,
+        filters: list[FilterSpec] | None = None,
+        spec_version: int | None = None,
     ) -> "Dashboard":
+        sources = sources or []
+        filters = filters or []
+        has_v2 = bool(sources or filters) or any(
+            c.component_type == ComponentType.VISUAL for c in components or []
+        )
         return cls(
             title=title,
             description=description,
@@ -403,6 +424,9 @@ class Dashboard(BaseModel):
             permissions=permissions or [],
             created_by=created_by,
             agent_id=agent_id,
+            sources=sources,
+            filters=filters,
+            spec_version=spec_version or (2 if has_v2 else 1),
         )
 
     # ------------------------------------------------------------------

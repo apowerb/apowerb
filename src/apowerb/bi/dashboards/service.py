@@ -103,6 +103,18 @@ class SlugConflictError(Exception):
         super().__init__(f"Slug '{slug}' is already in use")
 
 
+def _check_spec(dashboard: Dashboard) -> None:
+    """Refuse a spec v2 dashboard that references unknown sources, measures…"""
+    if dashboard.spec_version < 2:
+        return
+    from apowerb.bi.spec.errors import SpecError
+    from apowerb.bi.spec.validate import validate_spec
+
+    errors = validate_spec(dashboard)
+    if errors:
+        raise SpecError("; ".join(errors), errors=errors)
+
+
 # ---------------------------------------------------------------------------
 # DashboardService
 # ---------------------------------------------------------------------------
@@ -186,7 +198,10 @@ class DashboardService:
             permissions=req.permissions,
             created_by=created_by,
             agent_id=req.agent_id,
+            sources=req.sources,
+            filters=req.filters,
         )
+        _check_spec(dashboard)
         return await self._store.save(dashboard)
 
     async def update(self, dashboard_id: str, req: DashboardUpdateRequest) -> Dashboard:
@@ -226,6 +241,10 @@ class DashboardService:
         unpublished = dashboard.unpublish()
         return await self._store.save(unpublished)
 
+    async def save(self, dashboard: Dashboard) -> Dashboard:
+        """Persist an already-validated dashboard (spec patches)."""
+        return await self._store.save(dashboard)
+
     async def delete(self, dashboard_id: str) -> None:
         deleted = await self._store.delete(dashboard_id)
         if not deleted:
@@ -241,6 +260,9 @@ class DashboardService:
         dashboard = await self.get(dashboard_id)
         component = req.component.to_domain()
         updated = dashboard.add_component(component)
+        if component.visual is not None:
+            updated = updated.model_copy(update={"spec_version": max(updated.spec_version, 2)})
+            _check_spec(updated)
         return await self._store.save(updated)
 
     async def remove_component(self, dashboard_id: str, component_id: str) -> Dashboard:

@@ -27,6 +27,7 @@ from apowerb.bi.dashboards.core import (
     TrendDirection,
     TrendSentiment,
 )
+from apowerb.bi.spec.models import FilterSpec, SourceSpec, VisualSpec
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +126,7 @@ class ComponentCreateSchema(BaseModel):
     chart: ChartWidgetSchema | None = None
     key_value: KeyValueCreateSchema | None = None
     table: TableWidgetCreateSchema | None = None
+    visual: VisualSpec | None = None  # spec v2
 
     def to_domain(self) -> DashboardComponent:
         return DashboardComponent(
@@ -133,6 +135,7 @@ class ComponentCreateSchema(BaseModel):
             chart=self.chart.to_domain() if self.chart else None,
             key_value=self.key_value.to_domain() if self.key_value else None,
             table=self.table.to_domain() if self.table else None,
+            visual=self.visual,
         )
 
 
@@ -151,6 +154,9 @@ class DashboardCreateRequest(BaseModel):
     components: list[ComponentCreateSchema] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
     agent_id: int | None = None
+    # spec v2 (optional): the dashboard declares its own sources and filters.
+    sources: list[SourceSpec] = Field(default_factory=list)
+    filters: list[FilterSpec] = Field(default_factory=list)
 
     model_config = {
         "json_schema_extra": {
@@ -278,6 +284,7 @@ class ComponentResponse(BaseModel):
     chart: ChartWidgetResponse | None
     key_value: KeyValueResponse | None
     table: TableWidgetResponse | None
+    visual: VisualSpec | None = None
 
     model_config = {"from_attributes": True}
 
@@ -299,6 +306,9 @@ class DashboardResponse(BaseModel):
     updated_at: datetime
     created_by: str | None
     agent_id: int | None = None
+    spec_version: int = 1
+    sources: list[SourceSpec] = Field(default_factory=list)
+    filters: list[FilterSpec] = Field(default_factory=list)
 
     @classmethod
     def from_domain(cls, dashboard: Dashboard) -> "DashboardResponse":

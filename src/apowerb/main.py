@@ -78,6 +78,7 @@ from apowerb.bi.charts.router import (
 )
 from apowerb.bi.dashboards.router import router as dashboards_router
 from apowerb.bi.data.router import router as data_router
+from apowerb.bi.spec.router import router as dashboard_spec_router
 from apowerb.bi.stats_router import router as bi_stats_router
 from apowerb.bi.data.upload_router import router as bi_upload_router
 from apowerb.bi.data.dataset_router import router as bi_dataset_router
@@ -572,6 +573,7 @@ api_router.include_router(onedrive_browser_router)
 api_router.include_router(google_drive_browser_router)
 api_router.include_router(charts_router, prefix="/api/v1")
 api_router.include_router(dashboards_router, prefix="/api/v1")
+api_router.include_router(dashboard_spec_router, prefix="/api/v1")
 api_router.include_router(data_router, prefix="/api/v1")
 api_router.include_router(bi_stats_router, prefix="/api/v1")
 api_router.include_router(bi_upload_router, prefix="/api/v1")

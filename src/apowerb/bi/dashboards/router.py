@@ -43,6 +43,7 @@ from apowerb.bi.dashboards.service import (
     SlugConflictError,
 )
 from apowerb.bi.dependencies import get_dashboard_service
+from apowerb.bi.spec.errors import SpecError
 from apowerb.auth.dependencies import get_current_user, get_optional_user
 from apowerb.helpers.database import get_db
 from apowerb.users import schemas as user_schemas
@@ -134,6 +135,8 @@ async def create_dashboard(
         dashboard = await svc.create(body, created_by=user.email)
     except SlugConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except SpecError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors)
     return DashboardResponse.from_domain(dashboard)
 
 
@@ -296,6 +299,8 @@ async def add_component(
         dashboard = await svc.add_component(dashboard_id, body)
     except DashboardNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except SpecError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors)
     return DashboardResponse.from_domain(dashboard)
 
 
