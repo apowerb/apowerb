@@ -1,0 +1,691 @@
+"""
+bi_dashboard_tools.py
+---------------------
+Agent (chat) tools for the BI dashboard spec v2: a dashboard that owns its
+data sources, measures, global filters and inline visuals.
+
+The tools are synchronous (ADK) and reuse the context helpers and the
+async-from-sync bridge of ``business_intelligence``. A dashboard is only ever
+read or written through a store scoped to the agent's owner, so an agent never
+sees another owner's dashboards.
+
+Tools: tool_bi_create_dashboard, tool_bi_create_stock_dashboard,
+tool_bi_patch_dashboard, tool_bi_query_dashboard, tool_bi_describe_dashboard.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+from logging import getLogger
+from typing import Any
+
+from pydantic import TypeAdapter, ValidationError
+
+from apowerb.tools_store.portfolio.business_intelligence import (
+    _agent_owner,
+    _get_session,
+    _run_async,
+)
+
+logger = getLogger(__name__)
+
+_MAX_ERRORS = 8
+_TABLE_ROWS = 20
+_CHART_ROWS = 30
+_MAX_FIELDS = 60
+_MAX_OPTIONS = 20
+
+
+# ---------------------------------------------------------------------------
+# Seams (kept as small functions so tests can replace them)
+# ---------------------------------------------------------------------------
+
+
+@contextlib.asynccontextmanager
+async def _dashboard_store(owner: str):
+    """Dashboard store scoped to ``owner`` (reads/writes outside it are invisible)."""
+    from apowerb.bi.db_stores import DatabaseDashboardStore
+
+    async with _get_session() as db:
+        yield DatabaseDashboardStore(db, owner=owner)
+
+
+async def _compute(dashboard, filters: dict | None, owner: str, components: list[str] | None = None):
+    from apowerb.bi.spec.engine import compute_dashboard
+    from apowerb.bi.spec.models import DashboardDataRequest
+
+    request = DashboardDataRequest(filters=filters or {}, components=components)
+    return await compute_dashboard(dashboard, request, owner=owner)
+
+
+def _validate(dashboard) -> list[str]:
+    from apowerb.bi.spec.validate import validate_spec
+
+    return list(validate_spec(dashboard))
+
+
+def _apply_ops(dashboard, ops):
+    from apowerb.bi.spec.ops import apply_ops
+
+    return apply_ops(dashboard, ops)
+
+
+# ---------------------------------------------------------------------------
+# Input parsing
+# ---------------------------------------------------------------------------
+
+
+def _fmt_validation(exc: ValidationError) -> str:
+    parts = []
+    for err in exc.errors()[:_MAX_ERRORS]:
+        loc = ".".join(str(p) for p in err["loc"])
+        parts.append(f"{loc}: {err['msg']}")
+    more = len(exc.errors()) - _MAX_ERRORS
+    if more > 0:
+        parts.append(f"... and {more} more")
+    return "; ".join(parts)
+
+
+def _loads(text: str, what: str, expected: type | tuple) -> tuple[Any, str | None]:
+    kinds = expected if isinstance(expected, tuple) else (expected,)
+    try:
+        value = json.loads(text) if (text or "").strip() else kinds[0]()
+    except json.JSONDecodeError as exc:
+        return None, (
+            f"{what} is not valid JSON ({exc.msg} at line {exc.lineno}, column {exc.colno}). "
+            "Send a single JSON value with double quotes and no trailing commas."
+        )
+    if not isinstance(value, kinds):
+        return None, f"{what} must be a JSON {'object' if kinds[0] is dict else 'array'}."
+    return value, None
+
+
+def _build_dashboard(title: str, description: str, spec: dict, owner: str):
+    """Spec dict -> Dashboard (v2). Returns (dashboard, error)."""
+    from apowerb.bi.dashboards.core import ComponentType, Dashboard, DashboardComponent, GridPosition
+    from apowerb.bi.spec.models import FilterSpec, SourceSpec, VisualSpec
+    from apowerb.core.invocation_context import get_root_agent_id
+
+    unknown = set(spec) - {"sources", "filters", "components"}
+    if unknown:
+        return None, (
+            f"Unknown key(s) in spec_json: {sorted(unknown)}. "
+            "Expected {\"sources\": [...], \"filters\": [...], \"components\": [{\"visual\": {...}, \"position\": {...}}]}."
+        )
+    try:
+        sources = [SourceSpec.model_validate(s) for s in spec.get("sources") or []]
+        filters = [FilterSpec.model_validate(f) for f in spec.get("filters") or []]
+        components = []
+        for i, item in enumerate(spec.get("components") or []):
+            if not isinstance(item, dict) or "visual" not in item:
+                return None, f"components[{i}] must be an object {{\"visual\": {{...}}, \"position\": {{...}}}}."
+            components.append(
+                DashboardComponent(
+                    component_type=ComponentType.VISUAL,
+                    position=GridPosition(**(item.get("position") or {})),
+                    visual=VisualSpec.model_validate(item["visual"]),
+                )
+            )
+    except ValidationError as exc:
+        return None, f"Invalid spec: {_fmt_validation(exc)}"
+    if not sources:
+        return None, "spec_json needs at least one source (e.g. kind='dataset' with a dataset_id)."
+    agent_id_str = get_root_agent_id()
+    try:
+        dashboard = Dashboard.create(
+            title=title,
+            description=description or None,
+            components=components,
+            sources=sources,
+            filters=filters,
+            spec_version=2,
+            created_by=owner,
+            agent_id=int(agent_id_str) if agent_id_str else None,
+        )
+    except ValidationError as exc:
+        return None, f"Invalid dashboard: {_fmt_validation(exc)}"
+    return dashboard, None
+
+
+# ---------------------------------------------------------------------------
+# Result summaries (compact: never thousands of rows)
+# ---------------------------------------------------------------------------
+
+
+def _clean_row(row: dict) -> dict:
+    out = {}
+    for key, val in row.items():
+        if key.startswith("_color_") or key == "_highlight":
+            continue
+        out[key] = round(val, 4) if isinstance(val, float) else val
+    return out
+
+
+def _component_title(comp) -> str | None:
+    visual = getattr(comp, "visual", None)
+    if visual is None:
+        return None
+    if visual.title:
+        return visual.title
+    if visual.kpi:
+        return visual.kpi.measure
+    return None
+
+
+def _summarize_components(dashboard, response, *, detail: bool) -> tuple[list[dict], dict[str, str]]:
+    """Per-component values. ``detail`` adds sample rows (query) instead of counts only."""
+    out: list[dict] = []
+    errors: dict[str, str] = {}
+    by_id = {c.id: c for c in dashboard.components}
+    for cid, res in response.components.items():
+        comp = by_id.get(cid)
+        title = _component_title(comp) if comp else None
+        entry: dict[str, Any] = {"id": cid, "type": res.type}
+        if title:
+            entry["title"] = title
+        if res.error:
+            entry["error"] = res.error
+            errors[cid] = f"{title or res.type}: {res.error}"
+            out.append(entry)
+            continue
+        if res.type == "kpi" and res.value is not None:
+            kv = res.value
+            entry["value"] = kv.formatted
+            if kv.value is not None:
+                entry["raw"] = round(kv.value, 4)
+            if kv.status:
+                entry["status"] = kv.status
+            if kv.delta_formatted:
+                entry["delta"] = kv.delta_formatted
+            if kv.secondary:
+                entry["secondary"] = kv.secondary
+        elif res.type == "text":
+            entry["text"] = res.text
+        elif res.type == "note":
+            if detail:
+                entry["text"] = res.text
+            else:
+                continue
+        elif res.rows is not None:
+            entry["row_count"] = len(res.rows)
+            limit = _TABLE_ROWS if res.type == "table" else _CHART_ROWS
+            if detail:
+                entry["rows"] = [_clean_row(r) for r in res.rows[:limit]]
+                if len(res.rows) > limit:
+                    entry["truncated"] = True
+            else:
+                entry["sample"] = [_clean_row(r) for r in res.rows[:2]]
+        out.append(entry)
+    return out, errors
+
+
+async def _preview(dashboard, owner: str, filters: dict | None = None, *, detail: bool = False) -> dict:
+    """Compute the dashboard and summarise it; a compute failure is reported, not raised."""
+    try:
+        response = await _compute(dashboard, filters, owner)
+    except Exception as exc:  # engine/SQL/forecast failure
+        logger.warning("[BI_SPEC] preview failed: %s", exc)
+        return {"preview_error": f"Computation failed: {exc}", "components": [], "errors": {}}
+    components, errors = _summarize_components(dashboard, response, detail=detail)
+    result: dict[str, Any] = {
+        "components": components,
+        "errors": errors,
+        "filters": {
+            fid: {"value": rf.value, "label": rf.label, **({"from": rf.date_from, "to": rf.date_to} if rf.date_from else {})}
+            for fid, rf in response.filters.items()
+        },
+    }
+    if detail:
+        result["filter_options"] = {
+            fid: list(opts)[:_MAX_OPTIONS] for fid, opts in response.filter_options.items()
+        }
+    return result
+
+
+def _is_duplicate(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "unique" in msg or "duplicate key" in msg or "already exists" in msg
+
+
+# ---------------------------------------------------------------------------
+# Async implementations
+# ---------------------------------------------------------------------------
+
+
+async def _async_create(title: str, description: str, spec: dict, owner: str) -> dict:
+    dashboard, error = _build_dashboard(title, description, spec, owner)
+    if error:
+        return {"success": False, "error": error}
+    issues = _validate(dashboard)
+    if issues:
+        return {
+            "success": False,
+            "error": "The spec is invalid, nothing was created. Fix these problems and retry.",
+            "issues": issues[:20],
+        }
+    async with _dashboard_store(owner) as store:
+        saved = await store.save(dashboard)
+    dashboard = saved or dashboard
+    preview = await _preview(dashboard, owner)
+    return {
+        "success": True,
+        "dashboard_id": dashboard.id,
+        "url": f"/bi/{dashboard.id}",
+        "title": dashboard.title,
+        "component_count": len(dashboard.components),
+        **preview,
+        "message": (
+            f"Dashboard '{dashboard.title}' created. Open it at /bi/{dashboard.id}."
+            + (" Some components have errors: see 'errors'." if preview["errors"] else "")
+        ),
+    }
+
+
+_NOT_FOUND = "Dashboard '{id}' not found. Use tool_list_dashboards to find the right id."
+
+
+def _layout_diff(before, after) -> dict:
+    b = {c.id for c in before.components}
+    a = {c.id for c in after.components}
+    return {
+        "components_before": len(b),
+        "components_after": len(a),
+        "added": sorted(a - b),
+        "removed": sorted(b - a),
+        "sources": [s.name for s in after.sources],
+        "filters": [f.id for f in after.filters],
+    }
+
+
+async def _async_patch(dashboard_id: str, ops: list, dry_run: bool, owner: str) -> dict:
+    from apowerb.bi.spec.errors import SpecError
+
+    async with _dashboard_store(owner) as store:
+        dashboard = await store.get(dashboard_id)
+        if dashboard is None:
+            return {"success": False, "error": _NOT_FOUND.format(id=dashboard_id)}
+        try:
+            patched = _apply_ops(dashboard, ops)
+        except SpecError as exc:
+            return {"success": False, "error": f"Patch rejected, nothing was changed: {exc}"}
+        issues = _validate(patched)
+        if issues:
+            return {
+                "success": False,
+                "error": "The patched spec is invalid, nothing was changed. Fix these problems and retry.",
+                "issues": issues[:20],
+            }
+        if not dry_run:
+            saved = await store.save(patched)
+            patched = saved or patched
+    preview = await _preview(patched, owner)
+    return {
+        "success": True,
+        "dry_run": dry_run,
+        "dashboard_id": dashboard_id,
+        "applied_ops": len(ops),
+        "summary": _layout_diff(dashboard, patched),
+        **preview,
+        "message": ("Dry run: nothing was saved." if dry_run else "Dashboard updated."),
+    }
+
+
+async def _async_query(dashboard_id: str, filters: dict, owner: str) -> dict:
+    async with _dashboard_store(owner) as store:
+        dashboard = await store.get(dashboard_id)
+    if dashboard is None:
+        return {"success": False, "error": _NOT_FOUND.format(id=dashboard_id)}
+    if not dashboard.sources:
+        return {
+            "success": False,
+            "error": "This dashboard has no spec v2 sources (it is made of classic charts). Use tool_get_dashboard_data instead.",
+        }
+    preview = await _preview(dashboard, owner, filters, detail=True)
+    if "preview_error" in preview:
+        return {"success": False, "error": preview["preview_error"]}
+    return {"success": True, "dashboard_id": dashboard_id, "title": dashboard.title, **preview}
+
+
+def _describe_transform(step) -> str:
+    op = step.op
+    if op == "aggregate":
+        return f"aggregate by {', '.join(step.group_by)}"
+    if op == "derive":
+        return f"derive {step.column} = {step.expr}"
+    if op == "filter":
+        return f"filter {step.where}"
+    if op == "join":
+        return f"join {step.source} on {', '.join(step.on)}"
+    if op == "sql":
+        return "sql"
+    if op in ("naive_forecast", "forecast"):
+        return f"{op} of {step.value} -> {step.output}"
+    if op == "inventory_sim":
+        return f"inventory_sim (safety {step.safety_factor}, order {step.order_factor}, lead time {step.lead_time})"
+    return op
+
+
+def _describe_visual(comp) -> dict:
+    v = comp.visual
+    entry: dict[str, Any] = {"id": comp.id, "type": v.type}
+    if v.title:
+        entry["title"] = v.title
+    if v.source:
+        entry["source"] = v.source
+    if v.x:
+        entry["x"] = v.x
+    if v.kpi:
+        entry["measure"] = v.kpi.measure
+    if v.series:
+        entry["series"] = [s.key for s in v.series]
+    if v.columns:
+        entry["columns"] = [c.key for c in v.columns]
+    pos = comp.position
+    entry["position"] = {"row": pos.row, "col": pos.col, "width": pos.width, "height": pos.height}
+    return entry
+
+
+async def _async_describe(dashboard_id: str, owner: str) -> dict:
+    async with _dashboard_store(owner) as store:
+        dashboard = await store.get(dashboard_id)
+    if dashboard is None:
+        return {"success": False, "error": _NOT_FOUND.format(id=dashboard_id)}
+    inferred: dict[str, list[dict]] = {}
+    if dashboard.sources:
+        try:
+            response = await _compute(dashboard, None, owner, components=[])
+            for name, meta in response.sources.items():
+                inferred[name] = [
+                    {"name": f.name, "label": f.label, "type": f.type, "provenance": f.provenance.value}
+                    for f in meta.fields[:_MAX_FIELDS]
+                ]
+        except Exception as exc:  # describe must work even when data is unreachable
+            logger.info("[BI_SPEC] describe: field inference skipped: %s", exc)
+    sources = []
+    for s in dashboard.sources:
+        declared = [
+            {"name": f.name, "label": f.label, "type": f.type, "provenance": f.provenance.value}
+            for f in s.fields[:_MAX_FIELDS]
+        ]
+        src: dict[str, Any] = {"name": s.name, "kind": s.kind, "fields": inferred.get(s.name) or declared}
+        if s.label:
+            src["label"] = s.label
+        if s.dataset_id:
+            src["dataset_id"] = s.dataset_id
+        if s.parent:
+            src["parent"] = s.parent
+        if s.transforms:
+            src["transforms"] = [_describe_transform(t) for t in s.transforms]
+        src["measures"] = [
+            {
+                "name": m.name,
+                "label": m.label,
+                "expr": m.expr,
+                "format": m.format,
+                **({"thresholds": m.thresholds.model_dump(mode="json")} if m.thresholds else {}),
+            }
+            for m in s.measures
+        ]
+        sources.append(src)
+    return {
+        "success": True,
+        "dashboard_id": dashboard_id,
+        "title": dashboard.title,
+        "spec_version": dashboard.spec_version,
+        "url": f"/bi/{dashboard_id}",
+        "sources": sources,
+        "filters": [
+            {"id": f.id, "label": f.label, "field": f.field, "type": f.type, "default": f.default,
+             **({"presets": f.presets} if f.presets else {})}
+            for f in dashboard.filters
+        ],
+        "components": [_describe_visual(c) for c in dashboard.components if c.visual is not None],
+        "legacy_components": sum(1 for c in dashboard.components if c.visual is None),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+
+def _fail(tool: str, exc: Exception, title: str = "") -> dict:
+    logger.exception("[BI_SPEC] %s failed", tool)
+    if title and _is_duplicate(exc):
+        return {
+            "success": False,
+            "error": f"A dashboard named '{title}' already exists. Ask the user for a different name.",
+        }
+    return {"success": False, "error": str(exc)}
+
+
+def _create(title: str, description: str, spec: dict, tool: str) -> dict:
+    owner = _agent_owner()
+    if not owner:
+        return {"success": False, "error": "No owner context."}
+    if not (title or "").strip():
+        return {"success": False, "error": "title is required."}
+    try:
+        return _run_async(_async_create(title.strip(), description, spec, owner))
+    except Exception as exc:
+        return _fail(tool, exc, title)
+
+
+def tool_bi_create_dashboard(
+    title: str,
+    spec_json: str,
+    description: str = "",
+    folder_name: str = "",
+) -> dict:
+    """Creates an interactive dashboard from a declarative spec (sources, measures, filters, visuals).
+
+    Use it instead of the chart-by-chart tools when the user wants global
+    filters (family, period...), KPIs with traffic-light thresholds, linked
+    charts or a computed text. For a stock/inventory dashboard prefer
+    tool_bi_create_stock_dashboard. To change an existing one use
+    tool_bi_describe_dashboard then tool_bi_patch_dashboard.
+
+    The dashboard OWNS its data: sources point at a dataset (see
+    bi_datasets.tool_list_datasets / tool_describe_dataset), measures are SQL
+    aggregates, visuals reference a source and measure names. Never embed rows.
+
+    spec_json is one JSON object:
+    {"sources": [{"name": "ventes", "kind": "dataset", "dataset_id": "<uuid>",
+        "measures": [{"name": "total", "label": "Ventes", "expr": "SUM(montant)",
+                      "format": "compact"},
+                     {"name": "taux", "label": "Taux", "expr": "1 - SUM(perte)/NULLIF(SUM(montant),0)",
+                      "format": "percent",
+                      "thresholds": {"direction": "higher_is_better", "good": 0.95, "warn": 0.9}}]}],
+     "filters": [{"id": "region", "label": "Region", "field": "region", "type": "select"},
+                 {"id": "periode", "label": "Periode", "field": "date",
+                  "type": "relative_period", "default": "26w", "presets": ["13w", "26w", "all"]}],
+     "components": [
+       {"visual": {"type": "kpi", "title": "Ventes", "source": "ventes", "kpi": {"measure": "total"}},
+        "position": {"row": 0, "col": 0, "width": 3, "height": 3}},
+       {"visual": {"type": "bar", "title": "Ventes par mois", "source": "ventes", "x": "mois",
+                   "series": [{"key": "total"}]},
+        "position": {"row": 3, "col": 0, "width": 12, "height": 6}}]}
+
+    Visual types: kpi, combo, bar, hbar, line, area, pie, diverging_bar,
+    waterfall, table, text, note. Grid: 12 columns, give explicit positions
+    without overlap. Text templates accept {{measure|percent}} and
+    {{filters.<id>}}, {{period.last}}. Field names: lowercase identifiers.
+
+    Returns the dashboard id, its relative url (/bi/<id>), the computed KPI
+    values and texts, and an "errors" map with one message per component that
+    failed to compute (fix them with tool_bi_patch_dashboard). If the spec is
+    invalid nothing is created and "issues" lists what to fix.
+
+    Args:
+        title:       Dashboard title.
+        spec_json:   JSON object described above.
+        description: Optional description.
+        folder_name: Agent folder name (injected automatically).
+    """
+    spec, error = _loads(spec_json, "spec_json", dict)
+    if error:
+        return {"success": False, "error": error}
+    return _create(title, description, spec, "tool_bi_create_dashboard")
+
+
+def tool_bi_create_stock_dashboard(
+    dataset_id: str,
+    title: str = "Pilotage stocks",
+    date: str = "semaine",
+    family: str = "famille",
+    sales: str = "ventes",
+    site: str = "",
+    safety_factor: float = 0.5,
+    order_factor: float = 1.4,
+    lead_time: int = 1,
+    default_period: str = "26w",
+    horizon: int = 8,
+) -> dict:
+    """Creates a complete "Pilotage stocks" dashboard from a weekly sales dataset.
+
+    Use it when the user wants to steer inventory (stock coverage, service
+    rate, forecast reliability, weeks under safety stock) from a dataset of
+    weekly sales per product family. It builds a transparent naive forecast
+    and a SIMULATED stock and replenishment loop (the real data is only the
+    sales), 6 KPIs with traffic-light thresholds, a combined chart, coverage,
+    a per-family table, a waterfall, a forecast-error ranking, five notes, a
+    family filter and a period filter.
+
+    Call bi_datasets.tool_describe_dataset first to find the column names.
+
+    Args:
+        dataset_id:     Dataset id (UUID) holding one row per week and family (and site).
+        title:          Dashboard title.
+        date:           Week (date) column name, lowercase.
+        family:         Product family column name, lowercase.
+        sales:          Sales quantity column name, lowercase.
+        site:           Site/warehouse column name if the data has one row per
+                        site: rows are summed per week and family. Empty if none.
+        safety_factor:  Safety stock as a share of the week's forecast (0.5 = 50 %).
+        order_factor:   Order up to this multiple of next week's forecast (+ safety stock).
+        lead_time:      Delivery lead time in weeks.
+        default_period: Initial period: 13w, 26w, 52w or all.
+        horizon:        Weeks of engine forecast ahead.
+
+    Returns the dashboard id, url (/bi/<id>), computed KPIs and the text
+    summary, and an "errors" map for components that failed.
+    """
+    from apowerb.bi.spec.templates import stock_pilotage
+
+    try:
+        spec = stock_pilotage(
+            dataset_id.strip(),
+            date=date,
+            family=family,
+            sales=sales,
+            site=site.strip() or None,
+            safety_factor=safety_factor,
+            order_factor=order_factor,
+            lead_time=lead_time,
+            default_period=default_period,
+            horizon=horizon,
+        )
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    return _create(title or "Pilotage stocks", "", spec, "tool_bi_create_stock_dashboard")
+
+
+def tool_bi_patch_dashboard(dashboard_id: str, ops_json: str, dry_run: bool = False) -> dict:
+    """Edits a spec v2 dashboard with a list of operations, atomically.
+
+    Use it to add/change/remove a visual, a source, a measure or a filter, or
+    to rename the dashboard. Call tool_bi_describe_dashboard first to get the
+    component ids, source and measure names. If any operation is invalid
+    nothing is changed and the error says why. Use dry_run=true to check an
+    edit and see the computed result without saving it.
+
+    ops_json is a JSON array of operations (or {"ops": [...]}). Operations:
+      {"op": "add_visual", "visual": {...VisualSpec...}, "position": {"row": 0, "col": 0, "width": 6, "height": 4}}
+      {"op": "update_visual", "component_id": "<id>", "changes": {"title": "New title"}}  (shallow merge)
+      {"op": "remove_component", "component_id": "<id>"}
+      {"op": "move_component", "component_id": "<id>", "position": {...}}
+      {"op": "upsert_source", "source": {...SourceSpec...}}   {"op": "remove_source", "name": "..."}
+      {"op": "upsert_measure", "source": "<source>", "measure": {"name": "...", "label": "...", "expr": "SUM(x)"}}
+      {"op": "remove_measure", "source": "<source>", "name": "..."}
+      {"op": "upsert_filter", "filter": {...FilterSpec...}}   {"op": "remove_filter", "id": "..."}
+      {"op": "set_title", "title": "...", "description": "..."}
+    Example: [{"op": "update_visual", "component_id": "abc", "changes": {"title": "Ventes 2025"}}]
+
+    Args:
+        dashboard_id: Dashboard id (UUID) of one of the user's dashboards.
+        ops_json:     JSON array of operations.
+        dry_run:      Validate and compute without saving.
+
+    Returns a change summary (added/removed component ids), the computed
+    KPIs/texts and an "errors" map per failing component.
+    """
+    owner = _agent_owner()
+    if not owner:
+        return {"success": False, "error": "No owner context."}
+    raw, error = _loads(ops_json, "ops_json", (list, dict))
+    if error:
+        return {"success": False, "error": error}
+    if isinstance(raw, dict):
+        raw = raw.get("ops")
+    if not isinstance(raw, list) or not raw:
+        return {"success": False, "error": "ops_json must be a non-empty JSON array of operations."}
+    from apowerb.bi.spec.models import PatchOp
+
+    try:
+        ops = TypeAdapter(list[PatchOp]).validate_python(raw)
+    except ValidationError as exc:
+        return {"success": False, "error": f"Invalid operations: {_fmt_validation(exc)}"}
+    try:
+        return _run_async(_async_patch(dashboard_id.strip(), ops, bool(dry_run), owner))
+    except Exception as exc:
+        return _fail("tool_bi_patch_dashboard", exc)
+
+
+def tool_bi_query_dashboard(dashboard_id: str, filters_json: str = "{}") -> dict:
+    """Reads the computed values of a spec v2 dashboard to answer a question.
+
+    Use it when the user asks about the numbers of a dashboard built with
+    tool_bi_create_dashboard / tool_bi_create_stock_dashboard ("what is the
+    coverage for family A over 13 weeks?"). Never invent figures: query first.
+    Returns KPI values with their traffic-light status, texts, and chart/table
+    rows (tables: first 20 rows, charts: first 30, "truncated" is set when cut).
+
+    filters_json is a JSON object of filter id -> value, using the ids shown by
+    tool_bi_describe_dashboard. Omitted filters keep their default. Example:
+    {"famille": "A", "periode": "13w"}. A select filter set to null means "all".
+
+    Args:
+        dashboard_id: Dashboard id (UUID).
+        filters_json: JSON object of filter values, "{}" for the defaults.
+    """
+    owner = _agent_owner()
+    if not owner:
+        return {"success": False, "error": "No owner context."}
+    filters, error = _loads(filters_json, "filters_json", dict)
+    if error:
+        return {"success": False, "error": error}
+    try:
+        return _run_async(_async_query(dashboard_id.strip(), filters, owner))
+    except Exception as exc:
+        return _fail("tool_bi_query_dashboard", exc)
+
+
+def tool_bi_describe_dashboard(dashboard_id: str) -> dict:
+    """Describes the spec of a dashboard: sources, fields, measures, filters, components.
+
+    Call it before tool_bi_patch_dashboard or tool_bi_query_dashboard: it gives
+    the exact component ids, source names, measure names and their formula
+    (expr), the field list with provenance (real / forecast / simulated), the
+    filter ids and the position of each component. Compact: no data rows.
+
+    Args:
+        dashboard_id: Dashboard id (UUID) of one of the user's dashboards.
+    """
+    owner = _agent_owner()
+    if not owner:
+        return {"success": False, "error": "No owner context."}
+    try:
+        return _run_async(_async_describe(dashboard_id.strip(), owner))
+    except Exception as exc:
+        return _fail("tool_bi_describe_dashboard", exc)

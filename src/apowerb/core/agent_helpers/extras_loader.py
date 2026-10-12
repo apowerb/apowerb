@@ -140,6 +140,12 @@ def inject_bi_dashboard_tools(
         "bi_datasets.tool_describe_dataset",
         "bi_datasets.tool_describe_sql",
         "business_intelligence.tool_create_forecast_chart",
+        # Tableaux de bord déclaratifs (filtres globaux, KPI à seuils).
+        "bi_dashboard_tools.tool_bi_create_dashboard",
+        "bi_dashboard_tools.tool_bi_create_stock_dashboard",
+        "bi_dashboard_tools.tool_bi_patch_dashboard",
+        "bi_dashboard_tools.tool_bi_query_dashboard",
+        "bi_dashboard_tools.tool_bi_describe_dashboard",
     ]
     new_bi = [t for t in bi_tools if t not in tools_names]
     if not new_bi:
