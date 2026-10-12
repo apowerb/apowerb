@@ -1144,29 +1144,15 @@ def tool_create_forecast_chart(
         connection, query error, unknown column, too many rows, or the
         forecast service failing), no chart is created.
     """
-    from apowerb.bi.charts.core import SourceType
-    from apowerb.bi.charts.schemas import DataSourceSchema
-
     owner_email = _agent_owner()
     if not owner_email:
         return {"success": False, "error": "No owner context."}
-    if sum(1 for s in (dataset_id, sql, file_id) if s) != 1:
-        return {"success": False, "error": "Fournir exactement une source : dataset_id, sql ou file_id."}
     try:
-        if sql:
-            loaded = _run_async(_load_agent_sql_rows(sql, owner_email, MAX_DATA_ROWS))
-        elif file_id:
-            loaded = _load_uploaded_file_rows(file_id, owner_email, MAX_DATA_ROWS, sheet or None)
-        else:
-            loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS))
+        loaded = _load_forecast_rows(
+            owner_email, dataset_id, sql, file_id, sheet, date_var, target_var, group_var,
+        )
         if not loaded["success"]:
-            return {"success": False, "error": loaded["error"]}
-        if loaded["truncated"]:
-            what = "Le résultat de la requête" if sql else "Le jeu de données"
-            return {"success": False, "error": api_call._too_large_message(what)}
-        column_error = validate_forecast_columns(loaded["columns"], date_var, target_var, group_var)
-        if column_error:
-            return {"success": False, "error": column_error}
+            return loaded
 
         preprocessing = {"outliers": True} if correct_outliers else None
         # Hors de _run_async (plafonné à 30 s alors que Chronos peut prendre
@@ -1179,50 +1165,14 @@ def tool_create_forecast_chart(
             preprocessing=preprocessing,
         )
         if forecast_summary.get("status") != "success":
-            return {
-                "success": False,
-                "error": forecast_summary.get("message")
-                or str(forecast_summary.get("errors")),
-            }
+            return {"success": False, "error": _forecast_error(forecast_summary)}
 
-        if sql:
-            # Same connection the rows came from: the chart re-runs the query
-            # with its owner's config when displayed.
-            source = DataSourceSchema(
-                source_type=SourceType.DATABASE, query=sql,
-                connection_config_id=loaded["connection_config_id"], limit=MAX_DATA_ROWS,
-            )
-            label = "sql"
-        else:
-            if file_id:
-                # Après la prévision : un échec ne laisse ni graphique ni jeu orphelin.
-                stored = _run_async(_materialize_uploaded_file_dataset(
-                    file_id, owner_email, _agent_org(), _agent_project(), sheet or None,
-                ))
-                if not stored["success"]:
-                    return {"success": False, "error": stored["error"]}
-                dataset_id = stored["dataset_id"]
-            source = DataSourceSchema(
-                source_type=SourceType.CSV, query=f"csv://{dataset_id}", limit=MAX_DATA_ROWS,
-            )
-            label = dataset_id
-        config = {
-            "date_var": date_var,
-            "target_var": target_var,
-            "group_var": group_var,
-            "horizon": horizon,
-            "frequency": frequency,
-            "models": ["auto"],
-            "confidence_levels": [0.8, 0.95],
-        }
-        if preprocessing:
-            config["preprocessing"] = preprocessing
-        chart = _run_async(_async_save_forecast_chart(
-            source_schema=source, source_label=label, target_var=target_var,
-            title=title, config=config,
-            organization_id=_agent_org(), project_id=_agent_project(),
-            owner_email=owner_email,
-        ))
+        chart = _save_forecast_widget(
+            owner_email, loaded, dataset_id, sql, file_id, sheet, title,
+            date_var, target_var, group_var, horizon, frequency, preprocessing,
+        )
+        if isinstance(chart, dict):
+            return chart
         return {
             "success": True,
             "chart_id": chart.id,
@@ -1232,6 +1182,366 @@ def tool_create_forecast_chart(
     except Exception as e:
         logger.exception("[BI] tool_create_forecast_chart failed")
         return {"success": False, "error": str(e)}
+
+
+def _forecast_error(response: dict) -> str:
+    return response.get("message") or str(response.get("errors"))
+
+
+def _load_forecast_rows(
+    owner_email: str, dataset_id: str, sql: str, file_id: str, sheet: str,
+    date_var: str, target_var: str, group_var: str,
+) -> dict:
+    """Rows of exactly one forecast source, with the columns checked."""
+    if sum(1 for s in (dataset_id, sql, file_id) if s) != 1:
+        return {"success": False, "error": "Fournir exactement une source : dataset_id, sql ou file_id."}
+    if sql:
+        loaded = _run_async(_load_agent_sql_rows(sql, owner_email, MAX_DATA_ROWS))
+    elif file_id:
+        loaded = _load_uploaded_file_rows(file_id, owner_email, MAX_DATA_ROWS, sheet or None)
+    else:
+        loaded = _run_async(_load_owned_dataset_rows(dataset_id, owner_email, MAX_DATA_ROWS))
+    if not loaded["success"]:
+        return {"success": False, "error": loaded["error"]}
+    if loaded["truncated"]:
+        what = "Le résultat de la requête" if sql else "Le jeu de données"
+        return {"success": False, "error": api_call._too_large_message(what)}
+    column_error = validate_forecast_columns(loaded["columns"], date_var, target_var, group_var)
+    if column_error:
+        return {"success": False, "error": column_error}
+    return loaded
+
+
+def _save_forecast_widget(
+    owner_email: str, loaded: dict, dataset_id: str, sql: str, file_id: str, sheet: str,
+    title: str, date_var: str, target_var: str, group_var: str, horizon: int,
+    frequency: str, preprocessing: dict | None,
+):
+    """Persist the forecast widget once its forecast succeeded; returns the
+    chart, or an error dict."""
+    from apowerb.bi.charts.core import SourceType
+    from apowerb.bi.charts.schemas import DataSourceSchema
+
+    if sql:
+        # Same connection the rows came from: the chart re-runs the query
+        # with its owner's config when displayed.
+        source = DataSourceSchema(
+            source_type=SourceType.DATABASE, query=sql,
+            connection_config_id=loaded["connection_config_id"], limit=MAX_DATA_ROWS,
+        )
+        label = "sql"
+    else:
+        if file_id:
+            # Après la prévision : un échec ne laisse ni graphique ni jeu orphelin.
+            stored = _run_async(_materialize_uploaded_file_dataset(
+                file_id, owner_email, _agent_org(), _agent_project(), sheet or None,
+            ))
+            if not stored["success"]:
+                return {"success": False, "error": stored["error"]}
+            dataset_id = stored["dataset_id"]
+        source = DataSourceSchema(
+            source_type=SourceType.CSV, query=f"csv://{dataset_id}", limit=MAX_DATA_ROWS,
+        )
+        label = dataset_id
+    config = {
+        "date_var": date_var,
+        "target_var": target_var,
+        "group_var": group_var,
+        "horizon": horizon,
+        "frequency": frequency,
+        "models": ["auto"],
+        "confidence_levels": [0.8, 0.95],
+    }
+    if preprocessing:
+        config["preprocessing"] = preprocessing
+    return _run_async(_async_save_forecast_chart(
+        source_schema=source, source_label=label, target_var=target_var,
+        title=title, config=config,
+        organization_id=_agent_org(), project_id=_agent_project(),
+        owner_email=owner_email,
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Forecast dashboard: one forecast, explained by several charts.
+# ---------------------------------------------------------------------------
+
+
+def tool_create_forecast_dashboard(
+    date_var: str,
+    target_var: str,
+    horizon: int,
+    title: str,
+    dataset_id: str = "",
+    sql: str = "",
+    group_var: str = "",
+    frequency: str = "",
+    folder_name: str = "",
+    file_id: str = "",
+    sheet: str = "",
+    correct_outliers: bool = False,
+) -> dict:
+    """Forecasts a series ONCE and builds a whole dashboard that explains it:
+    4 KPI tiles (total forecast, change vs the same period last year,
+    reliable series, peak period), the forecast widget with its 80/95 %
+    bands, then forecast vs last year per series, share of each series,
+    forecast volume per period, uncertainty per series and a detail table.
+
+    Same sources as tool_create_forecast_chart — exactly one of dataset_id,
+    sql (a single SELECT on this agent's database connection) or file_id (a
+    file attached to the chat). Check the columns first with
+    tool_describe_dataset / tool_describe_sql / read_uploaded_file. Use it
+    when the user asks for a forecast dashboard, a full analysis or several
+    charts; use tool_create_forecast_chart for a single chart.
+
+    Args:
+        date_var:    Name of the date column.
+        target_var:  Name of the column to forecast.
+        horizon:     Number of future periods to forecast (1-366).
+        title:       Dashboard title (made unique if already taken).
+        dataset_id:  The dataset_id (UUID) returned by tool_list_datasets.
+        sql:         A single SELECT query on the agent's database.
+        group_var:   Optional column to forecast independently per group
+                     (product family, site...): the dashboard compares them.
+        frequency:   Optional series frequency (day, week, month, quarter, year).
+        folder_name: Agent folder name (injected automatically).
+        file_id:     Name of a file attached to the chat, exactly as in the
+                     `[Uploaded files: ...]` line. Never copy its rows.
+        sheet:       Sheet name for a spreadsheet file_id.
+        correct_outliers: R engine only. Correct outliers before training.
+
+    Returns:
+        dict with success status; on success dashboard_id, dashboard_title,
+        forecast_chart_id (pass it to embed_chart to show the forecast in the
+        chat), chart_ids, headline (the KPI numbers), series (one row per
+        series: totals, change vs last year, reliability, uncertainty) and
+        summary (the compact forecast summary). Comment headline and series;
+        never invent numbers. On failure nothing is created if the forecast
+        itself failed; a later failure reports the dashboard_id built so far.
+    """
+    from apowerb.bi import forecast_dashboard as fd
+
+    owner_email = _agent_owner()
+    if not owner_email:
+        return {"success": False, "error": "No owner context."}
+    try:
+        loaded = _load_forecast_rows(
+            owner_email, dataset_id, sql, file_id, sheet, date_var, target_var, group_var,
+        )
+        if not loaded["success"]:
+            return loaded
+        preprocessing = {"outliers": True} if correct_outliers else None
+        response = api_call._forecast_raw(
+            date_var=date_var, target_var=target_var, horizon=horizon,
+            data_rows=loaded["rows"], group_var=group_var or None,
+            frequency=frequency or None, models=["auto"],
+            preprocessing=preprocessing,
+        )
+        if response.get("status") != "success":
+            return {"success": False, "error": _forecast_error(response)}
+        table = fd.series_table(response)
+        if not table:
+            return {"success": False, "error": "La prévision n'a renvoyé aucune série exploitable."}
+
+        forecast_chart = _save_forecast_widget(
+            owner_email, loaded, dataset_id, sql, file_id, sheet, title,
+            date_var, target_var, group_var, horizon, frequency, preprocessing,
+        )
+        if isinstance(forecast_chart, dict):
+            return forecast_chart
+
+        periods = fd.period_table(response, table)
+        headline = fd.headline(table, periods)
+        built = _run_async(_async_build_forecast_dashboard(
+            title=title, target_var=target_var, forecast_chart_id=forecast_chart.id,
+            table=table, shares=fd.share_table(table), periods=periods,
+            headline=headline, owner_email=owner_email,
+            organization_id=_agent_org(), project_id=_agent_project(),
+        ))
+        if not built["success"]:
+            return {**built, "forecast_chart_id": forecast_chart.id}
+        return {
+            **built,
+            "forecast_chart_id": forecast_chart.id,
+            "headline": headline,
+            "series": table[:20],
+            "summary": api_call._compact_response(response),
+        }
+    except Exception as e:
+        logger.exception("[BI] tool_create_forecast_dashboard failed")
+        return {"success": False, "error": str(e)}
+
+
+async def _async_store_rows_dataset(
+    rows: list[dict], name: str, owner_email: str, organization_id: str, project_id: str,
+) -> str:
+    """Store computed rows as a CSV dataset of ``owner_email``; returns its id."""
+    import uuid
+
+    from apowerb.bi.data.tabular_import import store_tabular_as_csv
+    from apowerb.bi.db_stores import DatabaseDataStore
+    from apowerb.helpers.tabular_loader import TabularData
+
+    dataset_id = str(uuid.uuid4())
+    data = TabularData(columns=list(rows[0].keys()), rows=rows, format="csv")
+    async with _get_session() as db:
+        store = DatabaseDataStore(db, owner=owner_email)
+        await store_tabular_as_csv(
+            store, organization_id=organization_id, project_id=project_id,
+            file_id=dataset_id, name=f"{name} #{dataset_id[:8]}", data=data,
+            uploaded_by=owner_email, extra_metadata={"source": "forecast_dashboard"},
+        )
+    return dataset_id
+
+
+async def _async_save_dataset_chart(
+    chart_type: str, dataset_id: str, title: str, description: str, config: dict,
+    owner_email: str, organization_id: str, project_id: str,
+):
+    import uuid
+
+    from apowerb.bi.charts.core import ChartOrigin, ChartType, SourceType
+    from apowerb.bi.charts.schemas import ChartCreateRequest, DataSourceSchema
+    from apowerb.bi.charts.service import ChartService
+    from apowerb.bi.db_stores import DatabaseChartStore
+
+    async with _get_session() as db:
+        store = DatabaseChartStore(db, owner=owner_email)
+        svc = ChartService(store, db)
+        req = ChartCreateRequest(
+            name=f"forecast-dashboard-{chart_type}-{uuid.uuid4().hex[:8]}",
+            title=title, chart_type=ChartType(chart_type), description=description,
+            source=DataSourceSchema(
+                source_type=SourceType.CSV, query=f"csv://{dataset_id}", limit=MAX_DATA_ROWS,
+            ),
+            organization_id=organization_id, project_id=project_id, config=config,
+        )
+        return await svc.create(req, created_by=owner_email, origin=ChartOrigin.CHAT)
+
+
+async def _async_create_unique_dashboard(title: str, owner_email: str) -> dict:
+    """Create the dashboard, suffixing the title when it is already taken."""
+    from datetime import datetime
+
+    try:
+        return await _async_create_dashboard(title=title, description="", slug="", owner_email=owner_email)
+    except Exception as e:
+        msg = str(e).lower()
+        if not any(s in msg for s in ("unique", "duplicate key", "already exists")):
+            raise
+    stamped = f"{title} ({datetime.now().strftime('%d/%m/%Y %H:%M:%S')})"
+    return await _async_create_dashboard(title=stamped, description="", slug="", owner_email=owner_email)
+
+
+def _check(result: dict) -> dict:
+    """The dashboard helpers report failures as ``success: False``."""
+    if not result.get("success"):
+        raise RuntimeError(result.get("error") or "échec sans message")
+    return result
+
+
+def _format_number(value: float) -> str:
+    return f"{value:,.0f}".replace(",", " ") if abs(value) >= 100 else f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+async def _async_build_forecast_dashboard(
+    title: str, target_var: str, forecast_chart_id: str, table: list[dict],
+    shares: list[dict], periods: list[dict], headline: dict, owner_email: str,
+    organization_id: str, project_id: str,
+) -> dict:
+    """Dashboard around an already saved forecast widget: KPI tiles, then
+    charts on small datasets computed from the same forecast."""
+    from datetime import datetime
+
+    from apowerb.bi.forecast_dashboard import displayed_series
+
+    snapshot = f"Instantané de la prévision du {datetime.now().strftime('%d/%m/%Y %H:%M')}."
+    dashboard_id = None
+    chart_ids: list[str] = []
+    try:
+        dashboard = await _async_create_unique_dashboard(title, owner_email)
+        dashboard_id = dashboard["dashboard_id"]
+        multi = len(table) > 1
+        change = headline["change_pct"]
+        kpis = [
+            dict(label=f"{target_var} prévu sur l'horizon", value=_format_number(headline["total"]),
+                 description="Somme des valeurs prévues, toutes séries."),
+            dict(label="Écart vs même période N-1",
+                 value=f"{change:+.1f}" if change is not None else "n/d",
+                 unit="%" if change is not None else "",
+                 description="Prévision comparée aux mêmes semaines ou mois de l'an dernier."
+                 if change is not None else "Historique trop court pour comparer à l'an dernier.",
+                 trend_value=change or 0.0,
+                 trend_direction="up" if (change or 0) > 0 else "down" if (change or 0) < 0 else "neutral"),
+            dict(label="Séries fiables", value=f"{headline['reliable']} / {headline['series']}",
+                 description="Séries dont le modèle est jugé fiable au test sur le passé."),
+            dict(label="Pic prévu", value=headline["peak_period"] or "n/d",
+                 description=f"Période la plus chargée : {_format_number(headline['peak_value'])}."
+                 if headline["peak_value"] is not None else ""),
+        ]
+        for i, kpi in enumerate(kpis):
+            _check(await _async_add_kpi_to_dashboard(
+                dashboard_id=dashboard_id, unit=kpi.pop("unit", ""),
+                trend_value=kpi.pop("trend_value", 0.0),
+                trend_direction=kpi.pop("trend_direction", "neutral"), trend_sentiment="neutral",
+                row=0, col=i * 3, width=3, height=2, owner_email=owner_email, **kpi,
+            ))
+        _check(await _async_add_chart_to_dashboard(
+            dashboard_id=dashboard_id, chart_id=forecast_chart_id, row=2, col=0,
+            width=12, height=6, title_override="", owner_email=owner_email,
+        ))
+
+        async def add(rows, chart_type, chart_title, config, row, col, width):
+            dataset_id = await _async_store_rows_dataset(
+                rows, f"{title} - {chart_title}", owner_email, organization_id, project_id,
+            )
+            chart = await _async_save_dataset_chart(
+                chart_type, dataset_id, chart_title, snapshot, config,
+                owner_email, organization_id, project_id,
+            )
+            chart_ids.append(chart.id)
+            _check(await _async_add_chart_to_dashboard(
+                dashboard_id=dashboard_id, chart_id=chart.id, row=row, col=col,
+                width=width, height=5, title_override="", owner_email=owner_email,
+            ))
+
+        has_last_year = any(r["meme_periode_n1"] for r in table)
+        comparison = (
+            ["prevu_total", "meme_periode_n1"] if has_last_year else ["prevu_total"]
+        )
+        await add(
+            [{k: r[k] for k in ("serie", *comparison)} for r in table],
+            "bar", "Prévu vs même période N-1" if has_last_year else "Prévu par série",
+            {"labelColumn": "serie", "valueColumns": comparison}, 8, 0, 6 if multi else 12,
+        )
+        if multi:
+            await add(shares, "donut", "Part de chaque série dans la prévision",
+                      {"labelColumn": "serie", "valueColumns": ["prevu_total"]}, 8, 6, 6)
+        series_columns = [k for k in periods[0] if k != "periode"]
+        await add(periods, "bar", "Volume prévu par période",
+                  {"labelColumn": "periode", "valueColumns": series_columns, "stacked": True}, 13, 0, 12)
+        shown = set(displayed_series(table))
+        uncertainty = [
+            {"serie": r["serie"], "incertitude_80_pct": r["incertitude_80_pct"]}
+            for r in table if r["serie"] in shown and r["incertitude_80_pct"] is not None
+        ]
+        if uncertainty:
+            await add(uncertainty, "bar", "Incertitude par série (largeur de la bande 80 %, en % du prévu)",
+                      {"labelColumn": "serie", "valueColumns": ["incertitude_80_pct"]}, 18, 0, 6)
+        await add(table, "table", "Détail par série", {}, 18, 6 if uncertainty else 0, 6 if uncertainty else 12)
+        _check(await _async_publish_dashboard(dashboard_id=dashboard_id, visibility="private", owner_email=owner_email))
+    except Exception as e:
+        logger.exception("[BI] forecast dashboard build failed")
+        return {
+            "success": False, "dashboard_id": dashboard_id, "chart_ids": chart_ids,
+            "error": f"Tableau de bord incomplet : {e}" if dashboard_id else f"Tableau de bord non créé : {e}",
+        }
+    return {
+        "success": True,
+        "dashboard_id": dashboard_id,
+        "dashboard_title": dashboard["title"],
+        "chart_ids": chart_ids,
+    }
 
 
 def tool_create_dashboard(

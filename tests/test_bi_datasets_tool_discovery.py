@@ -16,3 +16,4 @@ def test_forecast_chart_tool_discovered_in_business_intelligence():
     store = ToolsStore()
     tools = store.get_tools_in_category("business_intelligence")
     assert "business_intelligence.tool_create_forecast_chart" in tools
+    assert "business_intelligence.tool_create_forecast_dashboard" in tools
