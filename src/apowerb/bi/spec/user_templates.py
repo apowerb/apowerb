@@ -163,6 +163,8 @@ class UserTemplateStore:
         except IntegrityError as exc:
             await self._db.rollback()
             raise DashboardNameConflictError(label) from exc
+        # The commit expires the row (expire_on_commit): reload it before reading its columns.
+        await self._db.refresh(row)
         return to_template(row, self._viewer)
 
     async def delete(self, template_id: str) -> None:

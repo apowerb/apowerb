@@ -131,7 +131,8 @@ async def db_env() -> AsyncIterator[DbEnv]:
         await conn.run_sync(lambda c: BusinessIntelligence.__table__.create(c))
     spec_engine.clear_caches()
     try:
-        yield DbEnv(async_sessionmaker(engine, expire_on_commit=False))
+        # Same expiry as the app sessions (DatabaseSessionManager): attributes read after a commit reload.
+        yield DbEnv(async_sessionmaker(engine, expire_on_commit=True))
     finally:
         spec_engine.clear_caches()
         await engine.dispose()

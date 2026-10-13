@@ -178,3 +178,49 @@ async def test_model_of_a_stock_dashboard_keeps_the_real_stock_columns():
         model = (await _make_model(env, resp.json()["dashboard_id"])).json()
         assert {c["key"] for c in model["columns"]} == {
             "semaine", "famille", "ventes", "stock", "seuil_securite", "delai_fournisseur_sem"}
+
+
+STOCK_REAL = {"date": "week", "family": "product_group", "sales": "qty",
+              "stock": "on_hand", "safety": "min_level", "lead_time": "lead_weeks"}
+REPLACED = {"date": "periode", "family": "groupe", "sales": "volume",
+            "stock": "stock_reel", "safety": "seuil", "lead_time": "delai"}
+
+
+async def test_real_stock_dashboard_with_a_replaced_file_becomes_a_reusable_model():
+    # agent-dev 13/10 : HTTP 500 en enregistrant comme modele un tableau stock reel dont le fichier a ete remplace.
+    async with db_env() as env:
+        env.datasets[DS_WEEKS] = (ALICE, stock_frame(renamed=True))
+        third = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        env.datasets[third] = (ALICE, stock_frame(weeks=70, renamed=True).rename(columns={
+            "week": "periode", "product_group": "groupe", "qty": "volume",
+            "on_hand": "stock_reel", "min_level": "seuil", "lead_weeks": "delai"}))
+        with env.patched():
+            async with env.client() as client:
+                resp = await client.post(
+                    f"{URL}/dashboard-templates/stock_pilotage/dashboards",
+                    json={"dataset_id": DS_WEEKS, "columns": STOCK_REAL, "params": {"horizon": 8}},
+                )
+                assert resp.status_code == 201, resp.text
+                dashboard_id = resp.json()["dashboard_id"]
+                replaced = await client.post(
+                    f"{URL}/dashboards/{dashboard_id}/source", json={"dataset_id": third, "columns": REPLACED})
+                assert replaced.status_code == 200, replaced.text
+        made = await _make_model(env, dashboard_id, label="Stock reel")
+        assert made.status_code == 201, made.text
+        model = made.json()
+        renamed = {"week": "periode", "product_group": "groupe", "qty": "volume",
+                   "on_hand": "stock_reel", "min_level": "seuil", "lead_weeks": "delai"}
+        mapping = {c["key"]: renamed[c["key"]] for c in model["columns"]}
+
+        env.datasets[DS_OTHER] = (ALICE, stock_frame(weeks=70, renamed=True).rename(columns={
+            "week": "periode", "product_group": "groupe", "qty": "volume",
+            "on_hand": "stock_reel", "min_level": "seuil", "lead_weeks": "delai"}))
+        with env.patched():
+            async with env.client() as client:
+                created = await client.post(
+                    f"{URL}/dashboard-templates/{model['id']}/dashboards",
+                    json={"dataset_id": DS_OTHER, "title": "Depuis modele stock reel", "columns": mapping},
+                )
+                assert created.status_code == 201, created.text
+                data = (await client.post(f"{URL}/dashboards/{created.json()['dashboard_id']}/data", json={})).json()
+        assert {cid: r["error"] for cid, r in data["components"].items() if r.get("error")} == {}
