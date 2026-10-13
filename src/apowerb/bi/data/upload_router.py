@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.artifacts.upload_mirror import mirror_as_input_artifact
 from apowerb.bi.data._bi_storage import bi_artifact_app_name, save_file
+from apowerb.bi.data.fec_import import FecImportError, fec_to_tabular, is_fec, parse_fec
 from apowerb.bi.data.tabular_import import store_tabular_as_csv
 from apowerb.bi.db_stores import DatabaseDataStore
 from apowerb.tools_store.tools_helpers import list_user_tool_configs
@@ -52,6 +53,9 @@ _SEPARATOR_MAP = {
     "tab": "\t",
     "pipe": "|",
 }
+
+
+_FEC_EXTENSIONS = {".txt", ".csv", ".tsv"}
 
 
 def _detect_separator(text: str) -> str:
@@ -118,6 +122,12 @@ async def upload_csv(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Uploaded CSV file is empty.",
+        )
+
+    if extension in _FEC_EXTENSIONS and is_fec(raw_bytes):
+        return await _import_fec(
+            raw_bytes, filename, file.content_type,
+            organization_id, project_id, current_user, db,
         )
 
     if extension != ".csv":
@@ -284,6 +294,64 @@ async def _import_tabular(
         "sample_rows": data.rows[:5],
         "separator": ",",
         "sheet": data.sheet,
+        "uploaded_by": str(current_user.email),
+    }
+
+
+async def _import_fec(
+    raw_bytes: bytes,
+    filename: str,
+    content_type: str | None,
+    organization_id: str,
+    project_id: str,
+    current_user: user_schemas.User,
+    db: AsyncSession,
+) -> dict:
+    """FEC (journal comptable) : normalisé en 18 colonnes, stocké en CSV canonique."""
+    try:
+        data = fec_to_tabular(parse_fec(raw_bytes))
+    except FecImportError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    file_id = str(_uuid.uuid4())
+    data_store = DatabaseDataStore(db, owner=str(current_user.email))
+    try:
+        s3_key = await store_tabular_as_csv(
+            data_store,
+            organization_id=organization_id,
+            project_id=project_id,
+            file_id=file_id,
+            name=filename,
+            data=data,
+            uploaded_by=str(current_user.email),
+            extra_metadata={
+                "source_file": filename,
+                "source_content_type": content_type,
+                "source_format": "fec",
+            },
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A data source with this name already exists in this organization/project.",
+        )
+
+    await _mirror_upload(
+        organization_id, filename, raw_bytes, content_type or "application/octet-stream"
+    )
+
+    return {
+        "file_id": file_id,
+        "filename": filename,
+        "content_type": "text/csv",
+        "organization_id": organization_id,
+        "project_id": project_id,
+        "key": s3_key,
+        "columns": data.columns,
+        "row_count": len(data.rows),
+        "sample_rows": data.rows[:5],
+        "separator": ",",
+        "format": "fec",
         "uploaded_by": str(current_user.email),
     }
 
