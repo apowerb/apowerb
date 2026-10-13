@@ -201,6 +201,32 @@ def test_create_stock_dashboard_with_real_stock(env):
     assert plan.target_cover == 4 and plan.horizon == 8
 
 
+def test_create_stock_dashboard_records_the_template_provenance(env):
+    res = t.tool_bi_create_stock_dashboard("ds-9", site="site", horizon=12)
+    ref = env.db.rows[res["dashboard_id"]][1].template
+    assert ref.model_dump() == {
+        "id": "stock_pilotage",
+        "version": 1,
+        "columns": {"date": "semaine", "family": "famille", "sales": "ventes", "site": "site",
+                    "stock": None, "safety": None, "lead_time": None},
+        "params": {"horizon": 12},
+    }
+
+
+def test_create_stock_dashboard_with_real_stock_records_the_stock_columns(env):
+    res = t.tool_bi_create_stock_dashboard(
+        "ds-9", stock="stock", safety_column="seuil_securite", lead_time_column="delai_fournisseur_sem"
+    )
+    columns = env.db.rows[res["dashboard_id"]][1].template.columns
+    assert (columns["stock"], columns["safety"], columns["lead_time"], columns["site"]) == (
+        "stock", "seuil_securite", "delai_fournisseur_sem", None,
+    )
+
+
+def test_free_form_dashboard_has_no_template_provenance(env):
+    assert env.db.rows[_create()["dashboard_id"]][1].template is None
+
+
 def test_create_stock_dashboard_bad_column(env):
     res = t.tool_bi_create_stock_dashboard("ds-9", date="Semaine")
     assert res["success"] is False and "not a valid column name" in res["error"]

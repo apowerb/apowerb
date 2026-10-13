@@ -265,10 +265,14 @@ def _is_duplicate(exc: Exception) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def _async_create(title: str, description: str, spec: dict, owner: str) -> dict:
+async def _async_create(title: str, description: str, spec: dict, owner: str, template: dict | None = None) -> dict:
     dashboard, error = _build_dashboard(title, description, spec, owner)
     if error:
         return {"success": False, "error": error}
+    if template is not None:
+        from apowerb.bi.dashboards.core import TemplateRef
+
+        dashboard = dashboard.model_copy(update={"template": TemplateRef.model_validate(template)})
     issues = _validate(dashboard)
     if issues:
         return {
@@ -490,14 +494,14 @@ def _fail(tool: str, exc: Exception, title: str = "") -> dict:
     return {"success": False, "error": str(exc)}
 
 
-def _create(title: str, description: str, spec: dict, tool: str) -> dict:
+def _create(title: str, description: str, spec: dict, tool: str, template: dict | None = None) -> dict:
     owner = _agent_owner()
     if not owner:
         return {"success": False, "error": "No owner context."}
     if not (title or "").strip():
         return {"success": False, "error": "title is required."}
     try:
-        return _run_tool(_async_create(title.strip(), description, spec, owner))
+        return _run_tool(_async_create(title.strip(), description, spec, owner, template))
     except Exception as exc:
         return _fail(tool, exc, title)
 
@@ -620,6 +624,7 @@ def tool_bi_create_stock_dashboard(
     Returns the dashboard id, url (/bi/<id>), computed KPIs and the text
     summary, and an "errors" map for components that failed.
     """
+    from apowerb.bi.spec.catalog import STOCK_PILOTAGE_VERSION
     from apowerb.bi.spec.templates import stock_pilotage
 
     try:
@@ -641,7 +646,21 @@ def tool_bi_create_stock_dashboard(
         )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
-    return _create(title or "Pilotage stocks", "", spec, "tool_bi_create_stock_dashboard")
+    provenance = {
+        "id": "stock_pilotage",
+        "version": STOCK_PILOTAGE_VERSION,
+        "columns": {
+            "date": date,
+            "family": family,
+            "sales": sales,
+            "site": site.strip() or None,
+            "stock": stock.strip() or None,
+            "safety": safety_column.strip() or None,
+            "lead_time": lead_time_column.strip() or None,
+        },
+        "params": {"horizon": horizon},
+    }
+    return _create(title or "Pilotage stocks", "", spec, "tool_bi_create_stock_dashboard", provenance)
 
 
 def tool_bi_patch_dashboard(dashboard_id: str, ops_json: str, dry_run: bool = False) -> dict:
