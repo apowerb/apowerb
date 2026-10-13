@@ -8,6 +8,8 @@ failing that, from ``FilterSpec.default``. Period filters are resolved against
 the latest date of their field in the data (forecast rows appended after the
 last real value do not move it) and applied to each source that has the field.
 Filters are applied with pandas masks, never by interpolating values in SQL.
+``time_grain`` and ``aggregation`` filters restrict nothing: the visuals read
+their (whitelisted) value to bucket dates or pick the aggregate function.
 """
 
 from __future__ import annotations
@@ -21,10 +23,23 @@ import pandas as pd
 from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.formatting import format_date_fr
 from apowerb.bi.spec.frames import MatSource
-from apowerb.bi.spec.models import FilterSpec, ResolvedFilter
+from apowerb.bi.spec.models import AGGREGATIONS, TIME_GRAINS, FilterSpec, ResolvedFilter
 
-_PRESET_RE = re.compile(r"^(\d{1,3})([wm])$")
+_PRESET_RE = re.compile(r"^(\d{1,3})([dwmy])$")
+_TO_DATE = ("ytd", "mtd")
 _ALL_STRINGS = ("", "all", "__all__", "*")
+RESHAPING = ("time_grain", "aggregation")
+GRAIN_LABELS = {
+    "hour": "Par heure",
+    "day": "Par jour",
+    "week": "Par semaine",
+    "month": "Par mois",
+    "quarter": "Par trimestre",
+    "year": "Par année",
+}
+AGGREGATION_LABELS = {"sum": "Somme", "avg": "Moyenne", "min": "Minimum", "max": "Maximum", "count": "Nombre"}
+AGGREGATION_SQL = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX", "count": "COUNT"}
+assert set(GRAIN_LABELS) == set(TIME_GRAINS) and set(AGGREGATION_LABELS) == set(AGGREGATIONS)
 
 
 @dataclass
@@ -46,6 +61,8 @@ class ActiveFilter:
 
     @property
     def restricts(self) -> bool:
+        if self.spec.type in RESHAPING:
+            return False
         if self.is_period:
             return self.lo_excl is not None or self.hi_incl is not None
         return self.value is not None
@@ -68,12 +85,20 @@ def all_label(label: str) -> str:
 def period_label(preset: str) -> str:
     if preset == "all":
         return "Toute la période"
+    if preset == "ytd":
+        return "Depuis le début de l'année"
+    if preset == "mtd":
+        return "Depuis le début du mois"
     m = _PRESET_RE.match(preset)
     if not m:
         return preset
     n, unit = int(m.group(1)), m.group(2)
+    if unit == "d":
+        return f"{n} dernier jour" if n == 1 else f"{n} derniers jours"
     if unit == "w":
         return f"{n} dernière semaine" if n == 1 else f"{n} dernières semaines"
+    if unit == "y":
+        return f"{n} dernière année" if n == 1 else f"{n} dernières années"
     return f"{n} dernier mois" if n == 1 else f"{n} derniers mois"
 
 
@@ -145,6 +170,8 @@ def resolve_filters(
             out[spec.id] = ActiveFilter(spec, ResolvedFilter(value=values, label=label), values, sources=having)
         elif spec.type == "relative_period":
             out[spec.id] = _resolve_relative(spec, raw, having, mats)
+        elif spec.type in RESHAPING:
+            out[spec.id] = _resolve_choice(spec, raw, having)
         else:
             out[spec.id] = _resolve_range(spec, raw, having)
     return out
@@ -155,9 +182,10 @@ def _resolve_relative(
 ) -> ActiveFilter:
     preset = "all" if _is_all(raw) else str(raw).strip().lower()
     match = _PRESET_RE.match(preset)
-    if preset != "all" and not match:
+    if preset != "all" and preset not in _TO_DATE and not match:
         raise SpecError(
-            f"Filtre « {spec.id} » : période « {raw} » inconnue (attendu 13w, 26w, 52w, 3m, 12m ou all)."
+            f"Filtre « {spec.id} » : période « {raw} » inconnue "
+            "(attendu <n>d, <n>w, <n>m, <n>y, ytd, mtd ou all ; ex. 7d, 13w, 12m, 1y)."
         )
     lasts = [d for d in (mats[n].real_last_date(spec.field) for n in having) if d is not None]
     if not lasts:
@@ -166,7 +194,15 @@ def _resolve_relative(
     lo: pd.Timestamp | None = None
     if match:
         n, unit = int(match.group(1)), match.group(2)
-        lo = last - (pd.Timedelta(weeks=n) if unit == "w" else pd.DateOffset(months=n))
+        lo = last - {
+            "d": pd.Timedelta(days=n),
+            "w": pd.Timedelta(weeks=n),
+            "m": pd.DateOffset(months=n),
+            "y": pd.DateOffset(years=n),
+        }[unit]
+    elif preset in _TO_DATE:
+        start = pd.Timestamp(last.year, 1 if preset == "ytd" else last.month, 1)
+        lo = start - pd.Timedelta(microseconds=1)  # lower bound is exclusive
     firsts = []
     for name in having:
         dates = pd.to_datetime(mats[name].df[spec.field], errors="coerce")
@@ -181,6 +217,20 @@ def _resolve_relative(
     )
     # Only the lower bound cuts: forecast rows after the last real date are kept.
     return ActiveFilter(spec, public, preset, lo_excl=lo, last=last, sources=having)
+
+
+def _resolve_choice(spec: FilterSpec, raw: Any, having: set[str]) -> ActiveFilter:
+    """``time_grain`` / ``aggregation``: a whitelisted keyword, ``None`` = default."""
+    allowed, labels, default = (
+        (TIME_GRAINS, GRAIN_LABELS, "Détail")
+        if spec.type == "time_grain"
+        else (AGGREGATIONS, AGGREGATION_LABELS, AGGREGATION_LABELS["sum"])
+    )
+    value = None if _is_all(raw) or str(raw).strip().lower() == "none" else str(raw).strip().lower()
+    if value is not None and value not in allowed:
+        raise SpecError(f"Filtre « {spec.id} » : valeur « {raw} » inconnue (attendu {', '.join(allowed)}).")
+    label = default if value is None else labels[value]
+    return ActiveFilter(spec, ResolvedFilter(value=value, label=label), value, sources=having)
 
 
 def _resolve_range(spec: FilterSpec, raw: Any, having: set[str]) -> ActiveFilter:

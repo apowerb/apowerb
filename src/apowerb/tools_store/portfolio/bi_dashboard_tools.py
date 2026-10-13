@@ -541,6 +541,10 @@ def tool_bi_create_dashboard(
     waterfall, table, text, note. Grid: 12 columns, give explicit positions
     without overlap. Text templates accept {{measure|percent}} and
     {{filters.<id>}}, {{period.last}}. Field names: lowercase identifiers.
+    Filter types: select, multi, date_range, relative_period (<n>d, <n>w,
+    <n>m, <n>y, ytd, mtd, all), time_grain on a date field (hour, day, week,
+    month, quarter, year: buckets the x axis) and aggregation on a number
+    field (sum, avg, min, max, count of that column).
 
     Returns the dashboard id, its relative url (/bi/<id>), the computed KPI
     values and texts, and an "errors" map with one message per component that

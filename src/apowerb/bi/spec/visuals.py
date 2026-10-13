@@ -12,6 +12,7 @@ JSON-safe (dates as ISO strings, NaN as ``None``).
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,7 +21,7 @@ import pandas as pd
 from apowerb.bi.spec import sql_guard
 from apowerb.bi.spec.duck import SqlRunner, quote_ident, to_python
 from apowerb.bi.spec.errors import SpecError
-from apowerb.bi.spec.filters import ActiveFilter, apply_filters
+from apowerb.bi.spec.filters import AGGREGATION_SQL, ActiveFilter, apply_filters
 from apowerb.bi.spec.formatting import format_date_fr, format_delta, format_value
 from apowerb.bi.spec.frames import MatSource, referenced_columns
 from apowerb.bi.spec.models import (
@@ -42,6 +43,8 @@ from apowerb.bi.spec.validate import TEMPLATE_TOKEN_RE
 TOTAL_LABEL = "Toutes"
 _RANK = {Provenance.REAL: 0, Provenance.SIMULATED: 1, Provenance.FORECAST: 2}
 _DEFAULT_WATERFALL_COLORS = {"start": "accent", "increase": "good", "decrease": "bad", "end": "accent"}
+# A measure that is exactly SUM(column): the aggregation filter may swap its function.
+_PLAIN_SUM_RE = re.compile(r'^\s*SUM\s*\(\s*(?:"((?:[^"]|"")+)"|([A-Za-z_][A-Za-z0-9_]*))\s*\)\s*$', re.IGNORECASE)
 
 
 @dataclass
@@ -123,6 +126,22 @@ class VisualBuilder:
             self.mat = ctx.mats[visual.source]
             self.measures = {m.name: m for m in self.src.measures}
             self.df, self.applied, self.ignored = ctx.frame(self.mat, frozenset(visual.ignore_filters))
+        self.grains: dict[str, str] = {}  # date field -> time grain
+        self.aggs: dict[str, str] = {}  # raw column -> aggregation keyword
+        for fid, flt in ctx.active.items():
+            if flt.value is None or self.mat is None or self.mat.name not in flt.sources:
+                continue
+            if fid in visual.ignore_filters:
+                continue
+            if flt.spec.type == "time_grain":
+                self.grains[flt.spec.field] = flt.value
+            elif flt.spec.type == "aggregation":
+                self.aggs[flt.spec.field] = flt.value
+        for name, m in list(self.measures.items()):
+            plain = _PLAIN_SUM_RE.match(m.expr)
+            col = plain and (plain.group(2) or plain.group(1).replace('""', '"'))
+            if col and col in self.aggs:
+                self.measures[name] = m.model_copy(update={"expr": self._agg(col)})
 
     # -- helpers -----------------------------------------------------------
 
@@ -156,6 +175,23 @@ class VisualBuilder:
             self._scalar_cache.update(values)
         return {n: self._scalar_cache.get(n) for n in names}
 
+    def _agg(self, column: str) -> str:
+        """Aggregate of a raw column: SUM unless an aggregation filter says otherwise."""
+        return f"{AGGREGATION_SQL[self.aggs.get(column, 'sum')]}({quote_ident(column)})"
+
+    def _x_expr(self, x: str, frame: pd.DataFrame) -> str:
+        """``x`` as grouped: bucketed by the active time grain when ``x`` is its date field."""
+        qx = quote_ident(x)
+        grain = self.grains.get(x)
+        if grain is None:
+            return qx
+        if not pd.api.types.is_datetime64_any_dtype(frame[x]):
+            warning = f"Grain temporel ignoré : « {x} » n'est pas une date."
+            if warning not in self._extra_warnings:
+                self._extra_warnings.append(warning)
+            return qx
+        return f"date_trunc('{grain}', CAST({qx} AS TIMESTAMP))"
+
     def series_defs(self) -> list[_Series]:
         out: list[_Series] = []
         for s in self.v.series:
@@ -166,7 +202,7 @@ class VisualBuilder:
                 if self.mat is None or s.key not in self.mat.df.columns:
                     raise SpecError(f"Série « {s.key} » : ni mesure ni champ de la source « {self.v.source} ».")
                 self.used_columns.add(s.key)
-                out.append(_Series(s.key, s, f"SUM({quote_ident(s.key)})", None))
+                out.append(_Series(s.key, s, self._agg(s.key), None))
         return out
 
     def grouped(self, x: str, defs: list[tuple[str, str]], df: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -176,10 +212,11 @@ class VisualBuilder:
             raise SpecError(f"Champ x inconnu « {x} » dans la source « {self.v.source} ».")
         self.used_columns.add(x)
         qx = quote_ident(x)
-        parts = [f"{qx} AS _x"]
+        bx = self._x_expr(x, frame)
+        parts = [f"{bx} AS _x"]
         for i, (_, expr) in enumerate(defs):
             parts.append(f"({sql_guard.check_expression(expr, 'Expression')}) AS _c{i}")
-        sql = f"SELECT {', '.join(parts)} FROM frame WHERE {qx} IS NOT NULL GROUP BY {qx} ORDER BY {qx}"
+        sql = f"SELECT {', '.join(parts)} FROM frame WHERE {qx} IS NOT NULL GROUP BY {bx} ORDER BY {bx}"
         return self.ctx.runner.run(sql, {"frame": frame})
 
     # -- templates ---------------------------------------------------------
@@ -507,8 +544,7 @@ class VisualBuilder:
                 numeric = pd.api.types.is_numeric_dtype(self.mat.df[c.key]) and not pd.api.types.is_bool_dtype(
                     self.mat.df[c.key]
                 )
-                q = quote_ident(c.key)
-                defs.append((c.key, f"SUM({q})" if numeric else f"ANY_VALUE({q})"))
+                defs.append((c.key, self._agg(c.key) if numeric else f"ANY_VALUE({quote_ident(c.key)})"))
             else:
                 raise SpecError(f"Colonne « {c.key} » : ni mesure ni champ de la source « {v.source} ».")
             if c.total_measure:
@@ -542,7 +578,7 @@ class VisualBuilder:
         rows: list[dict[str, Any]] = []
         if v.x:
             res = self.grouped(v.x, defs) if defs else self.ctx.runner.run(
-                f"SELECT DISTINCT {quote_ident(v.x)} AS _x FROM frame WHERE {quote_ident(v.x)} IS NOT NULL",
+                f"SELECT DISTINCT {self._x_expr(v.x, self.df)} AS _x FROM frame WHERE {quote_ident(v.x)} IS NOT NULL",
                 {"frame": self.df},
             )
             self.used_columns.add(v.x)

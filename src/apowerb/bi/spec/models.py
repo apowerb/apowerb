@@ -274,21 +274,32 @@ class SourceSpec(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+TIME_GRAINS = ("hour", "day", "week", "month", "quarter", "year")
+AGGREGATIONS = ("sum", "avg", "min", "max", "count")
+
+
 class FilterSpec(BaseModel):
     """Dashboard-wide filter. Applies to every source that has ``field``
     unless ``applies_to`` narrows it.
 
-    ``relative_period`` values: ``"13w"``, ``"26w"``, ``"52w"``, ``"3m"``,
-    ``"12m"``, ``"all"`` — resolved against the latest date of the data.
-    ``select`` value ``None`` means "all"."""
+    ``relative_period`` values: ``"<n>d"``, ``"<n>w"``, ``"<n>m"``, ``"<n>y"``
+    (n = 1..999), ``"ytd"``, ``"mtd"``, ``"all"`` — resolved against the latest
+    date of the data. ``select`` value ``None`` means "all".
+
+    ``time_grain`` and ``aggregation`` drop no rows, they reshape the visuals:
+    ``time_grain`` (one of :data:`TIME_GRAINS`, ``None`` = raw dates) buckets
+    the x axis when it is ``field``; ``aggregation`` (one of
+    :data:`AGGREGATIONS`, ``None`` = sum) is the function applied to the raw
+    column ``field`` in series and table columns, and replaces the SUM of
+    measures that are exactly ``SUM(field)``."""
 
     id: Ident
     label: str
     field: Ident
-    type: Literal["select", "multi", "relative_period", "date_range"] = "select"
+    type: Literal["select", "multi", "relative_period", "date_range", "time_grain", "aggregation"] = "select"
     default: Any = None
     applies_to: list[Ident] | None = None
-    presets: list[str] | None = None  # relative_period choices shown in the UI
+    presets: list[str] | None = None  # relative_period / time_grain / aggregation choices shown in the UI
 
 
 # ---------------------------------------------------------------------------

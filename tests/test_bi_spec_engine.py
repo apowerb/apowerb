@@ -297,7 +297,7 @@ class TestFilters:
 
     async def test_unknown_period_is_a_spec_error(self):
         with pytest.raises(SpecError):
-            await compute(build_dashboard({"k": kpi("n")}), periode="7y")
+            await compute(build_dashboard({"k": kpi("n")}), periode="7q")
 
     async def test_period_is_relative_to_last_real_value_not_forecast_rows(self):
         df = weekly_sales(weeks=60)
