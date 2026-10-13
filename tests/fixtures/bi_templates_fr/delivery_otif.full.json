@@ -1,0 +1,835 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "text": "{{filters.client}}, du {{period.from}} au {{period.to}} : {{lignes|integer}} lignes de commande, {{lignes_livrees|integer}} livrées. OTIF de {{otif|percent}} : {{a_l_heure|percent}} livrées à l'heure et {{complet|percent}} complètes.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "otif",
+     "sparkline": "otif",
+     "target_label": "cible ≥ 95 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "title": "OTIF",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "a_l_heure",
+     "sparkline": "a_l_heure",
+     "target_label": "cible ≥ 95 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "title": "Livré à l'heure",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "complet",
+     "secondary": "Taux de service quantité : {{taux_service_qte|percent}}",
+     "sparkline": "complet",
+     "target_label": "cible ≥ 95 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "title": "Livré complet",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "retard_moyen",
+     "secondary": "des lignes livrées en retard",
+     "sparkline": "retard_moyen"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "title": "Retard moyen",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 10,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "retards_en_cours",
+     "secondary": "date promise dépassée",
+     "sparkline": "retards_en_cours"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "title": "En retard non livrées",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Objectif 95 %",
+      "value": 0.95
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "otif",
+      "label": "OTIF",
+      "mark": "bar",
+      "use_thresholds": true
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "a_l_heure",
+      "label": "À l'heure",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "livraisons",
+    "steps": [],
+    "subtitle": "Par mois, selon la date promise.",
+    "title": "OTIF et livraisons à l'heure",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "client": "client"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "client"
+    ],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "95 %",
+      "value": 0.95
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "otif",
+      "label": "OTIF",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "value_asc",
+    "source": "livraisons",
+    "steps": [],
+    "subtitle": "Les moins bons en premier. Cliquer pour filtrer le tableau de bord.",
+    "title": "OTIF par client",
+    "total_row": false,
+    "type": "hbar",
+    "x": "client"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "transporteur": "carrier"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "transporteur"
+    ],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "95 %",
+      "value": 0.95
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "otif",
+      "label": "OTIF",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "value_asc",
+    "source": "livraisons",
+    "steps": [],
+    "subtitle": "Les moins bons en premier. Cliquer pour filtrer le tableau de bord.",
+    "title": "OTIF par transporteur",
+    "total_row": false,
+    "type": "hbar",
+    "x": "carrier"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 17,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "famille": "family"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "95 %",
+      "value": 0.95
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "otif",
+      "label": "OTIF",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "value_asc",
+    "source": "livraisons",
+    "steps": [],
+    "subtitle": "Les moins bons en premier. Cliquer pour filtrer le tableau de bord.",
+    "title": "OTIF par famille",
+    "total_row": false,
+    "type": "hbar",
+    "x": "family"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 23,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "client": "client"
+    },
+    "columns": [
+     {
+      "key": "client",
+      "label": "Client",
+      "use_thresholds": false
+     },
+     {
+      "key": "lignes",
+      "label": "Lignes",
+      "use_thresholds": false
+     },
+     {
+      "key": "otif",
+      "label": "OTIF",
+      "use_thresholds": true
+     },
+     {
+      "key": "a_l_heure",
+      "label": "À l'heure",
+      "use_thresholds": true
+     },
+     {
+      "key": "complet",
+      "label": "Complet",
+      "use_thresholds": true
+     },
+     {
+      "key": "retard_moyen",
+      "label": "Retard moyen",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "client",
+    "ignore_filters": [
+     "client"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "subtitle": "La ligne « Toutes » reprend les définitions globales, pas la moyenne des clients.",
+    "title": "Performance par client",
+    "total_row": true,
+    "type": "table",
+    "x": "client"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 29,
+    "width": 8
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "lignes_livrees",
+      "label": "Lignes livrées",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "livraisons",
+    "steps": [],
+    "subtitle": "Lignes livrées, par jours de retard sur la date promise.",
+    "title": "Distribution des retards",
+    "total_row": false,
+    "type": "bar",
+    "x": "tranche_retard"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 5,
+    "row": 29,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "livraisons",
+    "steps": [],
+    "text": "Les lignes en retard sont livrées en moyenne {{retard_moyen|decimal1}} jours après la date promise. {{retards_en_cours|integer}} lignes ne sont pas encore livrées alors que leur date promise est dépassée. Le taux de service quantité est de {{taux_service_qte|percent}}.",
+    "title": "Lecture des retards",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 34,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**À l'heure** : livrée à la date promise ou avant. **Complet** : quantité livrée au moins égale à la quantité commandée. **OTIF** : à l'heure et complet. Les taux sont calculés sur les lignes livrées.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 4,
+    "row": 34,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Vert à partir de 95 % d'OTIF, orange entre 90 % et 95 %, rouge en dessous. La période se mesure sur la date promise.",
+    "title": "Seuils",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 4,
+    "row": 34,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Une ligne non livrée est en retard si sa date promise précède la dernière livraison connue du fichier (et non la date du jour). Elle n'entre pas dans les taux tant qu'elle n'est pas livrée. Le taux de service quantité compte les lignes échues, livrées ou en retard.",
+    "title": "Lignes non livrées",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "12m",
+   "field": "date_promise",
+   "id": "periode",
+   "label": "Période (date promise)",
+   "presets": [
+    "3m",
+    "6m",
+    "12m",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "client",
+   "id": "client",
+   "label": "Client",
+   "type": "select"
+  },
+  {
+   "field": "carrier",
+   "id": "transporteur",
+   "label": "Transporteur",
+   "type": "select"
+  },
+  {
+   "field": "family",
+   "id": "famille",
+   "label": "Famille",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Date de commande",
+     "name": "date_commande",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Date promise",
+     "name": "date_promise",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Date de livraison",
+     "name": "date_livraison",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "format": "compact",
+     "label": "Quantité commandée",
+     "name": "qte_commandee",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Quantité livrée",
+     "name": "qte_livree",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Client",
+     "name": "client",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Transporteur",
+     "name": "carrier",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Famille",
+     "name": "family",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "integer",
+     "label": "Ligne livrée",
+     "name": "ligne_livree",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Ligne livrée à l'heure",
+     "name": "ligne_a_lheure",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Ligne livrée complète",
+     "name": "ligne_complete",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Ligne OTIF",
+     "name": "ligne_otif",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "decimal1",
+     "label": "Retard (jours)",
+     "name": "retard_jours",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Tranche de retard",
+     "name": "tranche_retard",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "integer",
+     "label": "Ligne en retard non livrée",
+     "name": "ligne_en_retard_ouverte",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Ligne échue",
+     "name": "ligne_echue",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Quantité due",
+     "name": "qte_due",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Quantité servie",
+     "name": "qte_servie",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Mois",
+     "name": "periode_mois",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Lignes de commande livrées",
+   "measures": [
+    {
+     "expr": "COUNT(*)",
+     "format": "integer",
+     "label": "Lignes de commande",
+     "name": "lignes",
+     "unit": "lignes"
+    },
+    {
+     "expr": "SUM(ligne_livree)",
+     "format": "integer",
+     "label": "Lignes livrées",
+     "name": "lignes_livrees",
+     "unit": "lignes"
+    },
+    {
+     "description": "Lignes livrées à la date promise ou avant, sur les lignes livrées.",
+     "expr": "AVG(ligne_a_lheure)",
+     "format": "percent",
+     "label": "Livré à l'heure",
+     "name": "a_l_heure",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.95,
+      "warn": 0.9
+     }
+    },
+    {
+     "description": "Lignes livrées avec au moins la quantité commandée.",
+     "expr": "AVG(ligne_complete)",
+     "format": "percent",
+     "label": "Livré complet",
+     "name": "complet",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.95,
+      "warn": 0.9
+     }
+    },
+    {
+     "description": "On Time In Full : lignes livrées à l'heure et complètes, sur les lignes livrées.",
+     "expr": "AVG(ligne_otif)",
+     "format": "percent",
+     "label": "OTIF",
+     "name": "otif",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.95,
+      "warn": 0.9
+     }
+    },
+    {
+     "description": "Jours de retard moyens des lignes livrées en retard.",
+     "expr": "AVG(retard_jours)",
+     "format": "decimal1",
+     "label": "Retard moyen",
+     "name": "retard_moyen",
+     "unit": "jours"
+    },
+    {
+     "description": "Lignes non livrées dont la date promise précède la dernière livraison connue.",
+     "expr": "COALESCE(SUM(ligne_en_retard_ouverte), 0)",
+     "format": "integer",
+     "label": "En retard non livrées",
+     "name": "retards_en_cours",
+     "unit": "lignes"
+    },
+    {
+     "description": "Quantité livrée (plafonnée à la commande) sur la quantité commandée des lignes échues.",
+     "expr": "SUM(qte_servie) / NULLIF(SUM(qte_due), 0)",
+     "format": "percent",
+     "label": "Taux de service quantité",
+     "name": "taux_service_qte"
+    }
+   ],
+   "name": "livraisons",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "ligne_livree",
+     "expr": "CASE WHEN \"date_livraison\" IS NULL THEN 0 ELSE 1 END",
+     "op": "derive"
+    },
+    {
+     "column": "ligne_a_lheure",
+     "expr": "CASE WHEN \"date_livraison\" IS NULL OR \"date_promise\" IS NULL THEN NULL WHEN CAST(\"date_livraison\" AS DATE) <= CAST(\"date_promise\" AS DATE) THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "ligne_complete",
+     "expr": "CASE WHEN \"date_livraison\" IS NULL THEN NULL WHEN COALESCE(\"qte_livree\", 0) >= \"qte_commandee\" THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "ligne_otif",
+     "expr": "ligne_a_lheure * ligne_complete",
+     "op": "derive"
+    },
+    {
+     "column": "retard_jours",
+     "expr": "CASE WHEN \"date_livraison\" IS NOT NULL AND \"date_promise\" IS NOT NULL AND CAST(\"date_livraison\" AS DATE) > CAST(\"date_promise\" AS DATE) THEN date_diff('day', CAST(\"date_promise\" AS DATE), CAST(\"date_livraison\" AS DATE)) END",
+     "op": "derive"
+    },
+    {
+     "column": "tranche_retard",
+     "expr": "CASE WHEN \"date_livraison\" IS NULL OR \"date_promise\" IS NULL THEN NULL WHEN retard_jours IS NULL THEN '0 j' WHEN retard_jours <= 2 THEN '1-2 j' WHEN retard_jours <= 5 THEN '3-5 j' WHEN retard_jours <= 10 THEN '6-10 j' ELSE '> 10 j' END",
+     "op": "derive"
+    },
+    {
+     "column": "ligne_en_retard_ouverte",
+     "expr": "CASE WHEN \"date_livraison\" IS NULL AND \"date_promise\" IS NOT NULL AND CAST(\"date_promise\" AS DATE) < CAST(MAX(\"date_livraison\") OVER () AS DATE) THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "ligne_echue",
+     "expr": "CASE WHEN ligne_livree = 1 OR ligne_en_retard_ouverte = 1 THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "qte_due",
+     "expr": "CASE WHEN ligne_echue = 1 THEN \"qte_commandee\" END",
+     "op": "derive"
+    },
+    {
+     "column": "qte_servie",
+     "expr": "CASE WHEN ligne_echue = 1 THEN LEAST(COALESCE(\"qte_livree\", 0), \"qte_commandee\") END",
+     "op": "derive"
+    },
+    {
+     "column": "periode_mois",
+     "expr": "date_trunc('month', CAST(\"date_promise\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}

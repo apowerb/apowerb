@@ -1,0 +1,742 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "text": "Solde actuel de {{solde_actuel|compact}} €. À 13 semaines : {{solde_horizon_central|compact}} € dans le scénario central, {{solde_horizon_pessimiste|compact}} € dans le pessimiste et {{solde_horizon_optimiste|compact}} € dans l'optimiste. Trésorerie couvrant {{semaines_tresorerie|decimal1}} semaines de décaissements.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "solde_actuel",
+     "secondary": "Dernière période réelle"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "Solde actuel",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "solde_horizon_central",
+     "secondary": "Pessimiste : {{solde_horizon_pessimiste|compact}} € · optimiste : {{solde_horizon_optimiste|compact}} €"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "Solde à 13 semaines",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "premiere_sous_seuil",
+     "secondary": "Pessimiste : {{premiere_sous_seuil_pessimiste|integer}} · optimiste : {{premiere_sous_seuil_optimiste|integer}} (— : jamais)"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "Première période sous le seuil",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "semaines_tresorerie",
+     "secondary": "Solde ÷ décaissements moyens prévus"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "Semaines de trésorerie",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "solde_central_plan",
+      "label": "Central",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "bad",
+      "color_rules": [],
+      "dash": true,
+      "key": "solde_pessimiste_plan",
+      "label": "Pessimiste",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "good",
+      "color_rules": [],
+      "dash": true,
+      "key": "solde_optimiste_plan",
+      "label": "Optimiste",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": true,
+      "key": "seuil_total",
+      "label": "Seuil de trésorerie minimale",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "plan",
+    "steps": [],
+    "subtitle": "Solde réel jusqu'à aujourd'hui, puis projeté sur 13 semaines. Pessimiste : encaissements -10 %, décaissements +10 %. Optimiste : l'inverse.",
+    "title": "Solde de trésorerie : trois scénarios",
+    "total_row": false,
+    "type": "combo",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "compte": "account"
+    },
+    "columns": [
+     {
+      "key": "account",
+      "label": "Compte",
+      "use_thresholds": false
+     },
+     {
+      "key": "solde_actuel",
+      "label": "Solde actuel",
+      "use_thresholds": false
+     },
+     {
+      "key": "solde_horizon_central",
+      "label": "Central à l'horizon",
+      "use_thresholds": false
+     },
+     {
+      "key": "solde_horizon_pessimiste",
+      "label": "Pessimiste à l'horizon",
+      "use_thresholds": false
+     },
+     {
+      "key": "solde_horizon_optimiste",
+      "label": "Optimiste à l'horizon",
+      "use_thresholds": false
+     },
+     {
+      "key": "premiere_sous_seuil",
+      "label": "Première période sous le seuil",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "compte",
+    "ignore_filters": [
+     "compte"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "subtitle": "Cliquer sur un compte pour filtrer le tableau de bord.",
+    "title": "Trésorerie par compte",
+    "total_row": true,
+    "type": "table",
+    "x": "account"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 16,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "encaissements_prevus_m",
+      "label": "Encaissements",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "decaissements_prevus_m",
+      "label": "Décaissements",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": false,
+      "key": "flux_net_m",
+      "label": "Flux net",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "horizon",
+    "steps": [],
+    "subtitle": "Encaissements et décaissements prévus (scénario central) et flux net.",
+    "title": "Flux prévus, semaine par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real",
+     "forecast",
+     "simulated"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les encaissements (`encaissements`), les décaissements (`decaissements`) et le solde (`balance`) sont les données réelles du fichier. Les flux à venir sont prévus par le moteur de prévision ; les scénarios pessimiste et optimiste sont des hypothèses.",
+    "title": "Origine des données",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "forecast",
+     "simulated"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Solde = solde de la période précédente + encaissements - décaissements. Central : flux prévus. Pessimiste : encaissements × (1 - 10 %) et décaissements × (1 + 10 %). Optimiste : encaissements × (1 + 10 %) et décaissements × (1 - 10 %). Seuil de trésorerie minimale : la colonne `threshold`, par compte ; une période est « sous le seuil » si le solde lui est strictement inférieur. Si le moteur ne répond pas, les flux valent la moyenne des 4 dernières périodes et un avertissement l'indique.",
+    "title": "Règle de calcul et scénarios",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Une ligne par période (et par compte). Les encaissements et décaissements sont des montants positifs. Les échéances connues (loyers, emprunts, salaires, factures à venir) ne sont pas intégrées : la prévision extrapole l'historique. Sans filtre de compte, le seuil affiché est la somme des seuils des comptes.",
+    "title": "Limites",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "field": "account",
+   "id": "compte",
+   "label": "Compte",
+   "type": "select"
+  },
+  {
+   "applies_to": [
+    "tresorerie"
+   ],
+   "default": "52w",
+   "field": "semaine",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "26w",
+    "52w",
+    "104w",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Période",
+     "name": "semaine",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Compte",
+     "name": "account",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Encaissements",
+     "name": "encaissements",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Décaissements",
+     "name": "decaissements",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Solde",
+     "name": "balance",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Seuil de trésorerie minimale",
+     "name": "threshold",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Historique de trésorerie",
+   "measures": [],
+   "name": "tresorerie",
+   "source_options": {},
+   "transforms": []
+  },
+  {
+   "fields": [
+    {
+     "format": "compact",
+     "label": "Encaissements prévus (moteur)",
+     "name": "encaissements_prevus",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Décaissements prévus (moteur)",
+     "name": "decaissements_prevus",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Solde (réel puis central)",
+     "name": "solde_projete_central",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Solde pessimiste",
+     "name": "solde_projete_pessimiste",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Solde optimiste",
+     "name": "solde_projete_optimiste",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Encaissements projetés",
+     "name": "encaissements_projetes",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Décaissements projetés",
+     "name": "decaissements_projetes",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Flux net projeté",
+     "name": "flux_net_projete",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Seuil de trésorerie minimale",
+     "name": "seuil_tresorerie",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Sous le seuil (central)",
+     "name": "sous_seuil_central",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Sous le seuil (pessimiste)",
+     "name": "sous_seuil_pessimiste",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Sous le seuil (optimiste)",
+     "name": "sous_seuil_optimiste",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Période du plan",
+     "name": "semaine_plan",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "number"
+    }
+   ],
+   "kind": "source",
+   "label": "Prévision de trésorerie",
+   "measures": [
+    {
+     "description": "Solde de la dernière période réelle.",
+     "expr": "SUM(solde_projete_central) FILTER (WHERE semaine_plan = 0)",
+     "format": "compact",
+     "label": "Solde actuel",
+     "name": "solde_actuel",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(solde_projete_central) FILTER (WHERE semaine_plan = 13)",
+     "format": "compact",
+     "label": "Solde à l'horizon (central)",
+     "name": "solde_horizon_central",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(solde_projete_pessimiste) FILTER (WHERE semaine_plan = 13)",
+     "format": "compact",
+     "label": "Solde à l'horizon (pessimiste)",
+     "name": "solde_horizon_pessimiste",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(solde_projete_optimiste) FILTER (WHERE semaine_plan = 13)",
+     "format": "compact",
+     "label": "Solde à l'horizon (optimiste)",
+     "name": "solde_horizon_optimiste",
+     "unit": "€"
+    },
+    {
+     "description": "Période du plan (1 = prochaine période) où un compte passe sous son seuil, scénario central ; vide si jamais.",
+     "expr": "MIN(semaine_plan) FILTER (WHERE sous_seuil_central = 1)",
+     "format": "integer",
+     "label": "Première période sous le seuil",
+     "name": "premiere_sous_seuil",
+     "unit": "sem."
+    },
+    {
+     "expr": "MIN(semaine_plan) FILTER (WHERE sous_seuil_pessimiste = 1)",
+     "format": "integer",
+     "label": "Première période sous le seuil (pessimiste)",
+     "name": "premiere_sous_seuil_pessimiste",
+     "unit": "sem."
+    },
+    {
+     "expr": "MIN(semaine_plan) FILTER (WHERE sous_seuil_optimiste = 1)",
+     "format": "integer",
+     "label": "Première période sous le seuil (optimiste)",
+     "name": "premiere_sous_seuil_optimiste",
+     "unit": "sem."
+    },
+    {
+     "description": "Solde actuel ÷ décaissements moyens par période de l'horizon.",
+     "expr": "SUM(solde_projete_central) FILTER (WHERE semaine_plan = 0) / NULLIF(SUM(decaissements_projetes) FILTER (WHERE semaine_plan >= 1) / NULLIF(COUNT(DISTINCT semaine) FILTER (WHERE semaine_plan >= 1), 0), 0)",
+     "format": "weeks",
+     "label": "Semaines de trésorerie",
+     "name": "semaines_tresorerie"
+    },
+    {
+     "expr": "SUM(encaissements_projetes) FILTER (WHERE semaine_plan >= 1)",
+     "format": "compact",
+     "label": "Encaissements prévus sur l'horizon",
+     "name": "encaissements_horizon",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(decaissements_projetes) FILTER (WHERE semaine_plan >= 1)",
+     "format": "compact",
+     "label": "Décaissements prévus sur l'horizon",
+     "name": "decaissements_horizon",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(solde_projete_central)",
+     "format": "compact",
+     "label": "Central",
+     "name": "solde_central_plan",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(solde_projete_pessimiste)",
+     "format": "compact",
+     "label": "Pessimiste",
+     "name": "solde_pessimiste_plan",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(solde_projete_optimiste)",
+     "format": "compact",
+     "label": "Optimiste",
+     "name": "solde_optimiste_plan",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(seuil_tresorerie)",
+     "format": "compact",
+     "label": "Seuil de trésorerie minimale",
+     "name": "seuil_total",
+     "unit": "€"
+    }
+   ],
+   "name": "plan",
+   "parent": "tresorerie",
+   "source_options": {},
+   "transforms": [
+    {
+     "by": [
+      "account"
+     ],
+     "date": "semaine",
+     "horizon": 13,
+     "op": "forecast",
+     "output": "encaissements_prevus",
+     "value": "encaissements"
+    },
+    {
+     "by": [
+      "account"
+     ],
+     "date": "semaine",
+     "horizon": 13,
+     "op": "forecast",
+     "output": "decaissements_prevus",
+     "value": "decaissements"
+    },
+    {
+     "balance": "balance",
+     "by": [
+      "account"
+     ],
+     "date": "semaine",
+     "fallback_window": 4,
+     "forecast_inflow": "encaissements_prevus",
+     "forecast_outflow": "decaissements_prevus",
+     "horizon": 13,
+     "inflow": "encaissements",
+     "inflow_shock": 0.1,
+     "keep_history": 26,
+     "min_cash": 0.0,
+     "min_cash_column": "threshold",
+     "op": "cash_forecast",
+     "opening_balance": 0.0,
+     "outflow": "decaissements",
+     "outflow_shock": 0.1
+    }
+   ]
+  },
+  {
+   "fields": [],
+   "kind": "source",
+   "label": "Flux sur 13 semaines",
+   "measures": [
+    {
+     "expr": "COALESCE(SUM(encaissements_projetes), 0)",
+     "format": "compact",
+     "label": "Encaissements",
+     "name": "encaissements_prevus_m",
+     "unit": "€"
+    },
+    {
+     "expr": "COALESCE(SUM(decaissements_projetes), 0)",
+     "format": "compact",
+     "label": "Décaissements",
+     "name": "decaissements_prevus_m",
+     "unit": "€"
+    },
+    {
+     "expr": "COALESCE(SUM(flux_net_projete), 0)",
+     "format": "compact",
+     "label": "Flux net",
+     "name": "flux_net_m",
+     "unit": "€"
+    }
+   ],
+   "name": "horizon",
+   "parent": "plan",
+   "source_options": {},
+   "transforms": [
+    {
+     "op": "filter",
+     "where": "semaine_plan >= 1"
+    }
+   ]
+  }
+ ]
+}

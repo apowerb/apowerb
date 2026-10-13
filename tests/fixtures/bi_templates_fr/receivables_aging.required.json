@@ -1,0 +1,563 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "creances",
+    "steps": [],
+    "text": "{{filters.client}}, du {{period.from}} au {{period.to}} : {{factures|integer}} factures pour {{ca_facture|compact}}. Encours de {{encours|compact}}, dont {{encours_echu|compact}} échu ({{pct_echu|percent}}). DSO de {{dso|decimal1}} jours.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "encours",
+     "sparkline": "encours"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "creances",
+    "steps": [],
+    "title": "Encours total",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "encours_echu",
+     "sparkline": "encours_echu"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "creances",
+    "steps": [],
+    "title": "Encours échu",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "pct_echu",
+     "sparkline": "pct_echu",
+     "target_label": "cible ≤ 10 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "creances",
+    "steps": [],
+    "title": "% échu",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "dso",
+     "target_label": "cible ≤ 45 jours"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "creances",
+    "steps": [],
+    "title": "DSO",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca_facture",
+      "label": "Facturation",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "encours",
+      "label": "Encore dû",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "creances",
+    "steps": [],
+    "subtitle": "Facturation du mois et part encore due sur ces factures.",
+    "title": "Facturation mensuelle",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "tranche": "tranche_anciennete"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "tranche"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "encours",
+      "label": "Encours",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "creances",
+    "steps": [],
+    "subtitle": "Reste dû par jours de retard après l'échéance. Cliquer pour filtrer le tableau de bord.",
+    "title": "Encours par ancienneté",
+    "total_row": false,
+    "type": "bar",
+    "x": "tranche_anciennete"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "client": "client"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "client"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "encours_echu",
+      "label": "Encours échu",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "creances",
+    "steps": [],
+    "subtitle": "Dix plus gros encours échus. Cliquer pour filtrer le tableau de bord.",
+    "title": "Clients les plus en retard",
+    "top_n": 10,
+    "total_row": false,
+    "type": "hbar",
+    "x": "client"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 17,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "client": "client"
+    },
+    "columns": [
+     {
+      "key": "client",
+      "label": "Client",
+      "use_thresholds": false
+     },
+     {
+      "key": "encours",
+      "label": "Encours",
+      "use_thresholds": false
+     },
+     {
+      "key": "encours_echu",
+      "label": "Encours échu",
+      "use_thresholds": false
+     },
+     {
+      "key": "pct_echu",
+      "label": "% échu",
+      "use_thresholds": true
+     },
+     {
+      "key": "retard_moyen",
+      "label": "Retard moyen",
+      "use_thresholds": false
+     },
+     {
+      "key": "factures",
+      "label": "Factures",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "client",
+    "ignore_filters": [
+     "client"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "sort": "value_desc",
+    "source": "creances",
+    "steps": [],
+    "subtitle": "La ligne « Toutes » reprend les définitions globales, pas la moyenne des clients.",
+    "title": "Encours par client",
+    "total_row": true,
+    "type": "table",
+    "x": "client"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 23,
+    "width": 6
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Échu** : facture non soldée dont l'échéance précède la date de référence. **Tranches** : jours de retard après l'échéance (non échu, 0-30, 31-60, 61-90, plus de 90). **% échu** : encours échu sur encours total. La période se mesure sur la date de facture.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 4,
+    "row": 23,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "La date de référence est la dernière date de facture du fichier (et non la date du jour). Le DSO est l'encours divisé par la facturation des 90 derniers jours jusqu'à cette date, multiplié par 90 ; il suit les filtres actifs. Vert sous 45 jours, orange jusqu'à 60, rouge au-delà.",
+    "title": "Date de référence et DSO",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "all",
+   "field": "date_facture",
+   "id": "periode",
+   "label": "Période (date de facture)",
+   "presets": [
+    "3m",
+    "6m",
+    "12m",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "client",
+   "id": "client",
+   "label": "Client",
+   "type": "select"
+  },
+  {
+   "field": "tranche_anciennete",
+   "id": "tranche",
+   "label": "Ancienneté",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Client",
+     "name": "client",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Date de facture",
+     "name": "date_facture",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Date d'échéance",
+     "name": "date_echeance",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "format": "compact",
+     "label": "Montant",
+     "name": "montant",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Reste dû",
+     "name": "reste_du",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Jours de retard",
+     "name": "jours_retard",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Reste dû échu",
+     "name": "reste_echu",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Tranche d'ancienneté",
+     "name": "tranche_anciennete",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Facturé sur 90 jours",
+     "name": "ca_90j",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Mois",
+     "name": "periode_mois",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Factures clients",
+   "measures": [
+    {
+     "expr": "COUNT(*)",
+     "format": "integer",
+     "label": "Factures",
+     "name": "factures",
+     "unit": "factures"
+    },
+    {
+     "expr": "SUM(\"montant\")",
+     "format": "compact",
+     "label": "Facturation",
+     "name": "ca_facture"
+    },
+    {
+     "description": "Reste dû sur l'ensemble des factures, échues ou non.",
+     "expr": "COALESCE(SUM(reste_du), 0)",
+     "format": "compact",
+     "label": "Encours total",
+     "name": "encours"
+    },
+    {
+     "description": "Reste dû des factures dont l'échéance précède la dernière date de facture du fichier.",
+     "expr": "COALESCE(SUM(reste_echu), 0)",
+     "format": "compact",
+     "label": "Encours échu",
+     "name": "encours_echu"
+    },
+    {
+     "description": "Encours échu sur encours total.",
+     "expr": "COALESCE(SUM(reste_echu), 0) / NULLIF(SUM(reste_du), 0)",
+     "format": "percent",
+     "label": "% échu",
+     "name": "pct_echu",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.1,
+      "warn": 0.25
+     }
+    },
+    {
+     "description": "Encours divisé par la facturation des 90 derniers jours (jusqu'à la dernière date de facture du fichier), multiplié par 90.",
+     "expr": "SUM(reste_du) / NULLIF(SUM(ca_90j), 0) * 90",
+     "format": "decimal1",
+     "label": "DSO",
+     "name": "dso",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 45.0,
+      "warn": 60.0
+     },
+     "unit": "jours"
+    },
+    {
+     "description": "Jours de retard moyens des factures échues non soldées.",
+     "expr": "AVG(jours_retard)",
+     "format": "decimal1",
+     "label": "Retard moyen",
+     "name": "retard_moyen",
+     "unit": "jours"
+    },
+    {
+     "expr": "MAX(jours_retard)",
+     "format": "integer",
+     "label": "Retard maximal",
+     "name": "retard_max",
+     "unit": "jours"
+    }
+   ],
+   "name": "creances",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "reste_du",
+     "expr": "COALESCE(\"montant\", 0)",
+     "op": "derive"
+    },
+    {
+     "column": "jours_retard",
+     "expr": "CASE WHEN reste_du > 0 AND \"date_echeance\" IS NOT NULL AND CAST(\"date_echeance\" AS DATE) < CAST(MAX(\"date_facture\") OVER () AS DATE) THEN date_diff('day', CAST(\"date_echeance\" AS DATE), CAST(MAX(\"date_facture\") OVER () AS DATE)) END",
+     "op": "derive"
+    },
+    {
+     "column": "reste_echu",
+     "expr": "CASE WHEN jours_retard IS NOT NULL THEN reste_du END",
+     "op": "derive"
+    },
+    {
+     "column": "tranche_anciennete",
+     "expr": "CASE WHEN reste_du > 0 AND \"date_echeance\" IS NOT NULL THEN CASE WHEN jours_retard IS NULL THEN '1. Non échu' WHEN jours_retard <= 30 THEN '2. 0-30 j' WHEN jours_retard <= 60 THEN '3. 31-60 j' WHEN jours_retard <= 90 THEN '4. 61-90 j' ELSE '5. > 90 j' END END",
+     "op": "derive"
+    },
+    {
+     "column": "ca_90j",
+     "expr": "CASE WHEN date_diff('day', CAST(\"date_facture\" AS DATE), CAST(MAX(\"date_facture\") OVER () AS DATE)) < 90 THEN \"montant\" END",
+     "op": "derive"
+    },
+    {
+     "column": "periode_mois",
+     "expr": "date_trunc('month', CAST(\"date_facture\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}

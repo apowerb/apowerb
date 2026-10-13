@@ -1,0 +1,1035 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "text": "{{filters.famille}}, semaine du {{period.last}} : stock de {{stock_fin_semaine|compact}} unités, soit {{couverture|weeks}} de couverture. Sur la période, la demande a été servie à {{taux_service|percent}}, la prévision est fiable à {{fiabilite|percent}} et le stock est passé {{semaines_sous_secu|integer}} fois sous le stock de sécurité.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "stock_fin_semaine",
+     "secondary": "{{variation_stock|percent}} vs semaine précédente",
+     "sparkline": "stock_total"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "title": "Stock fin de semaine",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 2,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "couverture",
+     "secondary": "Stock ÷ prévision de la semaine",
+     "sparkline": "couverture_hebdo"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "title": "Couverture",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "taux_service",
+     "sparkline": "taux_service",
+     "target_label": "cible ≥ 99 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "title": "Taux de service",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "fiabilite",
+     "secondary": "Biais : {{biais|percent}}",
+     "target_label": "cible ≥ 90 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "title": "Fiabilité de la prévision",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "semaines_sous_secu",
+     "secondary": "risque de rupture"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "title": "Semaines sous sécu",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 10,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "appro_recus",
+     "secondary": "Ventes : {{ventes_totales|compact}}",
+     "sparkline": "appro_total"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "title": "Approvisionnements reçus",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "good",
+      "color_rules": [],
+      "dash": false,
+      "key": "stock_total",
+      "label": "Stock fin de semaine",
+      "mark": "area",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "prevision_totale",
+      "label": "Prévision",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "appro_total",
+      "label": "Approvisionnements",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": true,
+      "key": "securite_totale",
+      "label": "Stock de sécurité",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "stocks",
+    "steps": [],
+    "title": "Stock, prévision et approvisionnements par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [
+       {
+        "color": "good",
+        "op": ">",
+        "value": 0.0
+       },
+       {
+        "color": "#9a6b3f",
+        "op": "<",
+        "value": 0.0
+       }
+      ],
+      "dash": false,
+      "key": "ecart_total",
+      "label": "Écart",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "stocks",
+    "steps": [],
+    "subtitle": "Positif : les ventes dépassent la prévision.",
+    "title": "Écart ventes - prévision",
+    "total_row": false,
+    "type": "diverging_bar",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 5,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "1 semaine",
+      "value": 1.0
+     },
+     {
+      "color": "bad",
+      "dash": true,
+      "label": "0,5 semaine",
+      "value": 0.5
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "couverture_hebdo",
+      "label": "Couverture",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "x_asc",
+    "source": "stocks",
+    "steps": [],
+    "subtitle": "Semaines de ventes couvertes par le stock.",
+    "title": "Couverture par semaine",
+    "total_row": false,
+    "type": "bar",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 16,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "famille": "famille"
+    },
+    "columns": [
+     {
+      "key": "famille",
+      "label": "Famille",
+      "use_thresholds": false
+     },
+     {
+      "key": "stock_fin_semaine",
+      "label": "Stock fin",
+      "use_thresholds": false
+     },
+     {
+      "key": "couverture",
+      "label": "Couverture",
+      "use_thresholds": true
+     },
+     {
+      "key": "taux_service",
+      "label": "Taux de service",
+      "use_thresholds": true
+     },
+     {
+      "key": "fiabilite",
+      "label": "Fiabilité",
+      "use_thresholds": true
+     },
+     {
+      "key": "biais",
+      "label": "Biais",
+      "use_thresholds": false
+     },
+     {
+      "key": "semaines_sous_secu_famille",
+      "label": "Semaines sous sécu",
+      "total_measure": "semaines_sous_secu",
+      "use_thresholds": true
+     }
+    ],
+    "highlight_filter": "famille",
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [],
+    "subtitle": "Cliquer sur une famille pour filtrer le tableau de bord.",
+    "title": "Comparatif par famille",
+    "total_row": true,
+    "type": "table",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 21,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "stocks",
+    "steps": [
+     {
+      "kind": "start",
+      "label": "Stock début",
+      "measure": "stock_debut_periode"
+     },
+     {
+      "color": "#3b6fd8",
+      "kind": "increase",
+      "label": "Approvisionnements",
+      "measure": "appro_recus"
+     },
+     {
+      "color": "#9a6b3f",
+      "kind": "decrease",
+      "label": "Ventes servies",
+      "measure": "ventes_servies_total"
+     },
+     {
+      "kind": "end",
+      "label": "Stock fin",
+      "measure": "stock_fin_semaine"
+     }
+    ],
+    "subtitle": "De la première à la dernière semaine de la période.",
+    "title": "Pourquoi le stock a bougé",
+    "total_row": false,
+    "type": "waterfall"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 21,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "erreur_abs",
+      "label": "Erreur absolue",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "stocks",
+    "steps": [],
+    "subtitle": "Somme des écarts absolus entre ventes et prévision.",
+    "title": "Qui pèse dans l'erreur de prévision",
+    "total_row": false,
+    "type": "hbar",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 27,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": false,
+      "key": "biais",
+      "label": "Biais",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "stocks",
+    "steps": [],
+    "subtitle": "Biais moyen par mois : positif quand les ventes dépassent la prévision.",
+    "title": "Quand la prévision se trompe",
+    "total_row": false,
+    "type": "bar",
+    "x": "mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 32,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real",
+     "forecast",
+     "simulated"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les ventes (`ventes`) sont les données réelles du fichier importé. La prévision est calculée à partir de ces ventes. Les stocks, approvisionnements et commandes sont simulés : ils n'ont pas été mesurés en entrepôt.",
+    "title": "Origine des données",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 4,
+    "row": 32,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "forecast"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "La prévision est volontairement simple : au début de l'historique, moyenne des 4 semaines précédentes ; ensuite, ventes de la même semaine l'an dernier, corrigées de la tendance récente (bornée entre 0,8 et 1,25).",
+    "title": "Méthode de prévision",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 4,
+    "row": 32,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "simulated"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Stock de sécurité : 0,5 × la prévision de la semaine. Commande : 1,4 × la prévision de la semaine suivante + stock de sécurité - stock en fin de semaine. Délai de livraison : 1 semaine. Les commandes sont arrondies au lot de 100 unités.",
+    "title": "Règles de réapprovisionnement simulées",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 36,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Couverture** : stock de fin de semaine ÷ prévision de la semaine. **Taux de service** : part de la demande servie. **Fiabilité** : 1 - erreur absolue ÷ ventes. **Biais** : (ventes - prévision) ÷ prévision. **Semaines sous sécu** : semaines où le stock total passe sous le stock de sécurité total.",
+    "title": "Définition des KPI",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 4,
+    "row": 36,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les stocks sont simulés : ils illustrent la méthode, ils ne remplacent pas l'inventaire réel. La prévision ne connaît ni les promotions ni les ruptures passées. Les chiffres dépendent des paramètres de simulation ci-contre.",
+    "title": "Limites",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "field": "famille",
+   "id": "famille",
+   "label": "Famille",
+   "type": "select"
+  },
+  {
+   "applies_to": [
+    "stocks"
+   ],
+   "default": "26w",
+   "field": "semaine",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "13w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Semaine",
+     "name": "semaine",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Famille",
+     "name": "famille",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Ventes",
+     "name": "ventes",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Prévision",
+     "name": "prevision",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Stock début de semaine",
+     "name": "stock_debut",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Approvisionnements reçus",
+     "name": "appro",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Ventes servies",
+     "name": "ventes_servies",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Demande non servie",
+     "name": "demande_non_servie",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Stock fin de semaine",
+     "name": "stock_fin",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Stock de sécurité",
+     "name": "stock_securite",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Commande",
+     "name": "commande",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Écart ventes - prévision",
+     "name": "ecart",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "weeks",
+     "label": "Couverture",
+     "name": "couverture_semaine",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Sous le stock de sécurité",
+     "name": "sous_secu",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "boolean"
+    },
+    {
+     "label": "Mois",
+     "name": "mois",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Stocks et prévisions",
+   "measures": [
+    {
+     "description": "Stock de la dernière semaine de la période.",
+     "expr": "SUM(stock_fin) FILTER (WHERE semaine = (SELECT MAX(semaine) FROM frame))",
+     "format": "compact",
+     "label": "Stock fin de semaine",
+     "name": "stock_fin_semaine",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(stock_fin) FILTER (WHERE semaine = (SELECT MAX(semaine) FROM frame WHERE semaine < (SELECT MAX(semaine) FROM frame)))",
+     "format": "compact",
+     "label": "Stock semaine précédente",
+     "name": "stock_semaine_precedente",
+     "unit": "unités"
+    },
+    {
+     "description": "Stock de la dernière semaine par rapport à la semaine précédente.",
+     "expr": "SUM(stock_fin) FILTER (WHERE semaine = (SELECT MAX(semaine) FROM frame)) / NULLIF(SUM(stock_fin) FILTER (WHERE semaine = (SELECT MAX(semaine) FROM frame WHERE semaine < (SELECT MAX(semaine) FROM frame))), 0) - 1",
+     "format": "percent",
+     "label": "Variation du stock",
+     "name": "variation_stock"
+    },
+    {
+     "description": "Stock fin de semaine ÷ prévision de cette semaine.",
+     "expr": "SUM(stock_fin) FILTER (WHERE semaine = (SELECT MAX(semaine) FROM frame)) / NULLIF(SUM(prevision) FILTER (WHERE semaine = (SELECT MAX(semaine) FROM frame)), 0)",
+     "format": "weeks",
+     "label": "Couverture",
+     "name": "couverture",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 1.0,
+      "warn": 0.5
+     }
+    },
+    {
+     "description": "Part de la demande servie sur la période.",
+     "expr": "1 - SUM(demande_non_servie) / NULLIF(SUM(ventes), 0)",
+     "format": "percent",
+     "label": "Taux de service",
+     "name": "taux_service",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.99,
+      "warn": 0.97
+     }
+    },
+    {
+     "description": "1 moins l'erreur absolue totale rapportée aux ventes.",
+     "expr": "1 - SUM(ABS(ventes - prevision)) / NULLIF(SUM(ventes), 0)",
+     "format": "percent",
+     "label": "Fiabilité de la prévision",
+     "name": "fiabilite",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.9,
+      "warn": 0.8
+     }
+    },
+    {
+     "description": "Positif : la prévision est inférieure aux ventes.",
+     "expr": "(SUM(ventes) - SUM(prevision)) / NULLIF(SUM(prevision), 0)",
+     "format": "percent",
+     "label": "Biais de prévision",
+     "name": "biais"
+    },
+    {
+     "description": "Semaines où le stock total est inférieur au stock de sécurité total.",
+     "expr": "COUNT(DISTINCT semaine) FILTER (WHERE semaine IN (SELECT semaine FROM frame GROUP BY semaine HAVING SUM(stock_fin) < SUM(stock_securite)))",
+     "format": "integer",
+     "label": "Semaines sous le stock de sécurité",
+     "name": "semaines_sous_secu",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.0,
+      "warn": 2.0
+     },
+     "unit": "semaines"
+    },
+    {
+     "description": "Semaines où le stock de la famille est inférieur à son stock de sécurité.",
+     "expr": "COUNT(DISTINCT semaine) FILTER (WHERE stock_fin < stock_securite)",
+     "format": "integer",
+     "label": "Semaines sous sécu",
+     "name": "semaines_sous_secu_famille",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.0,
+      "warn": 2.0
+     },
+     "unit": "semaines"
+    },
+    {
+     "expr": "SUM(appro)",
+     "format": "compact",
+     "label": "Approvisionnements reçus",
+     "name": "appro_recus",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(ventes)",
+     "format": "compact",
+     "label": "Ventes",
+     "name": "ventes_totales",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(stock_debut) FILTER (WHERE semaine = (SELECT MIN(semaine) FROM frame))",
+     "format": "compact",
+     "label": "Stock début de période",
+     "name": "stock_debut_periode",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(ventes_servies)",
+     "format": "compact",
+     "label": "Ventes servies",
+     "name": "ventes_servies_total",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(ABS(ventes - prevision))",
+     "format": "compact",
+     "label": "Erreur absolue de prévision",
+     "name": "erreur_abs",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(stock_fin)",
+     "format": "compact",
+     "label": "Stock fin de semaine",
+     "name": "stock_total",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(prevision)",
+     "format": "compact",
+     "label": "Prévision",
+     "name": "prevision_totale",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(appro)",
+     "format": "compact",
+     "label": "Approvisionnements",
+     "name": "appro_total",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(stock_securite)",
+     "format": "compact",
+     "label": "Stock de sécurité",
+     "name": "securite_totale",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(ecart)",
+     "format": "compact",
+     "label": "Écart ventes - prévision",
+     "name": "ecart_total",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(stock_fin) / NULLIF(SUM(prevision), 0)",
+     "format": "weeks",
+     "label": "Couverture par semaine",
+     "name": "couverture_hebdo",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 1.0,
+      "warn": 0.5
+     }
+    }
+   ],
+   "name": "stocks",
+   "source_options": {},
+   "transforms": [
+    {
+     "by": [
+      "famille"
+     ],
+     "date": "semaine",
+     "op": "naive_forecast",
+     "output": "prevision",
+     "season_length": 52,
+     "trend_bounds": [
+      0.8,
+      1.25
+     ],
+     "value": "ventes",
+     "window": 4
+    },
+    {
+     "by": [
+      "famille"
+     ],
+     "date": "semaine",
+     "default_lot": 100,
+     "demand": "ventes",
+     "forecast": "prevision",
+     "initial_cover": 1.0,
+     "lead_time": 1,
+     "lot_column": "famille",
+     "lot_sizes": {},
+     "op": "inventory_sim",
+     "order_factor": 1.4,
+     "partial_rate": 0.1,
+     "safety_factor": 0.5,
+     "seed": 42
+    },
+    {
+     "column": "ecart",
+     "expr": "ventes - prevision",
+     "op": "derive",
+     "provenance": "forecast"
+    },
+    {
+     "column": "couverture_semaine",
+     "expr": "stock_fin / NULLIF(prevision, 0)",
+     "op": "derive"
+    },
+    {
+     "column": "sous_secu",
+     "expr": "CASE WHEN stock_fin < stock_securite THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "mois",
+     "expr": "strftime(CAST(semaine AS DATE), '%Y-%m')",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  },
+  {
+   "fields": [
+    {
+     "format": "compact",
+     "label": "Prévision moteur",
+     "name": "prevision_moteur",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    }
+   ],
+   "kind": "source",
+   "label": "Prévision moteur (périodes futures)",
+   "measures": [
+    {
+     "expr": "SUM(prevision_moteur)",
+     "format": "compact",
+     "label": "Prévision moteur",
+     "name": "prevision_moteur_totale",
+     "unit": "unités"
+    }
+   ],
+   "name": "prevision_future",
+   "parent": "stocks",
+   "source_options": {},
+   "transforms": [
+    {
+     "by": [
+      "famille"
+     ],
+     "date": "semaine",
+     "horizon": 8,
+     "op": "forecast",
+     "output": "prevision_moteur",
+     "value": "ventes"
+    }
+   ]
+  }
+ ]
+}

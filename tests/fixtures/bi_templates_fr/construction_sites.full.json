@@ -1,0 +1,767 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "chantiers",
+    "steps": [],
+    "text": "{{filters.chantier}}, du {{period.from}} au {{period.to}} : {{chantiers|integer}} chantiers suivis. Marge à terminaison estimée de {{marge_estimee|compact}} € contre {{marge_budget|compact}} € budgétés (écart de {{ecart_marge|compact}} €). Dérive de coûts de {{derive_pct|percent}} ; {{chantiers_derive|integer}} chantiers au-delà de 5 %.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "marge_estimee",
+     "secondary": "Budgétée : {{marge_budget|compact}} €"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "chantiers",
+    "steps": [],
+    "title": "Marge à terminaison estimée",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "ecart_marge",
+     "secondary": "Estimée - budgétée"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "chantiers",
+    "steps": [],
+    "title": "Écart vs marge budgétée",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "derive_pct",
+     "secondary": "{{derive_cout|compact}} € de surcoût estimé",
+     "sparkline": "derive_pct_mois",
+     "target_label": "seuil 5 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "chantiers",
+    "steps": [],
+    "title": "Dérive de coûts",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 5,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "decalage_net",
+     "secondary": "{{surfacturation|compact}} € surfacturé · {{retard_facturation|compact}} € en retard"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "chantiers",
+    "steps": [],
+    "title": "Décalage facturation / avancement",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 5,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "chantiers_derive",
+     "secondary": "Chantiers suivis : {{chantiers|integer}}"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "chantiers",
+    "steps": [],
+    "title": "Chantiers en dérive",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 8,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "chantier": "chantier"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "chantier"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": false,
+      "key": "marge_budget",
+      "label": "Marge budgétée",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "marge_estimee",
+      "label": "Marge estimée",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "chantiers",
+    "steps": [],
+    "subtitle": "Dernière situation de chaque chantier. Un chantier sans avancement n'est pas estimable.",
+    "title": "Marge budgétée vs estimée par chantier",
+    "total_row": false,
+    "type": "bar",
+    "x": "chantier"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 8,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Budget",
+      "value": 0.0
+     },
+     {
+      "color": "bad",
+      "dash": true,
+      "label": "Seuil 5 %",
+      "value": 0.05
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "derive_pct_mois",
+      "label": "Dérive de coûts",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "chantiers",
+    "steps": [],
+    "subtitle": "Coût à terminaison estimé contre budget de coût, situations du mois.",
+    "title": "Dérive des coûts par mois",
+    "total_row": false,
+    "type": "line",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 7,
+    "row": 14,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "chantier": "chantier"
+    },
+    "columns": [
+     {
+      "key": "chantier",
+      "label": "Chantier",
+      "use_thresholds": false
+     },
+     {
+      "key": "derive_pct",
+      "label": "Dérive de coûts",
+      "use_thresholds": true
+     },
+     {
+      "key": "client",
+      "label": "Client",
+      "use_thresholds": false
+     },
+     {
+      "key": "statut",
+      "label": "Statut",
+      "use_thresholds": false
+     },
+     {
+      "key": "avancement_actuel",
+      "label": "Avancement",
+      "use_thresholds": false
+     },
+     {
+      "key": "carnet",
+      "label": "Budget de vente",
+      "use_thresholds": false
+     },
+     {
+      "key": "marge_budget",
+      "label": "Marge budgétée",
+      "use_thresholds": false
+     },
+     {
+      "key": "marge_estimee",
+      "label": "Marge estimée",
+      "use_thresholds": false
+     },
+     {
+      "key": "ecart_marge",
+      "label": "Écart de marge",
+      "use_thresholds": true
+     },
+     {
+      "key": "decalage_net",
+      "label": "Décalage facturation",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "chantier",
+    "ignore_filters": [
+     "chantier"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "sort": "value_desc",
+    "source": "chantiers",
+    "steps": [],
+    "subtitle": "Dernière situation de chaque chantier, les plus en dérive d'abord. Cliquer pour filtrer.",
+    "title": "Chantiers par statut",
+    "total_row": false,
+    "type": "table",
+    "x": "chantier"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Coût à terminaison** = coût engagé ÷ avancement. **Marge estimée** = budget de vente - coût à terminaison ; **marge budgétée** = budget de vente - budget de coût. **Dérive** = coût à terminaison - budget de coût. **Décalage** = facturé cumulé - avancement x budget de vente (positif : surfacturé, négatif : retard de facturation).",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**En dérive** : dérive de coûts au-delà de 5 % du budget de coût (seuil réglable à la création). **À surveiller** : dérive positive sous le seuil. **Maîtrisé** : coût à terminaison dans le budget. **Non évaluable** : avancement à 0 %.",
+    "title": "Statuts",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les montants étant cumulés, les indicateurs lisent la dernière situation de chaque chantier, jamais une somme de mois. Les chantiers non évaluables sont exclus des totaux de marge et de dérive. L'avancement est lu en fraction, ou en pourcentage si une valeur du fichier dépasse 1.",
+    "title": "Lecture",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "12m",
+   "field": "mois",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "6m",
+    "12m",
+    "24m",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "chantier",
+   "id": "chantier",
+   "label": "Chantier",
+   "type": "select"
+  },
+  {
+   "field": "client",
+   "id": "client",
+   "label": "Client",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Mois de la situation",
+     "name": "mois",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Chantier",
+     "name": "chantier",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Budget de vente",
+     "name": "budget_vente",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Budget de coût",
+     "name": "budget_cout",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Coût engagé (cumul)",
+     "name": "cout_engage",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "number",
+     "label": "Avancement",
+     "name": "avancement",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Facturé (cumul)",
+     "name": "facture_cumul",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Client",
+     "name": "client",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Mois",
+     "name": "periode_mois",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    },
+    {
+     "format": "percent",
+     "label": "Avancement (0-1)",
+     "name": "avancement_n",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Situation estimable",
+     "name": "ligne_estimable",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Coût à terminaison",
+     "name": "cout_terminaison",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Marge budgétée",
+     "name": "marge_budget_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Marge estimée",
+     "name": "marge_estimee_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Dérive de coût",
+     "name": "derive_cout_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "percent",
+     "label": "Dérive de coût (%)",
+     "name": "derive_pct_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Décalage facturation / avancement",
+     "name": "decalage_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Dernière situation du chantier",
+     "name": "derniere_situation",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Situation en dérive",
+     "name": "ligne_en_derive",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Statut",
+     "name": "statut_chantier",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Situations de chantier",
+   "measures": [
+    {
+     "expr": "SUM(CASE WHEN derniere_situation = 1 THEN 1 END)",
+     "format": "integer",
+     "label": "Chantiers suivis",
+     "name": "chantiers",
+     "unit": "chantiers"
+    },
+    {
+     "description": "Budget de vente des chantiers (dernière situation de chacun).",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 THEN \"budget_vente\" END)",
+     "format": "compact",
+     "label": "Budget de vente",
+     "name": "carnet",
+     "unit": "€"
+    },
+    {
+     "description": "Avancement de la dernière situation.",
+     "expr": "MAX(CASE WHEN derniere_situation = 1 THEN avancement_n END)",
+     "format": "percent",
+     "label": "Avancement",
+     "name": "avancement_actuel"
+    },
+    {
+     "description": "Budget de vente - budget de coût, sur les chantiers estimables.",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 AND ligne_estimable = 1 THEN marge_budget_ligne END)",
+     "format": "compact",
+     "label": "Marge budgétée",
+     "name": "marge_budget",
+     "unit": "€"
+    },
+    {
+     "description": "Budget de vente - coût engagé ÷ avancement, dernière situation de chaque chantier.",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 AND ligne_estimable = 1 THEN marge_estimee_ligne END)",
+     "format": "compact",
+     "label": "Marge à terminaison estimée",
+     "name": "marge_estimee",
+     "unit": "€"
+    },
+    {
+     "description": "Marge estimée - marge budgétée (négatif : marge érodée).",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 AND ligne_estimable = 1 THEN marge_estimee_ligne - marge_budget_ligne END)",
+     "format": "compact",
+     "label": "Écart vs marge budgétée",
+     "name": "ecart_marge",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.0,
+      "warn": 0.0
+     },
+     "unit": "€"
+    },
+    {
+     "description": "Coût à terminaison estimé - budget de coût.",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 AND ligne_estimable = 1 THEN derive_cout_ligne END)",
+     "format": "compact",
+     "label": "Dérive de coûts",
+     "name": "derive_cout",
+     "unit": "€"
+    },
+    {
+     "description": "Dérive de coûts ÷ budget de coût, sur les chantiers estimables.",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 AND ligne_estimable = 1 THEN derive_cout_ligne END) / NULLIF(SUM(CASE WHEN derniere_situation = 1 AND ligne_estimable = 1 THEN \"budget_cout\" END), 0)",
+     "format": "percent",
+     "label": "Dérive de coûts (%)",
+     "name": "derive_pct",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.0,
+      "warn": 0.05
+     }
+    },
+    {
+     "description": "Facturé au-delà de l'avancement.",
+     "expr": "COALESCE(SUM(CASE WHEN derniere_situation = 1 AND decalage_ligne > 0 THEN decalage_ligne END), 0)",
+     "format": "compact",
+     "label": "Surfacturé",
+     "name": "surfacturation",
+     "unit": "€"
+    },
+    {
+     "description": "Avancement non encore facturé.",
+     "expr": "COALESCE(-SUM(CASE WHEN derniere_situation = 1 AND decalage_ligne < 0 THEN decalage_ligne END), 0)",
+     "format": "compact",
+     "label": "En retard de facturation",
+     "name": "retard_facturation",
+     "unit": "€"
+    },
+    {
+     "description": "Facturé cumulé - avancement x budget de vente (positif : surfacturé).",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 THEN decalage_ligne END)",
+     "format": "compact",
+     "label": "Décalage facturation / avancement",
+     "name": "decalage_net",
+     "unit": "€"
+    },
+    {
+     "description": "Chantiers dont la dérive de coûts dépasse 5 %.",
+     "expr": "SUM(CASE WHEN derniere_situation = 1 AND ligne_en_derive = 1 THEN 1 ELSE 0 END)",
+     "format": "integer",
+     "label": "Chantiers en dérive",
+     "name": "chantiers_derive",
+     "unit": "chantiers"
+    },
+    {
+     "expr": "MAX(CASE WHEN derniere_situation = 1 THEN statut_chantier END)",
+     "format": "number",
+     "label": "Statut",
+     "name": "statut"
+    },
+    {
+     "description": "Dérive de coûts des situations du mois ÷ leur budget de coût.",
+     "expr": "SUM(CASE WHEN ligne_estimable = 1 THEN derive_cout_ligne END) / NULLIF(SUM(CASE WHEN ligne_estimable = 1 THEN \"budget_cout\" END), 0)",
+     "format": "percent",
+     "label": "Dérive de coûts (%) du mois",
+     "name": "derive_pct_mois",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.0,
+      "warn": 0.05
+     }
+    }
+   ],
+   "name": "chantiers",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_mois",
+     "expr": "date_trunc('month', CAST(\"mois\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "avancement_n",
+     "expr": "CASE WHEN \"avancement\" IS NULL THEN NULL ELSE LEAST(1, GREATEST(0, CASE WHEN MAX(CAST(\"avancement\" AS DOUBLE)) OVER () > 1 THEN CAST(\"avancement\" AS DOUBLE) / 100.0 ELSE CAST(\"avancement\" AS DOUBLE) END)) END",
+     "op": "derive"
+    },
+    {
+     "column": "ligne_estimable",
+     "expr": "CASE WHEN avancement_n > 0 AND \"cout_engage\" IS NOT NULL AND \"budget_vente\" IS NOT NULL AND \"budget_cout\" IS NOT NULL THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "cout_terminaison",
+     "expr": "CASE WHEN ligne_estimable = 1 THEN \"cout_engage\" / avancement_n END",
+     "op": "derive"
+    },
+    {
+     "column": "marge_budget_ligne",
+     "expr": "\"budget_vente\" - \"budget_cout\"",
+     "op": "derive"
+    },
+    {
+     "column": "marge_estimee_ligne",
+     "expr": "CASE WHEN ligne_estimable = 1 THEN \"budget_vente\" - cout_terminaison END",
+     "op": "derive"
+    },
+    {
+     "column": "derive_cout_ligne",
+     "expr": "CASE WHEN ligne_estimable = 1 THEN cout_terminaison - \"budget_cout\" END",
+     "op": "derive"
+    },
+    {
+     "column": "derive_pct_ligne",
+     "expr": "ROUND(derive_cout_ligne / NULLIF(\"budget_cout\", 0), 6)",
+     "op": "derive"
+    },
+    {
+     "column": "decalage_ligne",
+     "expr": "CASE WHEN \"facture_cumul\" IS NOT NULL AND avancement_n IS NOT NULL AND \"budget_vente\" IS NOT NULL THEN \"facture_cumul\" - avancement_n * \"budget_vente\" END",
+     "op": "derive"
+    },
+    {
+     "column": "derniere_situation",
+     "expr": "CASE WHEN ROW_NUMBER() OVER (PARTITION BY \"chantier\" ORDER BY periode_mois DESC NULLS LAST) = 1 THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "ligne_en_derive",
+     "expr": "CASE WHEN ligne_estimable = 1 AND derive_pct_ligne > 0.05 THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "statut_chantier",
+     "expr": "CASE WHEN ligne_estimable = 0 OR derive_pct_ligne IS NULL THEN 'Non évaluable' WHEN derive_pct_ligne > 0.05 THEN 'En dérive' WHEN derive_pct_ligne > 0 THEN 'À surveiller' ELSE 'Maîtrisé' END",
+     "op": "derive"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,398 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "rh",
+    "steps": [],
+    "text": "du {{period.from}} au {{period.to}} : effectif moyen de {{effectif|decimal1}} salariés, absentéisme de {{absenteisme|percent}}, masse salariale de {{masse_totale|compact}} €.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "absenteisme",
+     "sparkline": "absenteisme",
+     "target_label": "alerte > 5 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "rh",
+    "steps": [],
+    "title": "Taux d'absentéisme",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "effectif",
+     "secondary": "effectif moyen de la période",
+     "sparkline": "effectif"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "rh",
+    "steps": [],
+    "title": "Effectif",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_period",
+     "measure": "masse_totale",
+     "secondary": "évolution face à la période précédente",
+     "sparkline": "masse_totale"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "rh",
+    "steps": [],
+    "title": "Masse salariale",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "cout_moyen",
+     "sparkline": "cout_moyen"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "rh",
+    "steps": [],
+    "title": "Coût moyen par salarié",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "warn",
+      "dash": true,
+      "label": "Alerte 5 %",
+      "value": 0.05
+     },
+     {
+      "color": "bad",
+      "dash": true,
+      "label": "Critique 8 %",
+      "value": 0.08
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "absenteisme",
+      "label": "Absentéisme",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "x_asc",
+    "source": "rh",
+    "steps": [],
+    "subtitle": "Heures d'absence ÷ heures théoriques. Alerte à 5 %, critique à 8 %.",
+    "title": "Absentéisme par mois",
+    "total_row": false,
+    "type": "bar",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "masse_totale",
+      "label": "Masse salariale",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "right",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "effectif",
+      "label": "Effectif",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "rh",
+    "steps": [],
+    "subtitle": "Brut chargé par mois, effectif en ligne.",
+    "title": "Masse salariale et effectif",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 17,
+    "width": 6
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Absentéisme** : heures d'absence ÷ heures théoriques. **Effectif** : salariés présents dans le mois (moyenne sur la période). **Turnover** : départs de la période ÷ effectif moyen. **Coût moyen** : masse salariale ÷ nombre de salariés-mois.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 4,
+    "row": 17,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Absentéisme : vert jusqu'à 5 %, orange jusqu'à 8 %, rouge au-delà. Turnover : vert jusqu'à 10 %, orange jusqu'à 20 %, rouge au-delà, sur la période affichée (12 mois par défaut). Réglables à la création du tableau de bord.",
+    "title": "Seuils",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "12m",
+   "field": "mois",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "3m",
+    "6m",
+    "12m",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Mois",
+     "name": "mois",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Salarié",
+     "name": "salarie",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Heures théoriques",
+     "name": "heures_theoriques",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Heures d'absence",
+     "name": "heures_absence",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Masse salariale",
+     "name": "masse_salariale",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Mois",
+     "name": "periode_mois",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    },
+    {
+     "label": "Salarié et mois",
+     "name": "cle_salarie_mois",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Salariés par mois",
+   "measures": [
+    {
+     "description": "Heures d'absence ÷ heures théoriques.",
+     "expr": "SUM(\"heures_absence\") / NULLIF(SUM(\"heures_theoriques\"), 0)",
+     "format": "percent",
+     "label": "Taux d'absentéisme",
+     "name": "absenteisme",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.05,
+      "warn": 0.08
+     }
+    },
+    {
+     "description": "Salariés présents dans le mois ; effectif moyen sur une période.",
+     "expr": "COUNT(DISTINCT cle_salarie_mois) * 1.0 / NULLIF(COUNT(DISTINCT periode_mois), 0)",
+     "format": "decimal1",
+     "label": "Effectif",
+     "name": "effectif",
+     "unit": "salariés"
+    },
+    {
+     "description": "Somme du brut chargé de la période.",
+     "expr": "SUM(\"masse_salariale\")",
+     "format": "compact",
+     "label": "Masse salariale",
+     "name": "masse_totale",
+     "unit": "€"
+    },
+    {
+     "description": "Masse salariale ÷ nombre de salariés-mois.",
+     "expr": "SUM(\"masse_salariale\") / NULLIF(COUNT(DISTINCT cle_salarie_mois), 0)",
+     "format": "compact",
+     "label": "Coût moyen par salarié",
+     "name": "cout_moyen",
+     "unit": "€ / mois"
+    },
+    {
+     "expr": "SUM(\"heures_absence\")",
+     "format": "compact",
+     "label": "Heures d'absence",
+     "name": "heures_absence_total",
+     "unit": "h"
+    }
+   ],
+   "name": "rh",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_mois",
+     "expr": "date_trunc('month', CAST(\"mois\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "cle_salarie_mois",
+     "expr": "CAST(\"salarie\" AS VARCHAR) || '|' || CAST(periode_mois AS VARCHAR)",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}

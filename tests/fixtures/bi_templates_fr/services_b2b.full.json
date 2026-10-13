@@ -1,0 +1,734 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "text": "{{filters.consultant}}, du {{period.from}} au {{period.to}} : {{heures_total|integer}} h passées pour {{heures_dispo_total|integer}} h disponibles, soit une occupation de {{occupation|percent}} ; {{taux_facturable|percent}} des heures sont facturables ({{jours_facturables|decimal1}} jours), CA de {{ca|compact}} €.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "occupation",
+     "sparkline": "occupation",
+     "target_label": "cible ≥ 85 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "title": "Taux d'occupation",
+    "total_row": false,
+    "type": "kpi",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 2,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "taux_facturable",
+     "secondary": "{{jours_facturables|decimal1}} jours facturables",
+     "sparkline": "taux_facturable",
+     "target_label": "cible ≥ 75 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "title": "Taux facturable",
+    "total_row": false,
+    "type": "kpi",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "tjm_moyen",
+     "sparkline": "tjm_moyen"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "title": "TJM moyen",
+    "total_row": false,
+    "type": "kpi",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_period",
+     "measure": "ca",
+     "sparkline": "ca"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "title": "CA facturé",
+    "total_row": false,
+    "type": "kpi",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "ca_par_consultant",
+     "sparkline": "ca_par_consultant"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "title": "CA par consultant",
+    "total_row": false,
+    "type": "kpi",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 10,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "reste_a_facturer",
+     "secondary": "valorisé au TJM, hors déjà facturé",
+     "sparkline": "reste_a_facturer"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "title": "Reste à facturer",
+    "total_row": false,
+    "type": "kpi",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Cible 75 %",
+      "value": 0.75
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "taux_facturable",
+      "label": "Taux facturable",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "x_asc",
+    "source": "activite",
+    "steps": [],
+    "subtitle": "Heures facturables ÷ heures passées. Cible 75 %.",
+    "title": "Taux facturable par semaine",
+    "total_row": false,
+    "type": "bar",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "client": "client"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "client"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "CA facturé",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "activite",
+    "steps": [],
+    "subtitle": "Par chiffre d'affaires. Cliquer pour filtrer le tableau de bord.",
+    "title": "Top clients",
+    "top_n": 10,
+    "total_row": false,
+    "type": "hbar",
+    "x": "client"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "consultant": "consultant"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "consultant"
+    ],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Cible 85 %",
+      "value": 0.85
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "occupation",
+      "label": "Occupation",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "value_asc",
+    "source": "activite",
+    "steps": [],
+    "subtitle": "Les moins occupés en premier. Cliquer pour filtrer le tableau de bord.",
+    "title": "Occupation par consultant",
+    "total_row": false,
+    "type": "hbar",
+    "x": "consultant"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 17,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "consultant": "consultant"
+    },
+    "columns": [
+     {
+      "key": "consultant",
+      "label": "Consultant",
+      "use_thresholds": false
+     },
+     {
+      "key": "heures_total",
+      "label": "Heures",
+      "use_thresholds": false
+     },
+     {
+      "key": "occupation",
+      "label": "Occupation",
+      "use_thresholds": true
+     },
+     {
+      "key": "taux_facturable",
+      "label": "Taux facturable",
+      "use_thresholds": true
+     },
+     {
+      "key": "tjm_moyen",
+      "label": "TJM moyen",
+      "use_thresholds": false
+     },
+     {
+      "key": "ca",
+      "label": "CA facturé",
+      "use_thresholds": false
+     },
+     {
+      "key": "reste_a_facturer",
+      "label": "Reste à facturer",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "consultant",
+    "ignore_filters": [
+     "consultant"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "source": "activite",
+    "steps": [],
+    "subtitle": "La ligne « Toutes » reprend les définitions globales, pas la moyenne des consultants.",
+    "title": "Activité par consultant",
+    "total_row": true,
+    "type": "table",
+    "x": "consultant"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 23,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Occupation** : heures passées ÷ heures disponibles. **Taux facturable** : heures facturables ÷ heures passées. Un jour compte 7 h. Les heures disponibles d'un consultant sur une date sont comptées une fois et réparties entre ses lignes.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 4,
+    "row": 23,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Vert à partir de la cible (85 % d'occupation, 75 % facturable), orange jusqu'à 10 points en dessous, rouge ensuite. Cibles réglables à la création du tableau de bord.",
+    "title": "Seuils",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 4,
+    "row": 23,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Le CA est le montant facturé si la colonne existe, sinon les jours facturables valorisés au TJM. Le reste à facturer demande le TJM et le montant facturé : jours facturables valorisés moins montant déjà facturé.",
+    "title": "Chiffre d'affaires",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "3m",
+   "field": "date",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "4w",
+    "13w",
+    "3m",
+    "6m",
+    "12m",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "consultant",
+   "id": "consultant",
+   "label": "Consultant",
+   "type": "select"
+  },
+  {
+   "field": "client",
+   "id": "client",
+   "label": "Client",
+   "type": "select"
+  },
+  {
+   "field": "projet",
+   "id": "projet",
+   "label": "Projet",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Date",
+     "name": "date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Consultant",
+     "name": "consultant",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Client",
+     "name": "client",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Projet",
+     "name": "projet",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Heures passées",
+     "name": "heures",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Heures disponibles",
+     "name": "heures_disponibles",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "TJM",
+     "name": "tjm",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Montant facturé",
+     "name": "montant_facture",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Semaine",
+     "name": "semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    },
+    {
+     "format": "integer",
+     "label": "Ligne facturable",
+     "name": "est_facturable",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Heures facturables",
+     "name": "heures_facturables_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Heures disponibles réparties",
+     "name": "heures_dispo_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Valeur au TJM",
+     "name": "valeur_tjm_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "TJM x heures",
+     "name": "tjm_x_heures_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Heures avec TJM",
+     "name": "heures_avec_tjm_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Heures des lignes facturées",
+     "name": "heures_facturees_ligne",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Temps passés par consultant",
+   "measures": [
+    {
+     "expr": "SUM(\"heures\")",
+     "format": "compact",
+     "label": "Heures passées",
+     "name": "heures_total",
+     "unit": "h"
+    },
+    {
+     "expr": "SUM(heures_dispo_ligne)",
+     "format": "compact",
+     "label": "Heures disponibles",
+     "name": "heures_dispo_total",
+     "unit": "h"
+    },
+    {
+     "expr": "SUM(heures_facturables_ligne)",
+     "format": "compact",
+     "label": "Heures facturables",
+     "name": "heures_facturables",
+     "unit": "h"
+    },
+    {
+     "description": "Heures facturables ÷ 7 h par jour.",
+     "expr": "SUM(heures_facturables_ligne) / 7.0",
+     "format": "decimal1",
+     "label": "Jours facturables",
+     "name": "jours_facturables",
+     "unit": "j"
+    },
+    {
+     "description": "Heures passées ÷ heures disponibles.",
+     "expr": "SUM(\"heures\") / NULLIF(SUM(heures_dispo_ligne), 0)",
+     "format": "percent",
+     "label": "Taux d'occupation",
+     "name": "occupation",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.85,
+      "warn": 0.75
+     }
+    },
+    {
+     "description": "Heures facturables ÷ heures passées.",
+     "expr": "SUM(heures_facturables_ligne) / NULLIF(SUM(\"heures\"), 0)",
+     "format": "percent",
+     "label": "Taux facturable",
+     "name": "taux_facturable",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.75,
+      "warn": 0.65
+     }
+    },
+    {
+     "description": "TJM pondéré par les heures facturables.",
+     "expr": "SUM(tjm_x_heures_ligne) / NULLIF(SUM(heures_avec_tjm_ligne), 0)",
+     "format": "compact",
+     "label": "TJM moyen",
+     "name": "tjm_moyen",
+     "unit": "€ / j"
+    },
+    {
+     "description": "Montants facturés de la période.",
+     "expr": "SUM(COALESCE(\"montant_facture\", 0))",
+     "format": "compact",
+     "label": "CA facturé",
+     "name": "ca",
+     "unit": "€"
+    },
+    {
+     "description": "CA ÷ nombre de consultants.",
+     "expr": "(SUM(COALESCE(\"montant_facture\", 0))) / NULLIF(COUNT(DISTINCT \"consultant\"), 0)",
+     "format": "compact",
+     "label": "CA par consultant",
+     "name": "ca_par_consultant",
+     "unit": "€"
+    },
+    {
+     "description": "Jours facturables valorisés au TJM, moins le montant déjà facturé.",
+     "expr": "GREATEST(SUM(valeur_tjm_ligne) - SUM(COALESCE(\"montant_facture\", 0)), 0)",
+     "format": "compact",
+     "label": "Reste à facturer",
+     "name": "reste_a_facturer",
+     "unit": "€"
+    }
+   ],
+   "name": "activite",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "semaine",
+     "expr": "date_trunc('week', CAST(\"date\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "est_facturable",
+     "expr": "CASE WHEN LOWER(TRIM(CAST(\"facturable\" AS VARCHAR))) IN ('1', '1.0', 'true', 't', 'oui', 'o', 'vrai', 'yes', 'y', 'x') THEN 1 ELSE 0 END",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "heures_facturables_ligne",
+     "expr": "COALESCE(\"heures\", 0) * est_facturable",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "heures_dispo_ligne",
+     "expr": "MAX(\"heures_disponibles\") OVER (PARTITION BY \"consultant\", CAST(\"date\" AS DATE)) / NULLIF(COUNT(*) OVER (PARTITION BY \"consultant\", CAST(\"date\" AS DATE)), 0)",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "valeur_tjm_ligne",
+     "expr": "heures_facturables_ligne * COALESCE(\"tjm\", 0) / 7",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "tjm_x_heures_ligne",
+     "expr": "CASE WHEN \"tjm\" IS NOT NULL THEN heures_facturables_ligne * \"tjm\" END",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "heures_avec_tjm_ligne",
+     "expr": "CASE WHEN \"tjm\" IS NOT NULL THEN heures_facturables_ligne END",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "heures_facturees_ligne",
+     "expr": "CASE WHEN \"montant_facture\" IS NOT NULL THEN heures_facturables_ligne END",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}
