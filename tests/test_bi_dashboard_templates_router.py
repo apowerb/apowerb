@@ -17,6 +17,7 @@ from apowerb.bi.spec import engine, sources
 from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.router import router as spec_router
 from tests.helpers.bi_spec_data import weekly_sales
+from tests.helpers.bi_template_env import stock_frame
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -28,11 +29,21 @@ EXPECTED_LIST = [
     {
         "id": "stock_pilotage",
         "label": "Pilotage stocks",
+        "version": 1,
+        "origin": "builtin",
+        "owner": None,
+        "visibility": None,
+        "can_delete": False,
         "columns": [
             {"key": "date", "label": "Semaine", "type": "date", "required": True, "default": "semaine"},
             {"key": "family", "label": "Famille", "type": "string", "required": True, "default": "famille"},
             {"key": "sales", "label": "Ventes", "type": "number", "required": True, "default": "ventes"},
             {"key": "site", "label": "Site", "type": "string", "required": False, "default": None},
+            {"key": "stock", "label": "Stock", "type": "number", "required": False, "default": "stock"},
+            {"key": "safety", "label": "Seuil de sécurité", "type": "number", "required": False,
+             "default": "seuil_securite"},
+            {"key": "lead_time", "label": "Délai fournisseur (semaines)", "type": "number", "required": False,
+             "default": "delai_fournisseur_sem"},
         ],
         "params": [
             {"key": "horizon", "label": "Horizon de prévision (semaines)", "type": "integer",
@@ -89,8 +100,13 @@ class Env:
         app = FastAPI()
         app.include_router(spec_router, prefix="/api/v1")
 
+        no_user_templates = MagicMock()
+        no_user_templates.scalars.return_value.all.return_value = []
+
         async def fake_db():
-            yield AsyncMock()
+            session = AsyncMock()
+            session.execute.return_value = no_user_templates
+            yield session
 
         app.dependency_overrides[get_db] = fake_db
         app.dependency_overrides[get_current_user] = lambda: _user(viewer)
@@ -221,3 +237,37 @@ def test_duplicate_title_gets_a_number_in_the_store(env):
     titles = [_create(env).json()["title"] for _ in range(3)]
     assert titles == ["Pilotage stocks", "Pilotage stocks (2)", "Pilotage stocks (3)"]
     assert sorted(d.title for d in env.shared.values()) == titles
+
+
+def test_creation_records_the_template_provenance(env):
+    resp = _create(env, {"params": {"horizon": 12}})
+    assert resp.status_code == 201, resp.text
+    saved = env.shared[resp.json()["dashboard_id"]]
+    assert saved.template.model_dump() == {
+        "id": "stock_pilotage",
+        "version": 1,
+        "columns": {"date": "week", "family": "product_group", "sales": "qty", "site": None,
+                    "stock": None, "safety": None, "lead_time": None},
+        "params": {"horizon": 12},
+    }
+
+
+def test_creation_with_a_stock_column_builds_the_real_stock_spec(env):
+    env.frame = stock_frame(renamed=True)
+    columns = {**COLUMNS, "stock": "on_hand", "safety": "min_level", "lead_time": "lead_weeks"}
+    resp = _create(env, {"columns": columns})
+    assert resp.status_code == 201, resp.text
+    saved = env.shared[resp.json()["dashboard_id"]]
+    assert [s.name for s in saved.sources][:3] == ["stocks", "plan", "horizon"]
+    assert any(c.visual.title == "Stock actuel" for c in saved.components)
+    with env.patched():
+        data = env.client().post(f"/api/v1/dashboards/{saved.id}/data", json={}).json()
+    assert {cid: r["error"] for cid, r in data["components"].items() if r.get("error")} == {}
+    stock_kpi = next(c for c in saved.components if c.visual.title == "Stock actuel")
+    assert data["components"][stock_kpi.id]["value"]["value"] is not None
+
+
+def test_stock_column_missing_from_the_file_is_422(env):
+    resp = _create(env, {"columns": {**COLUMNS, "stock": "on_hand"}})
+    assert resp.status_code == 422
+    assert any("on_hand" in e for e in resp.json()["detail"]["errors"])

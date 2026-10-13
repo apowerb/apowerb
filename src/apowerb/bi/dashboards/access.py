@@ -21,20 +21,25 @@ from apowerb.models import BIItemStatus, BusinessIntelligence
 logger = logging.getLogger(__name__)
 
 
-def visible_to(dashboard: Dashboard, viewer_email: str) -> bool:
-    """Visibility rule of a PUBLISHED dashboard for a logged-in viewer."""
-    if dashboard.visibility == DashboardVisibility.PUBLIC:
+def shared_with(visibility: DashboardVisibility, owner_email: str | None, viewer_email: str) -> bool:
+    """Whether something owned by ``owner_email`` with this visibility is open to the viewer."""
+    if visibility == DashboardVisibility.PUBLIC:
         return True
-    if dashboard.visibility == DashboardVisibility.PRIVATE:
+    if visibility == DashboardVisibility.PRIVATE:
         # Owner only: the agent tools publish private dashboards for their creator.
-        owner = (dashboard.created_by or "").lower()
+        owner = (owner_email or "").lower()
         return bool(owner) and owner == (viewer_email or "").lower()
-    if dashboard.visibility == DashboardVisibility.ORGANIZATION:
-        owner_domain = get_domain_from_email_or_none(dashboard.created_by)
+    if visibility == DashboardVisibility.ORGANIZATION:
+        owner_domain = get_domain_from_email_or_none(owner_email)
         viewer_domain = get_domain_from_email_or_none(viewer_email)
         return owner_domain is not None and viewer_domain is not None \
             and viewer_domain.lower() == owner_domain.lower()
     return False
+
+
+def visible_to(dashboard: Dashboard, viewer_email: str) -> bool:
+    """Visibility rule of a PUBLISHED dashboard for a logged-in viewer."""
+    return shared_with(dashboard.visibility, dashboard.created_by, viewer_email)
 
 
 def _shows_chart(config: dict, chart_id: str) -> bool:

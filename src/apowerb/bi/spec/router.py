@@ -21,7 +21,7 @@ Mount in main.py:  app.include_router(spec_router, prefix="/api/v1")
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, ValidationError
@@ -29,8 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.auth.dependencies import get_current_user, get_optional_user
 from apowerb.bi.dashboards.access import visible_to
-from apowerb.bi.dashboards.core import Dashboard, DashboardStatus
-from apowerb.bi.dashboards.core import ComponentType
+from apowerb.bi.dashboards.core import ComponentType, Dashboard, DashboardStatus, TemplateRef
 from apowerb.bi.dashboards.schema import (
     ComponentCreateSchema,
     DashboardCreateRequest,
@@ -58,6 +57,7 @@ from apowerb.bi.spec.models import (
     VisualSpec,
 )
 from apowerb.bi.spec.ops import apply_ops
+from apowerb.bi.spec.user_templates import UserTemplateStore
 from apowerb.helpers.database import get_db
 from apowerb.users import schemas as user_schemas
 
@@ -67,6 +67,7 @@ router = APIRouter(tags=["dashboard-spec"])
 
 ServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
 CurrentUser = Annotated[user_schemas.User, Depends(get_current_user)]
+DbDep = Annotated[AsyncSession, Depends(get_db)]
 
 
 def _owner_of(dashboard: Dashboard, fallback: str) -> str:
@@ -221,9 +222,67 @@ def _missing_columns(template: catalog.DashboardTemplate, columns: dict[str, str
     return errors
 
 
+async def _resolve_template(db: AsyncSession, template_id: str, viewer: str) -> catalog.DashboardTemplate | None:
+    """A built-in template, or a user template visible to the viewer."""
+    return catalog.get_template(template_id) or await UserTemplateStore(db, viewer).get(template_id)
+
+
 @router.get("/dashboard-templates", summary="List the dashboard templates")
-async def list_dashboard_templates(user: CurrentUser) -> list[dict[str, Any]]:
-    return [t.describe() for t in catalog.list_templates()]
+async def list_dashboard_templates(user: CurrentUser, db: DbDep) -> list[dict[str, Any]]:
+    user_templates = await UserTemplateStore(db, user.email).list_visible()
+    return [t.describe() for t in [*catalog.list_templates(), *user_templates]]
+
+
+class UserTemplateRequest(BaseModel):
+    label: str = Field(..., min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    visibility: Literal["private", "organization"]
+
+
+@router.post(
+    "/dashboards/{dashboard_id}/template",
+    status_code=status.HTTP_201_CREATED,
+    summary="Make a template from one of my dashboards",
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}, 422: {"description": "Not a spec v2 dashboard"}},
+)
+async def create_template_from_dashboard(
+    dashboard_id: str,
+    body: UserTemplateRequest,
+    user: CurrentUser,
+    svc: ServiceDep,
+    db: DbDep,
+) -> dict[str, Any]:
+    try:
+        dashboard = await svc.get(dashboard_id)
+    except DashboardNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    try:
+        template = await UserTemplateStore(db, user.email).create(
+            dashboard, body.label.strip(), body.description.strip(), body.visibility
+        )
+    except SpecError as exc:
+        raise _invalid(exc.errors)
+    except DashboardNameConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return template.describe()
+
+
+@router.delete(
+    "/dashboard-templates/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete one of my templates",
+    responses={403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+)
+async def delete_dashboard_template(template_id: str, user: CurrentUser, db: DbDep) -> None:
+    if catalog.get_template(template_id) is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Un gabarit intégré ne peut pas être supprimé.")
+    store = UserTemplateStore(db, user.email)
+    template = await store.get(template_id)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gabarit introuvable : {template_id}")
+    if not template.can_delete:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ce modèle appartient à un autre utilisateur.")
+    await store.delete(template_id)
 
 
 @router.post(
@@ -238,8 +297,9 @@ async def create_dashboard_from_template(
     body: TemplateDashboardRequest,
     user: CurrentUser,
     svc: ServiceDep,
+    db: DbDep,
 ) -> TemplateDashboardResponse:
-    template = catalog.get_template(template_id)
+    template = await _resolve_template(db, template_id, user.email)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gabarit introuvable : {template_id}")
 
@@ -267,7 +327,11 @@ async def create_dashboard_from_template(
         request = _create_request(title, spec)
         dashboard, final_title = await create_with_unique_title(
             title,
-            lambda candidate: svc.create(request.model_copy(update={"title": candidate}), created_by=user.email),
+            lambda candidate: svc.create(
+                request.model_copy(update={"title": candidate}),
+                created_by=user.email,
+                template=TemplateRef(id=template.id, version=template.version, columns=columns, params=params),
+            ),
         )
     except ValidationError as exc:
         raise _invalid([f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()[:8]])
