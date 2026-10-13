@@ -85,7 +85,10 @@ def next_reset(now: Optional[datetime] = None) -> datetime:
 
 
 async def used_tokens_this_month(
-    db: Any, owner_id: str, now: Optional[datetime] = None
+    db: Any,
+    owner_id: str,
+    now: Optional[datetime] = None,
+    start: Optional[datetime] = None,
 ) -> int:
     """Somme SQL des jetons factures a thaink2 pour *owner_id* ce mois-ci.
 
@@ -98,6 +101,9 @@ async def used_tokens_this_month(
     (owner_id, created_at) ; ``billed_to_thaink2`` n'est qu'un filtre
     residuel, volontairement sans index (la migration de ``llm_usage``
     previent qu'un CREATE INDEX non CONCURRENTLY bloquerait les INSERT).
+
+    *start* : debut effectif deja resolu par l'appelant (mois ou remise a
+    zero) ; absent, il est lu ici.
     """
     from sqlalchemy import func, select
 
@@ -108,22 +114,29 @@ async def used_tokens_this_month(
         LlmUsage.owner_id == owner_id,
         LlmUsage.billed_to_thaink2.is_(True),
         LlmUsage.created_at
-        >= await usage_counted_since(db, owner_id, month_start(now)),
+        >= (start or await usage_counted_since(db, owner_id, month_start(now))),
         LlmUsage.created_at < next_reset(now),
     )
     return max(0, int((await db.execute(stmt)).scalar() or 0))
 
 
 def build_usage(
-    used: int, limit: Optional[int], now: Optional[datetime] = None
+    used: int,
+    limit: Optional[int],
+    now: Optional[datetime] = None,
+    period_start: Optional[datetime] = None,
 ) -> DefaultLlmUsage:
-    """Assemble la photographie a partir d'un compteur deja agrege."""
+    """Assemble la photographie a partir d'un compteur deja agrege.
+
+    *period_start* : debut effectif du compte (remise a zero comprise) ;
+    absent, le debut du mois.
+    """
     now = now or datetime.now(timezone.utc)
     used = max(0, int(used or 0))
     base = DefaultLlmUsage(
         enabled=True,
         used_tokens=used,
-        period_start=month_start(now),
+        period_start=period_start or month_start(now),
         resets_at=next_reset(now),
     )
     if limit is None or int(limit) <= 0:
@@ -154,7 +167,10 @@ async def default_llm_usage(
     if not default_llm_available():
         return DefaultLlmUsage(enabled=False)
     now = now or datetime.now(timezone.utc)
-    used = await used_tokens_this_month(db, owner_id, now)
+    from apowerb.core.usage_quota import usage_counted_since
+
+    start = await usage_counted_since(db, owner_id, month_start(now))
+    used = await used_tokens_this_month(db, owner_id, now, start)
     cap_provider = registry.default_llm_cap()
     limit: Optional[int] = None
     if cap_provider is not None:
@@ -164,4 +180,4 @@ async def default_llm_usage(
             logger.warning(
                 "[DEFAULT LLM USAGE] plafond illisible pour %s: %s", owner_id, exc
             )
-    return build_usage(used, limit, now)
+    return build_usage(used, limit, now, start)

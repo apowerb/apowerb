@@ -9,6 +9,7 @@ jauge annoncerait un chiffre et la garde en appliquerait un autre.
 
 from __future__ import annotations
 
+import inspect
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
@@ -16,13 +17,18 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apowerb.admin import router as admin_router
 from apowerb.configs.settings import get_settings
 from apowerb.core import run_gate
-from apowerb.core.agent_helpers.default_llm_usage import used_tokens_this_month
+from apowerb.core.agent_helpers import default_llm_usage as gauge_module
+from apowerb.core.agent_helpers.default_llm_usage import (
+    default_llm_usage,
+    month_start,
+    used_tokens_this_month,
+)
 from apowerb.core.extensions.registry import registry
 from apowerb.core.usage_quota import get_quota_status
 from apowerb.helpers.database import Base, sessionmanager
@@ -140,7 +146,8 @@ async def test_le_plafond_glissant_repart_de_zero(base, registre_vierge, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_la_route_admin_pose_la_coupure_sans_rien_effacer(base, monkeypatch):
+async def test_la_route_admin_pose_la_coupure_sans_rien_effacer(base_admin, monkeypatch):
+    base = base_admin
     await consomme(base, jetons=300, il_y_a_min=30)
 
     async def autorise(db, admin, user_id):
@@ -192,3 +199,181 @@ async def test_une_coupure_illisible_garde_le_compteur_et_la_session(base):
     async with base() as db:
         assert (await get_quota_status(db, owner_id=MOI, plan=None)).used_tokens == 300
         assert db.in_nested_transaction() is False
+
+
+@pytest.fixture
+async def base_admin(base, monkeypatch):
+    """`base` + les tables du panneau d'admin que la route et la liste lisent.
+
+    SQLite n'a pas de schema `public` : on vise `main`, le schema par defaut.
+    """
+    monkeypatch.setattr(admin_router, "_schema", lambda: "main")
+
+    async def tout_voir(db, admin):
+        return None
+
+    monkeypatch.setattr(admin_router, "administered_user_ids", tout_voir)
+    async with base() as db:
+        for ddl in (
+            "CREATE TABLE admin_superadmin (user_id INTEGER PRIMARY KEY, granted_at TIMESTAMP)",
+            "CREATE TABLE admin_org_member (user_id INTEGER PRIMARY KEY, org_id INTEGER)",
+            "CREATE TABLE admin_organization (org_id INTEGER PRIMARY KEY, name TEXT)",
+            "CREATE TABLE admin_group_member (group_id INTEGER, user_id INTEGER)",
+            "CREATE TABLE admin_group (group_id INTEGER PRIMARY KEY, name TEXT)",
+            "CREATE TABLE th2agents_store (owner_id TEXT)",
+            "CREATE TABLE admin_token_reset ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
+            "target_email TEXT NOT NULL, admin_email TEXT NOT NULL, "
+            "reset_at TIMESTAMP NOT NULL, tokens_before BIGINT NOT NULL)",
+        ):
+            await db.execute(text(ddl))
+        await db.commit()
+    return base
+
+
+async def ajoute_compte(factory, user_id: int, email: str) -> None:
+    async with factory() as db:
+        db.add(User(user_id=user_id, email=email, first_name="A", last_name="B"))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_la_liste_admin_montre_ce_qui_compte_dans_le_quota(base_admin):
+    base = base_admin
+    await consomme(base, jetons=300, il_y_a_min=30)
+    await remet_a_zero(base, il_y_a_min=10)
+    await consomme(base, jetons=200, il_y_a_min=5)
+
+    async with base() as db:
+        users = await admin_router.list_users(db=db, _=MagicMock())
+        garde, jauge = (
+            (await get_quota_status(db, owner_id=MOI, plan=None)).used_tokens,
+            await used_tokens_this_month(db, MOI),
+        )
+    moi = next(u for u in users if u.email == MOI)
+    assert moi.tokens == 500, "la colonne historique garde tout"
+    assert moi.quota_tokens == 200 == garde == jauge
+    assert moi.token_usage_reset_at is not None
+
+
+@pytest.mark.asyncio
+async def test_la_liste_admin_sans_remise_a_zero_compte_le_mois_et_pas_avant(base_admin):
+    base = base_admin
+    await consomme(base, jetons=100, il_y_a_min=5)
+    await consomme(base, jetons=999, il_y_a_min=60 * 24 * 40)
+
+    async with base() as db:
+        users = await admin_router.list_users(db=db, _=MagicMock())
+    moi = users[0]
+    assert (moi.quota_tokens, moi.tokens) == (100, 1099)
+    assert moi.token_usage_reset_at is None
+
+
+@pytest.mark.asyncio
+async def test_la_liste_admin_ne_fait_pas_une_requete_par_compte(base_admin):
+    base = base_admin
+    for i in range(3):
+        await ajoute_compte(base, 100 + i, f"autre{i}@exemple.fr")
+    await consomme(base, jetons=100, il_y_a_min=5)
+
+    vues: list[str] = []
+    async with base() as db:
+        bind = db.get_bind()
+        event.listen(
+            bind, "before_cursor_execute",
+            lambda conn, cur, statement, *a: vues.append(statement),
+        )
+        await admin_router.list_users(db=db, _=MagicMock())
+    sur_llm_usage = [q for q in vues if "llm_usage" in q]
+    assert len(sur_llm_usage) == 2, sur_llm_usage
+
+
+@pytest.mark.asyncio
+async def test_la_route_renvoie_la_coupure_et_zero_jeton_compte(base_admin, monkeypatch):
+    base = base_admin
+    await consomme(base, jetons=300, il_y_a_min=30)
+    admin = MagicMock(email="boss@exemple.fr")
+
+    async def autorise(db, a, user_id):
+        return None
+
+    monkeypatch.setattr(admin_router, "_assert_may_act_on", autorise)
+    async with base() as db:
+        out = await admin_router.reset_token_usage(7, db=db, _=admin)
+    assert out.token_usage_reset_at is not None
+    assert out.quota_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_la_route_journalise_la_remise_a_zero(base_admin, monkeypatch):
+    base = base_admin
+    await consomme(base, jetons=300, il_y_a_min=30)
+    admin = MagicMock(email="boss@exemple.fr")
+
+    async def autorise(db, a, user_id):
+        return None
+
+    monkeypatch.setattr(admin_router, "_assert_may_act_on", autorise)
+    async with base() as db:
+        out = await admin_router.reset_token_usage(7, db=db, _=admin)
+
+    async with base() as db:
+        lignes = (await db.execute(text(
+            "SELECT user_id, target_email, admin_email, tokens_before, reset_at "
+            "FROM admin_token_reset"
+        ))).all()
+    assert len(lignes) == 1
+    user_id, cible, qui, avant, quand = lignes[0]
+    assert (user_id, cible, qui, avant) == (7, MOI, "boss@exemple.fr", 300)
+    assert quand is not None
+    assert out.token_usage_reset_at is not None
+
+
+@pytest.mark.asyncio
+async def test_un_compte_inconnu_ne_laisse_aucune_trace_d_audit(base_admin, monkeypatch):
+    base = base_admin
+
+    async def autorise(db, a, user_id):
+        return None
+
+    monkeypatch.setattr(admin_router, "_assert_may_act_on", autorise)
+    async with base() as db:
+        with pytest.raises(HTTPException):
+            await admin_router.reset_token_usage(
+                999, db=db, _=MagicMock(email="boss@exemple.fr")
+            )
+    async with base() as db:
+        n = (await db.execute(text("SELECT count(*) FROM admin_token_reset"))).scalar()
+    assert n == 0
+
+
+def test_la_table_d_audit_est_creee_par_la_migration_admin():
+    from apowerb.admin import migration
+
+    assert "admin_token_reset" in inspect.getsource(migration.ensure_admin_tables)
+
+
+@pytest.fixture
+def jauge_active(monkeypatch):
+    monkeypatch.setattr(gauge_module, "default_llm_available", lambda: True)
+
+
+@pytest.mark.asyncio
+async def test_la_jauge_annonce_le_debut_effectif_apres_remise_a_zero(base, jauge_active):
+    async with base() as db:
+        user = (await db.execute(select(User).where(User.email == MOI))).scalar_one()
+        coupure = datetime.now(timezone.utc) - timedelta(minutes=10)
+        user.token_usage_reset_at = coupure
+        await db.commit()
+        vue = await default_llm_usage(db, owner_id=MOI, plan=None)
+    debut = vue.period_start if vue.period_start.tzinfo else vue.period_start.replace(tzinfo=timezone.utc)
+    assert abs(debut - coupure) < timedelta(seconds=1)
+
+
+@pytest.mark.asyncio
+async def test_la_jauge_garde_le_debut_du_mois_sans_remise_a_zero_utile(base, jauge_active):
+    async with base() as db:
+        assert (await default_llm_usage(db, owner_id=MOI, plan=None)).period_start == month_start()
+    await remet_a_zero(base, il_y_a_min=60 * 24 * 40)
+    async with base() as db:
+        assert (await default_llm_usage(db, owner_id=MOI, plan=None)).period_start == month_start()

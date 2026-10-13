@@ -109,6 +109,20 @@ def ensure_admin_tables() -> None:
                         granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
                 """))
+
+            # Who zeroed whose token counter, when, and how much it held.
+            if "admin_token_reset" not in present:
+                logger.info("Creating 'admin_token_reset' table...")
+                conn.execute(text(f"""
+                    CREATE TABLE IF NOT EXISTS {schema}.admin_token_reset (
+                        id            BIGSERIAL PRIMARY KEY,
+                        user_id       INTEGER NOT NULL,
+                        target_email  VARCHAR(255) NOT NULL,
+                        admin_email   VARCHAR(255) NOT NULL,
+                        reset_at      TIMESTAMPTZ NOT NULL,
+                        tokens_before BIGINT NOT NULL
+                    )
+                """))
             conn.commit()
         logger.info("[ADMIN] group and organisation tables ready")
     except Exception as exc:  # noqa: BLE001 -- a failed migration must be loud, not fatal at boot

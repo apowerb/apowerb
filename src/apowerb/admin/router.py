@@ -10,15 +10,16 @@ from __future__ import annotations
 
 from apowerb.configs.settings import get_settings
 from apowerb.core.extensions.registry import registry as _registry
+from apowerb.core.usage_quota import month_start, next_reset
 from apowerb.helpers.database import get_db
 from apowerb.helpers.security import get_password_hash
-from apowerb.models import User, UserRole
+from apowerb.models import LlmUsage, User, UserRole
 from apowerb.users import schemas as user_schemas
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.admin.guard import (
@@ -68,6 +69,11 @@ class UserOut(BaseModel):
     agents: int = 0
     llm_calls: int = 0
     tokens: int = 0
+    # Tokens that count toward the current monthly quota: billed to the shared
+    # model since the later of the month start and the last reset. The same
+    # figure as the user's gauge, unlike `tokens` which sums the whole history.
+    quota_tokens: int = 0
+    token_usage_reset_at: datetime | None = None
     email_verified: bool = True
     mfa_enabled: bool = False
     # An administrator demanded a second factor. Distinct from
@@ -349,6 +355,35 @@ async def platform_metrics(
 # --------------------------------------------------------------------------
 
 
+async def _quota_tokens_by_email(
+    db: AsyncSession, email: str | None = None
+) -> dict[str, int]:
+    """Tokens counted toward the monthly quota, per owner, in one query.
+
+    Same window as the user's gauge: from the later of the month start and the
+    account's last reset, up to the next month. Done as a join so each row is
+    compared with its own account's cut-off.
+    """
+    now = datetime.now(timezone.utc)
+    query = (
+        select(LlmUsage.owner_id, func.sum(LlmUsage.total_tokens))
+        .join(User, User.email == LlmUsage.owner_id)
+        .where(
+            LlmUsage.billed_to_thaink2.is_(True),
+            LlmUsage.created_at >= month_start(now),
+            LlmUsage.created_at < next_reset(now),
+            or_(
+                User.token_usage_reset_at.is_(None),
+                LlmUsage.created_at >= User.token_usage_reset_at,
+            ),
+        )
+        .group_by(LlmUsage.owner_id)
+    )
+    if email is not None:
+        query = query.where(LlmUsage.owner_id == email)
+    return {owner: int(total or 0) for owner, total in (await db.execute(query)).all()}
+
+
 @router.get("/users", response_model=list[UserOut])
 async def list_users(
     db: AsyncSession = Depends(get_db),
@@ -362,7 +397,7 @@ async def list_users(
     query = select(
         User.user_id, User.email, User.first_name, User.last_name, User.role,
         User.plan, User.created_at, User.email_verified, User.mfa_enabled,
-        User.mfa_required,
+        User.mfa_required, User.token_usage_reset_at,
         User.onboarding_completed, User.google_id, User.microsoft_id,
         User.github_id, User.linkedin_id,
     )
@@ -410,6 +445,8 @@ async def list_users(
         ))).all()
     }
 
+    quota_by_email = await _quota_tokens_by_email(db)
+
     def sign_in_of(row) -> str:
         for provider, value in (
             ("google", row.google_id), ("microsoft", row.microsoft_id),
@@ -435,6 +472,8 @@ async def list_users(
             agents=agents_by_email.get(r.email, 0),
             llm_calls=calls,
             tokens=tokens,
+            quota_tokens=quota_by_email.get(r.email, 0),
+            token_usage_reset_at=r.token_usage_reset_at,
             email_verified=bool(r.email_verified),
             mfa_enabled=bool(r.mfa_enabled),
             mfa_required=bool(r.mfa_required),
@@ -959,13 +998,29 @@ async def reset_token_usage(
         "role": row.role.value if hasattr(row.role, "value") else str(row.role),
     }
 
+    reset_at = datetime.now(timezone.utc)
+    tokens_before = (await _quota_tokens_by_email(db, row.email)).get(row.email, 0)
+    # Same transaction as the update: no reset without its trace, no trace
+    # for a reset that did not happen.
     await db.execute(
-        update(User)
-        .where(User.user_id == user_id)
-        .values(token_usage_reset_at=datetime.now(timezone.utc))
+        text(
+            f"INSERT INTO {_schema()}.admin_token_reset "
+            "(user_id, target_email, admin_email, reset_at, tokens_before) "
+            "VALUES (:user_id, :target, :admin, :reset_at, :tokens_before)"
+        ),
+        {
+            "user_id": user_id,
+            "target": row.email,
+            "admin": _.email,
+            "reset_at": reset_at,
+            "tokens_before": tokens_before,
+        },
+    )
+    await db.execute(
+        update(User).where(User.user_id == user_id).values(token_usage_reset_at=reset_at)
     )
     await db.commit()
-    return UserOut(**identity)
+    return UserOut(**identity, token_usage_reset_at=reset_at, quota_tokens=0)
 
 
 class MfaDemand(BaseModel):
