@@ -19,6 +19,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from apowerb.admin import router as admin_router
 from apowerb.configs.settings import get_settings
@@ -35,6 +36,8 @@ from apowerb.helpers.database import Base, sessionmanager
 from apowerb.models import LlmUsage, User
 
 MOI = "eval@exemple.fr"
+# Le schema des modeles, fige a l'import (`settings.db_schema`, `public` par defaut).
+SCHEMA = Base.metadata.schema or "public"
 
 
 @pytest.fixture
@@ -46,11 +49,13 @@ def registre_vierge(monkeypatch):
 
 @pytest.fixture
 async def base(monkeypatch):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    for table in Base.metadata.tables.values():
-        monkeypatch.setattr(table, "schema", None)
-    monkeypatch.setattr(Base.metadata, "schema", None)
+    # Les tables gardent leur vrai schema, attache en SQLite (une seule
+    # connexion : la base attachee vit avec elle). Le retirer des tables ne
+    # suffit pas : un test precedent (`test_default_superadmin`) peut avoir
+    # fige dans le cache SQLAlchemy des colonnes de `user` qualifiees.
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
+        await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
         await conn.run_sync(Base.metadata.create_all)
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -205,9 +210,9 @@ async def test_une_coupure_illisible_garde_le_compteur_et_la_session(base):
 async def base_admin(base, monkeypatch):
     """`base` + les tables du panneau d'admin que la route et la liste lisent.
 
-    SQLite n'a pas de schema `public` : on vise `main`, le schema par defaut.
+    Le SQL brut de la route vise `{_schema()}.table` : le schema attache.
     """
-    monkeypatch.setattr(admin_router, "_schema", lambda: "main")
+    monkeypatch.setattr(admin_router, "_schema", lambda: SCHEMA)
 
     async def tout_voir(db, admin):
         return None
@@ -215,13 +220,13 @@ async def base_admin(base, monkeypatch):
     monkeypatch.setattr(admin_router, "administered_user_ids", tout_voir)
     async with base() as db:
         for ddl in (
-            "CREATE TABLE admin_superadmin (user_id INTEGER PRIMARY KEY, granted_at TIMESTAMP)",
-            "CREATE TABLE admin_org_member (user_id INTEGER PRIMARY KEY, org_id INTEGER)",
-            "CREATE TABLE admin_organization (org_id INTEGER PRIMARY KEY, name TEXT)",
-            "CREATE TABLE admin_group_member (group_id INTEGER, user_id INTEGER)",
-            "CREATE TABLE admin_group (group_id INTEGER PRIMARY KEY, name TEXT)",
-            "CREATE TABLE th2agents_store (owner_id TEXT)",
-            "CREATE TABLE admin_token_reset ("
+            f"CREATE TABLE {SCHEMA}.admin_superadmin (user_id INTEGER PRIMARY KEY, granted_at TIMESTAMP)",
+            f"CREATE TABLE {SCHEMA}.admin_org_member (user_id INTEGER PRIMARY KEY, org_id INTEGER)",
+            f"CREATE TABLE {SCHEMA}.admin_organization (org_id INTEGER PRIMARY KEY, name TEXT)",
+            f"CREATE TABLE {SCHEMA}.admin_group_member (group_id INTEGER, user_id INTEGER)",
+            f"CREATE TABLE {SCHEMA}.admin_group (group_id INTEGER PRIMARY KEY, name TEXT)",
+            f"CREATE TABLE {SCHEMA}.th2agents_store (owner_id TEXT)",
+            f"CREATE TABLE {SCHEMA}.admin_token_reset ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
             "target_email TEXT NOT NULL, admin_email TEXT NOT NULL, "
             "reset_at TIMESTAMP NOT NULL, tokens_before BIGINT NOT NULL)",
@@ -320,7 +325,7 @@ async def test_la_route_journalise_la_remise_a_zero(base_admin, monkeypatch):
     async with base() as db:
         lignes = (await db.execute(text(
             "SELECT user_id, target_email, admin_email, tokens_before, reset_at "
-            "FROM admin_token_reset"
+            f"FROM {SCHEMA}.admin_token_reset"
         ))).all()
     assert len(lignes) == 1
     user_id, cible, qui, avant, quand = lignes[0]
@@ -343,7 +348,7 @@ async def test_un_compte_inconnu_ne_laisse_aucune_trace_d_audit(base_admin, monk
                 999, db=db, _=MagicMock(email="boss@exemple.fr")
             )
     async with base() as db:
-        n = (await db.execute(text("SELECT count(*) FROM admin_token_reset"))).scalar()
+        n = (await db.execute(text(f"SELECT count(*) FROM {SCHEMA}.admin_token_reset"))).scalar()
     assert n == 0
 
 

@@ -6,8 +6,10 @@ dependances (``get_current_user`` decode un vrai JWT, ``require_admin``,
 ``_assert_may_act_on`` lit les vraies tables d'organisation) : une garde qui
 ne tiendrait que parce qu'un test l'a neutralisee serait invisible autrement.
 
-SQLite en memoire : le schema ``main`` joue le role de ``settings.db_schema``
-pour le SQL brut des gardes (``main.admin_org_member``).
+SQLite en memoire avec une base ``public`` attachee : les tables gardent leur
+vrai schema, comme en PostgreSQL. Retirer le schema des tables ne suffit pas :
+un test precedent (``test_default_superadmin``) peut avoir fige dans le cache
+SQLAlchemy des colonnes de ``user`` qualifiees ``public``.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from apowerb.admin import router as admin_router
 from apowerb.configs.settings import get_settings
@@ -39,21 +42,34 @@ ETRANGER = "etranger@exemple.fr"  # hors de cette organisation
 SIMPLE = "simple@exemple.fr"  # role USER
 
 
+# Le schema des modeles, fige a l'import (`settings.db_schema`, `public` par defaut).
+SCHEMA = Base.metadata.schema or "public"
+
+
 @pytest.fixture
 async def factory(monkeypatch):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    for table in Base.metadata.tables.values():
-        monkeypatch.setattr(table, "schema", None)
-    monkeypatch.setattr(Base.metadata, "schema", None)
-    # Le SQL brut des gardes cible `{db_schema}.table` ; `main` existe en SQLite.
-    monkeypatch.setattr(get_settings(), "db_schema", "main")
+    # Une seule connexion : la base attachee `public` vit avec elle.
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+    # Le SQL brut des gardes et de la route cible `{db_schema}.table`.
+    monkeypatch.setattr(get_settings(), "db_schema", SCHEMA)
+    monkeypatch.setattr(admin_router, "_schema", lambda: SCHEMA)
     async with engine.begin() as conn:
+        await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
         await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text("CREATE TABLE admin_organization (org_id INTEGER PRIMARY KEY)"))
+        await conn.execute(text(f"CREATE TABLE {SCHEMA}.admin_organization (org_id INTEGER PRIMARY KEY)"))
         await conn.execute(
-            text("CREATE TABLE admin_org_member (user_id INTEGER PRIMARY KEY, org_id INTEGER NOT NULL)")
+            text(f"CREATE TABLE {SCHEMA}.admin_org_member (user_id INTEGER PRIMARY KEY, org_id INTEGER NOT NULL)")
         )
-        await conn.execute(text("CREATE TABLE admin_superadmin (user_id INTEGER PRIMARY KEY)"))
+        await conn.execute(text(f"CREATE TABLE {SCHEMA}.admin_superadmin (user_id INTEGER PRIMARY KEY)"))
+        # Journal des remises a zero, ecrit dans la meme transaction que la coupure.
+        await conn.execute(
+            text(
+                f"CREATE TABLE {SCHEMA}.admin_token_reset ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
+                "target_email TEXT NOT NULL, admin_email TEXT NOT NULL, "
+                "reset_at TIMESTAMP NOT NULL, tokens_before BIGINT NOT NULL)"
+            )
+        )
 
     sessions = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -77,10 +93,10 @@ async def factory(monkeypatch):
         ):
             db.add(User(user_id=uid, email=mail, first_name="P", last_name="N", role=role))
         await db.flush()
-        await db.execute(text("INSERT INTO admin_organization (org_id) VALUES (1)"))
-        await db.execute(text("INSERT INTO admin_org_member (user_id, org_id) VALUES (2, 1), (3, 1)"))
+        await db.execute(text(f"INSERT INTO {SCHEMA}.admin_organization (org_id) VALUES (1)"))
+        await db.execute(text(f"INSERT INTO {SCHEMA}.admin_org_member (user_id, org_id) VALUES (2, 1), (3, 1)"))
         # Un superadmin nomme : sinon tout administrateur en serait un.
-        await db.execute(text("INSERT INTO admin_superadmin (user_id) VALUES (1)"))
+        await db.execute(text(f"INSERT INTO {SCHEMA}.admin_superadmin (user_id) VALUES (1)"))
         await db.commit()
     yield sessions
     await engine.dispose()
