@@ -9,8 +9,9 @@ async-from-sync bridge of ``business_intelligence``. A dashboard is only ever
 read or written through a store scoped to the agent's owner, so an agent never
 sees another owner's dashboards.
 
-Tools: tool_bi_create_dashboard, tool_bi_create_stock_dashboard,
-tool_bi_patch_dashboard, tool_bi_query_dashboard, tool_bi_describe_dashboard.
+Tools: tool_bi_import_attachment, tool_bi_create_dashboard,
+tool_bi_create_stock_dashboard, tool_bi_patch_dashboard,
+tool_bi_query_dashboard, tool_bi_describe_dashboard.
 """
 
 from __future__ import annotations
@@ -23,7 +24,9 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from apowerb.tools_store.portfolio.business_intelligence import (
+    _agent_org,
     _agent_owner,
+    _agent_project,
     _get_session,
     _run_async,
 )
@@ -502,6 +505,58 @@ def _create(title: str, description: str, spec: dict, tool: str) -> dict:
         return _fail(tool, exc, title)
 
 
+def tool_bi_import_attachment(filename: str, sheet: str = "") -> dict:
+    """Imports a file attached to the chat as a BI dataset and returns its dataset_id.
+
+    A dashboard is built on a DATASET, never on a chat attachment directly:
+    when the user attaches a file (CSV, Excel, ODS, JSON, Parquet) and asks for
+    a dashboard, call this first, then pass the returned ``dataset_id`` to
+    tool_bi_create_stock_dashboard or tool_bi_create_dashboard. The dataset
+    lands in the user's Data Pool, exactly as if they had uploaded the file in
+    the BI page. Importing the same file again reuses the same dataset.
+
+    Args:
+        filename: Name of the attached file, exactly as shown in
+                  ``[Uploaded files: ...]`` (a plain file name, no path).
+        sheet:    Sheet name for Excel/ODS files. Empty: the first sheet.
+
+    Returns:
+        dict with success, dataset_id, name, columns (names, to use as
+        ``date``/``family``/``sales``/``stock``... arguments) and row_count.
+        If the file is not found the error lists the available files.
+    """
+    from apowerb.tools_store.portfolio.bi_datasets import _materialize_uploaded_file_dataset
+
+    owner = _agent_owner()
+    if not owner:
+        return {"success": False, "error": "No owner context."}
+    name = (filename or "").strip()
+    if not name:
+        return {
+            "success": False,
+            "error": "filename is required: pass the attached file name as shown in [Uploaded files: ...].",
+        }
+    try:
+        stored = _run_async(_materialize_uploaded_file_dataset(
+            name, owner, _agent_org(), _agent_project(), sheet.strip() or None,
+        ))
+    except Exception as exc:
+        return _fail("tool_bi_import_attachment", exc)
+    if not stored["success"]:
+        return {"success": False, "error": stored["error"]}
+    return {
+        "success": True,
+        "dataset_id": stored["dataset_id"],
+        "name": stored["name"],
+        "columns": stored["columns"],
+        "row_count": stored["row_count"],
+        "reused": stored["reused"],
+        "message": (
+            f"File '{name}' is dataset {stored['dataset_id']}. Pass it as dataset_id to the dashboard tools."
+        ),
+    }
+
+
 def tool_bi_create_dashboard(
     title: str,
     spec_json: str,
@@ -560,7 +615,7 @@ def tool_bi_create_dashboard(
 
 
 def tool_bi_create_stock_dashboard(
-    dataset_id: str,
+    dataset_id: str = "",
     title: str = "Pilotage stocks",
     date: str = "semaine",
     family: str = "famille",
@@ -596,9 +651,13 @@ def tool_bi_create_stock_dashboard(
     family filter and a period filter.
 
     Call bi_datasets.tool_describe_dataset first to find the column names.
+    When the data is a file attached to the chat, import it first with
+    tool_bi_import_attachment: it returns the dataset_id (and the columns).
 
     Args:
         dataset_id:     Dataset id (UUID) holding one row per week and family (and site).
+                        Required: from tool_bi_import_attachment (chat attachment)
+                        or tool_list_datasets (already imported).
         title:          Dashboard title.
         date:           Week (date) column name, lowercase.
         family:         Product family column name, lowercase.
@@ -622,6 +681,15 @@ def tool_bi_create_stock_dashboard(
     """
     from apowerb.bi.spec.templates import stock_pilotage
 
+    if not (dataset_id or "").strip():
+        return {
+            "success": False,
+            "error": (
+                "dataset_id is required. If the data is a file attached to the chat, call "
+                "tool_bi_import_attachment(filename=<name from [Uploaded files: ...]>) first and pass "
+                "the dataset_id it returns; otherwise pick an existing dataset with tool_list_datasets."
+            ),
+        }
     try:
         spec = stock_pilotage(
             dataset_id.strip(),

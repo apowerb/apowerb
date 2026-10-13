@@ -142,6 +142,7 @@ def inject_bi_dashboard_tools(
         "business_intelligence.tool_create_forecast_chart",
         "business_intelligence.tool_create_forecast_dashboard",
         # Tableaux de bord déclaratifs (filtres globaux, KPI à seuils).
+        "bi_dashboard_tools.tool_bi_import_attachment",
         "bi_dashboard_tools.tool_bi_create_dashboard",
         "bi_dashboard_tools.tool_bi_create_stock_dashboard",
         "bi_dashboard_tools.tool_bi_patch_dashboard",

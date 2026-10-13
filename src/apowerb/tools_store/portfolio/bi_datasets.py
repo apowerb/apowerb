@@ -414,13 +414,15 @@ async def _materialize_uploaded_file_dataset(
         "source_sha256": digest,
     }
 
+    summary = {"name": display_name, "columns": data.columns, "row_count": len(data.rows)}
+
     async with _get_session() as db:
         store = DatabaseDataStore(db, owner=owner)
         existing = await store.get(dataset_id)
         if existing is not None:
             key = (existing.config or {}).get("s3_key")
             if key and read_file(key) is not None:
-                return {"success": True, "dataset_id": dataset_id, "reused": True}
+                return {"success": True, "dataset_id": dataset_id, "reused": True, **summary}
         try:
             await store_tabular_as_csv(
                 store, organization_id=organization_id, project_id=project_id,
@@ -435,7 +437,7 @@ async def _materialize_uploaded_file_dataset(
                 file_id=dataset_id, name=f"{display_name}-{dataset_id[:4]}", data=data,
                 uploaded_by=owner, extra_metadata=provenance,
             )
-    return {"success": True, "dataset_id": dataset_id, "reused": False}
+    return {"success": True, "dataset_id": dataset_id, "reused": False, **summary}
 
 
 def validate_forecast_columns(
