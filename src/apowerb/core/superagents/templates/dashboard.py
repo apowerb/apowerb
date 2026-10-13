@@ -44,6 +44,7 @@ DASHBOARD_TEMPLATES = [
             "| `tool_bi_query_dashboard` | Read the computed values of a spec-based dashboard | To answer a question about its numbers |\n\n"
             "For a dashboard with filters or KPIs with thresholds on a dataset, prefer `tool_bi_create_dashboard` / "
             "`tool_bi_create_stock_dashboard` (find the dataset with `tool_list_datasets` and `tool_describe_dataset`). "
+            "Pass `language` (\"fr\" or \"en\") in the language of the conversation to these template tools. "
             "To modify one, call `tool_bi_describe_dashboard` then `tool_bi_patch_dashboard`.\n\n"
 
             "## Workflow\n\n"

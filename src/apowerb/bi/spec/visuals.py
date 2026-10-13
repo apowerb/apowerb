@@ -22,7 +22,7 @@ from apowerb.bi.spec import sql_guard
 from apowerb.bi.spec.duck import SqlRunner, quote_ident, to_python
 from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.filters import AGGREGATION_SQL, ActiveFilter, apply_filters
-from apowerb.bi.spec.formatting import format_date_fr, format_delta, format_value
+from apowerb.bi.spec.formatting import format_date, format_delta, format_value
 from apowerb.bi.spec.frames import MatSource, referenced_columns
 from apowerb.bi.spec.models import (
     ColorRule,
@@ -41,6 +41,7 @@ from apowerb.bi.spec.models import (
 from apowerb.bi.spec.validate import TEMPLATE_TOKEN_RE
 
 TOTAL_LABEL = "Toutes"
+TOTAL_LABEL_EN = "All"
 _RANK = {Provenance.REAL: 0, Provenance.SIMULATED: 1, Provenance.FORECAST: 2}
 _DEFAULT_WATERFALL_COLORS = {"start": "accent", "increase": "good", "decrease": "bad", "end": "accent"}
 # A measure that is exactly SUM(column): the aggregation filter may swap its function.
@@ -56,6 +57,7 @@ class ComputeContext:
     source_errors: dict[str, str]
     active: dict[str, ActiveFilter]
     runner: SqlRunner
+    lang: str | None = None  # dashboard language; None = French
     _frames: dict[tuple[str, frozenset[str], bool], tuple[pd.DataFrame, dict[str, Any], list[str]]] = field(
         default_factory=dict
     )
@@ -186,7 +188,8 @@ class VisualBuilder:
         if grain is None:
             return qx
         if not pd.api.types.is_datetime64_any_dtype(frame[x]):
-            warning = f"Grain temporel ignoré : « {x} » n'est pas une date."
+            warning = (f"Time grain ignored: “{x}” is not a date." if self.ctx.lang == "en"
+                       else f"Grain temporel ignoré : « {x} » n'est pas une date.")
             if warning not in self._extra_warnings:
                 self._extra_warnings.append(warning)
             return qx
@@ -247,8 +250,8 @@ class VisualBuilder:
                 return period[key]
             m = self.measure(token)
             if fmt:
-                return format_value(values.get(token), fmt)
-            return format_value(values.get(token), m.format, m.unit)
+                return format_value(values.get(token), fmt, lang=self.ctx.lang)
+            return format_value(values.get(token), m.format, m.unit, lang=self.ctx.lang)
 
         return TEMPLATE_TOKEN_RE.sub(replace, template)
 
@@ -268,9 +271,9 @@ class VisualBuilder:
             return {"from": "", "to": "", "last": ""}
         last = dataclasses.replace(self.mat, df=self.df).real_last_date(col)
         return {
-            "from": format_date_fr(dates.min()),
-            "to": format_date_fr(dates.max()),
-            "last": format_date_fr(last),
+            "from": format_date(dates.min(), self.ctx.lang),
+            "to": format_date(dates.max(), self.ctx.lang),
+            "last": format_date(last, self.ctx.lang),
         }
 
     # -- sorting -----------------------------------------------------------
@@ -310,7 +313,8 @@ class VisualBuilder:
                     provs.add(self.mat.provenance_of(col))
             for col, message in self.mat.failed_columns.items():
                 if col in self.used_columns:
-                    warnings.append(f"Prévision indisponible : {message}.")
+                    warnings.append(f"Forecast unavailable: {message}." if self.ctx.lang == "en"
+                                    else f"Prévision indisponible : {message}.")
         return ComponentMeta(
             source=self.v.source,
             measures=traces,
@@ -419,10 +423,10 @@ class VisualBuilder:
             if last is not None:
                 current = last
         if previous is not None:
-            delta, delta_text = format_delta(current, previous, m.format)
+            delta, delta_text = format_delta(current, previous, m.format, lang=self.ctx.lang)
         kpi_value = KpiValue(
             value=value,
-            formatted=format_value(value, m.format, m.unit),
+            formatted=format_value(value, m.format, m.unit, lang=self.ctx.lang),
             status=status_of(value, m.thresholds),  # type: ignore[arg-type]
             delta=delta,
             delta_formatted=delta_text,
@@ -505,8 +509,12 @@ class VisualBuilder:
             else:  # end
                 base, shown = 0.0, amount
                 if abs(amount - running) > 1e-6 * max(1.0, abs(amount), abs(running)):
+                    lang = self.ctx.lang
                     warnings.append(
-                        f"Le total final « {s.label} » ({format_value(amount)}) diffère du cumul des étapes "
+                        f"The final total “{s.label}” ({format_value(amount, lang=lang)}) differs from the sum of the "
+                        f"steps ({format_value(running, lang=lang)})."
+                        if lang == "en"
+                        else f"Le total final « {s.label} » ({format_value(amount)}) diffère du cumul des étapes "
                         f"({format_value(running)})."
                     )
                 running = amount
@@ -594,7 +602,7 @@ class VisualBuilder:
             )
             res = self.ctx.runner.run(f"SELECT {parts} FROM frame", {"frame": self.df})
             if len(res):
-                rows.append(make_row(TOTAL_LABEL, res.iloc[0], total=True))
+                rows.append(make_row(TOTAL_LABEL_EN if self.ctx.lang == "en" else TOTAL_LABEL, res.iloc[0], total=True))
         return ComponentResult(type="table", rows=rows)
 
     def _is_highlighted(self, x_value: Any) -> bool:

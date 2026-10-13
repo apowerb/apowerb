@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 from apowerb.bi.spec import (
     catalog,
@@ -49,43 +48,27 @@ MODULES = (
 )
 
 
-def _module_entry(module: Any) -> tuple[str, list[dict], list[dict], Any]:
-    d = module.DESCRIPTOR
-    return d["id"], d["columns"], d.get("params", []), module.build
-
-
-def _stock_entry() -> tuple[str, list[dict], list[dict], Any]:
-    t = catalog.get_template("stock_pilotage")
-    assert t is not None
-    columns = [{"key": c.key, "required": c.required, "default": c.default} for c in t.columns]
-    params = [{"key": p.key, "default": p.default} for p in t.params]
-    return t.id, columns, params, t.build
-
-
-def entries() -> list[tuple[str, list[dict], list[dict], Any]]:
-    return [_stock_entry(), *(_module_entry(m) for m in MODULES)]
-
-
-TEMPLATE_IDS = [e[0] for e in entries()]
+TEMPLATE_IDS = ["stock_pilotage", *(m.DESCRIPTOR["id"] for m in MODULES)]
 CASES = ("required", "full")
 
 
-def inputs(columns: list[dict], params: list[dict], case: str) -> tuple[dict, dict]:
+def inputs(template: catalog.DashboardTemplate, case: str) -> tuple[dict, dict]:
     mapping: dict[str, str | None] = {}
-    for c in columns:
-        if c["required"]:
-            mapping[c["key"]] = c.get("default") or c["key"]
+    for c in template.columns:
+        if c.required:
+            mapping[c.key] = c.default or c.key
         else:
-            mapping[c["key"]] = (c.get("default") or c["key"]) if case == "full" else None
-    return mapping, {p["key"]: p["default"] for p in params}
+            mapping[c.key] = (c.default or c.key) if case == "full" else None
+    return mapping, {p.key: p.default for p in template.params}
 
 
-def build_case(template_id: str, case: str, **kwargs: Any) -> dict:
-    for tid, columns, params, build in entries():
-        if tid == template_id:
-            mapping, values = inputs(columns, params, case)
-            return build(DATASET_ID, mapping, values, **kwargs)
-    raise KeyError(template_id)
+def build_case(template_id: str, case: str, lang: str | None = None) -> dict:
+    """Build through the catalog, in French unless ``lang`` is given."""
+    template = catalog.get_template(template_id) if lang is None else catalog.get_template(template_id, lang=lang)
+    if template is None:
+        raise KeyError(template_id)
+    mapping, values = inputs(template, case)
+    return template.build(DATASET_ID, mapping, values)
 
 
 def golden_path(template_id: str, case: str) -> Path:

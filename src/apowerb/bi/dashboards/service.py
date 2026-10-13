@@ -250,6 +250,7 @@ class DashboardService:
             sources=req.sources,
             filters=req.filters,
             template=template,
+            locale=req.locale,
         )
         _check_spec(dashboard)
         return await self._save_named(dashboard)

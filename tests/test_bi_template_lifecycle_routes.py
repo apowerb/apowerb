@@ -241,7 +241,7 @@ async def test_replace_file_of_someone_elses_dashboard_or_dataset_is_404():
 
 
 def _bumped(monkeypatch, version=2):
-    template = dataclasses.replace(catalog.get_template("stock_pilotage"), version=version)
+    template = dataclasses.replace(catalog._TEMPLATES["stock_pilotage"], version=version)
     monkeypatch.setattr(catalog, "_TEMPLATES", {template.id: template})
 
 
@@ -334,3 +334,39 @@ async def test_upgrade_errors_422_404():
         assert blank.status_code == 422
         assert (await _post(env, f"/dashboards/{dashboard.id}/upgrade", {
             "template_id": "stock_pilotage", "columns": NATIVE}, viewer=BOB)).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Language: catalog, creation, upgrade
+# ---------------------------------------------------------------------------
+
+
+async def test_template_list_follows_the_requested_language():
+    async with db_env() as env:
+        english = {t["id"]: t["label"] for t in (await _get(env, "/dashboard-templates?lang=en")).json()}
+        french = {t["id"]: t["label"] for t in (await _get(env, "/dashboard-templates")).json()}
+        assert english["stock_pilotage"] == "Inventory steering" and french["stock_pilotage"] == "Pilotage stocks"
+        assert (await _get(env, "/dashboard-templates?lang=de")).status_code == 422
+
+
+async def test_english_dashboard_is_built_and_computed_in_english_and_keeps_it_on_upgrade(monkeypatch):
+    async with db_env() as env:
+        env.datasets[DS] = (ALICE, sales_frame(renamed=True))
+        resp = await _post(env, "/dashboard-templates/stock_pilotage/dashboards",
+                           {"dataset_id": DS, "columns": NATIVE, "lang": "en"})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["title"] == "Inventory steering"
+        dashboard_id = resp.json()["dashboard_id"]
+        built = await env.load(dashboard_id)
+        assert built.locale == "en"
+        assert any(c.visual.title == "Comparison by product family" for c in built.components)
+        data = await _post(env, f"/dashboards/{dashboard_id}/data", {})
+        assert data.status_code == 200, data.text
+        assert data.json()["filters"]["famille"]["label"] == "All product families"
+
+        _bumped(monkeypatch)
+        upgraded = await _post(env, f"/dashboards/{dashboard_id}/upgrade", {})
+        assert upgraded.status_code == 200, upgraded.text
+        after = await env.load(dashboard_id)
+        assert after.locale == "en"
+        assert any(c.visual.title == "Comparison by product family" for c in after.components)

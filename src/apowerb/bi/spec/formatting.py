@@ -1,11 +1,12 @@
 """
 bi/spec/formatting.py
 ---------------------
-fr-FR number formatting for the spec v2 measures (``MeasureSpec.format``).
+Number and date formatting for the spec v2 measures (``MeasureSpec.format``), in the
+dashboard language.
 
-Thousands are separated by a narrow no-break space (U+202F), the decimal mark
-is a comma, and units are separated from the number by a plain space:
-``1 234``, ``15,3 k``, ``96,9 %``, ``1,0 sem.``.
+French (the default): thousands separated by a narrow no-break space (U+202F), a
+decimal comma, units after a plain space: ``1 234``, ``15,3 k``, ``96,9 %``, ``1,0 sem.``.
+English: ``1,234``, ``15.3k``, ``96.9%``, ``1.0 wk``.
 """
 
 from __future__ import annotations
@@ -28,61 +29,78 @@ def _is_missing(value: Any) -> bool:
         return True
 
 
-def _group(int_part: str) -> str:
+# Separators and suffixes per language: thousands, decimal mark, compact suffixes
+# (thousand, million, billion), percent and weeks suffixes.
+_STYLE: dict[str, dict[str, Any]] = {
+    "fr": {"group": THIN_SPACE, "decimal": ",", "compact": (" k", " M", " Md"), "percent": " %", "weeks": " sem."},
+    "en": {"group": ",", "decimal": ".", "compact": ("k", "M", "B"), "percent": "%", "weeks": " wk"},
+}
+
+
+def _style(lang: str | None) -> dict[str, Any]:
+    return _STYLE.get(lang or "fr", _STYLE["fr"])
+
+
+def _group(int_part: str, sep: str = THIN_SPACE) -> str:
     """Insert the thousands separator in a string of digits."""
     out: list[str] = []
     for i, ch in enumerate(reversed(int_part)):
         if i and i % 3 == 0:
-            out.append(THIN_SPACE)
+            out.append(sep)
         out.append(ch)
     return "".join(reversed(out))
 
 
-def _fixed(value: float, decimals: int, *, trim: bool = False) -> str:
-    """``value`` with ``decimals`` decimals, French separators."""
+def _fixed(value: float, decimals: int, *, trim: bool = False, lang: str | None = None) -> str:
+    """``value`` with ``decimals`` decimals, with the separators of ``lang``."""
+    style = _style(lang)
     text = f"{abs(value):.{decimals}f}"
     int_part, _, frac = text.partition(".")
     if trim:
         frac = frac.rstrip("0")
-    body = _group(int_part) + ("," + frac if frac else "")
+    body = _group(int_part, style["group"]) + (style["decimal"] + frac if frac else "")
     # "-0" / "-0,0" read badly: a value that rounds to zero has no sign.
-    negative = value < 0 and any(c not in "0,.  " for c in body)
+    negative = value < 0 and any(c.isdigit() and c != "0" for c in body)
     return ("-" if negative else "") + body
 
 
-def format_value(value: Any, fmt: str = "number", unit: str | None = None) -> str:
-    """Format ``value`` according to a ``MeasureSpec.format`` name."""
+def format_value(value: Any, fmt: str = "number", unit: str | None = None, lang: str | None = None) -> str:
+    """Format ``value`` according to a ``MeasureSpec.format`` name, in ``lang`` (French by default)."""
     if _is_missing(value):
         return MISSING
+    style = _style(lang)
     v = float(value)
     if fmt == "integer":
-        text = _fixed(round(v), 0)
+        text = _fixed(round(v), 0, lang=lang)
     elif fmt == "compact":
         a = abs(v)
+        thousand, million, billion = style["compact"]
         if a >= 1e9:
-            text = _fixed(v / 1e9, 1) + " Md"
+            text = _fixed(v / 1e9, 1, lang=lang) + billion
         elif a >= 1e6:
-            text = _fixed(v / 1e6, 1) + " M"
+            text = _fixed(v / 1e6, 1, lang=lang) + million
         elif a >= 1e3:
-            text = _fixed(v / 1e3, 1) + " k"
+            text = _fixed(v / 1e3, 1, lang=lang) + thousand
         else:
-            text = _fixed(v, 1, trim=True)
+            text = _fixed(v, 1, trim=True, lang=lang)
     elif fmt == "percent":
-        text = _fixed(v * 100, 1) + " %"
+        text = _fixed(v * 100, 1, lang=lang) + style["percent"]
     elif fmt == "decimal1":
-        text = _fixed(v, 1)
+        text = _fixed(v, 1, lang=lang)
     elif fmt == "decimal2":
-        text = _fixed(v, 2)
+        text = _fixed(v, 2, lang=lang)
     elif fmt == "weeks":
-        text = _fixed(v, 1) + " sem."
+        text = _fixed(v, 1, lang=lang) + style["weeks"]
     else:  # number
-        text = _fixed(v, 0) if abs(v - round(v)) < 1e-9 else _fixed(v, 2, trim=True)
+        text = _fixed(v, 0, lang=lang) if abs(v - round(v)) < 1e-9 else _fixed(v, 2, trim=True, lang=lang)
     if unit and fmt not in ("percent", "weeks"):
         text = f"{text} {unit}"
     return text
 
 
-def format_delta(current: Any, previous: Any, fmt: str = "number") -> tuple[float | None, str | None]:
+def format_delta(
+    current: Any, previous: Any, fmt: str = "number", lang: str | None = None
+) -> tuple[float | None, str | None]:
     """Delta between two values: ``(delta, "+3,2 %")``.
 
     A ``percent`` measure is compared in points (``+1,2 pt``); any other
@@ -93,27 +111,34 @@ def format_delta(current: Any, previous: Any, fmt: str = "number") -> tuple[floa
     cur, prev = float(current), float(previous)
     if fmt == "percent":
         delta = (cur - prev) * 100
-        return delta, f"{'+' if delta > 0 else ''}{_fixed(delta, 1)} pt"
+        return delta, f"{'+' if delta > 0 else ''}{_fixed(delta, 1, lang=lang)} pt"
     if prev == 0:
         return None, None
     delta = (cur - prev) / abs(prev)
-    return delta, f"{'+' if delta > 0 else ''}{_fixed(delta * 100, 1)} %"
+    return delta, f"{'+' if delta > 0 else ''}{_fixed(delta * 100, 1, lang=lang)}{_style(lang)['percent']}"
 
 
-_MONTHS_FR = (
-    "janv.", "févr.", "mars", "avr.", "mai", "juin",
-    "juil.", "août", "sept.", "oct.", "nov.", "déc.",
-)
+_MONTHS = {
+    "fr": ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."),
+    "en": ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+}
 
 
-def format_date_fr(value: Any) -> str:
-    """``29 déc. 2025`` for a date-like value, ``""`` when missing."""
+def format_date(value: Any, lang: str | None = None) -> str:
+    """``29 déc. 2025`` (French) or ``Dec 29, 2025`` (English); ``""`` when missing."""
     try:
         import pandas as pd
 
         ts = pd.Timestamp(value)
         if pd.isna(ts):
             return ""
-        return f"{ts.day} {_MONTHS_FR[ts.month - 1]} {ts.year}"
+        if lang == "en":
+            return f"{_MONTHS['en'][ts.month - 1]} {ts.day}, {ts.year}"
+        return f"{ts.day} {_MONTHS['fr'][ts.month - 1]} {ts.year}"
     except (TypeError, ValueError):
         return ""
+
+
+def format_date_fr(value: Any) -> str:
+    """``29 déc. 2025`` for a date-like value, ``""`` when missing."""
+    return format_date(value, "fr")

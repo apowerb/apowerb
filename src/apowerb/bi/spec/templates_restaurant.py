@@ -32,6 +32,7 @@ from apowerb.bi.spec.models import (
     ThresholdSpec,
     VisualSpec,
 )
+from apowerb.bi.spec.templates_common import DEFAULT_LANG, translator
 
 _IDENT_RE = re.compile(IDENT)
 
@@ -46,32 +47,45 @@ WARN_MARGIN = 5  # points above the upper bound of a band before the ratio turns
 
 DESCRIPTOR: dict[str, Any] = {
     "id": "restaurant",
-    "label": "Restauration",
-    "description": (
-        "Pilotage d'un restaurant à partir d'une ligne par jour (ou par service) : coût matière et coût du "
-        "personnel en % du chiffre d'affaires, prime cost avec ses cibles réglables, ticket moyen, couverts et "
-        "chiffre d'affaires par jour de semaine."
-    ),
+    "label": {"fr": "Restauration", "en": "Restaurant"},
+    "description": {
+        "fr": (
+            "Pilotage d'un restaurant à partir d'une ligne par jour (ou par service) : coût matière et coût du "
+            "personnel en % du chiffre d'affaires, prime cost avec ses cibles réglables, ticket moyen, couverts et "
+            "chiffre d'affaires par jour de semaine."
+        ),
+        "en": (
+            "Restaurant management from one row per day (or per service): food cost and labor cost "
+            "as % of revenue, prime cost with adjustable targets, average check, covers and "
+            "revenue by day of the week."
+        ),
+    },
     "version": 1,
     "columns": [
         {"key": "date", "label": "Date", "type": "date", "required": True, "default": "date"},
-        {"key": "revenue", "label": "Chiffre d'affaires", "type": "number", "required": True, "default": "ca"},
-        {"key": "covers", "label": "Couverts", "type": "number", "required": True, "default": "couverts"},
-        {"key": "food_cost", "label": "Achats matières", "type": "number", "required": True,
-         "default": "achats_matieres"},
-        {"key": "labor_cost", "label": "Masse salariale", "type": "number", "required": True,
-         "default": "masse_salariale"},
-        {"key": "service", "label": "Service (midi / soir)", "type": "string", "required": False, "default": None},
+        {"key": "revenue", "label": {"fr": "Chiffre d'affaires", "en": "Revenue"}, "type": "number",
+         "required": True, "default": "ca"},
+        {"key": "covers", "label": {"fr": "Couverts", "en": "Covers"}, "type": "number", "required": True,
+         "default": "couverts"},
+        {"key": "food_cost", "label": {"fr": "Achats matières", "en": "Food purchases"}, "type": "number",
+         "required": True, "default": "achats_matieres"},
+        {"key": "labor_cost", "label": {"fr": "Masse salariale", "en": "Payroll"}, "type": "number",
+         "required": True, "default": "masse_salariale"},
+        {"key": "service", "label": {"fr": "Service (midi / soir)", "en": "Service (lunch / dinner)"},
+         "type": "string", "required": False, "default": None},
     ],
     "params": [
-        {"key": "food_cost_min", "label": "Coût matière : cible basse (%)", "type": "integer",
-         "default": FOOD_COST_MIN, "min": 0, "max": 99},
-        {"key": "food_cost_max", "label": "Coût matière : cible haute (%)", "type": "integer",
-         "default": FOOD_COST_MAX, "min": 1, "max": 100},
-        {"key": "prime_cost_min", "label": "Prime cost : cible basse (%)", "type": "integer",
-         "default": PRIME_COST_MIN, "min": 0, "max": 99},
-        {"key": "prime_cost_max", "label": "Prime cost : cible haute (%)", "type": "integer",
-         "default": PRIME_COST_MAX, "min": 1, "max": 100},
+        {"key": "food_cost_min", "label": {"fr": "Coût matière : cible basse (%)", "en": "Food cost: low target (%)"},
+         "type": "integer", "default": FOOD_COST_MIN, "min": 0, "max": 99},
+        {"key": "food_cost_max",
+         "label": {"fr": "Coût matière : cible haute (%)", "en": "Food cost: high target (%)"},
+         "type": "integer", "default": FOOD_COST_MAX, "min": 1, "max": 100},
+        {"key": "prime_cost_min",
+         "label": {"fr": "Prime cost : cible basse (%)", "en": "Prime cost: low target (%)"},
+         "type": "integer", "default": PRIME_COST_MIN, "min": 0, "max": 99},
+        {"key": "prime_cost_max",
+         "label": {"fr": "Prime cost : cible haute (%)", "en": "Prime cost: high target (%)"},
+         "type": "integer", "default": PRIME_COST_MAX, "min": 1, "max": 100},
     ],
 }
 _REQUIRED = [c["key"] for c in DESCRIPTOR["columns"] if c["required"]]
@@ -79,6 +93,7 @@ _OPTIONAL = [c["key"] for c in DESCRIPTOR["columns"] if not c["required"]]
 _PARAMS = {p["key"]: p for p in DESCRIPTOR["params"]}
 
 _WEEKDAYS = ("Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim")
+_WEEKDAYS_EN = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
 def _check_ident(label: str, value: str) -> str:
@@ -142,8 +157,10 @@ def restaurant(
     prime_cost_min: int = PRIME_COST_MIN,
     prime_cost_max: int = PRIME_COST_MAX,
     default_period: str = "12w",
+    lang: str = DEFAULT_LANG,
 ) -> dict:
-    """Build the « Restauration » spec for a dataset of days (or services)."""
+    """Build the « Restauration » spec for a dataset of days (or services), in ``lang``."""
+    T = translator(lang)
     if not dataset_id:
         raise ValueError("dataset_id is required.")
     d = _check_ident("date", date)
@@ -157,7 +174,8 @@ def restaurant(
     CA, CV, FC, LC = (f"SUM({_q(c)})" for c in (ca, cv, fc, lc))
 
     # ---- transforms --------------------------------------------------
-    names = " ".join(f"WHEN {i} THEN '{i}-{name}'" for i, name in enumerate(_WEEKDAYS, start=1))
+    weekdays = tuple(T(fr, en) for fr, en in zip(_WEEKDAYS, _WEEKDAYS_EN))
+    names = " ".join(f"WHEN {i} THEN '{i}-{name}'" for i, name in enumerate(weekdays, start=1))
     transforms = [
         DeriveStep(column=bucket, expr=f"date_trunc('week', CAST({_q(d)} AS TIMESTAMP))", provenance=Provenance.REAL),
         DeriveStep(column=weekday, expr=f"CASE isodow(CAST({_q(d)} AS DATE)) {names} END",
@@ -167,16 +185,19 @@ def restaurant(
     # ---- fields ------------------------------------------------------
     fields = [
         FieldSpec(name=d, label="Date", type="date", role="date"),
-        FieldSpec(name=ca, label="Chiffre d'affaires", type="number", role="measure", format="compact"),
-        FieldSpec(name=cv, label="Couverts", type="number", role="measure", format="integer"),
-        FieldSpec(name=fc, label="Achats matières", type="number", role="measure", format="compact"),
-        FieldSpec(name=lc, label="Masse salariale", type="number", role="measure", format="compact"),
+        FieldSpec(name=ca, label=T("Chiffre d'affaires", "Revenue"), type="number", role="measure",
+                  format="compact"),
+        FieldSpec(name=cv, label=T("Couverts", "Covers"), type="number", role="measure", format="integer"),
+        FieldSpec(name=fc, label=T("Achats matières", "Food purchases"), type="number", role="measure",
+                  format="compact"),
+        FieldSpec(name=lc, label=T("Masse salariale", "Payroll"), type="number", role="measure",
+                  format="compact"),
     ]
     if sv:
         fields.append(FieldSpec(name=sv, label="Service", role="dimension"))
     fields += [
-        FieldSpec(name=bucket, label="Semaine", type="date", role="dimension"),
-        FieldSpec(name=weekday, label="Jour de la semaine", role="dimension"),
+        FieldSpec(name=bucket, label=T("Semaine", "Week"), type="date", role="dimension"),
+        FieldSpec(name=weekday, label=T("Jour de la semaine", "Day of the week"), role="dimension"),
     ]
 
     # ---- measures ----------------------------------------------------
@@ -185,28 +206,36 @@ def restaurant(
                              warn=min(high + WARN_MARGIN, 100) / 100)
 
     measures = [
-        MeasureSpec(name="ca", label="Chiffre d'affaires", expr=CA, format="compact", unit="€"),
-        MeasureSpec(name="couverts", label="Couverts", expr=CV, format="integer", unit="couverts"),
-        MeasureSpec(name="achats", label="Achats matières", expr=FC, format="compact", unit="€"),
-        MeasureSpec(name="masse_salariale", label="Masse salariale", expr=LC, format="compact", unit="€"),
-        MeasureSpec(name="cout_matiere", label="Coût matière", expr=f"{FC} / NULLIF({CA}, 0)", format="percent",
-                    thresholds=band(food_cost_max),
-                    description="Achats matières ÷ chiffre d'affaires."),
-        MeasureSpec(name="cout_personnel", label="Coût du personnel", expr=f"{LC} / NULLIF({CA}, 0)",
-                    format="percent", description="Masse salariale ÷ chiffre d'affaires."),
+        MeasureSpec(name="ca", label=T("Chiffre d'affaires", "Revenue"), expr=CA, format="compact", unit="€"),
+        MeasureSpec(name="couverts", label=T("Couverts", "Covers"), expr=CV, format="integer",
+                    unit=T("couverts", "covers")),
+        MeasureSpec(name="achats", label=T("Achats matières", "Food purchases"), expr=FC, format="compact",
+                    unit="€"),
+        MeasureSpec(name="masse_salariale", label=T("Masse salariale", "Payroll"), expr=LC, format="compact",
+                    unit="€"),
+        MeasureSpec(name="cout_matiere", label=T("Coût matière", "Food cost"), expr=f"{FC} / NULLIF({CA}, 0)",
+                    format="percent", thresholds=band(food_cost_max),
+                    description=T("Achats matières ÷ chiffre d'affaires.", "Food purchases ÷ revenue.")),
+        MeasureSpec(name="cout_personnel", label=T("Coût du personnel", "Labor cost"),
+                    expr=f"{LC} / NULLIF({CA}, 0)", format="percent",
+                    description=T("Masse salariale ÷ chiffre d'affaires.", "Payroll ÷ revenue.")),
         MeasureSpec(name="prime_cost", label="Prime cost", expr=f"({FC} + {LC}) / NULLIF({CA}, 0)",
                     format="percent", thresholds=band(prime_cost_max),
-                    description="(Achats matières + masse salariale) ÷ chiffre d'affaires."),
-        MeasureSpec(name="ticket_moyen", label="Ticket moyen", expr=f"{CA} / NULLIF({CV}, 0)", format="decimal1",
-                    unit="€", description="Chiffre d'affaires ÷ couverts."),
-        MeasureSpec(name="ca_moyen_jour", label="CA moyen par jour",
+                    description=T("(Achats matières + masse salariale) ÷ chiffre d'affaires.",
+                                  "(Food purchases + payroll) ÷ revenue.")),
+        MeasureSpec(name="ticket_moyen", label=T("Ticket moyen", "Average check"), expr=f"{CA} / NULLIF({CV}, 0)",
+                    format="decimal1", unit="€",
+                    description=T("Chiffre d'affaires ÷ couverts.", "Revenue ÷ covers.")),
+        MeasureSpec(name="ca_moyen_jour", label=T("CA moyen par jour", "Average revenue per day"),
                     expr=f"{CA} / NULLIF(COUNT(DISTINCT CAST({_q(d)} AS DATE)), 0)", format="compact", unit="€",
-                    description="Chiffre d'affaires ÷ nombre de jours distincts (les deux services d'un jour comptent "
-                                "pour un seul jour)."),
+                    description=T("Chiffre d'affaires ÷ nombre de jours distincts (les deux services d'un jour comptent "
+                                  "pour un seul jour).",
+                                  "Revenue ÷ number of distinct days (the two services of a day count "
+                                  "as a single day).")),
     ]
     source = SourceSpec(
         name="exploitation",
-        label="Exploitation du restaurant",
+        label=T("Exploitation du restaurant", "Restaurant operations"),
         kind="dataset",
         dataset_id=dataset_id,
         transforms=transforms,
@@ -218,8 +247,8 @@ def restaurant(
     presets = ["4w", "12w", "26w", "52w", "all"]
     if default_period not in presets:
         presets.insert(0, default_period)
-    filters = [FilterSpec(id="periode", label="Période", field=d, type="relative_period", default=default_period,
-                          presets=presets)]
+    filters = [FilterSpec(id="periode", label=T("Période", "Period"), field=d, type="relative_period",
+                          default=default_period, presets=presets)]
     if sv:
         filters.append(FilterSpec(id="service", label="Service", field=sv, type="select", default=None))
 
@@ -229,47 +258,58 @@ def restaurant(
                           kpi=KpiSpec(measure=measure, sparkline=measure, **kw))
 
     scope = "{{filters.service}}, d" if sv else "D"
+    scope_en = "{{filters.service}}, " if sv else "From "
     synthese = VisualSpec(
         type="text",
         source="exploitation",
-        text=(
+        text=T(
             f"{scope}u {{{{period.from}}}} au {{{{period.to}}}} : {{{{ca|compact}}}} € de chiffre d'affaires pour "
             "{{couverts|integer}} couverts (ticket moyen {{ticket_moyen|decimal1}} €). Coût matière "
-            "{{cout_matiere|percent}}, personnel {{cout_personnel|percent}}, prime cost {{prime_cost|percent}}."
+            "{{cout_matiere|percent}}, personnel {{cout_personnel|percent}}, prime cost {{prime_cost|percent}}.",
+            f"{scope_en}{{{{period.from}}}} to {{{{period.to}}}}: {{{{ca|compact}}}} € of revenue from "
+            "{{couverts|integer}} covers (average check {{ticket_moyen|decimal1}} €). Food cost "
+            "{{cout_matiere|percent}}, labor {{cout_personnel|percent}}, prime cost {{prime_cost|percent}}.",
         ),
     )
     kpis = [
-        kpi("Chiffre d'affaires", "ca", secondary="{{couverts|integer}} couverts"),
-        kpi("Coût matière", "cout_matiere", target_label=f"cible {food_cost_min}-{food_cost_max} %",
-            secondary="{{achats|compact}} € d'achats"),
-        kpi("Coût du personnel", "cout_personnel", secondary="{{masse_salariale|compact}} € de masse salariale"),
-        kpi("Prime cost", "prime_cost", target_label=f"cible {prime_cost_min}-{prime_cost_max} %"),
-        kpi("Ticket moyen", "ticket_moyen", secondary="par couvert"),
+        kpi(T("Chiffre d'affaires", "Revenue"), "ca",
+            secondary=T("{{couverts|integer}} couverts", "{{couverts|integer}} covers")),
+        kpi(T("Coût matière", "Food cost"), "cout_matiere",
+            target_label=T(f"cible {food_cost_min}-{food_cost_max} %", f"target {food_cost_min}-{food_cost_max}%"),
+            secondary=T("{{achats|compact}} € d'achats", "{{achats|compact}} € of purchases")),
+        kpi(T("Coût du personnel", "Labor cost"), "cout_personnel",
+            secondary=T("{{masse_salariale|compact}} € de masse salariale", "{{masse_salariale|compact}} € of payroll")),
+        kpi("Prime cost", "prime_cost",
+            target_label=T(f"cible {prime_cost_min}-{prime_cost_max} %", f"target {prime_cost_min}-{prime_cost_max}%")),
+        kpi(T("Ticket moyen", "Average check"), "ticket_moyen", secondary=T("par couvert", "per cover")),
     ]
 
     def edges(low: int, high: int, label: str) -> list[ReferenceLine]:
         return [
-            ReferenceLine(value=low / 100, label=f"{label} mini {low} %", color="good"),
-            ReferenceLine(value=high / 100, label=f"{label} maxi {high} %", color="good"),
+            ReferenceLine(value=low / 100, label=T(f"{label} mini {low} %", f"{label} min {low}%"), color="good"),
+            ReferenceLine(value=high / 100, label=T(f"{label} maxi {high} %", f"{label} max {high}%"),
+                          color="good"),
         ]
 
     ratios = VisualSpec(
         type="line",
-        title="Coût matière et personnel par semaine",
-        subtitle=f"En % du chiffre d'affaires. Lignes vertes : cible matière {food_cost_min}-{food_cost_max} %.",
+        title=T("Coût matière et personnel par semaine", "Food and labor cost per week"),
+        subtitle=T(f"En % du chiffre d'affaires. Lignes vertes : cible matière {food_cost_min}-{food_cost_max} %.",
+                   f"As % of revenue. Green lines: food cost target {food_cost_min}-{food_cost_max}%."),
         source="exploitation",
         x=bucket,
         series=[
-            SeriesSpec(key="cout_matiere", label="Coût matière", mark="line", color=BLUE),
-            SeriesSpec(key="cout_personnel", label="Coût du personnel", mark="line", color=BROWN),
+            SeriesSpec(key="cout_matiere", label=T("Coût matière", "Food cost"), mark="line", color=BLUE),
+            SeriesSpec(key="cout_personnel", label=T("Coût du personnel", "Labor cost"), mark="line", color=BROWN),
         ],
-        reference_lines=edges(food_cost_min, food_cost_max, "Matière"),
+        reference_lines=edges(food_cost_min, food_cost_max, T("Matière", "Food")),
         sort="x_asc",
     )
     prime = VisualSpec(
         type="line",
-        title="Prime cost par semaine",
-        subtitle=f"(Matières + personnel) ÷ CA. Lignes vertes : cible {prime_cost_min}-{prime_cost_max} %.",
+        title=T("Prime cost par semaine", "Prime cost per week"),
+        subtitle=T(f"(Matières + personnel) ÷ CA. Lignes vertes : cible {prime_cost_min}-{prime_cost_max} %.",
+                   f"(Food + labor) ÷ revenue. Green lines: target {prime_cost_min}-{prime_cost_max}%."),
         source="exploitation",
         x=bucket,
         series=[SeriesSpec(key="prime_cost", label="Prime cost", mark="line", color=BLUE)],
@@ -278,55 +318,64 @@ def restaurant(
     )
     activity = VisualSpec(
         type="combo",
-        title="CA et couverts par semaine",
-        subtitle="Chiffre d'affaires en barres, couverts en ligne.",
+        title=T("CA et couverts par semaine", "Revenue and covers per week"),
+        subtitle=T("Chiffre d'affaires en barres, couverts en ligne.", "Revenue as bars, covers as a line."),
         source="exploitation",
         x=bucket,
         series=[
-            SeriesSpec(key="ca", label="Chiffre d'affaires", mark="bar", color=BLUE),
-            SeriesSpec(key="couverts", label="Couverts", mark="line", color=BROWN, axis="right"),
+            SeriesSpec(key="ca", label=T("Chiffre d'affaires", "Revenue"), mark="bar", color=BLUE),
+            SeriesSpec(key="couverts", label=T("Couverts", "Covers"), mark="line", color=BROWN, axis="right"),
         ],
         sort="x_asc",
     )
     by_weekday = VisualSpec(
         type="combo",
-        title="CA moyen par jour de semaine",
-        subtitle="Barres : CA moyen d'un jour ouvert. Ligne : CA total sur la période.",
+        title=T("CA moyen par jour de semaine", "Average revenue by day of the week"),
+        subtitle=T("Barres : CA moyen d'un jour ouvert. Ligne : CA total sur la période.",
+                   "Bars: average revenue of an open day. Line: total revenue over the period."),
         source="exploitation",
         x=weekday,
         series=[
-            SeriesSpec(key="ca_moyen_jour", label="CA moyen par jour", mark="bar", color=BLUE),
-            SeriesSpec(key="ca", label="CA total", mark="line", color=BROWN, axis="right"),
+            SeriesSpec(key="ca_moyen_jour", label=T("CA moyen par jour", "Average revenue per day"), mark="bar",
+                       color=BLUE),
+            SeriesSpec(key="ca", label=T("CA total", "Total revenue"), mark="line", color=BROWN, axis="right"),
         ],
         sort="x_asc",
     )
     by_service = VisualSpec(
         type="pie",
-        title="CA par service",
+        title=T("CA par service", "Revenue by service"),
         source="exploitation",
         x=sv or "",
-        series=[SeriesSpec(key="ca", label="Chiffre d'affaires")],
+        series=[SeriesSpec(key="ca", label=T("Chiffre d'affaires", "Revenue"))],
     ) if sv else None
 
     notes = [
         VisualSpec(
             type="note",
-            title="Définitions",
+            title=T("Définitions", "Definitions"),
             badges=[Provenance.REAL],
-            text=(
+            text=T(
                 "**Coût matière** : achats matières ÷ CA. **Coût du personnel** : masse salariale ÷ CA. **Prime "
                 "cost** : (matières + personnel) ÷ CA. **Ticket moyen** : CA ÷ couverts. Chaque ratio est calculé "
-                "sur les sommes de la période, jamais comme une moyenne de ratios."
+                "sur les sommes de la période, jamais comme une moyenne de ratios.",
+                "**Food cost**: food purchases ÷ revenue. **Labor cost**: payroll ÷ revenue. **Prime "
+                "cost**: (food + labor) ÷ revenue. **Average check**: revenue ÷ covers. Each ratio is computed "
+                "on the sums of the period, never as an average of ratios.",
             ),
         ),
         VisualSpec(
             type="note",
-            title="Cibles",
-            text=(
+            title=T("Cibles", "Targets"),
+            text=T(
                 f"Coût matière : cible {food_cost_min}-{food_cost_max} %. Prime cost : cible "
                 f"{prime_cost_min}-{prime_cost_max} %. Vert jusqu'à la borne haute, orange jusqu'à "
                 f"{WARN_MARGIN} points au-dessus, rouge au-delà. Un ratio sous la borne basse n'est pas pénalisé : "
-                "vérifier alors que tous les achats sont saisis. Les cibles se règlent à la création."
+                "vérifier alors que tous les achats sont saisis. Les cibles se règlent à la création.",
+                f"Food cost: target {food_cost_min}-{food_cost_max}%. Prime cost: target "
+                f"{prime_cost_min}-{prime_cost_max}%. Green up to the upper bound, orange up to "
+                f"{WARN_MARGIN} points above, red beyond. A ratio under the lower bound is not penalized: "
+                "check then that all purchases are entered. Targets are set at creation.",
             ),
         ),
     ]
@@ -364,8 +413,8 @@ def restaurant(
     }
 
 
-def build(dataset_id: str, columns: dict, params: dict) -> dict:
-    """Catalog entry point: column mapping (blank optional → None) to the template."""
+def build(dataset_id: str, columns: dict, params: dict, lang: str = DEFAULT_LANG) -> dict:
+    """Catalog entry point: column mapping (blank optional → None) to the template, in ``lang``."""
     mapping: dict[str, Any] = {key: columns.get(key) or "" for key in _REQUIRED}
     mapping.update({key: columns.get(key) or None for key in _OPTIONAL})
-    return restaurant(dataset_id, **mapping, **_check_params(params))
+    return restaurant(dataset_id, **mapping, **_check_params(params), lang=lang)

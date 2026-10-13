@@ -21,7 +21,7 @@ from typing import Any
 import pandas as pd
 
 from apowerb.bi.spec.errors import SpecError
-from apowerb.bi.spec.formatting import format_date_fr
+from apowerb.bi.spec.formatting import format_date
 from apowerb.bi.spec.frames import MatSource
 from apowerb.bi.spec.models import AGGREGATIONS, TIME_GRAINS, FilterSpec, ResolvedFilter
 
@@ -38,8 +38,18 @@ GRAIN_LABELS = {
     "year": "Par année",
 }
 AGGREGATION_LABELS = {"sum": "Somme", "avg": "Moyenne", "min": "Minimum", "max": "Maximum", "count": "Nombre"}
+GRAIN_LABELS_EN = {
+    "hour": "By hour",
+    "day": "By day",
+    "week": "By week",
+    "month": "By month",
+    "quarter": "By quarter",
+    "year": "By year",
+}
+AGGREGATION_LABELS_EN = {"sum": "Sum", "avg": "Average", "min": "Minimum", "max": "Maximum", "count": "Count"}
 AGGREGATION_SQL = {"sum": "SUM", "avg": "AVG", "min": "MIN", "max": "MAX", "count": "COUNT"}
-assert set(GRAIN_LABELS) == set(TIME_GRAINS) and set(AGGREGATION_LABELS) == set(AGGREGATIONS)
+assert set(GRAIN_LABELS) == set(TIME_GRAINS) == set(GRAIN_LABELS_EN)
+assert set(AGGREGATION_LABELS) == set(AGGREGATIONS) == set(AGGREGATION_LABELS_EN)
 
 
 @dataclass
@@ -76,23 +86,43 @@ def _feminine(word: str) -> bool:
     return word.endswith(("e", "ion", "té"))
 
 
-def all_label(label: str) -> str:
-    """« Toutes familles » / « Tous produits » from the filter label."""
+def _plural_en(phrase: str) -> str:
+    """English plural of the last word: ``product family`` → ``product families``."""
+    head, _, word = phrase.rpartition(" ")
+    if word.endswith("y") and len(word) > 1 and word[-2] not in "aeiou":
+        word = word[:-1] + "ies"
+    elif word.endswith(("s", "x", "z", "ch", "sh")):
+        word += "es"
+    else:
+        word += "s"
+    return f"{head} {word}" if head else word
+
+
+def all_label(label: str, lang: str | None = None) -> str:
+    """« Toutes familles » / « Tous produits » (« All products » in English) from the filter label."""
     word = label.strip().lower()
+    if lang == "en":
+        return f"All {_plural_en(word)}"
     return f"{'Toutes' if _feminine(word) else 'Tous'} {_plural(word)}"
 
 
-def period_label(preset: str) -> str:
+_UNITS_EN = {"d": "day", "w": "week", "m": "month", "y": "year"}
+
+
+def period_label(preset: str, lang: str | None = None) -> str:
+    en = lang == "en"
     if preset == "all":
-        return "Toute la période"
+        return "Whole period" if en else "Toute la période"
     if preset == "ytd":
-        return "Depuis le début de l'année"
+        return "Year to date" if en else "Depuis le début de l'année"
     if preset == "mtd":
-        return "Depuis le début du mois"
+        return "Month to date" if en else "Depuis le début du mois"
     m = _PRESET_RE.match(preset)
     if not m:
         return preset
     n, unit = int(m.group(1)), m.group(2)
+    if en:
+        return f"Last {_UNITS_EN[unit]}" if n == 1 else f"Last {n} {_UNITS_EN[unit]}s"
     if unit == "d":
         return f"{n} dernier jour" if n == 1 else f"{n} derniers jours"
     if unit == "w":
@@ -150,8 +180,9 @@ def resolve_filters(
     specs: list[FilterSpec],
     requested: dict[str, Any],
     mats: dict[str, MatSource],
+    lang: str | None = None,
 ) -> dict[str, ActiveFilter]:
-    """Resolve every filter against the request and the materialised sources."""
+    """Resolve every filter against the request and the materialised sources; labels in ``lang``."""
     out: dict[str, ActiveFilter] = {}
     for spec in specs:
         raw = requested[spec.id] if spec.id in requested else spec.default
@@ -162,23 +193,23 @@ def resolve_filters(
         }
         if spec.type == "select":
             value = None if _is_all(raw) else raw
-            label = all_label(spec.label) if value is None else str(value)
+            label = all_label(spec.label, lang) if value is None else str(value)
             out[spec.id] = ActiveFilter(spec, ResolvedFilter(value=value, label=label), value, sources=having)
         elif spec.type == "multi":
             values = _normalise_multi(raw)
-            label = all_label(spec.label) if values is None else ", ".join(str(v) for v in values)
+            label = all_label(spec.label, lang) if values is None else ", ".join(str(v) for v in values)
             out[spec.id] = ActiveFilter(spec, ResolvedFilter(value=values, label=label), values, sources=having)
         elif spec.type == "relative_period":
-            out[spec.id] = _resolve_relative(spec, raw, having, mats)
+            out[spec.id] = _resolve_relative(spec, raw, having, mats, lang)
         elif spec.type in RESHAPING:
-            out[spec.id] = _resolve_choice(spec, raw, having)
+            out[spec.id] = _resolve_choice(spec, raw, having, lang)
         else:
-            out[spec.id] = _resolve_range(spec, raw, having)
+            out[spec.id] = _resolve_range(spec, raw, having, lang)
     return out
 
 
 def _resolve_relative(
-    spec: FilterSpec, raw: Any, having: set[str], mats: dict[str, MatSource]
+    spec: FilterSpec, raw: Any, having: set[str], mats: dict[str, MatSource], lang: str | None = None
 ) -> ActiveFilter:
     preset = "all" if _is_all(raw) else str(raw).strip().lower()
     match = _PRESET_RE.match(preset)
@@ -189,7 +220,7 @@ def _resolve_relative(
         )
     lasts = [d for d in (mats[n].real_last_date(spec.field) for n in having) if d is not None]
     if not lasts:
-        return ActiveFilter(spec, ResolvedFilter(value=preset, label=period_label(preset)), preset, sources=having)
+        return ActiveFilter(spec, ResolvedFilter(value=preset, label=period_label(preset, lang)), preset, sources=having)
     last = max(lasts)
     lo: pd.Timestamp | None = None
     if match:
@@ -211,7 +242,7 @@ def _resolve_relative(
             firsts.append(window.min())
     public = ResolvedFilter(
         value=preset,
-        label=period_label(preset),
+        label=period_label(preset, lang),
         date_from=min(firsts).strftime("%Y-%m-%d") if firsts else None,
         date_to=last.strftime("%Y-%m-%d"),
     )
@@ -219,12 +250,14 @@ def _resolve_relative(
     return ActiveFilter(spec, public, preset, lo_excl=lo, last=last, sources=having)
 
 
-def _resolve_choice(spec: FilterSpec, raw: Any, having: set[str]) -> ActiveFilter:
+def _resolve_choice(spec: FilterSpec, raw: Any, having: set[str], lang: str | None = None) -> ActiveFilter:
     """``time_grain`` / ``aggregation``: a whitelisted keyword, ``None`` = default."""
+    en = lang == "en"
+    grains, aggregations = (GRAIN_LABELS_EN, AGGREGATION_LABELS_EN) if en else (GRAIN_LABELS, AGGREGATION_LABELS)
     allowed, labels, default = (
-        (TIME_GRAINS, GRAIN_LABELS, "Détail")
+        (TIME_GRAINS, grains, "Detail" if en else "Détail")
         if spec.type == "time_grain"
-        else (AGGREGATIONS, AGGREGATION_LABELS, AGGREGATION_LABELS["sum"])
+        else (AGGREGATIONS, aggregations, aggregations["sum"])
     )
     value = None if _is_all(raw) or str(raw).strip().lower() == "none" else str(raw).strip().lower()
     if value is not None and value not in allowed:
@@ -233,7 +266,7 @@ def _resolve_choice(spec: FilterSpec, raw: Any, having: set[str]) -> ActiveFilte
     return ActiveFilter(spec, ResolvedFilter(value=value, label=label), value, sources=having)
 
 
-def _resolve_range(spec: FilterSpec, raw: Any, having: set[str]) -> ActiveFilter:
+def _resolve_range(spec: FilterSpec, raw: Any, having: set[str], lang: str | None = None) -> ActiveFilter:
     start: Any = None
     end: Any = None
     if isinstance(raw, dict):
@@ -243,14 +276,16 @@ def _resolve_range(spec: FilterSpec, raw: Any, having: set[str]) -> ActiveFilter
     lo, hi = _to_ts(start), _to_ts(end)
     lo_excl = lo - pd.Timedelta(days=1) if lo is not None else None
     hi_incl = hi + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1) if hi is not None else None
+    en = lang == "en"
     if lo is not None and hi is not None:
-        label = f"du {format_date_fr(lo)} au {format_date_fr(hi)}"
+        label = (f"{format_date(lo, lang)} to {format_date(hi, lang)}" if en
+                 else f"du {format_date(lo)} au {format_date(hi)}")
     elif lo is not None:
-        label = f"depuis le {format_date_fr(lo)}"
+        label = f"since {format_date(lo, lang)}" if en else f"depuis le {format_date(lo)}"
     elif hi is not None:
-        label = f"jusqu'au {format_date_fr(hi)}"
+        label = f"until {format_date(hi, lang)}" if en else f"jusqu'au {format_date(hi)}"
     else:
-        label = "Toute la période"
+        label = "Whole period" if en else "Toute la période"
     value = None if lo is None and hi is None else {"from": start, "to": end}
     public = ResolvedFilter(
         value=value,

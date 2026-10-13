@@ -166,7 +166,8 @@ async def compute_dashboard(
 
     materializer = _Materializer(dashboard, owner)
     mats, errors = await materializer.materialize_all()
-    active = resolve_filters(dashboard.filters, request.filters, mats)
+    lang = dashboard.locale
+    active = resolve_filters(dashboard.filters, request.filters, mats, lang)
 
     cache_key = (
         owner.lower(),
@@ -175,6 +176,7 @@ async def compute_dashboard(
             {
                 "sources": {n: m.token for n, m in mats.items()},
                 "errors": errors,
+                "locale": lang,
                 "filters": [f.model_dump(mode="json") for f in dashboard.filters],
                 "values": {fid: a.public.model_dump(mode="json") for fid, a in active.items()},
                 "visuals": [(c.id, c.visual.model_dump(mode="json")) for c in visuals if c.visual],
@@ -191,7 +193,7 @@ async def compute_dashboard(
     def run() -> dict[str, ComponentResult]:
         with SqlRunner(budget_s=COMPUTE_BUDGET_S) as runner:
             ctx = ComputeContext(
-                sources=sources_by_name, mats=mats, source_errors=errors, active=active, runner=runner
+                sources=sources_by_name, mats=mats, source_errors=errors, active=active, runner=runner, lang=lang
             )
             return {c.id: build_component(ctx, c.id, c.visual) for c in visuals if c.visual}
 
@@ -200,7 +202,8 @@ async def compute_dashboard(
     source_metas = {name: _source_meta(mat) for name, mat in mats.items()}
     for name, message in errors.items():
         source_metas[name] = SourceMeta(
-            fields=[], row_count=0, warnings=[f"Source indisponible : {message}"]
+            fields=[], row_count=0,
+            warnings=[f"Source unavailable: {message}" if lang == "en" else f"Source indisponible : {message}"]
         )
     response = DashboardDataResponse(
         dashboard_id=dashboard.id,

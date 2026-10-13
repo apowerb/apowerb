@@ -120,7 +120,7 @@ def test_composants_conditionnels():
 
 
 def test_description_precise_la_date_de_reference():
-    text = DESCRIPTOR["description"].lower()
+    text = DESCRIPTOR["description"]["fr"].lower()
     assert "dernière date de facture" in text and "dso" in text
 
 
@@ -132,7 +132,7 @@ def test_noms_de_colonnes_invalides():
 
 def test_descripteur():
     assert DESCRIPTOR["id"] == "receivables_aging" and DESCRIPTOR["version"] == 1 and DESCRIPTOR["params"] == []
-    assert DESCRIPTOR["label"] == "Balance âgée clients"
+    assert DESCRIPTOR["label"]["fr"] == "Balance âgée clients"
     assert {"id", "label", "description", "version", "columns", "params"} == set(DESCRIPTOR)
     cols = {c["key"]: c for c in DESCRIPTOR["columns"]}
     assert set(cols) == {
