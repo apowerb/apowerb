@@ -144,3 +144,41 @@ def source_columns(dashboard: Dashboard) -> list[SourceColumn]:
         SourceColumn(name, label, kind, name.lower() in used, renames.get(name, name))
         for name, (label, kind) in candidates.items()
     ]
+
+
+def file_mapping(
+    dashboard: Dashboard, requested: dict[str, str | None] | None
+) -> tuple[dict[str, str | None], dict[str, str]]:
+    """File column behind each spec name once ``requested`` is applied, and slot -> spec name.
+
+    ``requested`` is keyed by template slot for a dashboard with provenance, by spec name
+    otherwise. What it leaves out keeps its current file column.
+    """
+    root = root_dataset_source(dashboard.sources)
+    renames, _ = pure_renames(root.transforms)
+    mapping: dict[str, str | None] = {c.key: c.current for c in source_columns(dashboard)}
+    slots: dict[str, str] = {}
+    reference = dashboard.template
+    if reference is not None:
+        by_file_column = {column: name for name, column in renames.items()}
+        slots = {slot: by_file_column.get(column, column) for slot, column in reference.columns.items() if column}
+    errors: list[str] = []
+    for key, value in (requested or {}).items():
+        column = (value or "").strip() or None
+        if reference is None:
+            if key not in mapping:
+                errors.append(f"Colonne inconnue pour ce tableau : {key}.")
+            else:
+                mapping[key] = column
+        elif key in slots:
+            mapping[slots[key]] = column
+        elif key not in reference.columns:
+            errors.append(f"Colonne inconnue pour ce modèle : {key}.")
+        elif column:
+            errors.append(
+                f"La colonne « {key} » n'est pas utilisée par ce tableau : "
+                "utilisez la mise à niveau pour la prendre en compte."
+            )
+    if errors:
+        raise SpecError(" ".join(errors), errors=errors)
+    return mapping, slots

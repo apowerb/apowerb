@@ -21,6 +21,7 @@ Mount in main.py:  app.include_router(spec_router, prefix="/api/v1")
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -29,7 +30,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apowerb.auth.dependencies import get_current_user, get_optional_user
 from apowerb.bi.dashboards.access import visible_to
-from apowerb.bi.dashboards.core import ComponentType, Dashboard, DashboardStatus, TemplateRef
+from apowerb.bi.dashboards.core import (
+    ComponentType,
+    Dashboard,
+    DashboardComponent,
+    DashboardStatus,
+    GridPosition,
+    TemplateRef,
+)
 from apowerb.bi.dashboards.schema import (
     ComponentCreateSchema,
     DashboardCreateRequest,
@@ -47,6 +55,7 @@ from apowerb.bi.dashboards.service import (
 from apowerb.bi.dependencies import get_dashboard_service
 from apowerb.bi.spec import catalog, sources
 from apowerb.bi.spec.engine import compute_dashboard
+from apowerb.bi.spec.validate import validate_spec
 from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.models import (
     DashboardDataRequest,
@@ -54,8 +63,10 @@ from apowerb.bi.spec.models import (
     FilterSpec,
     PatchRequest,
     SourceSpec,
+    UpsertSourceOp,
     VisualSpec,
 )
+from apowerb.bi.spec.lifecycle import apply_mapping, file_mapping, pure_renames, root_dataset_source, source_columns
 from apowerb.bi.spec.ops import apply_ops
 from apowerb.bi.spec.user_templates import UserTemplateStore
 from apowerb.helpers.database import get_db
@@ -342,3 +353,192 @@ async def create_dashboard_from_template(
     return TemplateDashboardResponse(
         dashboard_id=dashboard.id, title=final_title, url=f"/bi/{dashboard.id}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Template lifecycle: file requirements, file replacement, upgrade
+# ---------------------------------------------------------------------------
+
+
+async def _owned_dashboard(svc: DashboardService, dashboard_id: str) -> Dashboard:
+    try:
+        return await svc.get(dashboard_id)
+    except DashboardNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+async def _frame_of(dataset_id: str, email: str, sheet: str | None = None):
+    try:
+        return await sources.load_dataset(dataset_id.strip(), email, sheet)
+    except SpecError as exc:
+        if str(exc).startswith(_DATASET_NOT_FOUND):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        raise _invalid(exc.errors)
+
+
+def _root_or_422(dashboard: Dashboard) -> SourceSpec:
+    try:
+        return root_dataset_source(dashboard.sources)
+    except SpecError as exc:
+        raise _invalid(exc.errors)
+
+
+@router.get(
+    "/dashboards/{dashboard_id}/source-requirements",
+    summary="Columns the dashboard needs from its data file",
+    responses={404: {"model": ErrorResponse}, 422: {"description": "Not exactly one file source"}},
+)
+async def get_source_requirements(dashboard_id: str, user: CurrentUser, svc: ServiceDep, db: DbDep) -> dict[str, Any]:
+    dashboard = await _owned_dashboard(svc, dashboard_id)
+    root = _root_or_422(dashboard)
+    reference = dashboard.template
+    template = await _resolve_template(db, reference.id, user.email) if reference else None
+    if reference is not None and template is not None:
+        columns = [
+            {"key": c.key, "label": c.label, "type": c.type, "required": c.required, "current": reference.columns.get(c.key)}
+            for c in template.columns
+        ]
+    else:
+        columns = [
+            {"key": c.key, "label": c.label, "type": c.type, "required": c.required, "current": c.current}
+            for c in source_columns(dashboard)
+        ]
+    return {
+        "source": root.name,
+        "dataset_id": root.dataset_id,
+        "template": reference.model_dump() if reference else None,
+        "columns": columns,
+    }
+
+
+class ReplaceSourceRequest(BaseModel):
+    dataset_id: str = Field(..., min_length=1)
+    columns: dict[str, str | None] | None = None
+    dry_run: bool = False
+
+
+@router.post(
+    "/dashboards/{dashboard_id}/source",
+    summary="Replace the data file of a dashboard",
+    responses={404: {"model": ErrorResponse}, 422: {"description": "A required column is missing from the new file"}},
+)
+async def replace_dashboard_source(
+    dashboard_id: str, body: ReplaceSourceRequest, user: CurrentUser, svc: ServiceDep
+) -> dict[str, Any]:
+    dashboard = await _owned_dashboard(svc, dashboard_id)
+    root = _root_or_422(dashboard)
+    frame = await _frame_of(body.dataset_id, user.email, root.sheet)
+    available = [str(c) for c in frame.columns]
+    try:
+        mapping, slots = file_mapping(dashboard, body.columns)
+    except SpecError as exc:
+        raise _invalid(exc.errors)
+
+    missing = []
+    for column in source_columns(dashboard):
+        if not column.required:
+            continue
+        file_column = mapping.get(column.key)
+        if file_column not in available:
+            wanted = f"« {file_column} » " if file_column else ""
+            missing.append(
+                f"La colonne {wanted}({column.label}) est introuvable dans le nouveau fichier. "
+                f"Colonnes disponibles : {', '.join(available[:_MAX_LISTED_COLUMNS])}."
+            )
+    if missing:
+        raise _invalid(missing)
+
+    found = {name: column for name, column in mapping.items() if column in available}
+    _, rest = pure_renames(root.transforms)
+    try:
+        new_root = root.model_copy(
+            update={"dataset_id": body.dataset_id.strip(), "transforms": apply_mapping(rest, found)}
+        )
+        updated = apply_ops(dashboard, [UpsertSourceOp(source=new_root)])
+    except SpecError as exc:
+        raise _invalid(exc.errors)
+    if dashboard.template is not None:
+        columns = {**dashboard.template.columns, **{slot: found.get(name) for slot, name in slots.items()}}
+        updated = updated.model_copy(update={"template": dashboard.template.model_copy(update={"columns": columns})})
+    if not body.dry_run:
+        updated = await svc.save(updated)
+    return {"dashboard": DashboardResponse.from_domain(updated), "missing": []}
+
+
+class UpgradeRequest(BaseModel):
+    template_id: str | None = None
+    columns: dict[str, str | None] | None = None
+    params: dict[str, Any] | None = None
+    dry_run: bool = False
+
+
+def _components_of(spec: dict) -> list[DashboardComponent]:
+    return [
+        DashboardComponent(
+            component_type=ComponentType.VISUAL,
+            position=GridPosition(**(item.get("position") or {})),
+            visual=VisualSpec.model_validate(item["visual"]),
+        )
+        for item in spec.get("components") or []
+    ]
+
+
+@router.post(
+    "/dashboards/{dashboard_id}/upgrade",
+    summary="Rebuild a dashboard from the current version of its template",
+    responses={404: {"model": ErrorResponse}, 422: {"description": "No template, or invalid columns"}},
+)
+async def upgrade_dashboard(
+    dashboard_id: str, body: UpgradeRequest, user: CurrentUser, svc: ServiceDep, db: DbDep
+) -> dict[str, Any]:
+    dashboard = await _owned_dashboard(svc, dashboard_id)
+    reference = dashboard.template
+    template_id = body.template_id or (reference.id if reference else None)
+    if template_id is None:
+        raise _invalid(["Ce tableau n'est pas issu d'un modèle : précisez template_id et columns pour le rattacher."])
+    template = await _resolve_template(db, template_id, user.email)
+    if template is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gabarit introuvable : {template_id}")
+    root = _root_or_422(dashboard)
+
+    same = reference is not None and reference.id == template.id
+    columns, column_errors = template.clean_columns(
+        body.columns if body.columns is not None else (reference.columns if same else {})
+    )
+    params, param_errors = template.clean_params(body.params if body.params is not None else (reference.params if same else {}))
+    if column_errors or param_errors:
+        raise _invalid(column_errors + param_errors)
+    dataset_id = root.dataset_id or ""
+    try:
+        spec = template.build(dataset_id, columns, params)
+    except ValueError as exc:
+        raise _invalid([str(exc)])
+    frame = await _frame_of(dataset_id, user.email, root.sheet)
+    missing = _missing_columns(template, columns, frame.columns)
+    if missing:
+        raise _invalid(missing)
+
+    try:
+        updated = dashboard.model_copy(
+            update={
+                "sources": [SourceSpec.model_validate(s) for s in spec.get("sources") or []],
+                "filters": [FilterSpec.model_validate(f) for f in spec.get("filters") or []],
+                "components": _components_of(spec),
+                "spec_version": 2,
+                "template": TemplateRef(id=template.id, version=template.version, columns=columns, params=params),
+                "version": dashboard.version + 1,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+    except ValidationError as exc:
+        raise _invalid([f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()[:8]])
+    problems = validate_spec(updated)
+    if problems:
+        raise _invalid(problems)
+    if not body.dry_run:
+        updated = await svc.save(updated)
+    return {
+        "dashboard": DashboardResponse.from_domain(updated),
+        "from_version": reference.version if reference else None,
+        "to_version": template.version,
+    }
