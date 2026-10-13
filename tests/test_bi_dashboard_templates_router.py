@@ -154,7 +154,7 @@ def test_list_templates_contract(env):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     descriptions = [t.pop("description") for t in body]
-    assert body == EXPECTED_LIST
+    assert body[: len(EXPECTED_LIST)] == EXPECTED_LIST
     assert all(isinstance(d, str) and len(d) > 20 for d in descriptions)
 
 

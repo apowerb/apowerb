@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from apowerb.bi.spec import templates_otif, templates_quality
 from apowerb.bi.spec.templates import stock_pilotage
 
 
@@ -124,7 +125,7 @@ _STOCK_PILOTAGE = DashboardTemplate(
     description=(
         "Tableau de bord de pilotage des stocks à partir de ventes hebdomadaires par famille : "
         "couverture, taux de service, fiabilité de la prévision et semaines sous le stock de sécurité. "
-        "Le stock et les approvisionnements sont simulés à partir des ventes."
+        "Avec une colonne Stock, le stock réel est utilisé ; sinon stock et approvisionnements sont simulés à partir des ventes."
     ),
     columns=(
         TemplateColumn("date", "Semaine", "date", True, "semaine"),
@@ -140,7 +141,28 @@ _STOCK_PILOTAGE = DashboardTemplate(
     version=STOCK_PILOTAGE_VERSION,
 )
 
-_TEMPLATES: dict[str, DashboardTemplate] = {_STOCK_PILOTAGE.id: _STOCK_PILOTAGE}
+def _from_module(module: Any) -> DashboardTemplate:
+    """A template module exposes a ``DESCRIPTOR`` dict and a ``build`` function."""
+    d = module.DESCRIPTOR
+    return DashboardTemplate(
+        id=d["id"],
+        label=d["label"],
+        description=d["description"],
+        columns=tuple(
+            TemplateColumn(c["key"], c["label"], c["type"], c["required"], c.get("default")) for c in d["columns"]
+        ),
+        params=tuple(
+            TemplateParam(p["key"], p["label"], p["type"], p.get("default"), p.get("min"), p.get("max"))
+            for p in d.get("params", [])
+        ),
+        build=module.build,
+        version=d.get("version", 1),
+    )
+
+
+_TEMPLATES: dict[str, DashboardTemplate] = {
+    t.id: t for t in (_STOCK_PILOTAGE, _from_module(templates_otif), _from_module(templates_quality))
+}
 
 
 def list_templates() -> list[DashboardTemplate]:

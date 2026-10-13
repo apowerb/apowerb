@@ -41,6 +41,10 @@ async def _list(env, viewer):
     return resp.json()
 
 
+async def _user_models(env, viewer):
+    return [t for t in await _list(env, viewer) if t["origin"] == "user"]
+
+
 async def test_model_created_from_a_dashboard_then_dashboard_created_from_the_model():
     async with db_env() as env:
         dashboard_id = await _stock_dashboard(env)
@@ -97,7 +101,7 @@ async def test_label_already_taken_is_409():
         assert (await _make_model(env, dashboard_id)).status_code == 201
         resp = await _make_model(env, dashboard_id)
         assert resp.status_code == 409, resp.text
-        assert len(await _list(env, ALICE)) == 2
+        assert len(await _user_models(env, ALICE)) == 1
 
 
 async def test_dashboard_without_spec_or_with_two_files_is_422():
@@ -118,14 +122,14 @@ async def test_only_the_owner_of_the_dashboard_can_make_a_model():
     async with db_env() as env:
         dashboard_id = await _stock_dashboard(env)
         assert (await _make_model(env, dashboard_id, owner=BOB)).status_code == 404
-        assert [t["origin"] for t in await _list(env, ALICE)] == ["builtin"]
+        assert await _user_models(env, ALICE) == []
 
 
 async def test_private_model_of_someone_else_is_invisible_and_unusable():
     async with db_env() as env:
         model = (await _make_model(env, await _stock_dashboard(env, owner=BOB), owner=BOB)).json()
-        assert [t["id"] for t in await _list(env, ALICE)] == ["stock_pilotage"]
-        assert [t["id"] for t in await _list(env, BOB)] == ["stock_pilotage", model["id"]]
+        assert await _user_models(env, ALICE) == []
+        assert [t["id"] for t in await _user_models(env, BOB)] == [model["id"]]
         env.datasets[DS_OTHER] = (ALICE, sales_frame(renamed=True))
         with env.patched():
             async with env.client(ALICE) as client:
