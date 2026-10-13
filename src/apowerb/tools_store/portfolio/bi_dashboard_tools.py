@@ -290,7 +290,12 @@ async def _async_create(title: str, description: str, spec: dict, owner: str) ->
     renamed = (
         {"renamed_from": requested} if dashboard.title != requested else {}
     )
-    message = f"Dashboard '{dashboard.title}' created. Open it at /bi/{dashboard.id}."
+    # Relative on purpose: the UI serves it from its own origin. The model once
+    # put an invented third-party domain in front of it (PROD, 13/10).
+    message = (
+        f"Dashboard '{dashboard.title}' created. Link for the user: /bi/{dashboard.id}"
+        " (copy this relative path exactly as written; never add a domain in front of it)."
+    )
     if renamed:
         message += (
             f" A dashboard named '{requested}' already existed, so this one is named"
