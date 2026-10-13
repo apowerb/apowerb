@@ -147,6 +147,25 @@ def test_descripteur_et_build():
         "ds-1", horizon=4, **RENAMED)
 
 
+def test_le_descripteur_se_charge_dans_le_catalogue():
+    from apowerb.bi.spec.catalog import DashboardTemplate, TemplateColumn, TemplateParam
+
+    template = DashboardTemplate(
+        id=DESCRIPTOR["id"], label=DESCRIPTOR["label"], description=DESCRIPTOR["description"],
+        columns=tuple(TemplateColumn(**c) for c in DESCRIPTOR["columns"]),
+        params=tuple(TemplateParam(**p) for p in DESCRIPTOR["params"]),
+        build=build,
+    )
+    assert template.describe() == {k: v for k, v in DESCRIPTOR.items() if k != "version"}
+    columns, errors = template.clean_columns({})
+    assert errors and all("obligatoire" in e for e in errors)
+    filled = {c["key"]: c["default"] or None for c in DESCRIPTOR["columns"]}
+    columns, errors = template.clean_columns(filled)
+    params, param_errors = template.clean_params({})
+    assert errors == [] and param_errors == []
+    assert template.build("ds-1", columns, params) == build("ds-1", filled, params)
+
+
 # ---------------------------------------------------------------------------
 # Moteur réel
 # ---------------------------------------------------------------------------
