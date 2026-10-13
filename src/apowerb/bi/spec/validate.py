@@ -20,6 +20,8 @@ from apowerb.bi.spec import sql_guard
 from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.formatting import FORMATS
 from apowerb.bi.spec.models import (
+    AGGREGATIONS,
+    TIME_GRAINS,
     AggregateStep,
     DeriveStep,
     FilterStep,
@@ -34,7 +36,7 @@ from apowerb.bi.spec.models import (
 )
 
 TEMPLATE_TOKEN_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*(?:\|\s*([A-Za-z0-9_]+)\s*)?\}\}")
-_PRESET_RE = re.compile(r"^(all|\d{1,3}[wm])$")
+_PRESET_RE = re.compile(r"^(all|ytd|mtd|\d{1,3}[dwmy])$")
 _PERIOD_KEYS = ("from", "to", "last")
 _CHART_TYPES = ("combo", "bar", "hbar", "line", "area", "diverging_bar", "pie")
 _INVENTORY_OUTPUTS = (
@@ -237,7 +239,10 @@ def validate_spec(dashboard: Dashboard) -> list[str]:
         if not any(schemas[s.name].has(f.field) for s in targets):
             add(f"Filtre « {f.id} » : le champ « {f.field} » n'existe dans aucune source.")
         if f.type == "relative_period" and f.default is not None and not _PRESET_RE.match(str(f.default)):
-            add(f"Filtre « {f.id} » : période par défaut « {f.default} » inconnue (13w, 26w, 52w, 3m, 12m, all).")
+            add(f"Filtre « {f.id} » : période par défaut « {f.default} » inconnue (ex. 7d, 13w, 12m, 1y, ytd, mtd, all).")
+        choices = {"time_grain": TIME_GRAINS, "aggregation": AGGREGATIONS}.get(f.type)
+        if choices and f.default is not None and str(f.default) not in choices:
+            add(f"Filtre « {f.id} » : valeur par défaut « {f.default} » inconnue ({', '.join(choices)}).")
 
     # --- visuals -----------------------------------------------------------
     seen_components: set[str] = set()

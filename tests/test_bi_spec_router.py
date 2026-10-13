@@ -170,9 +170,9 @@ class TestDashboardData:
     def test_invalid_filter_value_is_422(self, env):
         d = make(env)
         with env.patched():
-            resp = env.client(OWNER).post(f"/api/v1/dashboards/{d.id}/data", json={"filters": {"periode": "7y"}})
+            resp = env.client(OWNER).post(f"/api/v1/dashboards/{d.id}/data", json={"filters": {"periode": "7q"}})
         assert resp.status_code == 422
-        assert "7y" in resp.json()["detail"][0]
+        assert "7q" in resp.json()["detail"][0]
 
 
 class TestUnexpectedFailure:

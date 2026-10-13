@@ -303,7 +303,12 @@ async def _async_create(title: str, description: str, spec: dict, owner: str, te
     renamed = (
         {"renamed_from": requested} if dashboard.title != requested else {}
     )
-    message = f"Dashboard '{dashboard.title}' created. Open it at /bi/{dashboard.id}."
+    # Relative on purpose: the UI serves it from its own origin. The model once
+    # put an invented third-party domain in front of it (PROD, 13/10).
+    message = (
+        f"Dashboard '{dashboard.title}' created. Link for the user: /bi/{dashboard.id}"
+        " (copy this relative path exactly as written; never add a domain in front of it)."
+    )
     if renamed:
         message = (
             f"Le nom « {requested} » était déjà pris : le tableau s'appelle « {dashboard.title} ». "
@@ -558,6 +563,10 @@ def tool_bi_create_dashboard(
     waterfall, table, text, note. Grid: 12 columns, give explicit positions
     without overlap. Text templates accept {{measure|percent}} and
     {{filters.<id>}}, {{period.last}}. Field names: lowercase identifiers.
+    Filter types: select, multi, date_range, relative_period (<n>d, <n>w,
+    <n>m, <n>y, ytd, mtd, all), time_grain on a date field (hour, day, week,
+    month, quarter, year: buckets the x axis) and aggregation on a number
+    field (sum, avg, min, max, count of that column).
 
     Returns the dashboard id, its relative url (/bi/<id>), the computed KPI
     values and texts, and an "errors" map with one message per component that

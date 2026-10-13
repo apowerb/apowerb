@@ -132,3 +132,12 @@ async def test_helper_raises_name_conflict_after_twenty():
 def test_generic_tool_instructs_the_agent_to_report_the_rename():
     doc = t.tool_bi_create_dashboard.__doc__
     assert "renamed_from" in doc and "tell them the final title" in doc
+
+
+def test_created_dashboard_link_is_relative_and_must_be_copied_verbatim(rows):
+    # PROD 13/10 : le modele a prefixe /bi/<id> d'un domaine tiers invente.
+    for res in (_create(), t.tool_bi_create_stock_dashboard("ds-1")):
+        path = f"/bi/{res['dashboard_id']}"
+        assert res["url"] == path
+        assert path in res["message"]
+        assert "never add a domain" in res["message"]
