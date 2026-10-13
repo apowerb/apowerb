@@ -29,6 +29,7 @@ from apowerb.bi.spec.models import (
     DeriveStep,
     FieldSpec,
     FilterSpec,
+    FilterStep,
     ForecastStep,
     InventorySimStep,
     KpiSpec,
@@ -605,6 +606,13 @@ def _replenishment_spec(
     ]
     plan = SourceSpec(name="plan", label="Plan d'approvisionnement", kind="source", parent="stocks",
                       transforms=plan_transforms, fields=plan_fields, measures=plan_measures)
+    # the plan weeks only, so the orders chart does not show the kept history as empty weeks
+    horizon_src = SourceSpec(
+        name="horizon", label=f"Plan sur {horizon} semaines", kind="source", parent="plan",
+        transforms=[FilterStep(where="semaine_plan >= 1")],
+        measures=[MeasureSpec(name="commande_prevue", label="Commande", expr="COALESCE(SUM(commande), 0)",
+                              format="compact", unit="unités")],
+    )
 
     filters = [
         FilterSpec(id="famille", label="Famille", field=f, type="select", default=None, applies_to=None),
@@ -652,9 +660,9 @@ def _replenishment_spec(
         type="bar",
         title="Commandes à passer, semaine par semaine",
         subtitle="Quantité à commander chaque semaine pour ne pas passer sous le seuil.",
-        source="plan",
+        source="horizon",
         x=d,
-        series=[SeriesSpec(key="commandes_horizon", label="Commande", mark="bar", color=BLUE)],
+        series=[SeriesSpec(key="commande_prevue", label="Commande", mark="bar", color=BLUE)],
         sort="x_asc",
     )
     table = VisualSpec(
@@ -748,7 +756,7 @@ def _replenishment_spec(
         (notes[2], dict(row=21, col=8, width=4, height=4)),
     ]
     return {
-        "sources": [_dump(historique), _dump(plan)],
+        "sources": [_dump(historique), _dump(plan), _dump(horizon_src)],
         "filters": [_dump(flt) for flt in filters],
         "components": [{"visual": _dump(v), "position": pos} for v, pos in grid],
     }

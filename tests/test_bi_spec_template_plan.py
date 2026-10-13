@@ -85,7 +85,7 @@ def test_sans_colonne_stock_le_gabarit_est_inchange():
 def test_spec_valide_et_sans_chevauchement():
     spec = stock_pilotage("ds-1", **KW)
     assert validate_spec(_dashboard(spec)) == []
-    assert [s["name"] for s in spec["sources"]] == ["stocks", "plan"]
+    assert [s["name"] for s in spec["sources"]] == ["stocks", "plan", "horizon"]
     taken = set()
     for comp in spec["components"]:
         p = comp["position"]
@@ -129,6 +129,12 @@ def test_tableau_de_bord_calcule_de_bout_en_bout(computed):
     total = next(r for r in resp.components[table.id].rows if r.get("_total"))
     assert total["semaines_avant_rupture"] == 0
     assert not resp.sources["plan"].warnings
+    # Commandes à passer : seulement les semaines de l'horizon, sans l'historique.
+    bar = next(c for c in dash.components if c.visual.type == "bar")
+    assert bar.visual.title.startswith("Commandes")
+    pts = resp.components[bar.id].rows
+    assert len(pts) == 8
+    assert min(pd.Timestamp(r["semaine"]) for r in pts) > pd.Timestamp("2023-01-02") + pd.Timedelta(weeks=103)
 
 
 def test_moteur_indisponible_plan_quand_meme_avec_avertissement(computed):

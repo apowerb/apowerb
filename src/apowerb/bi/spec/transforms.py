@@ -465,6 +465,16 @@ def _replenishment_plan_step(state: TransformState, step: ReplenishmentPlanStep,
     results = {name: np.full(len(out), np.nan) for name in PLAN_COLUMNS}
     future_rows: list[tuple[str, np.ndarray, np.ndarray, int]] = []  # key, idx, forecast, real position
 
+    lots = {k: v for k, v in step.lot_sizes.items() if v >= 1}
+
+    def settings(last: int, fc: np.ndarray) -> tuple[float, int]:
+        seuil = _last_finite(out[step.safety_column].iloc[[last]]) if step.safety_column else None
+        if seuil is None:
+            seuil = step.safety_weeks * (float(np.nanmean(fc)) if len(fc) else 0.0)
+        delai = _last_finite(out[step.lead_time_column].iloc[[last]]) if step.lead_time_column else None
+        lead = step.lead_time if delai is None else int(min(12, max(1, round(delai))))
+        return float(seuil), lead
+
     for key, idx in groups:
         real = idx[stock.iloc[idx].notna().to_numpy()]
         if not len(real):
@@ -475,26 +485,20 @@ def _replenishment_plan_step(state: TransformState, step: ReplenishmentPlanStep,
         after = idx[idx > last]
         future = after[fc_all.iloc[after].notna().to_numpy()][: step.horizon]
         if len(future):
-            future_rows.append((key, future, fc_all.iloc[future].to_numpy(dtype=float), last))
+            fc = fc_all.iloc[future].to_numpy(dtype=float)
+            future_rows.append((key, future, fc, last))
         else:
             recent = pd.to_numeric(out[step.demand].iloc[idx[idx <= last]], errors="coerce").dropna().tail(4)
             mean = float(recent.mean()) if len(recent) else 0.0
+            fc = np.full(step.horizon, mean)
             base = {b: out[b].iloc[last] for b in step.by}
             fallback.append(key or "total")
             for ts in _future_dates(out[step.date].iloc[idx[idx <= last]], step.horizon):
                 appended.append({step.date: ts, **base, step.forecast: mean, "_key": key, "_last": last})
         results["stock_projete"][history] = stock.iloc[history].to_numpy(dtype=float)
+        # threshold and lead time on the kept history too: the threshold line spans the whole chart
+        results["seuil_plan"][history], results["delai_plan"][history] = settings(last, fc)
         results["semaine_plan"][last] = 0
-
-    lots = {k: v for k, v in step.lot_sizes.items() if v >= 1}
-
-    def settings(last: int, fc: np.ndarray) -> tuple[float, int]:
-        seuil = _last_finite(out[step.safety_column].iloc[[last]]) if step.safety_column else None
-        if seuil is None:
-            seuil = step.safety_weeks * (float(np.nanmean(fc)) if len(fc) else 0.0)
-        delai = _last_finite(out[step.lead_time_column].iloc[[last]]) if step.lead_time_column else None
-        lead = step.lead_time if delai is None else int(min(12, max(1, round(delai))))
-        return float(seuil), lead
 
     def fill(target: dict[str, np.ndarray], pos: np.ndarray, key: str, fc: np.ndarray, last: int) -> None:
         seuil, lead = settings(last, fc)

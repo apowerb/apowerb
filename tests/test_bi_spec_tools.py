@@ -194,7 +194,7 @@ def test_create_stock_dashboard_with_real_stock(env):
     )
     assert res["success"] is True and res["component_count"] == 12
     dash = env.db.rows[res["dashboard_id"]][1]
-    assert [s.name for s in dash.sources] == ["stocks", "plan"]
+    assert [s.name for s in dash.sources] == ["stocks", "plan", "horizon"]
     plan = dash.sources[1].transforms[-1]
     assert plan.op == "replenishment_plan" and plan.stock == "stock"
     assert plan.safety_column == "seuil_securite" and plan.lead_time_column == "delai_fournisseur_sem"

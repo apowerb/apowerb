@@ -108,6 +108,21 @@ def test_etape_par_famille_avec_seuil_et_delai_du_fichier():
     assert b["commande"].sum() == 0
 
 
+def test_seuil_et_delai_aussi_sur_l_historique_garde():
+    # Le seuil se trace sur tout le graphique, pas seulement sur l'horizon.
+    out = _run(_frame(), keep_history=4).df
+    a = out[(out["famille"] == "A") & ~(out["semaine_plan"] >= 1)]
+    assert len(a) == 4
+    assert set(a["seuil_plan"]) == {40} and set(a["delai_plan"]) == {2}
+    assert a["commande"].isna().all()
+
+
+def test_seuil_sur_l_historique_en_repli_sans_prevision():
+    out = _run(_frame(with_future=False), keep_history=4).df
+    a = out[(out["famille"] == "A") & ~(out["semaine_plan"] >= 1)]
+    assert len(a) == 4 and set(a["seuil_plan"]) == {40}
+
+
 def test_provenances_et_colonnes():
     state = _run(_frame())
     for col in PLAN_COLUMNS:
