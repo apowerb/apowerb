@@ -86,6 +86,7 @@ from apowerb.routers.models import router as models_router
 from apowerb.bi.refresh_router import router as bi_refresh_router
 from apowerb.bi.chart_refresh_router import router as bi_chart_refresh_router
 from apowerb.routers.forecast import router as forecast_router
+from apowerb.routers.bi_digest import router as bi_digest_router
 
 from apowerb.configs.settings import get_settings
 from apowerb.helpers.api_schema import hide_api_schema, publishes_api_schema
@@ -581,6 +582,7 @@ api_router.include_router(bi_dataset_router, prefix="/api/v1")
 api_router.include_router(bi_refresh_router, prefix="/api/v1")
 api_router.include_router(bi_chart_refresh_router, prefix="/api/v1")
 api_router.include_router(forecast_router, prefix="/api/v1")
+api_router.include_router(bi_digest_router, prefix="/api/v1")
 api_router.include_router(share_router, prefix="/api")
 api_router.include_router(skills_router, prefix="/api")
 api_router.include_router(models_router, prefix="/api")
@@ -722,6 +724,15 @@ async def _start_webhook_renewal():
         print("[STARTUP HOOK] flow_scheduler.start() scheduled", flush=True)
     except Exception as e:
         print(f"[STARTUP HOOK] flow_scheduler.start() raised: {e!r}", flush=True)
+
+    try:
+        # Résumés périodiques et alertes KPI des tableaux de bord BI.
+        from apowerb.scheduler import bi_digest
+
+        bi_digest.start()
+        print("[STARTUP HOOK] bi_digest.start() scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] bi_digest.start() raised: {e!r}", flush=True)
 
     print("[STARTUP HOOK] _start_webhook_renewal done", flush=True)
 

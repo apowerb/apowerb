@@ -603,6 +603,44 @@ class BIForecastAlert(Base):
     )
 
 
+class BIDashboardDigest(Base):
+    """Abonnement d'un proprietaire a un resume periodique (et aux alertes KPI)
+    d'un tableau de bord spec v2 : une ligne par (dashboard_id, owner_email).
+
+    Table additive, creee idempotemment par `helpers.core_tables.ensure_core_tables`
+    (`create_all(checkfirst=True)`) comme `BIForecastAlert` : aucune table ni
+    colonne existante n'est touchee. Retour arriere : `DROP TABLE
+    bi_dashboard_digests` (rien d'autre ne la reference).
+
+    `next_digest_at` / `next_alert_check_at` servent de verrou de ligne (UPDATE
+    conditionnel) entre repliques, comme `workflow_triggers.next_run_at`.
+    `bad_components` (JSON, liste d'ids de composants KPI) memorise les KPI deja
+    signales en `bad` : une alerte n'est emise qu'au passage en `bad`.
+    """
+
+    __tablename__ = "bi_dashboard_digests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dashboard_id = Column(String(36), nullable=False)
+    owner_email = Column(String(255), nullable=False)
+    frequency = Column(String(10), nullable=False, default="weekly")  # weekly | daily
+    weekday = Column(Integer, nullable=True)  # 0 = lundi ; None pour daily
+    hour = Column(Integer, nullable=False, default=8)
+    timezone = Column(String(64), nullable=False, default="Europe/Paris")
+    alerts_enabled = Column(Boolean, nullable=False, default=True)
+    next_digest_at = Column(DateTime(timezone=True), nullable=False)
+    next_alert_check_at = Column(DateTime(timezone=True), nullable=False)
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+    bad_components = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("dashboard_id", "owner_email", name="uq_bi_dashboard_digest_dashboard_owner"),
+        Index("idx_bi_dashboard_digest_next", "next_digest_at"),
+        {"schema": settings.db_schema},
+    )
+
+
 class OAuthState(Base):
     """One-time CSRF state tokens for OAuth authorisation flows.
 
