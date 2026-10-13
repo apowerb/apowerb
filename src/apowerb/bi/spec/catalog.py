@@ -15,7 +15,13 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from apowerb.bi.spec import templates_otif, templates_quality
+from apowerb.bi.spec import (
+    templates_otif,
+    templates_purchasing,
+    templates_quality,
+    templates_receivables,
+    templates_support,
+)
 from apowerb.bi.spec.templates import stock_pilotage
 
 
@@ -161,7 +167,15 @@ def _from_module(module: Any) -> DashboardTemplate:
 
 
 _TEMPLATES: dict[str, DashboardTemplate] = {
-    t.id: t for t in (_STOCK_PILOTAGE, _from_module(templates_otif), _from_module(templates_quality))
+    t.id: t
+    for t in (
+        _STOCK_PILOTAGE,
+        _from_module(templates_otif),
+        _from_module(templates_quality),
+        _from_module(templates_receivables),
+        _from_module(templates_purchasing),
+        _from_module(templates_support),
+    )
 }
 
 
