@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 SPEC_VERSION = 2
 
@@ -249,15 +249,20 @@ class SourceSpec(BaseModel):
     """A named data source owned by the dashboard. Rows are never embedded:
     ``kind=dataset`` → ``dataset_id`` (a BI data pool file),
     ``kind=sql`` → ``connection_config_id`` + ``query`` (SELECT only),
+    ``kind=connector`` → any chart data source (``source_type`` + ``query``,
+    ``connection_config_id``, ``source_options``: database, Google Drive,
+    OneDrive, agent), read through the chart executors,
     ``kind=source`` → ``parent`` (another source of this dashboard)."""
 
     name: Ident
     label: str | None = None
-    kind: Literal["dataset", "sql", "source"]
+    kind: Literal["dataset", "sql", "connector", "source"]
     dataset_id: str | None = None
     sheet: str | None = None
     connection_config_id: str | None = None
     query: str | None = None
+    source_type: str | None = None  # connector: a chart SourceType value
+    source_options: dict[str, Any] = Field(default_factory=dict)  # connector: provider properties
     parent: Ident | None = None
     transforms: list[TransformStep] = Field(default_factory=list)
     fields: list[FieldSpec] = Field(default_factory=list)  # overrides of inferred fields
@@ -345,6 +350,21 @@ class WaterfallStep(BaseModel):
     color: str | None = None
 
 
+class ForecastVisualSpec(BaseModel):
+    """Forecast widget bound to a dashboard source. The engine returns the
+    filtered series; the widget computes the forecast like a forecast chart,
+    so its other options (models, preprocessing, confidence_levels...) are
+    kept as given."""
+
+    model_config = ConfigDict(extra="allow")
+
+    date_var: Ident
+    target_var: Ident
+    group_var: Ident | None = None
+    horizon: int = Field(default=12, ge=1, le=366)
+    frequency: str | None = None
+
+
 class VisualSpec(BaseModel):
     """Inline visual bound to a dashboard source.
 
@@ -356,7 +376,7 @@ class VisualSpec(BaseModel):
 
     type: Literal[
         "kpi", "combo", "bar", "hbar", "line", "area", "pie",
-        "diverging_bar", "waterfall", "table", "text", "note",
+        "diverging_bar", "waterfall", "table", "text", "note", "forecast",
     ]
     title: str | None = None
     subtitle: str | None = None
@@ -375,6 +395,7 @@ class VisualSpec(BaseModel):
     click_filters: dict[str, str] = Field(default_factory=dict)  # filter id -> x/row field
     ignore_filters: list[Ident] = Field(default_factory=list)
     highlight_filter: Ident | None = None  # table: highlight the row matching this filter
+    forecast: ForecastVisualSpec | None = None  # forecast: series and widget options
 
 
 # ---------------------------------------------------------------------------

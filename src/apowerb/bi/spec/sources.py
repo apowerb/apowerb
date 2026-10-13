@@ -9,6 +9,8 @@ Loading of the raw rows behind a :class:`SourceSpec`.
   must stay readable by B without exposing A's other files.
 - ``kind=sql`` → ``DatabaseQueryExecutor`` (SELECT only, its own validation),
   scoped to the owner's tool_config.
+- ``kind=connector`` → the chart executor of its ``source_type`` (database,
+  Google Drive, OneDrive, agent), run as the owner.
 
 Both return a DataFrame with normalised column names and inferred dtypes.
 """
@@ -16,9 +18,11 @@ Both return a DataFrame with normalised column names and inferred dtypes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import io
 import logging
+from typing import Any, AsyncContextManager
 
 import pandas as pd
 
@@ -100,8 +104,55 @@ async def load_sql(connection_config_id: str, query: str, owner: str) -> pd.Data
     return coerce_frame(pd.DataFrame.from_records(rows))
 
 
+def _connector_session() -> AsyncContextManager[Any]:
+    """DB session for executors that need one (OneDrive); same factory as datasets."""
+    from apowerb.bi.data.csv_executor import _open_session
+
+    return _open_session()
+
+
+async def load_connector(spec: SourceSpec, owner: str) -> pd.DataFrame:
+    """Rows of a ``connector`` source, read like a chart source but as the owner."""
+    from apowerb.bi.charts.core import DataSource, SourceType
+    from apowerb.bi.data import service as data_service
+
+    label = f"Source « {spec.name} »"
+    try:
+        source_type = SourceType(spec.source_type or "")
+    except ValueError:
+        raise SpecError(f"{label} : source_type inconnu « {spec.source_type} ».") from None
+    query = spec.query or ""
+    if source_type == SourceType.DATABASE:
+        query = sql_guard.check_query(query, f"Requête de la {label.lower()}")
+    source = DataSource(
+        source_type=source_type,
+        query=query,
+        connection_config_id=spec.connection_config_id,
+        source_options=spec.source_options,
+        limit=100_000,
+    )
+    try:
+        async with contextlib.AsyncExitStack() as stack:
+            db = await stack.enter_async_context(_connector_session()) if source_type == SourceType.ONEDRIVE_EXCEL else None
+            executor = data_service.make_executor(
+                source, user_id=owner, db_session=db, max_rows=MAX_SOURCE_ROWS, label=label
+            )
+            rows = await executor.run(source)
+    except SpecError:
+        raise
+    except (data_service.NoDataSourceError, ValueError) as exc:
+        raise SpecError(f"{label} : {exc}") from None
+    except Exception as exc:  # noqa: BLE001 - provider errors are logged, not shown
+        logger.warning("[BiSpec] connector source %s failed: %s", spec.name, exc)
+        raise SpecError(f"{label} : la lecture a échoué (voir les journaux du serveur).") from None
+    # Some executors report a failure as a single {"error": ...} row.
+    if len(rows) == 1 and set(rows[0]) == {"error"}:
+        raise SpecError(f"{label} : {rows[0]['error']}")
+    return coerce_frame(pd.DataFrame.from_records(rows))
+
+
 async def load_source(spec: SourceSpec, owner: str) -> pd.DataFrame:
-    """Raw frame of a ``dataset`` or ``sql`` source."""
+    """Raw frame of a ``dataset``, ``sql`` or ``connector`` source."""
     if spec.kind == "dataset":
         if not spec.dataset_id:
             raise SpecError(f"Source « {spec.name} » : dataset_id manquant.")
@@ -110,4 +161,6 @@ async def load_source(spec: SourceSpec, owner: str) -> pd.DataFrame:
         if not spec.connection_config_id or not spec.query:
             raise SpecError(f"Source « {spec.name} » : connection_config_id et query sont requis.")
         return await load_sql(spec.connection_config_id, spec.query, owner)
+    if spec.kind == "connector":
+        return await load_connector(spec, owner)
     raise SpecError(f"Source « {spec.name} » : type inattendu {spec.kind}.")

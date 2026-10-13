@@ -170,6 +170,8 @@ def validate_spec(dashboard: Dashboard) -> list[str]:
                 add(f"{label} : requête SQL manquante.")
             else:
                 _guard(add, sql_guard.check_query, s.query, f"{label}, requête")
+        if s.kind == "connector":
+            _validate_connector(s, label, add)
         if s.kind == "source":
             if not s.parent:
                 add(f"{label} : `parent` manquant.")
@@ -265,6 +267,32 @@ def _guard(add, check, value: str, what: str) -> None:  # type: ignore[no-untype
         add(str(exc))
 
 
+_CONNECTOR_TYPES = ("database", "csv", "google_drive", "onedrive_excel", "agent")
+
+
+def _validate_connector(s: SourceSpec, label: str, add) -> None:  # type: ignore[no-untyped-def]
+    st, opts = s.source_type, s.source_options
+    if not st:
+        add(f"{label} : source_type manquant.")
+    elif st not in _CONNECTOR_TYPES:
+        add(f"{label} : source_type inconnu « {st} ».")
+    elif st == "csv":
+        add(f"{label} : un fichier importé se déclare en kind=dataset (dataset_id).")
+    elif st == "database":
+        if not s.connection_config_id:
+            add(f"{label} : connection_config_id manquant.")
+        if not s.query:
+            add(f"{label} : requête SQL manquante.")
+        else:
+            _guard(add, sql_guard.check_query, s.query, f"{label}, requête")
+    elif st == "google_drive" and not s.connection_config_id:
+        add(f"{label} : connection_config_id manquant.")
+    elif st == "onedrive_excel" and not (opts.get("item_id") or opts.get("item_path")):
+        add(f"{label} : fichier OneDrive manquant (source_options.item_id ou item_path).")
+    elif st == "agent" and not opts.get("agent_ids"):
+        add(f"{label} : agent manquant (source_options.agent_ids).")
+
+
 def _validate_visual(
     v: VisualSpec,
     component_id: str,
@@ -323,6 +351,13 @@ def _validate_visual(
             need_key(col.key, "colonne")
             if col.total_measure:
                 need_measure(col.total_measure, "colonne (total_measure)")
+    elif v.type == "forecast":
+        if v.forecast is None:
+            add(f"{name} : bloc `forecast` manquant.")
+        else:
+            for col in (v.forecast.date_var, v.forecast.target_var, v.forecast.group_var):
+                if col and source is not None and not field_ok(col):
+                    add(f"{name} : champ inconnu « {col} » dans la source « {source.name} ».")
     elif v.type in ("text", "note") and not v.text:
         add(f"{name} : `text` manquant.")
 

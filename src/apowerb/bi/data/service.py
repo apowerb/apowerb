@@ -236,6 +236,46 @@ _query_cache = _QueryCache()
 
 
 
+def _is_csv(source: DataSource) -> bool:
+    return source.source_type == SourceType.CSV or bool(source.query and source.query.startswith("csv://"))
+
+
+def make_executor(
+    source: DataSource,
+    *,
+    user_id: str | None,
+    csv_owner: str | None = None,
+    db_session: AsyncSession | None = None,
+    max_rows: int | None = None,
+    label: str = "This source",
+) -> QueryExecutor:
+    """Executor reading ``source``: one routing for charts and dashboard sources."""
+    source_type = source.source_type
+    if source_type == SourceType.AGENT:
+        if not user_id:
+            raise NoDataSourceError(f"{label} uses agent source but no user context provided.")
+        return AgentQueryExecutor(user_id)
+    if source_type == SourceType.GOOGLE_DRIVE:
+        if not user_id:
+            raise NoDataSourceError(f"{label} uses Google Drive source but no user context provided.")
+        return GoogleDriveQueryExecutor(source.connection_config_id, owner_id=user_id)
+    if source_type == SourceType.ONEDRIVE_EXCEL:
+        if not user_id:
+            raise NoDataSourceError(f"{label} uses OneDrive Excel source but no user context provided.")
+        return OnedriveExcelQueryExecutor(owner_id=user_id, db_session=db_session)
+    if _is_csv(source):
+        return CsvQueryExecutor(owner=csv_owner)
+    if source.connection_config_id:
+        if not user_id:
+            raise NoDataSourceError(f"{label} uses a database source but no user context provided.")
+        cap = {"max_rows": max_rows} if max_rows else {}
+        return DatabaseQueryExecutor(source.connection_config_id, owner_id=user_id, **cap)
+    raise NoDataSourceError(
+        f"{label} has no valid data source configured. "
+        f"A database connection, CSV file, Google Drive, OneDrive Excel, or agent source is required."
+    )
+
+
 async def _chart_data_owner(chart: Chart) -> str:
     """Propriétaire qui fait foi pour lire le CSV d'un graphique : la colonne
     ``owner`` de sa ligne, posée à l'enregistrement par l'utilisateur
@@ -315,51 +355,20 @@ class ChartDataService:
         else:
             logger.debug("Cache miss for chart %s — executing query", chart_id)
             source_type = chart.source.source_type
-            if source_type == SourceType.AGENT:
-                if not user_id:
-                    raise NoDataSourceError(
-                        f"Chart '{chart.id}' uses agent source but no user context provided."
-                    )
-                executor: QueryExecutor = AgentQueryExecutor(user_id)
-            elif source_type == SourceType.GOOGLE_DRIVE:
-                if not user_id:
-                    raise NoDataSourceError(
-                        f"Chart '{chart.id}' uses Google Drive source but no user context provided."
-                    )
-                executor = GoogleDriveQueryExecutor(
-                    chart.source.connection_config_id, owner_id=user_id
-                )
-            elif source_type == SourceType.ONEDRIVE_EXCEL:
-                if not user_id:
-                    raise NoDataSourceError(
-                        f"Chart '{chart.id}' uses OneDrive Excel source but no user context provided."
-                    )
-                executor = OnedriveExcelQueryExecutor(
-                    owner_id=user_id,
-                    db_session=db_session,
-                )
-            elif source_type == SourceType.CSV or (chart.source.query and chart.source.query.startswith("csv://")):
+            # A forecast chart is computed on up to MAX_DATA_ROWS rows; the
+            # widget must re-read the same series, not the 10 000 default.
+            from apowerb.schema.forecast_schema import MAX_DATA_ROWS
+
+            executor = make_executor(
+                chart.source,
+                user_id=user_id,
                 # Scoped to the chart owner, not the reader: a published
                 # dashboard must stay readable by any viewer.
-                executor = CsvQueryExecutor(owner=await _chart_data_owner(chart))
-            elif chart.source.connection_config_id:
-                if not user_id:
-                    raise NoDataSourceError(
-                        f"Chart '{chart.id}' uses a database source but no user context provided."
-                    )
-                # A forecast chart is computed on up to MAX_DATA_ROWS rows; the
-                # widget must re-read the same series, not the 10 000 default.
-                from apowerb.schema.forecast_schema import MAX_DATA_ROWS
-
-                cap = {"max_rows": MAX_DATA_ROWS} if chart.chart_type == ChartType.FORECAST else {}
-                executor = DatabaseQueryExecutor(
-                    chart.source.connection_config_id, owner_id=user_id, **cap
-                )
-            else:
-                raise NoDataSourceError(
-                    f"Chart '{chart.id}' has no valid data source configured. "
-                    f"A database connection, CSV file, Google Drive, OneDrive Excel, or agent source is required."
-                )
+                csv_owner=await _chart_data_owner(chart) if _is_csv(chart.source) else None,
+                db_session=db_session,
+                max_rows=MAX_DATA_ROWS if chart.chart_type == ChartType.FORECAST else None,
+                label=f"Chart '{chart.id}'",
+            )
             try:
                 raw_rows = await executor.run(chart.source)
             except NoDataSourceError:

@@ -294,6 +294,7 @@ class VisualBuilder:
             "table": self.table,
             "text": self.text,
             "note": self.note,
+            "forecast": self.forecast,
         }.get(self.v.type, self.chart)
         result = builder()
         extra = self._reference_lines() if self.v.type in _CHART_TYPES else []
@@ -571,6 +572,24 @@ class VisualBuilder:
         if not self.v.text:
             raise SpecError("`text` manquant.")
         return ComponentResult(type="text", text=self.render(self.v.text))
+
+    def forecast(self) -> ComponentResult:
+        """The filtered series, sorted by group then date; the widget forecasts it."""
+        from apowerb.schema.forecast_schema import MAX_DATA_ROWS
+
+        f = self.v.forecast
+        if f is None:
+            raise SpecError("Bloc `forecast` manquant.")
+        cols = [f.date_var, f.target_var] + ([f.group_var] if f.group_var else [])
+        missing = [c for c in cols if c not in self.df.columns]
+        if missing:
+            raise SpecError(f"Champ inconnu dans la source « {self.v.source} » : {', '.join(missing)}.")
+        self.used_columns.update(cols)
+        frame = self.df[cols].dropna(subset=[f.date_var])
+        order = ([f.group_var] if f.group_var else []) + [f.date_var]
+        frame = frame.sort_values(order, kind="stable").head(MAX_DATA_ROWS)
+        rows = [{c: to_python(v) for c, v in zip(cols, rec)} for rec in frame.itertuples(index=False, name=None)]
+        return ComponentResult(type="forecast", rows=rows)
 
     def note(self) -> ComponentResult:
         badges = self.v.badges
