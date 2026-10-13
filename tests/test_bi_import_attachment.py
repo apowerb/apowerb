@@ -174,3 +174,11 @@ def test_import_then_stock_dashboard_with_the_returned_dataset_id(env):
     assert out["success"] is True, out
     assert out["errors"] == {}, out["errors"]
     assert len([c for c in out["components"] if c["type"] == "kpi"]) == 4
+
+
+@pytest.mark.parametrize("template_id", ["forecasting_agent", "text_to_sql_agent"])
+def test_tool_declared_in_agent_templates(template_id):
+    from apowerb.core.superagents.templates import SUPERAGENT_TEMPLATES
+
+    tpl = next(t for t in SUPERAGENT_TEMPLATES if t["template_id"] == template_id)
+    assert "bi_dashboard_tools.tool_bi_import_attachment" in tpl["recommended_tools"]
