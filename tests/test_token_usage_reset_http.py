@@ -6,7 +6,7 @@ dependances (``get_current_user`` decode un vrai JWT, ``require_admin``,
 ``_assert_may_act_on`` lit les vraies tables d'organisation) : une garde qui
 ne tiendrait que parce qu'un test l'a neutralisee serait invisible autrement.
 
-SQLite en memoire avec une base ``public`` attachee : les tables gardent leur
+SQLite en memoire, schema des modeles attache s'il y en a un : les tables gardent leur
 vrai schema, comme en PostgreSQL. Retirer le schema des tables ne suffit pas :
 un test precedent (``test_default_superadmin``) peut avoir fige dans le cache
 SQLAlchemy des colonnes de ``user`` qualifiees ``public``.
@@ -42,19 +42,21 @@ ETRANGER = "etranger@exemple.fr"  # hors de cette organisation
 SIMPLE = "simple@exemple.fr"  # role USER
 
 
-# Le schema des modeles, fige a l'import (`settings.db_schema`, `public` par defaut).
-SCHEMA = Base.metadata.schema or "public"
+# Le schema des modeles, fige a l'import (`settings.db_schema`). Vide (la CI),
+# les tables vivent dans `main`, le schema par defaut de SQLite.
+SCHEMA = Base.metadata.schema or "main"
 
 
 @pytest.fixture
 async def factory(monkeypatch):
-    # Une seule connexion : la base attachee `public` vit avec elle.
+    # Une seule connexion : la base attachee vit avec elle.
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     # Le SQL brut des gardes et de la route cible `{db_schema}.table`.
     monkeypatch.setattr(get_settings(), "db_schema", SCHEMA)
     monkeypatch.setattr(admin_router, "_schema", lambda: SCHEMA)
     async with engine.begin() as conn:
-        await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
+        if SCHEMA != "main":
+            await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text(f"CREATE TABLE {SCHEMA}.admin_organization (org_id INTEGER PRIMARY KEY)"))
         await conn.execute(

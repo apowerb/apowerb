@@ -36,8 +36,9 @@ from apowerb.helpers.database import Base, sessionmanager
 from apowerb.models import LlmUsage, User
 
 MOI = "eval@exemple.fr"
-# Le schema des modeles, fige a l'import (`settings.db_schema`, `public` par defaut).
-SCHEMA = Base.metadata.schema or "public"
+# Le schema des modeles, fige a l'import (`settings.db_schema`). Vide (la CI),
+# les tables vivent dans `main`, le schema par defaut de SQLite.
+SCHEMA = Base.metadata.schema or "main"
 
 
 @pytest.fixture
@@ -55,7 +56,8 @@ async def base(monkeypatch):
     # fige dans le cache SQLAlchemy des colonnes de `user` qualifiees.
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
-        await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
+        if SCHEMA != "main":
+            await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
         await conn.run_sync(Base.metadata.create_all)
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
