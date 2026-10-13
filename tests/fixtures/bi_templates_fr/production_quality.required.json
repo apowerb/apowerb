@@ -1,0 +1,432 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "production",
+    "steps": [],
+    "text": "{{filters.ligne}}, du {{period.from}} au {{period.to}} : {{volume_produit|compact}} unités produites, dont {{volume_rebut|compact}} rebutées, soit un taux de rebut de {{taux_rebut|percent}} ({{bon_premier_coup|percent}} bon du premier coup).",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "taux_rebut",
+     "sparkline": "taux_rebut",
+     "target_label": "cible ≤ 2 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "production",
+    "steps": [],
+    "title": "Taux de rebut",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "bon_premier_coup",
+     "sparkline": "bon_premier_coup",
+     "target_label": "cible ≥ 98 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "production",
+    "steps": [],
+    "title": "Bon du premier coup",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "volume_produit",
+     "secondary": "{{volume_rebut|compact}} rebutées",
+     "sparkline": "volume_produit"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "production",
+    "steps": [],
+    "title": "Volume produit",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "volume_rebut",
+     "secondary": "{{taux_rebut|percent}} de la production",
+     "sparkline": "volume_rebut"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "production",
+    "steps": [],
+    "title": "Volume rebuté",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Objectif 2 %",
+      "value": 0.02
+     }
+    ],
+    "series": [
+     {
+      "axis": "right",
+      "color": "muted",
+      "color_rules": [],
+      "dash": false,
+      "key": "volume_produit",
+      "label": "Volume produit",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "bad",
+      "color_rules": [],
+      "dash": false,
+      "key": "taux_rebut",
+      "label": "Taux de rebut",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "production",
+    "steps": [],
+    "subtitle": "Volume produit en barres, taux de rebut en ligne.",
+    "title": "Taux de rebut par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "ligne": "ligne"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "ligne"
+    ],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "2 %",
+      "value": 0.02
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "taux_rebut",
+      "label": "Taux de rebut",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "value_desc",
+    "source": "production",
+    "steps": [],
+    "subtitle": "Les plus élevés en premier. Cliquer pour filtrer le tableau de bord.",
+    "title": "Taux de rebut par ligne",
+    "total_row": false,
+    "type": "hbar",
+    "x": "ligne"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 17,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "ligne": "ligne"
+    },
+    "columns": [
+     {
+      "key": "ligne",
+      "label": "Ligne",
+      "use_thresholds": false
+     },
+     {
+      "key": "volume_produit",
+      "label": "Produit",
+      "use_thresholds": false
+     },
+     {
+      "key": "volume_rebut",
+      "label": "Rebut",
+      "use_thresholds": false
+     },
+     {
+      "key": "taux_rebut",
+      "label": "Taux de rebut",
+      "use_thresholds": true
+     }
+    ],
+    "highlight_filter": "ligne",
+    "ignore_filters": [
+     "ligne"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "source": "production",
+    "steps": [],
+    "subtitle": "La ligne « Toutes » est calculée sur le total, pas comme la moyenne des lignes.",
+    "title": "Performance par ligne",
+    "total_row": true,
+    "type": "table",
+    "x": "ligne"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 23,
+    "width": 6
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Taux de rebut** : quantité rebutée ÷ quantité produite. **Bon du premier coup** : 1 - taux de rebut. Chaque taux est calculé sur les quantités cumulées, jamais comme la moyenne de taux.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 4,
+    "row": 23,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Rebut : vert jusqu'à 2 %, orange jusqu'à 5 %, rouge au-delà.",
+    "title": "Seuils",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "12w",
+   "field": "date",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "4w",
+    "12w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "ligne",
+   "id": "ligne",
+   "label": "Ligne",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Date",
+     "name": "date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Ligne",
+     "name": "ligne",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Quantité produite",
+     "name": "qte_produite",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Quantité rebutée",
+     "name": "qte_rebut",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Semaine",
+     "name": "periode_semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Lots de production",
+   "measures": [
+    {
+     "expr": "SUM(\"qte_produite\")",
+     "format": "compact",
+     "label": "Volume produit",
+     "name": "volume_produit",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(\"qte_rebut\")",
+     "format": "compact",
+     "label": "Volume rebuté",
+     "name": "volume_rebut",
+     "unit": "unités"
+    },
+    {
+     "description": "Quantité rebutée ÷ quantité produite.",
+     "expr": "SUM(\"qte_rebut\") / NULLIF(SUM(\"qte_produite\"), 0)",
+     "format": "percent",
+     "label": "Taux de rebut",
+     "name": "taux_rebut",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.02,
+      "warn": 0.05
+     }
+    },
+    {
+     "description": "Part de la production conforme dès le premier passage : 1 - rebut ÷ produit.",
+     "expr": "1 - SUM(\"qte_rebut\") / NULLIF(SUM(\"qte_produite\"), 0)",
+     "format": "percent",
+     "label": "Bon du premier coup",
+     "name": "bon_premier_coup",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.98,
+      "warn": 0.95
+     }
+    }
+   ],
+   "name": "production",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_semaine",
+     "expr": "date_trunc('week', CAST(\"date\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}

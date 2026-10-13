@@ -382,3 +382,37 @@ def test_create_dashboard_from_template_rejects_unknown_template_and_columns(env
     res = t.tool_bi_create_dashboard_from_template("delivery_otif", "ds-7", columns_json="[1]")
     assert res["success"] is False
     assert env.db.rows == {}
+
+
+def test_template_tool_does_not_assume_optional_columns(env):
+    # stock_pilotage declares optional defaults (stock, seuil_securite...): a dataset without
+    # them must give the simulated dashboard, not a real-stock one on missing columns.
+    res = t.tool_bi_create_dashboard_from_template("stock_pilotage", "ds-7")
+    assert res["success"] is True, res
+    dash = env.db.rows[res["dashboard_id"]][1]
+    assert [s.name for s in dash.sources] == ["stocks", "prevision_future"]
+    assert dash.template.columns["stock"] is None and dash.template.columns["safety"] is None
+    res = t.tool_bi_create_dashboard_from_template("stock_pilotage", "ds-7", columns_json='{"stock": "stock"}')
+    assert [s.name for s in env.db.rows[res["dashboard_id"]][1].sources] == ["stocks", "plan", "horizon"]
+
+
+def test_template_tools_speak_the_requested_language(env):
+    listed = t.tool_bi_list_dashboard_templates(language="en")
+    labels = {tpl["id"]: tpl["label"] for tpl in listed["templates"]}
+    assert labels["delivery_otif"] == "Deliveries / OTIF"
+    assert t.tool_bi_list_dashboard_templates()["templates"][0]["label"] == "Pilotage stocks"
+    res = t.tool_bi_create_dashboard_from_template("delivery_otif", "ds-7", language="en")
+    assert res["success"] is True, res
+    dash = env.db.rows[res["dashboard_id"]][1]
+    assert dash.title == "Deliveries / OTIF" and dash.locale == "en"
+    assert t.tool_bi_create_dashboard_from_template("delivery_otif", "ds-7", language="de")["success"] is False
+    french = t.tool_bi_create_dashboard_from_template("production_quality", "ds-7")
+    assert env.db.rows[french["dashboard_id"]][1].locale is None
+
+
+def test_stock_tool_speaks_the_requested_language(env):
+    res = t.tool_bi_create_stock_dashboard("ds-9", title="", language="en")
+    assert res["success"] is True, res
+    dash = env.db.rows[res["dashboard_id"]][1]
+    assert dash.title == "Inventory steering" and dash.locale == "en"
+    assert dash.filters[0].label == "Product family"

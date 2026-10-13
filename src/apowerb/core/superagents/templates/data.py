@@ -29,7 +29,7 @@ DATA_TEMPLATES = [
 - tool_visualize_data(query=<sql_query>, chart_type, filename) — a DOWNLOADABLE chart FILE; returns a link. Use for "in HTML / downloadable / export the chart". `query` MUST be the `sql_query` a tool returned, never hand-typed SQL.
 - tool_create_dashboard(title) → dashboard_id. tool_list_dashboards() → existing boards (id+title). tool_add_chart_to_dashboard(dashboard_id, chart_id). tool_add_kpi_to_dashboard(dashboard_id, label, value, unit). tool_send_chart_to_dashboard(chart_id) — quick path to the default chat dashboard.
 - tool_update_chart(chart_id, title, chart_type, query) — modify an existing chart's title/type/query. tool_remove_chart_from_dashboard(chart_id, dashboard_id) — take a chart OFF a dashboard (detaches the widget, KEEPS the chart). In a dashboard's own chat, dashboard_id defaults to that dashboard.
-- tool_bi_list_dashboard_templates / tool_bi_create_dashboard_from_template — ready-made dashboards (delivery OTIF, production quality...) on a dataset: list the templates, map their columns, create in one call.
+- tool_bi_list_dashboard_templates / tool_bi_create_dashboard_from_template — ready-made dashboards (delivery OTIF, production quality...) on a dataset: list the templates, map their columns, create in one call. Pass language ("fr" or "en") in the language of the conversation, also to tool_bi_create_stock_dashboard.
 - tool_bi_create_dashboard / tool_bi_create_stock_dashboard — build a dashboard with global filters and KPIs with thresholds on a DATASET (find it with tool_list_datasets / tool_describe_dataset; for a file attached to the chat, call tool_bi_import_attachment(filename) first and pass the dataset_id it returns). To modify it: tool_bi_describe_dashboard then tool_bi_patch_dashboard; to read its numbers: tool_bi_query_dashboard.
 - create_downloadable_file — export DATA (e.g. CSV). Never use it to hand-write HTML or fake a chart.
 - tool_send_outlook_email(to, subject, body, attachments=<exact /api/files path>) — Outlook only.
@@ -290,7 +290,7 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "file's name exactly as in `[Uploaded files: ...]`, plus `sheet` for a spreadsheet tab other "
             "than the first), `dataset_id` (imported dataset) or `sql` (a single SELECT on your database connection, checked first with "
             "`tool_describe_sql`) — plus `date_var`, `target_var`, `horizon` (and optional "
-            "`group_var`/`frequency`), then `embed_chart` to show the widget. Without a chart, call "
+            "`group_var`/`frequency`), then `embed_chart(forecast_chart_id)` to show the widget. Without a chart, call "
             "`tool_thaink2_forecast` with the appropriate parameters:\n"
             "   - `file_id`: the attached file (csv, tsv, txt, xlsx, xlsm, xls, ods, json, parquet), OR "
             "`sql`: a SELECT query returning the historical rows, OR `rows`: a small inline "
@@ -310,6 +310,8 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "5. Generate a report if requested\n\n"
             "## Rules\n"
             "- NEVER copy the rows of an attached file into `rows` or any argument: pass its `file_id`\n"
+            "- `tool_bi_*` dashboards (stock, templates, spec) are not charts: never pass their component ids to `embed_chart`; "
+            "give their `/bi/<id>` link\n"
             "- ALWAYS validate the data has enough historical points before forecasting\n"
             "- Explain the forecast in business terms, not just numbers\n"
             "- Mention confidence levels and potential limitations\n"

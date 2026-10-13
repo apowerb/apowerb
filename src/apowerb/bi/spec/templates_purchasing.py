@@ -25,7 +25,16 @@ from apowerb.bi.spec.models import (
     ThresholdSpec,
     VisualSpec,
 )
-from apowerb.bi.spec.templates_common import Placed, assemble, check_ident, flow, quote, tile_row
+from apowerb.bi.spec.templates_common import (
+    DEFAULT_LANG,
+    Placed,
+    assemble,
+    check_ident,
+    flow,
+    quote,
+    tile_row,
+    translator,
+)
 
 BROWN = "#9a6b3f"
 BLUE = "#3b6fd8"
@@ -37,22 +46,30 @@ ON_TIME_WARN = 0.90
 
 DESCRIPTOR: dict[str, Any] = {
     "id": "purchasing_suppliers",
-    "label": "Achats et fournisseurs",
-    "description": (
-        "Suivi des achats à partir d'une ligne par commande ou facture d'achat : dépenses totales et par mois, "
-        "nombre de fournisseurs, dépendance aux cinq premiers fournisseurs, dépenses par fournisseur et par article. "
-        "Avec la quantité, le prix moyen par article ; avec les dates promise et de réception, le taux de livraison "
-        "à l'heure et le retard moyen."
-    ),
+    "label": {"fr": "Achats et fournisseurs", "en": "Purchasing and suppliers"},
+    "description": {
+        "fr": (
+            "Suivi des achats à partir d'une ligne par commande ou facture d'achat : dépenses totales et par mois, "
+            "nombre de fournisseurs, dépendance aux cinq premiers fournisseurs, dépenses par fournisseur et par article. "
+            "Avec la quantité, le prix moyen par article ; avec les dates promise et de réception, le taux de livraison "
+            "à l'heure et le retard moyen."
+        ),
+        "en": (
+            "Purchasing tracking from one row per purchase order or purchase invoice line: total spend and spend "
+            "by month, number of suppliers, dependence on the top five suppliers, spend by supplier and by item. "
+            "With the quantity, the average price per item; with the promised and received dates, the on-time "
+            "delivery rate and the average delay."
+        ),
+    },
     "version": 1,
     "columns": [
-        {"key": "date", "label": "Date", "type": "date", "required": True, "default": "date"},
-        {"key": "supplier", "label": "Fournisseur", "type": "string", "required": True, "default": "fournisseur"},
-        {"key": "item", "label": "Article ou famille", "type": "string", "required": True, "default": "article"},
-        {"key": "quantity", "label": "Quantité", "type": "number", "required": False, "default": None},
-        {"key": "amount", "label": "Montant", "type": "number", "required": True, "default": "montant"},
-        {"key": "promised_date", "label": "Date promise", "type": "date", "required": False, "default": None},
-        {"key": "received_date", "label": "Date de réception", "type": "date", "required": False, "default": None},
+        {"key": "date", "label": {"fr": "Date", "en": "Date"}, "type": "date", "required": True, "default": "date"},
+        {"key": "supplier", "label": {"fr": "Fournisseur", "en": "Supplier"}, "type": "string", "required": True, "default": "fournisseur"},
+        {"key": "item", "label": {"fr": "Article ou famille", "en": "Item or family"}, "type": "string", "required": True, "default": "article"},
+        {"key": "quantity", "label": {"fr": "Quantité", "en": "Quantity"}, "type": "number", "required": False, "default": None},
+        {"key": "amount", "label": {"fr": "Montant", "en": "Amount"}, "type": "number", "required": True, "default": "montant"},
+        {"key": "promised_date", "label": {"fr": "Date promise", "en": "Promised date"}, "type": "date", "required": False, "default": None},
+        {"key": "received_date", "label": {"fr": "Date de réception", "en": "Received date"}, "type": "date", "required": False, "default": None},
     ],
     "params": [],
 }
@@ -71,8 +88,10 @@ def purchasing_suppliers(
     promised_date: str | None = None,
     received_date: str | None = None,
     default_period: str = "12m",
+    lang: str = DEFAULT_LANG,
 ) -> dict:
-    """Build the « Achats et fournisseurs » spec for a dataset of purchase lines."""
+    """Build the « Achats et fournisseurs » spec for a dataset of purchase lines, in ``lang``."""
+    T = translator(lang)
     if not dataset_id:
         raise ValueError("dataset_id is required.")
     dt = check_ident("date", date)
@@ -111,61 +130,71 @@ def purchasing_suppliers(
 
     # ---- fields ------------------------------------------------------
     fields = [
-        FieldSpec(name=dt, label="Date", type="date", role="date"),
-        FieldSpec(name=su, label="Fournisseur", role="dimension"),
-        FieldSpec(name=it, label="Article ou famille", role="dimension"),
-        FieldSpec(name=am, label="Montant", type="number", role="measure", format="compact"),
+        FieldSpec(name=dt, label=T("Date", "Date"), type="date", role="date"),
+        FieldSpec(name=su, label=T("Fournisseur", "Supplier"), role="dimension"),
+        FieldSpec(name=it, label=T("Article ou famille", "Item or family"), role="dimension"),
+        FieldSpec(name=am, label=T("Montant", "Amount"), type="number", role="measure", format="compact"),
     ]
     if qt:
-        fields.append(FieldSpec(name=qt, label="Quantité", type="number", role="measure", format="compact"))
+        fields.append(FieldSpec(name=qt, label=T("Quantité", "Quantity"), type="number", role="measure", format="compact"))
     if prom:
-        fields.append(FieldSpec(name=prom, label="Date promise", type="date", role="date"))
+        fields.append(FieldSpec(name=prom, label=T("Date promise", "Promised date"), type="date", role="date"))
     if recv:
-        fields.append(FieldSpec(name=recv, label="Date de réception", type="date", role="date"))
-    fields.append(FieldSpec(name="periode_mois", label="Mois", type="date", role="dimension"))
+        fields.append(FieldSpec(name=recv, label=T("Date de réception", "Received date"), type="date", role="date"))
+    fields.append(FieldSpec(name="periode_mois", label=T("Mois", "Month"), type="date", role="dimension"))
     if delivery:
         fields += [
-            FieldSpec(name="livraison_a_lheure", label="Livré à l'heure", type="number", role="measure",
+            FieldSpec(name="livraison_a_lheure", label=T("Livré à l'heure", "Delivered on time"), type="number", role="measure",
                       format="integer"),
-            FieldSpec(name="retard_jours", label="Retard (jours)", type="number", role="measure", format="decimal1"),
+            FieldSpec(name="retard_jours", label=T("Retard (jours)", "Delay (days)"), type="number", role="measure", format="decimal1"),
         ]
 
     # ---- measures ----------------------------------------------------
     measures = [
-        MeasureSpec(name="depenses", label="Dépenses", expr=f"SUM({A})", format="compact"),
-        MeasureSpec(name="commandes", label="Lignes d'achat", expr="COUNT(*)", format="integer", unit="lignes"),
-        MeasureSpec(name="fournisseurs", label="Fournisseurs", expr=f"COUNT(DISTINCT {S})", format="integer"),
+        MeasureSpec(name="depenses", label=T("Dépenses", "Spend"), expr=f"SUM({A})", format="compact"),
+        MeasureSpec(name="commandes", label=T("Lignes d'achat", "Purchase lines"), expr="COUNT(*)", format="integer",
+                    unit=T("lignes", "lines")),
+        MeasureSpec(name="fournisseurs", label=T("Fournisseurs", "Suppliers"), expr=f"COUNT(DISTINCT {S})", format="integer"),
         MeasureSpec(
             name="part_top5",
-            label="Part du top 5",
+            label=T("Part du top 5", "Top 5 share"),
             expr=(
                 f"(SELECT SUM(s) FROM (SELECT SUM({A}) AS s FROM frame GROUP BY {S} ORDER BY s DESC LIMIT 5)) "
                 f"/ NULLIF(SUM({A}), 0)"
             ),
             format="percent",
             thresholds=ThresholdSpec(direction="lower_is_better", good=TOP5_GOOD, warn=TOP5_WARN),
-            description="Dépenses des cinq premiers fournisseurs sur les dépenses totales de la période filtrée. "
-            "À lire sur l'ensemble de la sélection, pas par fournisseur.",
+            description=T(
+                "Dépenses des cinq premiers fournisseurs sur les dépenses totales de la période filtrée. "
+                "À lire sur l'ensemble de la sélection, pas par fournisseur.",
+                "Spend of the top five suppliers over total spend of the filtered period. "
+                "Read across the whole selection, not per supplier.",
+            ),
         ),
     ]
     if qt:
         measures += [
-            MeasureSpec(name="qte_totale", label="Quantité", expr=f"SUM({quote(qt)})", format="compact"),
-            MeasureSpec(name="prix_moyen", label="Prix moyen", expr=f"SUM({A}) / NULLIF(SUM({quote(qt)}), 0)",
-                        format="decimal2", description="Montant divisé par la quantité, à lire par article."),
+            MeasureSpec(name="qte_totale", label=T("Quantité", "Quantity"), expr=f"SUM({quote(qt)})", format="compact"),
+            MeasureSpec(name="prix_moyen", label=T("Prix moyen", "Average price"), expr=f"SUM({A}) / NULLIF(SUM({quote(qt)}), 0)",
+                        format="decimal2",
+                        description=T("Montant divisé par la quantité, à lire par article.",
+                                      "Amount divided by quantity, read per item.")),
         ]
     if delivery:
         rate_thr = ThresholdSpec(direction="higher_is_better", good=ON_TIME_GOOD, warn=ON_TIME_WARN)
         measures += [
-            MeasureSpec(name="a_l_heure", label="Livré à l'heure", expr="AVG(livraison_a_lheure)", format="percent",
+            MeasureSpec(name="a_l_heure", label=T("Livré à l'heure", "Delivered on time"), expr="AVG(livraison_a_lheure)", format="percent",
                         thresholds=rate_thr,
-                        description="Lignes reçues à la date promise ou avant, sur les lignes reçues."),
-            MeasureSpec(name="retard_moyen", label="Retard moyen", expr="AVG(retard_jours)", format="decimal1",
-                        unit="jours", description="Jours de retard moyens des lignes reçues en retard."),
+                        description=T("Lignes reçues à la date promise ou avant, sur les lignes reçues.",
+                                      "Lines received on or before the promised date, over received lines.")),
+            MeasureSpec(name="retard_moyen", label=T("Retard moyen", "Average delay"), expr="AVG(retard_jours)",
+                        format="decimal1", unit=T("jours", "days"),
+                        description=T("Jours de retard moyens des lignes reçues en retard.",
+                                      "Average days late of the lines received late.")),
         ]
     source = SourceSpec(
         name="achats",
-        label="Lignes d'achat",
+        label=T("Lignes d'achat", "Purchase lines"),
         kind="dataset",
         dataset_id=dataset_id,
         transforms=transforms,
@@ -178,10 +207,10 @@ def purchasing_suppliers(
     if default_period not in presets:
         presets.insert(0, default_period)
     filters = [
-        FilterSpec(id="periode", label="Période", field=dt, type="relative_period", default=default_period,
+        FilterSpec(id="periode", label=T("Période", "Period"), field=dt, type="relative_period", default=default_period,
                    presets=presets),
-        FilterSpec(id="fournisseur", label="Fournisseur", field=su, type="select", default=None),
-        FilterSpec(id="article", label="Article ou famille", field=it, type="select", default=None),
+        FilterSpec(id="fournisseur", label=T("Fournisseur", "Supplier"), field=su, type="select", default=None),
+        FilterSpec(id="article", label=T("Article ou famille", "Item or family"), field=it, type="select", default=None),
     ]
 
     # ---- visuals -----------------------------------------------------
@@ -189,59 +218,66 @@ def purchasing_suppliers(
         return VisualSpec(type="kpi", title=title, source="achats", x="periode_mois",
                           kpi=KpiSpec(measure=measure, sparkline=measure if sparkline else None, **kw))
 
-    text = (
+    text = T(
         "{{filters.fournisseur}}, du {{period.from}} au {{period.to}} : {{depenses|compact}} de dépenses auprès de "
-        "{{fournisseurs|integer}} fournisseurs, dont {{part_top5|percent}} pour les cinq premiers."
+        "{{fournisseurs|integer}} fournisseurs, dont {{part_top5|percent}} pour les cinq premiers.",
+        "{{filters.fournisseur}}, from {{period.from}} to {{period.to}}: {{depenses|compact}} spent with "
+        "{{fournisseurs|integer}} suppliers, of which {{part_top5|percent}} with the top five.",
     )
     if delivery:
-        text += " {{a_l_heure|percent}} des lignes reçues sont arrivées à l'heure."
+        text += T(" {{a_l_heure|percent}} des lignes reçues sont arrivées à l'heure.",
+                  " {{a_l_heure|percent}} of received lines arrived on time.")
     synthese = VisualSpec(type="text", source="achats", text=text)
     kpis = [
-        kpi("Dépenses totales", "depenses"),
-        kpi("Fournisseurs", "fournisseurs"),
-        kpi("Part du top 5", "part_top5", sparkline=False, secondary="des dépenses, cinq premiers fournisseurs",
-            target_label="vigilance au-delà de 50 %"),
+        kpi(T("Dépenses totales", "Total spend"), "depenses"),
+        kpi(T("Fournisseurs", "Suppliers"), "fournisseurs"),
+        kpi(T("Part du top 5", "Top 5 share"), "part_top5", sparkline=False,
+            secondary=T("des dépenses, cinq premiers fournisseurs", "of spend, top five suppliers"),
+            target_label=T("vigilance au-delà de 50 %", "watch above 50%")),
     ]
     if delivery:
         kpis += [
-            kpi("Livré à l'heure", "a_l_heure", target_label="cible ≥ 95 %"),
-            kpi("Retard moyen", "retard_moyen", secondary="des lignes reçues en retard"),
+            kpi(T("Livré à l'heure", "Delivered on time"), "a_l_heure", target_label=T("cible ≥ 95 %", "target ≥ 95%")),
+            kpi(T("Retard moyen", "Average delay"), "retard_moyen",
+                secondary=T("des lignes reçues en retard", "of lines received late")),
         ]
     par_mois = VisualSpec(
         type="bar",
-        title="Dépenses par mois",
-        subtitle="Selon la date de la ligne d'achat.",
+        title=T("Dépenses par mois", "Spend by month"),
+        subtitle=T("Selon la date de la ligne d'achat.", "By purchase line date."),
         source="achats",
         x="periode_mois",
-        series=[SeriesSpec(key="depenses", label="Dépenses", mark="bar", color=BLUE)],
+        series=[SeriesSpec(key="depenses", label=T("Dépenses", "Spend"), mark="bar", color=BLUE)],
         sort="x_asc",
     )
     par_fournisseur = VisualSpec(
         type="hbar",
-        title="Dépenses par fournisseur",
-        subtitle="Dix premiers fournisseurs. Cliquer pour filtrer le tableau de bord.",
+        title=T("Dépenses par fournisseur", "Spend by supplier"),
+        subtitle=T("Dix premiers fournisseurs. Cliquer pour filtrer le tableau de bord.",
+                   "Top ten suppliers. Click to filter the dashboard."),
         source="achats",
         x=su,
-        series=[SeriesSpec(key="depenses", label="Dépenses", mark="bar", color=BROWN)],
+        series=[SeriesSpec(key="depenses", label=T("Dépenses", "Spend"), mark="bar", color=BROWN)],
         sort="value_desc",
         top_n=10,
         click_filters={"fournisseur": su},
         ignore_filters=["fournisseur"],
     )
     supplier_columns = [
-        ColumnSpec(key=su, label="Fournisseur"),
-        ColumnSpec(key="depenses", label="Dépenses"),
-        ColumnSpec(key="commandes", label="Lignes"),
+        ColumnSpec(key=su, label=T("Fournisseur", "Supplier")),
+        ColumnSpec(key="depenses", label=T("Dépenses", "Spend")),
+        ColumnSpec(key="commandes", label=T("Lignes", "Lines")),
     ]
     if delivery:
         supplier_columns += [
-            ColumnSpec(key="a_l_heure", label="À l'heure", use_thresholds=True),
-            ColumnSpec(key="retard_moyen", label="Retard moyen"),
+            ColumnSpec(key="a_l_heure", label=T("À l'heure", "On time"), use_thresholds=True),
+            ColumnSpec(key="retard_moyen", label=T("Retard moyen", "Average delay")),
         ]
     table_fournisseurs = VisualSpec(
         type="table",
-        title="Détail par fournisseur",
-        subtitle="La ligne « Toutes » reprend les définitions globales, pas la moyenne des fournisseurs.",
+        title=T("Détail par fournisseur", "Detail by supplier"),
+        subtitle=T("La ligne « Toutes » reprend les définitions globales, pas la moyenne des fournisseurs.",
+                   "The “All” row uses the overall definitions, not the average of the suppliers."),
         source="achats",
         x=su,
         columns=supplier_columns,
@@ -251,13 +287,16 @@ def purchasing_suppliers(
         ignore_filters=["fournisseur"],
         highlight_filter="fournisseur",
     )
-    item_columns = [ColumnSpec(key=it, label="Article ou famille"), ColumnSpec(key="depenses", label="Dépenses")]
+    item_columns = [ColumnSpec(key=it, label=T("Article ou famille", "Item or family")),
+                    ColumnSpec(key="depenses", label=T("Dépenses", "Spend"))]
     if qt:
-        item_columns += [ColumnSpec(key="qte_totale", label="Quantité"), ColumnSpec(key="prix_moyen", label="Prix moyen")]
+        item_columns += [ColumnSpec(key="qte_totale", label=T("Quantité", "Quantity")),
+                         ColumnSpec(key="prix_moyen", label=T("Prix moyen", "Average price"))]
     table_articles = VisualSpec(
         type="table",
-        title="Détail par article",
-        subtitle="Quinze premiers articles par dépenses." + (" Prix moyen = montant / quantité." if qt else ""),
+        title=T("Détail par article", "Detail by item"),
+        subtitle=T("Quinze premiers articles par dépenses.", "Top fifteen items by spend.")
+        + (T(" Prix moyen = montant / quantité.", " Average price = amount / quantity.") if qt else ""),
         source="achats",
         x=it,
         columns=item_columns,
@@ -270,9 +309,9 @@ def purchasing_suppliers(
     notes = [
         VisualSpec(
             type="note",
-            title="Définitions",
+            title=T("Définitions", "Definitions"),
             badges=[Provenance.REAL],
-            text=(
+            text=T(
                 "**Part du top 5** : dépenses des cinq premiers fournisseurs sur les dépenses totales de la période "
                 "filtrée (dépendance). Vert sous 50 %, orange jusqu'à 70 %, rouge au-delà. "
                 + (
@@ -280,7 +319,15 @@ def purchasing_suppliers(
                     if delivery
                     else "Sans dates promise et de réception, le suivi des livraisons n'est pas affiché. "
                 )
-                + ("**Prix moyen** : montant divisé par la quantité." if qt else "")
+                + ("**Prix moyen** : montant divisé par la quantité." if qt else ""),
+                "**Top 5 share**: spend of the top five suppliers over total spend of the filtered "
+                "period (dependence). Green below 50%, orange up to 70%, red beyond. "
+                + (
+                    "**On time**: received on or before the promised date, over received lines. "
+                    if delivery
+                    else "Without promised and received dates, delivery tracking is not shown. "
+                )
+                + ("**Average price**: amount divided by quantity." if qt else ""),
             ),
         )
     ]
@@ -298,8 +345,8 @@ def purchasing_suppliers(
     return assemble([source], filters, grid)
 
 
-def build(dataset_id: str, columns: dict, params: dict) -> dict:
-    """Catalog entry point: column mapping (blank optional → None) to the template."""
+def build(dataset_id: str, columns: dict, params: dict, lang: str = DEFAULT_LANG) -> dict:
+    """Catalog entry point: column mapping (blank optional → None) to the template, in ``lang``."""
     mapping: dict[str, Any] = {key: columns.get(key) or "" for key in _REQUIRED}
     mapping.update({key: columns.get(key) or None for key in _OPTIONAL})
-    return purchasing_suppliers(dataset_id, **mapping)
+    return purchasing_suppliers(dataset_id, **mapping, lang=lang)

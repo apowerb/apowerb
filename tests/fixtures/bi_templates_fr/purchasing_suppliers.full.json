@@ -1,0 +1,548 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "achats",
+    "steps": [],
+    "text": "{{filters.fournisseur}}, du {{period.from}} au {{period.to}} : {{depenses|compact}} de dépenses auprès de {{fournisseurs|integer}} fournisseurs, dont {{part_top5|percent}} pour les cinq premiers. {{a_l_heure|percent}} des lignes reçues sont arrivées à l'heure.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "depenses",
+     "sparkline": "depenses"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "achats",
+    "steps": [],
+    "title": "Dépenses totales",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "fournisseurs",
+     "sparkline": "fournisseurs"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "achats",
+    "steps": [],
+    "title": "Fournisseurs",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "part_top5",
+     "secondary": "des dépenses, cinq premiers fournisseurs",
+     "target_label": "vigilance au-delà de 50 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "achats",
+    "steps": [],
+    "title": "Part du top 5",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "a_l_heure",
+     "sparkline": "a_l_heure",
+     "target_label": "cible ≥ 95 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "achats",
+    "steps": [],
+    "title": "Livré à l'heure",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 10,
+    "height": 3,
+    "row": 2,
+    "width": 2
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "retard_moyen",
+     "secondary": "des lignes reçues en retard",
+     "sparkline": "retard_moyen"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "achats",
+    "steps": [],
+    "title": "Retard moyen",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "depenses",
+      "label": "Dépenses",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "achats",
+    "steps": [],
+    "subtitle": "Selon la date de la ligne d'achat.",
+    "title": "Dépenses par mois",
+    "total_row": false,
+    "type": "bar",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 5,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "fournisseur": "fournisseur"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "fournisseur"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "depenses",
+      "label": "Dépenses",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "achats",
+    "steps": [],
+    "subtitle": "Dix premiers fournisseurs. Cliquer pour filtrer le tableau de bord.",
+    "title": "Dépenses par fournisseur",
+    "top_n": 10,
+    "total_row": false,
+    "type": "hbar",
+    "x": "fournisseur"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "fournisseur": "fournisseur"
+    },
+    "columns": [
+     {
+      "key": "fournisseur",
+      "label": "Fournisseur",
+      "use_thresholds": false
+     },
+     {
+      "key": "depenses",
+      "label": "Dépenses",
+      "use_thresholds": false
+     },
+     {
+      "key": "commandes",
+      "label": "Lignes",
+      "use_thresholds": false
+     },
+     {
+      "key": "a_l_heure",
+      "label": "À l'heure",
+      "use_thresholds": true
+     },
+     {
+      "key": "retard_moyen",
+      "label": "Retard moyen",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "fournisseur",
+    "ignore_filters": [
+     "fournisseur"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "sort": "value_desc",
+    "source": "achats",
+    "steps": [],
+    "subtitle": "La ligne « Toutes » reprend les définitions globales, pas la moyenne des fournisseurs.",
+    "title": "Détail par fournisseur",
+    "total_row": true,
+    "type": "table",
+    "x": "fournisseur"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 17,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "article": "article"
+    },
+    "columns": [
+     {
+      "key": "article",
+      "label": "Article ou famille",
+      "use_thresholds": false
+     },
+     {
+      "key": "depenses",
+      "label": "Dépenses",
+      "use_thresholds": false
+     },
+     {
+      "key": "qte_totale",
+      "label": "Quantité",
+      "use_thresholds": false
+     },
+     {
+      "key": "prix_moyen",
+      "label": "Prix moyen",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "article",
+    "ignore_filters": [
+     "article"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "sort": "value_desc",
+    "source": "achats",
+    "steps": [],
+    "subtitle": "Quinze premiers articles par dépenses. Prix moyen = montant / quantité.",
+    "title": "Détail par article",
+    "top_n": 15,
+    "total_row": false,
+    "type": "table",
+    "x": "article"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 23,
+    "width": 12
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Part du top 5** : dépenses des cinq premiers fournisseurs sur les dépenses totales de la période filtrée (dépendance). Vert sous 50 %, orange jusqu'à 70 %, rouge au-delà. **À l'heure** : reçu à la date promise ou avant, sur les lignes reçues. **Prix moyen** : montant divisé par la quantité.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "12m",
+   "field": "date",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "3m",
+    "6m",
+    "12m",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "fournisseur",
+   "id": "fournisseur",
+   "label": "Fournisseur",
+   "type": "select"
+  },
+  {
+   "field": "article",
+   "id": "article",
+   "label": "Article ou famille",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Date",
+     "name": "date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Fournisseur",
+     "name": "fournisseur",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Article ou famille",
+     "name": "article",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Montant",
+     "name": "montant",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Quantité",
+     "name": "quantity",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Date promise",
+     "name": "promised_date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Date de réception",
+     "name": "received_date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Mois",
+     "name": "periode_mois",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    },
+    {
+     "format": "integer",
+     "label": "Livré à l'heure",
+     "name": "livraison_a_lheure",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "decimal1",
+     "label": "Retard (jours)",
+     "name": "retard_jours",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Lignes d'achat",
+   "measures": [
+    {
+     "expr": "SUM(\"montant\")",
+     "format": "compact",
+     "label": "Dépenses",
+     "name": "depenses"
+    },
+    {
+     "expr": "COUNT(*)",
+     "format": "integer",
+     "label": "Lignes d'achat",
+     "name": "commandes",
+     "unit": "lignes"
+    },
+    {
+     "expr": "COUNT(DISTINCT \"fournisseur\")",
+     "format": "integer",
+     "label": "Fournisseurs",
+     "name": "fournisseurs"
+    },
+    {
+     "description": "Dépenses des cinq premiers fournisseurs sur les dépenses totales de la période filtrée. À lire sur l'ensemble de la sélection, pas par fournisseur.",
+     "expr": "(SELECT SUM(s) FROM (SELECT SUM(\"montant\") AS s FROM frame GROUP BY \"fournisseur\" ORDER BY s DESC LIMIT 5)) / NULLIF(SUM(\"montant\"), 0)",
+     "format": "percent",
+     "label": "Part du top 5",
+     "name": "part_top5",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.5,
+      "warn": 0.7
+     }
+    },
+    {
+     "expr": "SUM(\"quantity\")",
+     "format": "compact",
+     "label": "Quantité",
+     "name": "qte_totale"
+    },
+    {
+     "description": "Montant divisé par la quantité, à lire par article.",
+     "expr": "SUM(\"montant\") / NULLIF(SUM(\"quantity\"), 0)",
+     "format": "decimal2",
+     "label": "Prix moyen",
+     "name": "prix_moyen"
+    },
+    {
+     "description": "Lignes reçues à la date promise ou avant, sur les lignes reçues.",
+     "expr": "AVG(livraison_a_lheure)",
+     "format": "percent",
+     "label": "Livré à l'heure",
+     "name": "a_l_heure",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.95,
+      "warn": 0.9
+     }
+    },
+    {
+     "description": "Jours de retard moyens des lignes reçues en retard.",
+     "expr": "AVG(retard_jours)",
+     "format": "decimal1",
+     "label": "Retard moyen",
+     "name": "retard_moyen",
+     "unit": "jours"
+    }
+   ],
+   "name": "achats",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_mois",
+     "expr": "date_trunc('month', CAST(\"date\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "livraison_a_lheure",
+     "expr": "CASE WHEN \"received_date\" IS NULL OR \"promised_date\" IS NULL THEN NULL WHEN CAST(\"received_date\" AS DATE) <= CAST(\"promised_date\" AS DATE) THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "retard_jours",
+     "expr": "CASE WHEN \"received_date\" IS NOT NULL AND \"promised_date\" IS NOT NULL AND CAST(\"received_date\" AS DATE) > CAST(\"promised_date\" AS DATE) THEN date_diff('day', CAST(\"promised_date\" AS DATE), CAST(\"received_date\" AS DATE)) END",
+     "op": "derive"
+    }
+   ]
+  }
+ ]
+}

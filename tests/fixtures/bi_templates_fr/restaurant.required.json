@@ -1,0 +1,561 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "exploitation",
+    "steps": [],
+    "text": "Du {{period.from}} au {{period.to}} : {{ca|compact}} € de chiffre d'affaires pour {{couverts|integer}} couverts (ticket moyen {{ticket_moyen|decimal1}} €). Coût matière {{cout_matiere|percent}}, personnel {{cout_personnel|percent}}, prime cost {{prime_cost|percent}}.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "ca",
+     "secondary": "{{couverts|integer}} couverts",
+     "sparkline": "ca"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "exploitation",
+    "steps": [],
+    "title": "Chiffre d'affaires",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "cout_matiere",
+     "secondary": "{{achats|compact}} € d'achats",
+     "sparkline": "cout_matiere",
+     "target_label": "cible 25-35 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "exploitation",
+    "steps": [],
+    "title": "Coût matière",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "cout_personnel",
+     "secondary": "{{masse_salariale|compact}} € de masse salariale",
+     "sparkline": "cout_personnel"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "exploitation",
+    "steps": [],
+    "title": "Coût du personnel",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 5,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "prime_cost",
+     "sparkline": "prime_cost",
+     "target_label": "cible 55-65 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "exploitation",
+    "steps": [],
+    "title": "Prime cost",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 5,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "ticket_moyen",
+     "secondary": "par couvert",
+     "sparkline": "ticket_moyen"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "exploitation",
+    "steps": [],
+    "title": "Ticket moyen",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 8,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Matière mini 25 %",
+      "value": 0.25
+     },
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Matière maxi 35 %",
+      "value": 0.35
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "cout_matiere",
+      "label": "Coût matière",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "cout_personnel",
+      "label": "Coût du personnel",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "exploitation",
+    "steps": [],
+    "subtitle": "En % du chiffre d'affaires. Lignes vertes : cible matière 25-35 %.",
+    "title": "Coût matière et personnel par semaine",
+    "total_row": false,
+    "type": "line",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 8,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Prime cost mini 55 %",
+      "value": 0.55
+     },
+     {
+      "color": "good",
+      "dash": true,
+      "label": "Prime cost maxi 65 %",
+      "value": 0.65
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "prime_cost",
+      "label": "Prime cost",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "exploitation",
+    "steps": [],
+    "subtitle": "(Matières + personnel) ÷ CA. Lignes vertes : cible 55-65 %.",
+    "title": "Prime cost par semaine",
+    "total_row": false,
+    "type": "line",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 14,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "Chiffre d'affaires",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "right",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "couverts",
+      "label": "Couverts",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "exploitation",
+    "steps": [],
+    "subtitle": "Chiffre d'affaires en barres, couverts en ligne.",
+    "title": "CA et couverts par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 20,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca_moyen_jour",
+      "label": "CA moyen par jour",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "right",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "CA total",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "exploitation",
+    "steps": [],
+    "subtitle": "Barres : CA moyen d'un jour ouvert. Ligne : CA total sur la période.",
+    "title": "CA moyen par jour de semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "jour_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 26,
+    "width": 6
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Coût matière** : achats matières ÷ CA. **Coût du personnel** : masse salariale ÷ CA. **Prime cost** : (matières + personnel) ÷ CA. **Ticket moyen** : CA ÷ couverts. Chaque ratio est calculé sur les sommes de la période, jamais comme une moyenne de ratios.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 4,
+    "row": 26,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Coût matière : cible 25-35 %. Prime cost : cible 55-65 %. Vert jusqu'à la borne haute, orange jusqu'à 5 points au-dessus, rouge au-delà. Un ratio sous la borne basse n'est pas pénalisé : vérifier alors que tous les achats sont saisis. Les cibles se règlent à la création.",
+    "title": "Cibles",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "12w",
+   "field": "date",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "4w",
+    "12w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Date",
+     "name": "date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "format": "compact",
+     "label": "Chiffre d'affaires",
+     "name": "ca",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Couverts",
+     "name": "couverts",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Achats matières",
+     "name": "achats_matieres",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Masse salariale",
+     "name": "masse_salariale",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Semaine",
+     "name": "periode_semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    },
+    {
+     "label": "Jour de la semaine",
+     "name": "jour_semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Exploitation du restaurant",
+   "measures": [
+    {
+     "expr": "SUM(\"ca\")",
+     "format": "compact",
+     "label": "Chiffre d'affaires",
+     "name": "ca",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(\"couverts\")",
+     "format": "integer",
+     "label": "Couverts",
+     "name": "couverts",
+     "unit": "couverts"
+    },
+    {
+     "expr": "SUM(\"achats_matieres\")",
+     "format": "compact",
+     "label": "Achats matières",
+     "name": "achats",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(\"masse_salariale\")",
+     "format": "compact",
+     "label": "Masse salariale",
+     "name": "masse_salariale",
+     "unit": "€"
+    },
+    {
+     "description": "Achats matières ÷ chiffre d'affaires.",
+     "expr": "SUM(\"achats_matieres\") / NULLIF(SUM(\"ca\"), 0)",
+     "format": "percent",
+     "label": "Coût matière",
+     "name": "cout_matiere",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.35,
+      "warn": 0.4
+     }
+    },
+    {
+     "description": "Masse salariale ÷ chiffre d'affaires.",
+     "expr": "SUM(\"masse_salariale\") / NULLIF(SUM(\"ca\"), 0)",
+     "format": "percent",
+     "label": "Coût du personnel",
+     "name": "cout_personnel"
+    },
+    {
+     "description": "(Achats matières + masse salariale) ÷ chiffre d'affaires.",
+     "expr": "(SUM(\"achats_matieres\") + SUM(\"masse_salariale\")) / NULLIF(SUM(\"ca\"), 0)",
+     "format": "percent",
+     "label": "Prime cost",
+     "name": "prime_cost",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.65,
+      "warn": 0.7
+     }
+    },
+    {
+     "description": "Chiffre d'affaires ÷ couverts.",
+     "expr": "SUM(\"ca\") / NULLIF(SUM(\"couverts\"), 0)",
+     "format": "decimal1",
+     "label": "Ticket moyen",
+     "name": "ticket_moyen",
+     "unit": "€"
+    },
+    {
+     "description": "Chiffre d'affaires ÷ nombre de jours distincts (les deux services d'un jour comptent pour un seul jour).",
+     "expr": "SUM(\"ca\") / NULLIF(COUNT(DISTINCT CAST(\"date\" AS DATE)), 0)",
+     "format": "compact",
+     "label": "CA moyen par jour",
+     "name": "ca_moyen_jour",
+     "unit": "€"
+    }
+   ],
+   "name": "exploitation",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_semaine",
+     "expr": "date_trunc('week', CAST(\"date\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "jour_semaine",
+     "expr": "CASE isodow(CAST(\"date\" AS DATE)) WHEN 1 THEN '1-Lun' WHEN 2 THEN '2-Mar' WHEN 3 THEN '3-Mer' WHEN 4 THEN '4-Jeu' WHEN 5 THEN '5-Ven' WHEN 6 THEN '6-Sam' WHEN 7 THEN '7-Dim' END",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}

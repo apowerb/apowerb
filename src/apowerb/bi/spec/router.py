@@ -192,6 +192,8 @@ class TemplateDashboardRequest(BaseModel):
     title: str | None = Field(default=None, max_length=120)
     columns: dict[str, str | None] = Field(default_factory=dict)
     params: dict[str, Any] = Field(default_factory=dict)
+    # language of the dashboard texts; French when omitted
+    lang: Literal["fr", "en"] = "fr"
 
 
 class TemplateDashboardResponse(BaseModel):
@@ -204,9 +206,10 @@ def _invalid(errors: list[str]) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"errors": errors})
 
 
-def _create_request(title: str, spec: dict) -> DashboardCreateRequest:
+def _create_request(title: str, spec: dict, locale: str | None = None) -> DashboardCreateRequest:
     return DashboardCreateRequest(
         title=title,
+        locale=locale,
         sources=[SourceSpec.model_validate(s) for s in spec.get("sources") or []],
         filters=[FilterSpec.model_validate(f) for f in spec.get("filters") or []],
         components=[
@@ -226,22 +229,29 @@ def _missing_columns(template: catalog.DashboardTemplate, columns: dict[str, str
     for col in template.columns:
         name = columns.get(col.key)
         if name and name not in available:
+            listed = ", ".join(available[:_MAX_LISTED_COLUMNS])
             errors.append(
-                f"La colonne « {name} » ({col.label}) est introuvable dans le jeu de données. "
-                f"Colonnes disponibles : {', '.join(available[:_MAX_LISTED_COLUMNS])}."
+                f"The column “{name}” ({col.label}) is not in the dataset. Available columns: {listed}."
+                if template.lang == "en"
+                else f"La colonne « {name} » ({col.label}) est introuvable dans le jeu de données. "
+                f"Colonnes disponibles : {listed}."
             )
     return errors
 
 
-async def _resolve_template(db: AsyncSession, template_id: str, viewer: str) -> catalog.DashboardTemplate | None:
-    """A built-in template, or a user template visible to the viewer."""
-    return catalog.get_template(template_id) or await UserTemplateStore(db, viewer).get(template_id)
+async def _resolve_template(
+    db: AsyncSession, template_id: str, viewer: str, lang: str | None = "fr"
+) -> catalog.DashboardTemplate | None:
+    """A built-in template in ``lang``, or a user template visible to the viewer (stored as built)."""
+    return catalog.get_template(template_id, lang=lang or "fr") or await UserTemplateStore(db, viewer).get(template_id)
 
 
 @router.get("/dashboard-templates", summary="List the dashboard templates")
-async def list_dashboard_templates(user: CurrentUser, db: DbDep) -> list[dict[str, Any]]:
+async def list_dashboard_templates(
+    user: CurrentUser, db: DbDep, lang: Literal["fr", "en"] = Query("fr", description="Language of the built-in templates")
+) -> list[dict[str, Any]]:
     user_templates = await UserTemplateStore(db, user.email).list_visible()
-    return [t.describe() for t in [*catalog.list_templates(), *user_templates]]
+    return [t.describe() for t in [*catalog.list_templates(lang), *user_templates]]
 
 
 class UserTemplateRequest(BaseModel):
@@ -310,7 +320,7 @@ async def create_dashboard_from_template(
     svc: ServiceDep,
     db: DbDep,
 ) -> TemplateDashboardResponse:
-    template = await _resolve_template(db, template_id, user.email)
+    template = await _resolve_template(db, template_id, user.email, body.lang)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gabarit introuvable : {template_id}")
 
@@ -335,7 +345,7 @@ async def create_dashboard_from_template(
 
     title = (body.title or "").strip() or template.label
     try:
-        request = _create_request(title, spec)
+        request = _create_request(title, spec, body.lang)
         dashboard, final_title = await create_with_unique_title(
             title,
             lambda candidate: svc.create(
@@ -392,7 +402,7 @@ async def get_source_requirements(dashboard_id: str, user: CurrentUser, svc: Ser
     dashboard = await _owned_dashboard(svc, dashboard_id)
     root = _root_or_422(dashboard)
     reference = dashboard.template
-    template = await _resolve_template(db, reference.id, user.email) if reference else None
+    template = await _resolve_template(db, reference.id, user.email, dashboard.locale) if reference else None
     if reference is not None and template is not None:
         columns = [
             {"key": c.key, "label": c.label, "type": c.type, "required": c.required, "current": reference.columns.get(c.key)}
@@ -499,7 +509,8 @@ async def upgrade_dashboard(
     template_id = body.template_id or (reference.id if reference else None)
     if template_id is None:
         raise _invalid(["Ce tableau n'est pas issu d'un modèle : précisez template_id et columns pour le rattacher."])
-    template = await _resolve_template(db, template_id, user.email)
+    # the dashboard keeps its language across upgrades
+    template = await _resolve_template(db, template_id, user.email, dashboard.locale)
     if template is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gabarit introuvable : {template_id}")
     root = _root_or_422(dashboard)

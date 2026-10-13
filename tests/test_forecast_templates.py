@@ -94,3 +94,11 @@ class TestLegacyForecastToolRemoval:
         from apowerb.tools_store.portfolio import basic
 
         assert not hasattr(basic, "tool_thaink2_forecast")
+
+
+def test_forecasting_agent_embeds_only_the_forecast_chart():
+    # PROD 13/10 : "then embed_chart to show the widget" a ete applique au
+    # tableau de stock, avec un id de composant -> carte 404.
+    instruction = _template("forecasting_agent")["agent_instruction"]
+    assert "embed_chart(forecast_chart_id)" in instruction
+    assert "never pass their component ids to `embed_chart`" in instruction

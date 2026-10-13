@@ -32,6 +32,7 @@ from apowerb.bi.spec.models import (
     ThresholdSpec,
     VisualSpec,
 )
+from apowerb.bi.spec.templates_common import DEFAULT_LANG, translator
 
 _IDENT_RE = re.compile(IDENT)
 _PERIOD_RE = re.compile(r"^(\d{1,3})([wm])$")
@@ -44,22 +45,29 @@ OTIF_WARN = 0.90
 
 DESCRIPTOR: dict[str, Any] = {
     "id": "delivery_otif",
-    "label": "Livraisons / OTIF",
-    "description": (
-        "Suivi des livraisons clients à partir d'une ligne par ligne de commande : livré à l'heure, "
-        "livré complet et OTIF (les deux), retard moyen, retards en cours et taux de service quantité, "
-        "par client, transporteur et famille."
-    ),
+    "label": {"fr": "Livraisons / OTIF", "en": "Deliveries / OTIF"},
+    "description": {
+        "fr": (
+            "Suivi des livraisons clients à partir d'une ligne par ligne de commande : livré à l'heure, "
+            "livré complet et OTIF (les deux), retard moyen, retards en cours et taux de service quantité, "
+            "par client, transporteur et famille."
+        ),
+        "en": (
+            "Customer delivery tracking from one row per order line: delivered on time, "
+            "delivered in full and OTIF (both), average delay, open late lines and quantity fill rate, "
+            "by customer, carrier and product family."
+        ),
+    },
     "version": 1,
     "columns": [
-        {"key": "order_date", "label": "Date de commande", "type": "date", "required": True, "default": "date_commande"},
-        {"key": "promised_date", "label": "Date promise", "type": "date", "required": True, "default": "date_promise"},
-        {"key": "delivered_date", "label": "Date de livraison", "type": "date", "required": True, "default": "date_livraison"},
-        {"key": "qty_ordered", "label": "Quantité commandée", "type": "number", "required": True, "default": "qte_commandee"},
-        {"key": "qty_delivered", "label": "Quantité livrée", "type": "number", "required": True, "default": "qte_livree"},
-        {"key": "customer", "label": "Client", "type": "string", "required": True, "default": "client"},
-        {"key": "carrier", "label": "Transporteur", "type": "string", "required": False, "default": None},
-        {"key": "family", "label": "Famille", "type": "string", "required": False, "default": None},
+        {"key": "order_date", "label": {"fr": "Date de commande", "en": "Order date"}, "type": "date", "required": True, "default": "date_commande"},
+        {"key": "promised_date", "label": {"fr": "Date promise", "en": "Promised date"}, "type": "date", "required": True, "default": "date_promise"},
+        {"key": "delivered_date", "label": {"fr": "Date de livraison", "en": "Delivery date"}, "type": "date", "required": True, "default": "date_livraison"},
+        {"key": "qty_ordered", "label": {"fr": "Quantité commandée", "en": "Ordered quantity"}, "type": "number", "required": True, "default": "qte_commandee"},
+        {"key": "qty_delivered", "label": {"fr": "Quantité livrée", "en": "Delivered quantity"}, "type": "number", "required": True, "default": "qte_livree"},
+        {"key": "customer", "label": {"fr": "Client", "en": "Customer"}, "type": "string", "required": True, "default": "client"},
+        {"key": "carrier", "label": {"fr": "Transporteur", "en": "Carrier"}, "type": "string", "required": False, "default": None},
+        {"key": "family", "label": {"fr": "Famille", "en": "Product family"}, "type": "string", "required": False, "default": None},
     ],
     "params": [],
 }
@@ -124,8 +132,10 @@ def delivery_otif(
     carrier: str | None = None,
     family: str | None = None,
     default_period: str = "12m",
+    lang: str = DEFAULT_LANG,
 ) -> dict:
-    """Build the « Livraisons / OTIF » spec for a dataset of order lines."""
+    """Build the « Livraisons / OTIF » spec for a dataset of order lines, in ``lang``."""
+    T = translator(lang)
     if not dataset_id:
         raise ValueError("dataset_id is required.")
     od = _check_ident("order_date", order_date)
@@ -138,7 +148,7 @@ def delivery_otif(
     fa = _check_ident("family", family) if family else None
 
     bucket, unit = _bucket(default_period)
-    bucket_label = "Semaine" if unit == "week" else "Mois"
+    bucket_label = T("Semaine", "Week") if unit == "week" else T("Mois", "Month")
     P, D, QO, QD = _q(pd_), _q(dd), _q(qo), _q(qd)
     day_p, day_d = f"CAST({P} AS DATE)", f"CAST({D} AS DATE)"
     as_of = f"CAST(MAX({D}) OVER () AS DATE)"
@@ -165,9 +175,9 @@ def delivery_otif(
         DeriveStep(
             column="tranche_retard",
             expr=(
-                f"CASE WHEN {D} IS NULL OR {P} IS NULL THEN NULL WHEN retard_jours IS NULL THEN '0 j' "
-                "WHEN retard_jours <= 2 THEN '1-2 j' WHEN retard_jours <= 5 THEN '3-5 j' "
-                "WHEN retard_jours <= 10 THEN '6-10 j' ELSE '> 10 j' END"
+                f"CASE WHEN {D} IS NULL OR {P} IS NULL THEN NULL WHEN retard_jours IS NULL THEN '{T('0 j', '0 d')}' "
+                f"WHEN retard_jours <= 2 THEN '{T('1-2 j', '1-2 d')}' WHEN retard_jours <= 5 THEN '{T('3-5 j', '3-5 d')}' "
+                f"WHEN retard_jours <= 10 THEN '{T('6-10 j', '6-10 d')}' ELSE '{T('> 10 j', '> 10 d')}' END"
             ),
         ),
         DeriveStep(
@@ -192,56 +202,63 @@ def delivery_otif(
 
     # ---- fields ------------------------------------------------------
     fields = [
-        FieldSpec(name=od, label="Date de commande", type="date", role="date"),
-        FieldSpec(name=pd_, label="Date promise", type="date", role="date"),
-        FieldSpec(name=dd, label="Date de livraison", type="date", role="date"),
-        FieldSpec(name=qo, label="Quantité commandée", type="number", role="measure", format="compact"),
-        FieldSpec(name=qd, label="Quantité livrée", type="number", role="measure", format="compact"),
-        FieldSpec(name=cu, label="Client", role="dimension"),
+        FieldSpec(name=od, label=T("Date de commande", "Order date"), type="date", role="date"),
+        FieldSpec(name=pd_, label=T("Date promise", "Promised date"), type="date", role="date"),
+        FieldSpec(name=dd, label=T("Date de livraison", "Delivery date"), type="date", role="date"),
+        FieldSpec(name=qo, label=T("Quantité commandée", "Ordered quantity"), type="number", role="measure", format="compact"),
+        FieldSpec(name=qd, label=T("Quantité livrée", "Delivered quantity"), type="number", role="measure", format="compact"),
+        FieldSpec(name=cu, label=T("Client", "Customer"), role="dimension"),
     ]
     if ca:
-        fields.append(FieldSpec(name=ca, label="Transporteur", role="dimension"))
+        fields.append(FieldSpec(name=ca, label=T("Transporteur", "Carrier"), role="dimension"))
     if fa:
-        fields.append(FieldSpec(name=fa, label="Famille", role="dimension"))
+        fields.append(FieldSpec(name=fa, label=T("Famille", "Product family"), role="dimension"))
     fields += [
-        FieldSpec(name="ligne_livree", label="Ligne livrée", type="number", role="measure", format="integer"),
-        FieldSpec(name="ligne_a_lheure", label="Ligne livrée à l'heure", type="number", role="measure", format="integer"),
-        FieldSpec(name="ligne_complete", label="Ligne livrée complète", type="number", role="measure", format="integer"),
-        FieldSpec(name="ligne_otif", label="Ligne OTIF", type="number", role="measure", format="integer"),
-        FieldSpec(name="retard_jours", label="Retard (jours)", type="number", role="measure", format="decimal1"),
-        FieldSpec(name="tranche_retard", label="Tranche de retard", role="dimension"),
-        FieldSpec(name="ligne_en_retard_ouverte", label="Ligne en retard non livrée", type="number", role="measure",
+        FieldSpec(name="ligne_livree", label=T("Ligne livrée", "Delivered line"), type="number", role="measure", format="integer"),
+        FieldSpec(name="ligne_a_lheure", label=T("Ligne livrée à l'heure", "Line delivered on time"), type="number", role="measure", format="integer"),
+        FieldSpec(name="ligne_complete", label=T("Ligne livrée complète", "Line delivered in full"), type="number", role="measure", format="integer"),
+        FieldSpec(name="ligne_otif", label=T("Ligne OTIF", "OTIF line"), type="number", role="measure", format="integer"),
+        FieldSpec(name="retard_jours", label=T("Retard (jours)", "Delay (days)"), type="number", role="measure", format="decimal1"),
+        FieldSpec(name="tranche_retard", label=T("Tranche de retard", "Delay band"), role="dimension"),
+        FieldSpec(name="ligne_en_retard_ouverte", label=T("Ligne en retard non livrée", "Late undelivered line"), type="number", role="measure",
                   format="integer"),
-        FieldSpec(name="ligne_echue", label="Ligne échue", type="number", role="measure", format="integer"),
-        FieldSpec(name="qte_due", label="Quantité due", type="number", role="measure", format="compact"),
-        FieldSpec(name="qte_servie", label="Quantité servie", type="number", role="measure", format="compact"),
+        FieldSpec(name="ligne_echue", label=T("Ligne échue", "Due line"), type="number", role="measure", format="integer"),
+        FieldSpec(name="qte_due", label=T("Quantité due", "Due quantity"), type="number", role="measure", format="compact"),
+        FieldSpec(name="qte_servie", label=T("Quantité servie", "Served quantity"), type="number", role="measure", format="compact"),
         FieldSpec(name=bucket, label=bucket_label, type="date", role="dimension"),
     ]
 
     # ---- measures ----------------------------------------------------
     rate_thr = ThresholdSpec(direction="higher_is_better", good=OTIF_TARGET, warn=OTIF_WARN)
     measures = [
-        MeasureSpec(name="lignes", label="Lignes de commande", expr="COUNT(*)", format="integer", unit="lignes"),
-        MeasureSpec(name="lignes_livrees", label="Lignes livrées", expr="SUM(ligne_livree)", format="integer",
-                    unit="lignes"),
-        MeasureSpec(name="a_l_heure", label="Livré à l'heure", expr="AVG(ligne_a_lheure)", format="percent",
-                    thresholds=rate_thr, description="Lignes livrées à la date promise ou avant, sur les lignes livrées."),
-        MeasureSpec(name="complet", label="Livré complet", expr="AVG(ligne_complete)", format="percent",
-                    thresholds=rate_thr, description="Lignes livrées avec au moins la quantité commandée."),
+        MeasureSpec(name="lignes", label=T("Lignes de commande", "Order lines"), expr="COUNT(*)", format="integer",
+                    unit=T("lignes", "lines")),
+        MeasureSpec(name="lignes_livrees", label=T("Lignes livrées", "Delivered lines"), expr="SUM(ligne_livree)", format="integer",
+                    unit=T("lignes", "lines")),
+        MeasureSpec(name="a_l_heure", label=T("Livré à l'heure", "On time"), expr="AVG(ligne_a_lheure)", format="percent",
+                    thresholds=rate_thr, description=T("Lignes livrées à la date promise ou avant, sur les lignes livrées.",
+                                                       "Lines delivered on or before the promised date, over delivered lines.")),
+        MeasureSpec(name="complet", label=T("Livré complet", "In full"), expr="AVG(ligne_complete)", format="percent",
+                    thresholds=rate_thr, description=T("Lignes livrées avec au moins la quantité commandée.",
+                                                       "Lines delivered with at least the ordered quantity.")),
         MeasureSpec(name="otif", label="OTIF", expr="AVG(ligne_otif)", format="percent", thresholds=rate_thr,
-                    description="On Time In Full : lignes livrées à l'heure et complètes, sur les lignes livrées."),
-        MeasureSpec(name="retard_moyen", label="Retard moyen", expr="AVG(retard_jours)", format="decimal1",
-                    unit="jours", description="Jours de retard moyens des lignes livrées en retard."),
-        MeasureSpec(name="retards_en_cours", label="En retard non livrées",
-                    expr="COALESCE(SUM(ligne_en_retard_ouverte), 0)", format="integer", unit="lignes",
-                    description="Lignes non livrées dont la date promise précède la dernière livraison connue."),
-        MeasureSpec(name="taux_service_qte", label="Taux de service quantité",
+                    description=T("On Time In Full : lignes livrées à l'heure et complètes, sur les lignes livrées.",
+                                  "On Time In Full: lines delivered on time and in full, over delivered lines.")),
+        MeasureSpec(name="retard_moyen", label=T("Retard moyen", "Average delay"), expr="AVG(retard_jours)", format="decimal1",
+                    unit=T("jours", "days"), description=T("Jours de retard moyens des lignes livrées en retard.",
+                                                           "Average days of delay of the lines delivered late.")),
+        MeasureSpec(name="retards_en_cours", label=T("En retard non livrées", "Late, not delivered"),
+                    expr="COALESCE(SUM(ligne_en_retard_ouverte), 0)", format="integer", unit=T("lignes", "lines"),
+                    description=T("Lignes non livrées dont la date promise précède la dernière livraison connue.",
+                                  "Undelivered lines whose promised date is before the last known delivery.")),
+        MeasureSpec(name="taux_service_qte", label=T("Taux de service quantité", "Quantity fill rate"),
                     expr="SUM(qte_servie) / NULLIF(SUM(qte_due), 0)", format="percent",
-                    description="Quantité livrée (plafonnée à la commande) sur la quantité commandée des lignes échues."),
+                    description=T("Quantité livrée (plafonnée à la commande) sur la quantité commandée des lignes échues.",
+                                  "Delivered quantity (capped at the order) over the ordered quantity of due lines.")),
     ]
     source = SourceSpec(
         name="livraisons",
-        label="Lignes de commande livrées",
+        label=T("Lignes de commande livrées", "Delivered order lines"),
         kind="dataset",
         dataset_id=dataset_id,
         transforms=transforms,
@@ -254,14 +271,14 @@ def delivery_otif(
     if default_period not in presets:
         presets.insert(0, default_period)
     filters = [
-        FilterSpec(id="periode", label="Période (date promise)", field=pd_, type="relative_period",
+        FilterSpec(id="periode", label=T("Période (date promise)", "Period (promised date)"), field=pd_, type="relative_period",
                    default=default_period, presets=presets),
-        FilterSpec(id="client", label="Client", field=cu, type="select", default=None),
+        FilterSpec(id="client", label=T("Client", "Customer"), field=cu, type="select", default=None),
     ]
     if ca:
-        filters.append(FilterSpec(id="transporteur", label="Transporteur", field=ca, type="select", default=None))
+        filters.append(FilterSpec(id="transporteur", label=T("Transporteur", "Carrier"), field=ca, type="select", default=None))
     if fa:
-        filters.append(FilterSpec(id="famille", label="Famille", field=fa, type="select", default=None))
+        filters.append(FilterSpec(id="famille", label=T("Famille", "Product family"), field=fa, type="select", default=None))
 
     # ---- visuals -----------------------------------------------------
     def kpi(title: str, measure: str, **kw: Any) -> VisualSpec:
@@ -271,31 +288,38 @@ def delivery_otif(
     synthese = VisualSpec(
         type="text",
         source="livraisons",
-        text=(
+        text=T(
             "{{filters.client}}, du {{period.from}} au {{period.to}} : {{lignes|integer}} lignes de commande, "
             "{{lignes_livrees|integer}} livrées. OTIF de {{otif|percent}} : {{a_l_heure|percent}} livrées à l'heure "
-            "et {{complet|percent}} complètes."
+            "et {{complet|percent}} complètes.",
+            "{{filters.client}}, {{period.from}} to {{period.to}}: {{lignes|integer}} order lines, "
+            "{{lignes_livrees|integer}} delivered. OTIF of {{otif|percent}}: {{a_l_heure|percent}} delivered on time "
+            "and {{complet|percent}} in full.",
         ),
     )
     kpis = [
-        kpi("OTIF", "otif", target_label="cible ≥ 95 %"),
-        kpi("Livré à l'heure", "a_l_heure", target_label="cible ≥ 95 %"),
-        kpi("Livré complet", "complet", secondary="Taux de service quantité : {{taux_service_qte|percent}}",
-            target_label="cible ≥ 95 %"),
-        kpi("Retard moyen", "retard_moyen", secondary="des lignes livrées en retard"),
-        kpi("En retard non livrées", "retards_en_cours", secondary="date promise dépassée"),
+        kpi("OTIF", "otif", target_label=T("cible ≥ 95 %", "target ≥ 95%")),
+        kpi(T("Livré à l'heure", "On time"), "a_l_heure", target_label=T("cible ≥ 95 %", "target ≥ 95%")),
+        kpi(T("Livré complet", "In full"), "complet",
+            secondary=T("Taux de service quantité : {{taux_service_qte|percent}}",
+                        "Quantity fill rate: {{taux_service_qte|percent}}"),
+            target_label=T("cible ≥ 95 %", "target ≥ 95%")),
+        kpi(T("Retard moyen", "Average delay"), "retard_moyen",
+            secondary=T("des lignes livrées en retard", "of the lines delivered late")),
+        kpi(T("En retard non livrées", "Late, not delivered"), "retards_en_cours",
+            secondary=T("date promise dépassée", "promised date passed")),
     ]
     evolution = VisualSpec(
         type="combo",
-        title="OTIF et livraisons à l'heure",
-        subtitle=f"Par {bucket_label.lower()}, selon la date promise.",
+        title=T("OTIF et livraisons à l'heure", "OTIF and on-time deliveries"),
+        subtitle=T(f"Par {bucket_label.lower()}, selon la date promise.", f"By {bucket_label.lower()}, on the promised date."),
         source="livraisons",
         x=bucket,
         series=[
             SeriesSpec(key="otif", label="OTIF", mark="bar", color=BLUE, use_thresholds=True),
-            SeriesSpec(key="a_l_heure", label="À l'heure", mark="line", color=BROWN),
+            SeriesSpec(key="a_l_heure", label=T("À l'heure", "On time"), mark="line", color=BROWN),
         ],
-        reference_lines=[ReferenceLine(value=OTIF_TARGET, label="Objectif 95 %", color="good")],
+        reference_lines=[ReferenceLine(value=OTIF_TARGET, label=T("Objectif 95 %", "Target 95%"), color="good")],
         sort="x_asc",
     )
 
@@ -303,35 +327,37 @@ def delivery_otif(
         return VisualSpec(
             type="hbar",
             title=title,
-            subtitle="Les moins bons en premier. Cliquer pour filtrer le tableau de bord.",
+            subtitle=T("Les moins bons en premier. Cliquer pour filtrer le tableau de bord.",
+                       "Worst first. Click to filter the dashboard."),
             source="livraisons",
             x=column,
             series=[SeriesSpec(key="otif", label="OTIF", mark="bar", use_thresholds=True)],
             sort="value_asc",
-            reference_lines=[ReferenceLine(value=OTIF_TARGET, label="95 %", color="good")],
+            reference_lines=[ReferenceLine(value=OTIF_TARGET, label=T("95 %", "95%"), color="good")],
             click_filters={filter_id: column},
             ignore_filters=[filter_id],
         )
 
-    charts = [otif_by("OTIF par client", cu, "client")]
+    charts = [otif_by(T("OTIF par client", "OTIF by customer"), cu, "client")]
     if ca:
-        charts.append(otif_by("OTIF par transporteur", ca, "transporteur"))
+        charts.append(otif_by(T("OTIF par transporteur", "OTIF by carrier"), ca, "transporteur"))
     if fa:
-        charts.append(otif_by("OTIF par famille", fa, "famille"))
+        charts.append(otif_by(T("OTIF par famille", "OTIF by product family"), fa, "famille"))
 
     table = VisualSpec(
         type="table",
-        title="Performance par client",
-        subtitle="La ligne « Toutes » reprend les définitions globales, pas la moyenne des clients.",
+        title=T("Performance par client", "Performance by customer"),
+        subtitle=T("La ligne « Toutes » reprend les définitions globales, pas la moyenne des clients.",
+                   "The “All” row uses the overall definitions, not the average of the customers."),
         source="livraisons",
         x=cu,
         columns=[
-            ColumnSpec(key=cu, label="Client"),
-            ColumnSpec(key="lignes", label="Lignes"),
+            ColumnSpec(key=cu, label=T("Client", "Customer")),
+            ColumnSpec(key="lignes", label=T("Lignes", "Lines")),
             ColumnSpec(key="otif", label="OTIF", use_thresholds=True),
-            ColumnSpec(key="a_l_heure", label="À l'heure", use_thresholds=True),
-            ColumnSpec(key="complet", label="Complet", use_thresholds=True),
-            ColumnSpec(key="retard_moyen", label="Retard moyen"),
+            ColumnSpec(key="a_l_heure", label=T("À l'heure", "On time"), use_thresholds=True),
+            ColumnSpec(key="complet", label=T("Complet", "In full"), use_thresholds=True),
+            ColumnSpec(key="retard_moyen", label=T("Retard moyen", "Average delay")),
         ],
         total_row=True,
         click_filters={"client": cu},
@@ -340,48 +366,59 @@ def delivery_otif(
     )
     retards = VisualSpec(
         type="bar",
-        title="Distribution des retards",
-        subtitle="Lignes livrées, par jours de retard sur la date promise.",
+        title=T("Distribution des retards", "Delay distribution"),
+        subtitle=T("Lignes livrées, par jours de retard sur la date promise.",
+                   "Delivered lines, by days of delay on the promised date."),
         source="livraisons",
         x="tranche_retard",
-        series=[SeriesSpec(key="lignes_livrees", label="Lignes livrées", mark="bar", color=BROWN)],
+        series=[SeriesSpec(key="lignes_livrees", label=T("Lignes livrées", "Delivered lines"), mark="bar", color=BROWN)],
         sort="x_asc",
     )
     lecture = VisualSpec(
         type="text",
-        title="Lecture des retards",
+        title=T("Lecture des retards", "Reading the delays"),
         source="livraisons",
-        text=(
+        text=T(
             "Les lignes en retard sont livrées en moyenne {{retard_moyen|decimal1}} jours après la date promise. "
             "{{retards_en_cours|integer}} lignes ne sont pas encore livrées alors que leur date promise est "
-            "dépassée. Le taux de service quantité est de {{taux_service_qte|percent}}."
+            "dépassée. Le taux de service quantité est de {{taux_service_qte|percent}}.",
+            "Late lines are delivered on average {{retard_moyen|decimal1}} days after the promised date. "
+            "{{retards_en_cours|integer}} lines are not delivered yet although their promised date has "
+            "passed. The quantity fill rate is {{taux_service_qte|percent}}.",
         ),
     )
     notes = [
         VisualSpec(
             type="note",
-            title="Définitions",
+            title=T("Définitions", "Definitions"),
             badges=[Provenance.REAL],
-            text=(
+            text=T(
                 "**À l'heure** : livrée à la date promise ou avant. **Complet** : quantité livrée au moins égale à la "
-                "quantité commandée. **OTIF** : à l'heure et complet. Les taux sont calculés sur les lignes livrées."
+                "quantité commandée. **OTIF** : à l'heure et complet. Les taux sont calculés sur les lignes livrées.",
+                "**On time**: delivered on or before the promised date. **In full**: delivered quantity at least equal "
+                "to the ordered quantity. **OTIF**: on time and in full. Rates are computed on delivered lines.",
             ),
         ),
         VisualSpec(
             type="note",
-            title="Seuils",
-            text=(
+            title=T("Seuils", "Thresholds"),
+            text=T(
                 "Vert à partir de 95 % d'OTIF, orange entre 90 % et 95 %, rouge en dessous. La période se mesure sur la "
-                "date promise."
+                "date promise.",
+                "Green from 95% OTIF, orange between 90% and 95%, red below. The period is measured on the "
+                "promised date.",
             ),
         ),
         VisualSpec(
             type="note",
-            title="Lignes non livrées",
-            text=(
+            title=T("Lignes non livrées", "Undelivered lines"),
+            text=T(
                 "Une ligne non livrée est en retard si sa date promise précède la dernière livraison connue du fichier "
                 "(et non la date du jour). Elle n'entre pas dans les taux tant qu'elle n'est pas livrée. Le taux de "
-                "service quantité compte les lignes échues, livrées ou en retard."
+                "service quantité compte les lignes échues, livrées ou en retard.",
+                "An undelivered line is late when its promised date is before the last known delivery of the file "
+                "(not today's date). It stays out of the rates until it is delivered. The quantity fill rate counts "
+                "due lines, delivered or late.",
             ),
         ),
     ]
@@ -412,8 +449,8 @@ def delivery_otif(
     }
 
 
-def build(dataset_id: str, columns: dict, params: dict) -> dict:
-    """Catalog entry point: column mapping (blank optional → None) to the template."""
+def build(dataset_id: str, columns: dict, params: dict, lang: str = DEFAULT_LANG) -> dict:
+    """Catalog entry point: column mapping (blank optional → None) to the template, in ``lang``."""
     mapping: dict[str, Any] = {key: columns.get(key) or "" for key in _REQUIRED}
     mapping.update({key: columns.get(key) or None for key in _OPTIONAL})
-    return delivery_otif(dataset_id, **mapping)
+    return delivery_otif(dataset_id, **mapping, lang=lang)

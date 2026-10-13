@@ -1,0 +1,170 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "tickets",
+    "steps": [],
+    "text": "Du {{period.from}} au {{period.to}} : {{tickets|integer}} tickets reçus.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "tickets",
+     "sparkline": "tickets"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "tickets",
+    "steps": [],
+    "title": "Tickets reçus",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "tickets",
+      "label": "Tickets",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "tickets",
+    "steps": [],
+    "subtitle": "Selon la date d'ouverture.",
+    "title": "Tickets par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Objectifs : première réponse sous 4 h, résolution sous 48 h (paramétrables à la création). Un ticket est hors SLA si un objectif est dépassé, y compris pour un ticket encore sans réponse ou sans résolution dont l'échéance est passée. La date de référence est la plus récente du fichier (et non la date du jour). Vert à partir de 95 % de SLA, orange entre 90 % et 95 %, rouge en dessous.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "26w",
+   "field": "date_ouverture",
+   "id": "periode",
+   "label": "Période (date d'ouverture)",
+   "presets": [
+    "13w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Ticket",
+     "name": "ticket_id",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Date d'ouverture",
+     "name": "date_ouverture",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Semaine",
+     "name": "periode_semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Tickets de support",
+   "measures": [
+    {
+     "expr": "COUNT(DISTINCT \"ticket_id\")",
+     "format": "integer",
+     "label": "Tickets reçus",
+     "name": "tickets",
+     "unit": "tickets"
+    }
+   ],
+   "name": "tickets",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_semaine",
+     "expr": "date_trunc('week', CAST(\"date_ouverture\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}

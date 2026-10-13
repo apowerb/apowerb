@@ -1,0 +1,640 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "text": "{{filters.famille}} : {{prevu_horizon|compact}} unités prévues sur les 8 prochaines semaines, soit {{evolution_n1|percent}} par rapport aux mêmes semaines de l'an dernier. Pic en semaine {{semaine_pic|integer}} ({{pic_volume|compact}} unités). Fiabilité de la méthode de référence sur la période : {{fiabilite|percent}}.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "prevu_horizon",
+     "secondary": "sur 8 semaines"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "title": "Total prévu sur l'horizon",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "evolution_n1",
+     "secondary": "N-1 : {{ventes_n1_horizon|compact}}"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "title": "Écart vs même période N-1",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "fiabilite",
+     "secondary": "Prévision naïve appliquée à la période",
+     "target_label": "cible ≥ 85 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "title": "Fiabilité (test sur le passé)",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "semaine_pic",
+     "secondary": "{{pic_volume|compact}} unités prévues"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "title": "Semaine de pic",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "good",
+      "color_rules": [],
+      "dash": false,
+      "key": "ventes_hebdo",
+      "label": "Ventes",
+      "mark": "area",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "prevision_hebdo",
+      "label": "Prévision",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": true,
+      "key": "ventes_n1_hebdo",
+      "label": "Même semaine N-1",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "ventes",
+    "steps": [],
+    "subtitle": "Avant la dernière semaine connue, la prévision est celle de la méthode naïve (test sur le passé) ; sur les 8 semaines à venir, celle de la méthode indiquée dans le tableau.",
+    "title": "Ventes, prévision et même semaine N-1",
+    "total_row": false,
+    "type": "combo",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "famille": "famille"
+    },
+    "columns": [],
+    "highlight_filter": "famille",
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "prevu_horizon",
+      "label": "Prévu",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "ventes",
+    "steps": [],
+    "subtitle": "Cliquer sur une famille pour filtrer le tableau de bord.",
+    "title": "Prévu par famille",
+    "total_row": false,
+    "type": "hbar",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 5,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [
+       {
+        "color": "good",
+        "op": ">=",
+        "value": 0.0
+       },
+       {
+        "color": "#9a6b3f",
+        "op": "<",
+        "value": 0.0
+       }
+      ],
+      "dash": false,
+      "key": "evolution_n1",
+      "label": "Écart",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "ventes",
+    "steps": [],
+    "subtitle": "Positif : la prévision dépasse les ventes des mêmes semaines l'an dernier.",
+    "title": "Écart vs même période N-1, par famille",
+    "total_row": false,
+    "type": "diverging_bar",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 16,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "famille": "famille"
+    },
+    "columns": [
+     {
+      "key": "famille",
+      "label": "Famille",
+      "use_thresholds": false
+     },
+     {
+      "key": "prevu_horizon",
+      "label": "Prévu",
+      "use_thresholds": false
+     },
+     {
+      "key": "ventes_n1_horizon",
+      "label": "N-1",
+      "use_thresholds": false
+     },
+     {
+      "key": "evolution_n1",
+      "label": "Évolution vs N-1",
+      "use_thresholds": false
+     },
+     {
+      "key": "fiabilite",
+      "label": "Fiabilité",
+      "use_thresholds": true
+     },
+     {
+      "key": "methode_prevision",
+      "label": "Méthode",
+      "use_thresholds": false
+     }
+    ],
+    "highlight_filter": "famille",
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "sort": "value_desc",
+    "source": "ventes",
+    "steps": [],
+    "subtitle": "Cliquer sur une famille pour filtrer le tableau de bord.",
+    "title": "Détail par famille",
+    "total_row": true,
+    "type": "table",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 21,
+    "width": 3
+   },
+   "visual": {
+    "badges": [
+     "real",
+     "forecast"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les ventes (`ventes`) sont les données réelles du fichier importé, additionnées par semaine et par famille (`famille`). Tout le reste est calculé : prévisions et écarts sont des estimations.",
+    "title": "Origine des données",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 6,
+    "row": 21,
+    "width": 3
+   },
+   "visual": {
+    "badges": [
+     "forecast"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les 8 semaines à venir viennent du moteur th2forecast. Pour une famille sans réponse du moteur (service indisponible ou réponse partielle), la prévision naïve la remplace : la colonne « Méthode » du tableau l'indique. La prévision naïve reprend les ventes de la même semaine l'an dernier, corrigées de la tendance récente (moyenne des 4 dernières semaines, bornée entre 0,8 et 1,25) ; au début de l'historique, c'est la moyenne des 4 semaines précédentes.",
+    "title": "Méthode de prévision",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 21,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Écart vs N-1** : prévu sur 8 semaines ÷ ventes des mêmes semaines un an plus tôt (364 jours), moins 1. **Fiabilité** : 1 - erreur absolue de la prévision naïve ÷ ventes, sur la période ; vert à partir de 85 %, orange à partir de 70 %. **Semaine de pic** : numéro ISO de la semaine au plus gros volume prévu.",
+    "title": "Définition des indicateurs",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 6,
+    "row": 21,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "La série est supposée hebdomadaire, sans semaine manquante. La prévision naïve demande plus d'un an d'historique par famille : sinon seules les premières semaines à venir sont chiffrées. Ni les promotions ni les ruptures passées ne sont connues. La fiabilité mesure la méthode naïve, pas le moteur.",
+    "title": "Limites",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "field": "famille",
+   "id": "famille",
+   "label": "Famille",
+   "type": "select"
+  },
+  {
+   "default": "52w",
+   "field": "semaine",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "13w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Semaine",
+     "name": "semaine",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Famille",
+     "name": "famille",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Ventes",
+     "name": "ventes",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Prévision du moteur",
+     "name": "prevision_moteur",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Prévision naïve",
+     "name": "prevision_naive",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Prévision",
+     "name": "prevision",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Même semaine N-1",
+     "name": "ventes_n1",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Méthode",
+     "name": "methode",
+     "provenance": "forecast",
+     "role": "dimension",
+     "type": "string"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Ventes et prévisions",
+   "measures": [
+    {
+     "description": "Somme des ventes prévues sur les semaines à venir.",
+     "expr": "SUM(prevision) FILTER (WHERE futur)",
+     "format": "compact",
+     "label": "Prévu sur 8 semaines",
+     "name": "prevu_horizon",
+     "unit": "unités"
+    },
+    {
+     "description": "Ventes réelles des mêmes semaines un an plus tôt.",
+     "expr": "SUM(ventes_n1) FILTER (WHERE futur)",
+     "format": "compact",
+     "label": "Mêmes semaines N-1",
+     "name": "ventes_n1_horizon",
+     "unit": "unités"
+    },
+    {
+     "description": "Prévu ÷ ventes des mêmes semaines un an plus tôt, moins 1.",
+     "expr": "SUM(prevision) FILTER (WHERE futur AND ventes_n1 IS NOT NULL) / NULLIF(SUM(ventes_n1) FILTER (WHERE futur), 0) - 1",
+     "format": "percent",
+     "label": "Écart vs même période N-1",
+     "name": "evolution_n1"
+    },
+    {
+     "description": "1 moins l'erreur absolue de la prévision naïve sur les ventes de la période.",
+     "expr": "1 - SUM(ABS(\"ventes\" - prevision_naive)) / NULLIF(SUM(\"ventes\") FILTER (WHERE prevision_naive IS NOT NULL), 0)",
+     "format": "percent",
+     "label": "Fiabilité (test sur le passé)",
+     "name": "fiabilite",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.85,
+      "warn": 0.7
+     }
+    },
+    {
+     "description": "Numéro ISO de la semaine la plus chargée de l'horizon.",
+     "expr": "MAX((SELECT weekofyear(d) FROM (SELECT \"semaine\" AS d, SUM(prevision) AS v FROM frame WHERE futur GROUP BY \"semaine\") ORDER BY v DESC, d LIMIT 1))",
+     "format": "integer",
+     "label": "Semaine de pic",
+     "name": "semaine_pic"
+    },
+    {
+     "expr": "MAX((SELECT MAX(v) FROM (SELECT \"semaine\" AS d, SUM(prevision) AS v FROM frame WHERE futur GROUP BY \"semaine\")))",
+     "format": "compact",
+     "label": "Volume du pic",
+     "name": "pic_volume",
+     "unit": "unités"
+    },
+    {
+     "description": "Méthode qui a produit la prévision : moteur ou prévision naïve.",
+     "expr": "CASE WHEN COUNT(DISTINCT methode) > 1 THEN 'Mixte' ELSE MAX(methode) END",
+     "format": "number",
+     "label": "Méthode",
+     "name": "methode_prevision"
+    },
+    {
+     "expr": "SUM(\"ventes\")",
+     "format": "compact",
+     "label": "Ventes",
+     "name": "ventes_hebdo",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(prevision)",
+     "format": "compact",
+     "label": "Prévision",
+     "name": "prevision_hebdo",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(ventes_n1)",
+     "format": "compact",
+     "label": "Même semaine N-1",
+     "name": "ventes_n1_hebdo",
+     "unit": "unités"
+    }
+   ],
+   "name": "ventes",
+   "source_options": {},
+   "transforms": [
+    {
+     "aggregates": {
+      "ventes": "SUM(ventes)"
+     },
+     "group_by": [
+      "semaine",
+      "famille"
+     ],
+     "op": "aggregate"
+    },
+    {
+     "by": [
+      "famille"
+     ],
+     "date": "semaine",
+     "horizon": 8,
+     "op": "forecast",
+     "output": "prevision_moteur",
+     "value": "ventes"
+    },
+    {
+     "op": "sql",
+     "query": "SELECT * FROM input UNION ALL BY NAME SELECT g.\"famille\" AS \"famille\", CAST(g.last_week + k.n * INTERVAL 7 DAY AS TIMESTAMP) AS \"semaine\" FROM (SELECT \"famille\", MAX(\"semaine\") FILTER (WHERE \"ventes\" IS NOT NULL) AS last_week FROM input GROUP BY \"famille\" HAVING COUNT(prevision_moteur) = 0) AS g CROSS JOIN (VALUES (1), (2), (3), (4), (5), (6), (7), (8)) AS k(n)"
+    },
+    {
+     "by": [
+      "famille"
+     ],
+     "date": "semaine",
+     "op": "naive_forecast",
+     "output": "prevision_naive",
+     "season_length": 52,
+     "trend_bounds": [
+      0.8,
+      1.25
+     ],
+     "value": "ventes",
+     "window": 4
+    },
+    {
+     "op": "sql",
+     "query": "SELECT t.*, p.\"ventes\" AS ventes_n1 FROM input AS t LEFT JOIN input AS p ON p.\"famille\" = t.\"famille\" AND p.\"semaine\" = t.\"semaine\" - INTERVAL 364 DAY"
+    },
+    {
+     "column": "futur",
+     "expr": "\"semaine\" > (SELECT MAX(\"semaine\") FROM input WHERE \"ventes\" IS NOT NULL)",
+     "op": "derive"
+    },
+    {
+     "column": "prevision",
+     "expr": "CASE WHEN futur THEN COALESCE(prevision_moteur, prevision_naive) ELSE prevision_naive END",
+     "op": "derive",
+     "provenance": "forecast"
+    },
+    {
+     "column": "methode",
+     "expr": "CASE WHEN NOT futur THEN NULL WHEN prevision_moteur IS NOT NULL THEN 'Moteur th2forecast' ELSE 'Prévision naïve (repli)' END",
+     "op": "derive",
+     "provenance": "forecast"
+    }
+   ]
+  }
+ ]
+}

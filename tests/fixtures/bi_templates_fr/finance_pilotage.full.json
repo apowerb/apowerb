@@ -1,0 +1,879 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "text": "{{filters.periode}}, du {{period.from}} au {{period.to}} : chiffre d'affaires de {{ca}}, marge brute de {{taux_marge_brute|percent}} ({{marge_brute}}), EBE approché de {{ebe}} ({{taux_ebe|percent}} du CA). Trésorerie de {{tresorerie}} en fin de période et BFR approché de {{bfr}}. Les charges de personnel pèsent {{part_personnel|percent}} du CA ; le seuil de rentabilité est de {{seuil_rentabilite}}.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_point",
+     "measure": "tresorerie",
+     "sparkline": "tresorerie",
+     "target_label": "minimum 0 €"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "Trésorerie",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_point",
+     "measure": "ca_mois",
+     "sparkline": "ca"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "CA du dernier mois",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_period",
+     "measure": "ca",
+     "secondary": "sur les mois affichés",
+     "sparkline": "ca"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "CA cumulé",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_period",
+     "measure": "taux_marge_brute",
+     "secondary": "{{marge_brute}} de marge brute",
+     "sparkline": "taux_marge_brute",
+     "target_label": "cible ≥ 30 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "Marge brute",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 5,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_period",
+     "measure": "ebe",
+     "secondary": "{{taux_ebe|percent}} du CA",
+     "sparkline": "ebe"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "EBE approché",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 5,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_period",
+     "measure": "charges_personnel",
+     "secondary": "{{part_personnel|percent}} du CA",
+     "sparkline": "charges_personnel"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "Charges de personnel",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 5,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "seuil_rentabilite",
+     "secondary": "Marge de sécurité : {{marge_securite|percent}}"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "Seuil de rentabilité",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 5,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "compare": "previous_point",
+     "measure": "bfr",
+     "secondary": "Stocks {{stocks_fin}} + clients {{clients_fin}} − fournisseurs {{fournisseurs_fin}}",
+     "sparkline": "bfr"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [],
+    "title": "BFR approché",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 8,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "bad",
+      "dash": true,
+      "label": "Minimum",
+      "value": 0.0
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "tresorerie",
+      "label": "Trésorerie",
+      "mark": "area",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "mensuel",
+    "steps": [],
+    "subtitle": "Solde cumulé des comptes 512 à la fin de chaque mois.",
+    "title": "Évolution de la trésorerie",
+    "total_row": false,
+    "type": "area",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 8,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "CA",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#2f8f6b",
+      "color_rules": [],
+      "dash": false,
+      "key": "marge_brute",
+      "label": "Marge brute",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "right",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "taux_marge_brute",
+      "label": "Taux de marge",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "mensuel",
+    "steps": [],
+    "subtitle": "CA et marge brute en euros, taux de marge brute sur l'axe de droite.",
+    "title": "CA et marge par mois",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 7,
+    "row": 14,
+    "width": 7
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "mensuel",
+    "steps": [
+     {
+      "kind": "start",
+      "label": "Chiffre d'affaires",
+      "measure": "ca"
+     },
+     {
+      "kind": "decrease",
+      "label": "Achats consommés",
+      "measure": "achats"
+     },
+     {
+      "kind": "decrease",
+      "label": "Services extérieurs",
+      "measure": "services_ext"
+     },
+     {
+      "kind": "decrease",
+      "label": "Impôts et taxes",
+      "measure": "impots_taxes"
+     },
+     {
+      "kind": "decrease",
+      "label": "Personnel",
+      "measure": "charges_personnel"
+     },
+     {
+      "kind": "increase",
+      "label": "Autres produits d'exploitation",
+      "measure": "autres_exploit_pos"
+     },
+     {
+      "kind": "decrease",
+      "label": "Autres charges d'exploitation",
+      "measure": "autres_exploit_neg"
+     },
+     {
+      "kind": "end",
+      "label": "EBE",
+      "measure": "ebe"
+     },
+     {
+      "kind": "increase",
+      "label": "Produits financiers",
+      "measure": "financier_pos"
+     },
+     {
+      "kind": "decrease",
+      "label": "Charges financières",
+      "measure": "financier_neg"
+     },
+     {
+      "kind": "increase",
+      "label": "Autres produits (exc., reprises)",
+      "measure": "hors_exploit_pos"
+     },
+     {
+      "kind": "decrease",
+      "label": "Dotations, exc. et impôt",
+      "measure": "hors_exploit_neg"
+     },
+     {
+      "kind": "end",
+      "label": "Résultat",
+      "measure": "resultat"
+     }
+    ],
+    "subtitle": "Cumul sur les mois affichés ; les soldes nets sont répartis en gains et pertes.",
+    "title": "Du chiffre d'affaires au résultat",
+    "total_row": false,
+    "type": "waterfall"
+   }
+  },
+  {
+   "position": {
+    "col": 7,
+    "height": 7,
+    "row": 14,
+    "width": 5
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "charges_par_compte",
+      "label": "Charges",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "fec",
+    "steps": [],
+    "subtitle": "Les 10 comptes de charges (classe 6) les plus lourds sur la période.",
+    "title": "Principales charges par compte",
+    "top_n": 10,
+    "total_row": false,
+    "type": "hbar",
+    "x": "compte_charge"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 7,
+    "row": 21,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [
+     {
+      "key": "periode_mois",
+      "label": "Mois",
+      "use_thresholds": false
+     },
+     {
+      "key": "ca",
+      "label": "CA",
+      "use_thresholds": false
+     },
+     {
+      "key": "marge_brute",
+      "label": "Marge brute",
+      "use_thresholds": false
+     },
+     {
+      "key": "taux_marge_brute",
+      "label": "Taux de marge",
+      "use_thresholds": true
+     },
+     {
+      "key": "ebe",
+      "label": "EBE",
+      "use_thresholds": false
+     },
+     {
+      "key": "charges_personnel",
+      "label": "Personnel",
+      "use_thresholds": false
+     },
+     {
+      "key": "resultat",
+      "label": "Résultat",
+      "use_thresholds": false
+     },
+     {
+      "key": "tresorerie",
+      "label": "Trésorerie",
+      "use_thresholds": true
+     },
+     {
+      "key": "bfr",
+      "label": "BFR",
+      "use_thresholds": false
+     }
+    ],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "sort": "x_desc",
+    "source": "mensuel",
+    "steps": [],
+    "subtitle": "Flux du mois ; trésorerie et BFR en solde de fin de mois.",
+    "title": "Tableau mensuel",
+    "total_row": true,
+    "type": "table",
+    "x": "periode_mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 28,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Trésorerie** : débit − crédit des comptes 512, cumulé depuis la première écriture (à-nouveaux compris). **CA** : comptes 70, crédit − débit. **Marge brute** : CA − achats consommés (comptes 60, dont variation de stock 603). **EBE approché** : produits d'exploitation 70-75 − charges 60-65 (les comptes 66 à 69 en sont exclus). **BFR approché** : stocks (classe 3) + clients 411 − fournisseurs 401, soldes de fin de période, hors TVA et autres comptes de tiers. **Résultat** : classe 7 − classe 6.",
+    "title": "Définitions et comptes retenus",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 6,
+    "row": 28,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Coûts variables = 100 % des achats consommés (60) + 0 % des services extérieurs (61-62) + 0 % du personnel (64). Impôts et taxes (63) et autres charges (65) sont fixes, ainsi que le reste des comptes 61-62 et 64. Seuil = charges fixes ÷ (marge sur coûts variables ÷ CA), sur la période affichée. Parts réglables à la création du tableau de bord.",
+    "title": "Seuil de rentabilité : hypothèse fixes / variables",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 6,
+    "row": 28,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Seuils : trésorerie minimale 0 €, marge brute cible 30 %. Les écritures sans date ou sans numéro de compte sont ignorées. Les écritures de clôture qui solderaient les comptes 6 et 7 doivent être exclues du FEC fourni, sinon elles annulent le résultat du mois. Ce n'est pas une balance âgée : les créances clients ne sont pas ventilées par ancienneté.",
+    "title": "Limites",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "12m",
+   "field": "periode_mois",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "3m",
+    "6m",
+    "12m",
+    "24m",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Mois",
+     "name": "periode_mois",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Compte",
+     "name": "compte",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Compte de charges",
+     "name": "compte_charge",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Écritures du FEC",
+   "measures": [
+    {
+     "description": "Débit − crédit des comptes de la classe 6.",
+     "expr": "SUM(ch_total_l)",
+     "format": "compact",
+     "label": "Charges (classe 6)",
+     "name": "charges_par_compte",
+     "unit": "€"
+    }
+   ],
+   "name": "fec",
+   "source_options": {},
+   "transforms": [
+    {
+     "op": "sql",
+     "query": "WITH l AS (\n  SELECT date_trunc('month', CAST(\"ecrituredate\" AS TIMESTAMP)) AS periode_mois,\n         regexp_replace(trim(CAST(\"comptenum\" AS VARCHAR)), '\\.0+$', '') AS compte,\n         COALESCE(CAST(\"comptelib\" AS VARCHAR), '') AS lib,\n         COALESCE(CAST(\"debit\" AS DOUBLE), 0) - COALESCE(CAST(\"credit\" AS DOUBLE), 0) AS solde\n  FROM input\n  WHERE \"ecrituredate\" IS NOT NULL AND \"comptenum\" IS NOT NULL\n), c AS (\n  SELECT *, MIN(NULLIF(trim(lib), '')) OVER (PARTITION BY compte) AS libelle FROM l\n)\nSELECT periode_mois, compte,\n  CASE WHEN compte LIKE '6%' THEN compte || COALESCE(' - ' || libelle, '') END AS compte_charge,\n  CASE WHEN compte LIKE '512%' THEN solde ELSE 0 END AS tresorerie_l,\n  CASE WHEN compte LIKE '70%' THEN -solde ELSE 0 END AS ca_l,\n  CASE WHEN LEFT(compte, 2) IN ('70', '71', '72', '73', '74', '75') THEN -solde ELSE 0 END AS prod_expl_l,\n  CASE WHEN compte LIKE '60%' THEN solde ELSE 0 END AS achats_l,\n  CASE WHEN LEFT(compte, 2) IN ('61', '62') THEN solde ELSE 0 END AS services_l,\n  CASE WHEN compte LIKE '63%' THEN solde ELSE 0 END AS impots_l,\n  CASE WHEN compte LIKE '64%' THEN solde ELSE 0 END AS personnel_l,\n  CASE WHEN compte LIKE '65%' THEN solde ELSE 0 END AS autres_l,\n  CASE WHEN LEFT(compte, 2) IN ('66', '76') THEN -solde ELSE 0 END AS financier_l,\n  CASE WHEN compte LIKE '7%' THEN -solde ELSE 0 END AS prod_total_l,\n  CASE WHEN compte LIKE '6%' THEN solde ELSE 0 END AS ch_total_l,\n  CASE WHEN compte LIKE '3%' THEN solde ELSE 0 END AS stocks_l,\n  CASE WHEN compte LIKE '411%' THEN solde ELSE 0 END AS clients_l,\n  CASE WHEN compte LIKE '401%' THEN -solde ELSE 0 END AS fournisseurs_l\nFROM c"
+    }
+   ]
+  },
+  {
+   "fields": [
+    {
+     "label": "Mois",
+     "name": "periode_mois",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    }
+   ],
+   "kind": "source",
+   "label": "Synthèse mensuelle",
+   "measures": [
+    {
+     "description": "Solde cumulé des comptes 512 (débit − crédit) à la fin de la période.",
+     "expr": "arg_max(tresorerie_fin, periode_mois)",
+     "format": "compact",
+     "label": "Trésorerie",
+     "name": "tresorerie",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.0,
+      "warn": 0.0
+     },
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 70 (crédit − débit), cumulé sur les mois affichés.",
+     "expr": "SUM(ca_m)",
+     "format": "compact",
+     "label": "Chiffre d'affaires",
+     "name": "ca",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 70 du dernier mois affiché.",
+     "expr": "arg_max(ca_m, periode_mois)",
+     "format": "compact",
+     "label": "CA du dernier mois",
+     "name": "ca_mois",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 60, variation de stock (603) et rabais obtenus (609) inclus.",
+     "expr": "SUM(achats_m)",
+     "format": "compact",
+     "label": "Achats consommés",
+     "name": "achats",
+     "unit": "€"
+    },
+    {
+     "description": "CA (70) − achats consommés (60).",
+     "expr": "SUM(marge_brute_m)",
+     "format": "compact",
+     "label": "Marge brute",
+     "name": "marge_brute",
+     "unit": "€"
+    },
+    {
+     "description": "Marge brute ÷ CA.",
+     "expr": "SUM(marge_brute_m) / NULLIF(SUM(ca_m), 0)",
+     "format": "percent",
+     "label": "Taux de marge brute",
+     "name": "taux_marge_brute",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.3,
+      "warn": 0.25
+     }
+    },
+    {
+     "description": "Produits d'exploitation (70-75) − charges (60-65).",
+     "expr": "SUM(ebe_m)",
+     "format": "compact",
+     "label": "EBE approché",
+     "name": "ebe",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(ebe_m) / NULLIF(SUM(ca_m), 0)",
+     "format": "percent",
+     "label": "EBE / CA",
+     "name": "taux_ebe"
+    },
+    {
+     "description": "Comptes 64.",
+     "expr": "SUM(personnel_m)",
+     "format": "compact",
+     "label": "Charges de personnel",
+     "name": "charges_personnel",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(personnel_m) / NULLIF(SUM(ca_m), 0)",
+     "format": "percent",
+     "label": "Personnel / CA",
+     "name": "part_personnel"
+    },
+    {
+     "description": "Charges fixes ÷ taux de marge sur coûts variables, sur la période affichée. Vide si la marge sur coûts variables est négative ou nulle.",
+     "expr": "CASE WHEN SUM(ca_m) - SUM(cv_m) > 0 THEN SUM(cf_m) * SUM(ca_m) / (SUM(ca_m) - SUM(cv_m)) END",
+     "format": "compact",
+     "label": "Seuil de rentabilité",
+     "name": "seuil_rentabilite",
+     "unit": "€"
+    },
+    {
+     "description": "(CA − seuil de rentabilité) ÷ CA.",
+     "expr": "CASE WHEN SUM(ca_m) > 0 THEN (SUM(ca_m) - (CASE WHEN SUM(ca_m) - SUM(cv_m) > 0 THEN SUM(cf_m) * SUM(ca_m) / (SUM(ca_m) - SUM(cv_m)) END)) / SUM(ca_m) END",
+     "format": "percent",
+     "label": "Marge de sécurité",
+     "name": "marge_securite"
+    },
+    {
+     "description": "Comptes 3, solde de fin de période.",
+     "expr": "arg_max(stocks_fin, periode_mois)",
+     "format": "compact",
+     "label": "Stocks",
+     "name": "stocks_fin",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 411, solde de fin de période.",
+     "expr": "arg_max(clients_fin, periode_mois)",
+     "format": "compact",
+     "label": "Clients",
+     "name": "clients_fin",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 401 (crédit − débit), solde de fin de période.",
+     "expr": "arg_max(fournisseurs_fin, periode_mois)",
+     "format": "compact",
+     "label": "Fournisseurs",
+     "name": "fournisseurs_fin",
+     "unit": "€"
+    },
+    {
+     "description": "Stocks + clients 411 − fournisseurs 401.",
+     "expr": "arg_max(bfr_fin, periode_mois)",
+     "format": "compact",
+     "label": "BFR approché",
+     "name": "bfr",
+     "unit": "€"
+    },
+    {
+     "description": "Produits (classe 7) − charges (classe 6).",
+     "expr": "SUM(resultat_m)",
+     "format": "compact",
+     "label": "Résultat",
+     "name": "resultat",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 61 et 62.",
+     "expr": "SUM(services_m)",
+     "format": "compact",
+     "label": "Services extérieurs",
+     "name": "services_ext",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 63.",
+     "expr": "SUM(impots_m)",
+     "format": "compact",
+     "label": "Impôts et taxes",
+     "name": "impots_taxes",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 71-75 moins comptes 65, si positif.",
+     "expr": "GREATEST((SUM(prod_expl_m) - SUM(ca_m) - SUM(autres_m)), 0)",
+     "format": "compact",
+     "label": "Autres produits d'exploitation nets",
+     "name": "autres_exploit_pos",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 65 moins comptes 71-75, si positif.",
+     "expr": "GREATEST(-(SUM(prod_expl_m) - SUM(ca_m) - SUM(autres_m)), 0)",
+     "format": "compact",
+     "label": "Autres charges d'exploitation nettes",
+     "name": "autres_exploit_neg",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 76 moins 66, si positif.",
+     "expr": "GREATEST(SUM(financier_m), 0)",
+     "format": "compact",
+     "label": "Produits financiers nets",
+     "name": "financier_pos",
+     "unit": "€"
+    },
+    {
+     "description": "Comptes 66 moins 76, si positif.",
+     "expr": "GREATEST(-SUM(financier_m), 0)",
+     "format": "compact",
+     "label": "Charges financières nettes",
+     "name": "financier_neg",
+     "unit": "€"
+    },
+    {
+     "description": "Exceptionnel, dotations/reprises et impôt sur les bénéfices (67-69, 77-79), si positif.",
+     "expr": "GREATEST((SUM(resultat_m) - SUM(ebe_m) - SUM(financier_m)), 0)",
+     "format": "compact",
+     "label": "Autres produits nets",
+     "name": "hors_exploit_pos",
+     "unit": "€"
+    },
+    {
+     "description": "Exceptionnel, dotations/reprises et impôt sur les bénéfices (67-69, 77-79), si négatif.",
+     "expr": "GREATEST(-(SUM(resultat_m) - SUM(ebe_m) - SUM(financier_m)), 0)",
+     "format": "compact",
+     "label": "Autres charges nettes",
+     "name": "hors_exploit_neg",
+     "unit": "€"
+    }
+   ],
+   "name": "mensuel",
+   "parent": "fec",
+   "source_options": {},
+   "transforms": [
+    {
+     "op": "sql",
+     "query": "WITH m AS (\n  SELECT periode_mois, SUM(ca_l) AS ca_m, SUM(prod_expl_l) AS prod_expl_m, SUM(achats_l) AS achats_m, SUM(services_l) AS services_m, SUM(impots_l) AS impots_m, SUM(personnel_l) AS personnel_m, SUM(autres_l) AS autres_m, SUM(financier_l) AS financier_m, SUM(prod_total_l) AS prod_total_m, SUM(ch_total_l) AS ch_total_m, SUM(tresorerie_l) AS tresorerie_flux, SUM(stocks_l) AS stocks_flux, SUM(clients_l) AS clients_flux, SUM(fournisseurs_l) AS fournisseurs_flux FROM input GROUP BY periode_mois\n), k AS (\n  SELECT *,\n    ca_m - achats_m AS marge_brute_m,\n    achats_m + services_m + impots_m + personnel_m + autres_m AS charges_expl_m,\n    prod_expl_m - (achats_m + services_m + impots_m + personnel_m + autres_m) AS ebe_m,\n    prod_total_m - ch_total_m AS resultat_m,\n    achats_m * 100 / 100.0 + services_m * 0 / 100.0 + personnel_m * 0 / 100.0 AS cv_m\n  FROM m\n), b AS (\n  SELECT *,\n    charges_expl_m - cv_m AS cf_m,\n    SUM(tresorerie_flux) OVER (ORDER BY periode_mois) AS tresorerie_fin,\n    SUM(stocks_flux) OVER (ORDER BY periode_mois) AS stocks_fin,\n    SUM(clients_flux) OVER (ORDER BY periode_mois) AS clients_fin,\n    SUM(fournisseurs_flux) OVER (ORDER BY periode_mois) AS fournisseurs_fin\n  FROM k\n)\nSELECT *, stocks_fin + clients_fin - fournisseurs_fin AS bfr_fin FROM b ORDER BY periode_mois"
+    }
+   ]
+  }
+ ]
+}

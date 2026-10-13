@@ -32,6 +32,7 @@ from apowerb.bi.spec.models import (
     ThresholdSpec,
     VisualSpec,
 )
+from apowerb.bi.spec.templates_common import DEFAULT_LANG, translator
 
 _IDENT_RE = re.compile(IDENT)
 _PERIOD_RE = re.compile(r"^(\d{1,3})([wm])$")
@@ -46,24 +47,39 @@ TRS_WARN = 0.60
 
 DESCRIPTOR: dict[str, Any] = {
     "id": "production_quality",
-    "label": "Qualité production",
-    "description": (
-        "Suivi de la qualité de production à partir d'une ligne par lot ou par poste : taux de rebut, "
-        "bon du premier coup, volumes, causes de rebut (Pareto) et, avec les temps planifiés, de marche et la "
-        "cadence idéale, le TRS (disponibilité, performance, qualité)."
-    ),
+    "label": {"fr": "Qualité production", "en": "Production quality"},
+    "description": {
+        "fr": (
+            "Suivi de la qualité de production à partir d'une ligne par lot ou par poste : taux de rebut, "
+            "bon du premier coup, volumes, causes de rebut (Pareto) et, avec les temps planifiés, de marche et la "
+            "cadence idéale, le TRS (disponibilité, performance, qualité)."
+        ),
+        "en": (
+            "Production quality tracking from one row per batch or per shift: reject rate, "
+            "first-pass yield, volumes, reject causes (Pareto) and, with the planned time, run time and "
+            "ideal rate, the OEE (availability, performance, quality)."
+        ),
+    },
     "version": 1,
     "columns": [
         {"key": "date", "label": "Date", "type": "date", "required": True, "default": "date"},
-        {"key": "line", "label": "Ligne de production", "type": "string", "required": True, "default": "ligne"},
-        {"key": "product", "label": "Produit", "type": "string", "required": False, "default": None},
-        {"key": "produced", "label": "Quantité produite", "type": "number", "required": True, "default": "qte_produite"},
-        {"key": "rejected", "label": "Quantité rebutée", "type": "number", "required": True, "default": "qte_rebut"},
-        {"key": "defect", "label": "Cause de rebut", "type": "string", "required": False, "default": None},
-        {"key": "planned_time", "label": "Temps planifié", "type": "number", "required": False, "default": None},
-        {"key": "run_time", "label": "Temps de marche", "type": "number", "required": False, "default": None},
-        {"key": "ideal_rate", "label": "Cadence idéale (par unité de temps)", "type": "number", "required": False,
+        {"key": "line", "label": {"fr": "Ligne de production", "en": "Production line"}, "type": "string",
+         "required": True, "default": "ligne"},
+        {"key": "product", "label": {"fr": "Produit", "en": "Product"}, "type": "string", "required": False,
          "default": None},
+        {"key": "produced", "label": {"fr": "Quantité produite", "en": "Quantity produced"}, "type": "number",
+         "required": True, "default": "qte_produite"},
+        {"key": "rejected", "label": {"fr": "Quantité rebutée", "en": "Quantity rejected"}, "type": "number",
+         "required": True, "default": "qte_rebut"},
+        {"key": "defect", "label": {"fr": "Cause de rebut", "en": "Reject cause"}, "type": "string",
+         "required": False, "default": None},
+        {"key": "planned_time", "label": {"fr": "Temps planifié", "en": "Planned time"}, "type": "number",
+         "required": False, "default": None},
+        {"key": "run_time", "label": {"fr": "Temps de marche", "en": "Run time"}, "type": "number",
+         "required": False, "default": None},
+        {"key": "ideal_rate",
+         "label": {"fr": "Cadence idéale (par unité de temps)", "en": "Ideal rate (per unit of time)"},
+         "type": "number", "required": False, "default": None},
     ],
     "params": [],
 }
@@ -129,8 +145,10 @@ def production_quality(
     run_time: str | None = None,
     ideal_rate: str | None = None,
     default_period: str = "12w",
+    lang: str = DEFAULT_LANG,
 ) -> dict:
-    """Build the « Qualité production » spec for a dataset of lots or shifts."""
+    """Build the « Qualité production » spec for a dataset of lots or shifts, in ``lang``."""
+    T = translator(lang)
     if not dataset_id:
         raise ValueError("dataset_id is required.")
     d = _check_ident("date", date)
@@ -145,7 +163,7 @@ def production_quality(
     with_trs = bool(tp and tr and ir)
 
     bucket, unit = _bucket(default_period)
-    bucket_label = "Semaine" if unit == "week" else "Mois"
+    bucket_label = T("Semaine", "Week") if unit == "week" else T("Mois", "Month")
     P, R = f"SUM({_q(qp)})", f"SUM({_q(qr)})"
 
     # ---- transforms --------------------------------------------------
@@ -157,21 +175,26 @@ def production_quality(
     # ---- fields ------------------------------------------------------
     fields = [
         FieldSpec(name=d, label="Date", type="date", role="date"),
-        FieldSpec(name=ln, label="Ligne", role="dimension"),
+        FieldSpec(name=ln, label=T("Ligne", "Line"), role="dimension"),
     ]
     if pr:
-        fields.append(FieldSpec(name=pr, label="Produit", role="dimension"))
+        fields.append(FieldSpec(name=pr, label=T("Produit", "Product"), role="dimension"))
     fields += [
-        FieldSpec(name=qp, label="Quantité produite", type="number", role="measure", format="compact"),
-        FieldSpec(name=qr, label="Quantité rebutée", type="number", role="measure", format="compact"),
+        FieldSpec(name=qp, label=T("Quantité produite", "Quantity produced"), type="number", role="measure",
+                  format="compact"),
+        FieldSpec(name=qr, label=T("Quantité rebutée", "Quantity rejected"), type="number", role="measure",
+                  format="compact"),
     ]
     if df:
-        fields.append(FieldSpec(name=df, label="Cause de rebut", role="dimension"))
+        fields.append(FieldSpec(name=df, label=T("Cause de rebut", "Reject cause"), role="dimension"))
     if with_trs:
         fields += [
-            FieldSpec(name=tp, label="Temps planifié", type="number", role="measure", format="number"),
-            FieldSpec(name=tr, label="Temps de marche", type="number", role="measure", format="number"),
-            FieldSpec(name=ir, label="Cadence idéale", type="number", role="measure", format="number"),
+            FieldSpec(name=tp, label=T("Temps planifié", "Planned time"), type="number", role="measure",
+                      format="number"),
+            FieldSpec(name=tr, label=T("Temps de marche", "Run time"), type="number", role="measure",
+                      format="number"),
+            FieldSpec(name=ir, label=T("Cadence idéale", "Ideal rate"), type="number", role="measure",
+                      format="number"),
         ]
     fields.append(FieldSpec(name=bucket, label=bucket_label, type="date", role="dimension"))
 
@@ -180,23 +203,34 @@ def production_quality(
     first_time_thr = ThresholdSpec(direction="higher_is_better", good=1 - REJECT_TARGET, warn=1 - REJECT_WARN)
     trs_thr = ThresholdSpec(direction="higher_is_better", good=TRS_TARGET, warn=TRS_WARN)
     measures = [
-        MeasureSpec(name="volume_produit", label="Volume produit", expr=P, format="compact", unit="unités"),
-        MeasureSpec(name="volume_rebut", label="Volume rebuté", expr=R, format="compact", unit="unités"),
-        MeasureSpec(name="taux_rebut", label="Taux de rebut", expr=f"{R} / NULLIF({P}, 0)", format="percent",
-                    thresholds=reject_thr, description="Quantité rebutée ÷ quantité produite."),
-        MeasureSpec(name="bon_premier_coup", label="Bon du premier coup", expr=f"1 - {R} / NULLIF({P}, 0)",
-                    format="percent", thresholds=first_time_thr,
-                    description="Part de la production conforme dès le premier passage : 1 - rebut ÷ produit."),
+        MeasureSpec(name="volume_produit", label=T("Volume produit", "Volume produced"), expr=P, format="compact",
+                    unit=T("unités", "units")),
+        MeasureSpec(name="volume_rebut", label=T("Volume rebuté", "Volume rejected"), expr=R, format="compact",
+                    unit=T("unités", "units")),
+        MeasureSpec(name="taux_rebut", label=T("Taux de rebut", "Reject rate"), expr=f"{R} / NULLIF({P}, 0)",
+                    format="percent", thresholds=reject_thr,
+                    description=T("Quantité rebutée ÷ quantité produite.", "Quantity rejected ÷ quantity produced.")),
+        MeasureSpec(name="bon_premier_coup", label=T("Bon du premier coup", "First-pass yield"),
+                    expr=f"1 - {R} / NULLIF({P}, 0)", format="percent", thresholds=first_time_thr,
+                    description=T("Part de la production conforme dès le premier passage : 1 - rebut ÷ produit.",
+                                  "Share of production that is conforming at the first pass: 1 - rejects ÷ produced.")),
     ]
     if df:
         top = lambda n: (  # noqa: E731
             f"(SELECT SUM(r) FROM (SELECT SUM({_q(qr)}) AS r FROM frame WHERE {_q(df)} IS NOT NULL "
             f"GROUP BY {_q(df)} ORDER BY r DESC LIMIT {n})) / NULLIF({R}, 0)"
         )
-        for n, label in ((1, "Première cause"), (2, "Deux premières causes"), (3, "Trois premières causes")):
+        causes = (
+            (1, T("Première cause", "Top cause")),
+            (2, T("Deux premières causes", "Top two causes")),
+            (3, T("Trois premières causes", "Top three causes")),
+        )
+        for n, label in causes:
             measures.append(MeasureSpec(
-                name=f"part_top{n}", label=f"{label} (part du rebut)", expr=top(n), format="percent",
-                description="Part cumulée du rebut expliquée par les causes les plus fréquentes.",
+                name=f"part_top{n}", label=T(f"{label} (part du rebut)", f"{label} (share of rejects)"),
+                expr=top(n), format="percent",
+                description=T("Part cumulée du rebut expliquée par les causes les plus fréquentes.",
+                              "Cumulative share of rejects explained by the most frequent causes."),
             ))
     if with_trs:
         run, planned, ideal = f"SUM({_q(tr)})", f"SUM({_q(tp)})", f"SUM({_q(tr)} * {_q(ir)})"
@@ -204,19 +238,22 @@ def production_quality(
         performance = f"LEAST(1, {P} / NULLIF({ideal}, 0))"
         quality = f"({P} - {R}) / NULLIF({P}, 0)"
         measures += [
-            MeasureSpec(name="disponibilite", label="Disponibilité", expr=availability, format="percent",
-                        description="Temps de marche ÷ temps planifié."),
+            MeasureSpec(name="disponibilite", label=T("Disponibilité", "Availability"), expr=availability,
+                        format="percent",
+                        description=T("Temps de marche ÷ temps planifié.", "Run time ÷ planned time.")),
             MeasureSpec(name="performance", label="Performance", expr=performance, format="percent",
-                        description="Quantité produite ÷ (temps de marche × cadence idéale), plafonnée à 100 %."),
-            MeasureSpec(name="qualite", label="Qualité", expr=quality, format="percent",
-                        description="Quantité bonne ÷ quantité produite."),
-            MeasureSpec(name="trs", label="TRS", expr=f"({availability}) * {performance} * ({quality})",
+                        description=T("Quantité produite ÷ (temps de marche × cadence idéale), plafonnée à 100 %.",
+                                      "Quantity produced ÷ (run time × ideal rate), capped at 100%.")),
+            MeasureSpec(name="qualite", label=T("Qualité", "Quality"), expr=quality, format="percent",
+                        description=T("Quantité bonne ÷ quantité produite.", "Good quantity ÷ quantity produced.")),
+            MeasureSpec(name="trs", label=T("TRS", "OEE"), expr=f"({availability}) * {performance} * ({quality})",
                         format="percent", thresholds=trs_thr,
-                        description="Taux de rendement synthétique : disponibilité × performance × qualité."),
+                        description=T("Taux de rendement synthétique : disponibilité × performance × qualité.",
+                                      "Overall equipment effectiveness: availability × performance × quality.")),
         ]
     source = SourceSpec(
         name="production",
-        label="Lots de production",
+        label=T("Lots de production", "Production batches"),
         kind="dataset",
         dataset_id=dataset_id,
         transforms=transforms,
@@ -229,50 +266,60 @@ def production_quality(
     if default_period not in presets:
         presets.insert(0, default_period)
     filters = [
-        FilterSpec(id="periode", label="Période", field=d, type="relative_period", default=default_period,
-                   presets=presets),
-        FilterSpec(id="ligne", label="Ligne", field=ln, type="select", default=None),
+        FilterSpec(id="periode", label=T("Période", "Period"), field=d, type="relative_period",
+                   default=default_period, presets=presets),
+        FilterSpec(id="ligne", label=T("Ligne", "Line"), field=ln, type="select", default=None),
     ]
     if pr:
-        filters.append(FilterSpec(id="produit", label="Produit", field=pr, type="select", default=None))
+        filters.append(FilterSpec(id="produit", label=T("Produit", "Product"), field=pr, type="select",
+                                  default=None))
 
     # ---- visuals -----------------------------------------------------
     def kpi(title: str, measure: str, **kw: Any) -> VisualSpec:
         return VisualSpec(type="kpi", title=title, source="production", x=bucket,
                           kpi=KpiSpec(measure=measure, sparkline=measure, **kw))
 
-    trs_sentence = " Le TRS est de {{trs|percent}}." if with_trs else ""
+    trs_sentence = T(" Le TRS est de {{trs|percent}}.", " The OEE is {{trs|percent}}.") if with_trs else ""
     synthese = VisualSpec(
         type="text",
         source="production",
-        text=(
+        text=T(
             "{{filters.ligne}}, du {{period.from}} au {{period.to}} : {{volume_produit|compact}} unités produites, "
             "dont {{volume_rebut|compact}} rebutées, soit un taux de rebut de {{taux_rebut|percent}} "
-            "({{bon_premier_coup|percent}} bon du premier coup)." + trs_sentence
-        ),
+            "({{bon_premier_coup|percent}} bon du premier coup).",
+            "{{filters.ligne}}, {{period.from}} to {{period.to}}: {{volume_produit|compact}} units produced, "
+            "of which {{volume_rebut|compact}} rejected, a reject rate of {{taux_rebut|percent}} "
+            "({{bon_premier_coup|percent}} first-pass yield).",
+        ) + trs_sentence,
     )
     kpis = [
-        kpi("Taux de rebut", "taux_rebut", target_label="cible ≤ 2 %"),
-        kpi("Bon du premier coup", "bon_premier_coup", target_label="cible ≥ 98 %"),
-        kpi("Volume produit", "volume_produit", secondary="{{volume_rebut|compact}} rebutées"),
-        kpi("Volume rebuté", "volume_rebut", secondary="{{taux_rebut|percent}} de la production"),
+        kpi(T("Taux de rebut", "Reject rate"), "taux_rebut", target_label=T("cible ≤ 2 %", "target ≤ 2%")),
+        kpi(T("Bon du premier coup", "First-pass yield"), "bon_premier_coup",
+            target_label=T("cible ≥ 98 %", "target ≥ 98%")),
+        kpi(T("Volume produit", "Volume produced"), "volume_produit",
+            secondary=T("{{volume_rebut|compact}} rebutées", "{{volume_rebut|compact}} rejected")),
+        kpi(T("Volume rebuté", "Volume rejected"), "volume_rebut",
+            secondary=T("{{taux_rebut|percent}} de la production", "{{taux_rebut|percent}} of production")),
     ]
     if with_trs:
-        kpis.append(kpi("TRS", "trs",
-                        secondary="Dispo. {{disponibilite|percent}} · perf. {{performance|percent}} · "
-                                  "qualité {{qualite|percent}}",
-                        target_label="cible ≥ 85 %"))
+        kpis.append(kpi(T("TRS", "OEE"), "trs",
+                        secondary=T("Dispo. {{disponibilite|percent}} · perf. {{performance|percent}} · "
+                                    "qualité {{qualite|percent}}",
+                                    "Avail. {{disponibilite|percent}} · perf. {{performance|percent}} · "
+                                    "quality {{qualite|percent}}"),
+                        target_label=T("cible ≥ 85 %", "target ≥ 85%")))
     evolution = VisualSpec(
         type="combo",
-        title=f"Taux de rebut par {bucket_label.lower()}",
-        subtitle="Volume produit en barres, taux de rebut en ligne.",
+        title=T(f"Taux de rebut par {bucket_label.lower()}", f"Reject rate by {bucket_label.lower()}"),
+        subtitle=T("Volume produit en barres, taux de rebut en ligne.", "Volume produced as bars, reject rate as a line."),
         source="production",
         x=bucket,
         series=[
-            SeriesSpec(key="volume_produit", label="Volume produit", mark="bar", color="muted", axis="right"),
-            SeriesSpec(key="taux_rebut", label="Taux de rebut", mark="line", color="bad"),
+            SeriesSpec(key="volume_produit", label=T("Volume produit", "Volume produced"), mark="bar",
+                       color="muted", axis="right"),
+            SeriesSpec(key="taux_rebut", label=T("Taux de rebut", "Reject rate"), mark="line", color="bad"),
         ],
-        reference_lines=[ReferenceLine(value=REJECT_TARGET, label="Objectif 2 %", color="good")],
+        reference_lines=[ReferenceLine(value=REJECT_TARGET, label=T("Objectif 2 %", "Target 2%"), color="good")],
         sort="x_asc",
     )
 
@@ -280,51 +327,57 @@ def production_quality(
         return VisualSpec(
             type="hbar",
             title=title,
-            subtitle="Les plus élevés en premier. Cliquer pour filtrer le tableau de bord.",
+            subtitle=T("Les plus élevés en premier. Cliquer pour filtrer le tableau de bord.",
+                       "Highest first. Click to filter the dashboard."),
             source="production",
             x=column,
-            series=[SeriesSpec(key="taux_rebut", label="Taux de rebut", mark="bar", use_thresholds=True)],
+            series=[SeriesSpec(key="taux_rebut", label=T("Taux de rebut", "Reject rate"), mark="bar",
+                               use_thresholds=True)],
             sort="value_desc",
-            reference_lines=[ReferenceLine(value=REJECT_TARGET, label="2 %", color="good")],
+            reference_lines=[ReferenceLine(value=REJECT_TARGET, label=T("2 %", "2%"), color="good")],
             click_filters={filter_id: column},
             ignore_filters=[filter_id],
         )
 
-    charts = [reject_by("Taux de rebut par ligne", ln, "ligne")]
+    charts = [reject_by(T("Taux de rebut par ligne", "Reject rate by line"), ln, "ligne")]
     if pr:
-        charts.append(reject_by("Taux de rebut par produit", pr, "produit"))
+        charts.append(reject_by(T("Taux de rebut par produit", "Reject rate by product"), pr, "produit"))
     if df:
         charts.append(VisualSpec(
             type="hbar",
-            title="Causes de rebut",
-            subtitle="Quantité rebutée par cause, de la plus fréquente à la moins fréquente (Pareto).",
+            title=T("Causes de rebut", "Reject causes"),
+            subtitle=T("Quantité rebutée par cause, de la plus fréquente à la moins fréquente (Pareto).",
+                       "Quantity rejected by cause, from the most to the least frequent (Pareto)."),
             source="production",
             x=df,
-            series=[SeriesSpec(key="volume_rebut", label="Rebut", mark="bar", color=BROWN)],
+            series=[SeriesSpec(key="volume_rebut", label=T("Rebut", "Rejects"), mark="bar", color=BROWN)],
             sort="value_desc",
         ))
     pareto_text = VisualSpec(
         type="text",
-        title="Part cumulée des causes",
+        title=T("Part cumulée des causes", "Cumulative share of causes"),
         source="production",
-        text=(
+        text=T(
             "La première cause explique {{part_top1|percent}} du rebut, les deux premières {{part_top2|percent}} "
-            "et les trois premières {{part_top3|percent}}."
+            "et les trois premières {{part_top3|percent}}.",
+            "The top cause explains {{part_top1|percent}} of rejects, the top two {{part_top2|percent}} "
+            "and the top three {{part_top3|percent}}.",
         ),
     ) if df else None
 
     table_columns = [
-        ColumnSpec(key=ln, label="Ligne"),
-        ColumnSpec(key="volume_produit", label="Produit"),
-        ColumnSpec(key="volume_rebut", label="Rebut"),
-        ColumnSpec(key="taux_rebut", label="Taux de rebut", use_thresholds=True),
+        ColumnSpec(key=ln, label=T("Ligne", "Line")),
+        ColumnSpec(key="volume_produit", label=T("Produit", "Produced")),
+        ColumnSpec(key="volume_rebut", label=T("Rebut", "Rejects")),
+        ColumnSpec(key="taux_rebut", label=T("Taux de rebut", "Reject rate"), use_thresholds=True),
     ]
     if with_trs:
-        table_columns.append(ColumnSpec(key="trs", label="TRS", use_thresholds=True))
+        table_columns.append(ColumnSpec(key="trs", label=T("TRS", "OEE"), use_thresholds=True))
     table = VisualSpec(
         type="table",
-        title="Performance par ligne",
-        subtitle="La ligne « Toutes » est calculée sur le total, pas comme la moyenne des lignes.",
+        title=T("Performance par ligne", "Performance by line"),
+        subtitle=T("La ligne « Toutes » est calculée sur le total, pas comme la moyenne des lignes.",
+                   "The “All” row is computed on the total, not as the average of the lines."),
         source="production",
         x=ln,
         columns=table_columns,
@@ -336,30 +389,36 @@ def production_quality(
     notes = [
         VisualSpec(
             type="note",
-            title="Définitions",
+            title=T("Définitions", "Definitions"),
             badges=[Provenance.REAL],
-            text=(
+            text=T(
                 "**Taux de rebut** : quantité rebutée ÷ quantité produite. **Bon du premier coup** : 1 - taux de "
-                "rebut. Chaque taux est calculé sur les quantités cumulées, jamais comme la moyenne de taux."
+                "rebut. Chaque taux est calculé sur les quantités cumulées, jamais comme la moyenne de taux.",
+                "**Reject rate**: quantity rejected ÷ quantity produced. **First-pass yield**: 1 - reject "
+                "rate. Each rate is computed on cumulative quantities, never as the average of rates.",
             ),
         ),
         VisualSpec(
             type="note",
-            title="Seuils",
-            text=(
-                "Rebut : vert jusqu'à 2 %, orange jusqu'à 5 %, rouge au-delà."
-                + (" TRS : vert à partir de 85 %, orange à partir de 60 %, rouge en dessous." if with_trs else "")
-            ),
+            title=T("Seuils", "Thresholds"),
+            text=T(
+                "Rebut : vert jusqu'à 2 %, orange jusqu'à 5 %, rouge au-delà.",
+                "Rejects: green up to 2%, orange up to 5%, red beyond.",
+            ) + (T(" TRS : vert à partir de 85 %, orange à partir de 60 %, rouge en dessous.",
+                   " OEE: green from 85%, orange from 60%, red below.") if with_trs else ""),
         ),
     ]
     if with_trs:
         notes.append(VisualSpec(
             type="note",
-            title="TRS",
-            text=(
+            title=T("TRS", "OEE"),
+            text=T(
                 "**TRS** = disponibilité × performance × qualité. **Disponibilité** : temps de marche ÷ temps "
                 "planifié. **Performance** : quantité produite ÷ (temps de marche × cadence idéale), plafonnée à "
-                "100 %. **Qualité** : quantité bonne ÷ quantité produite."
+                "100 %. **Qualité** : quantité bonne ÷ quantité produite.",
+                "**OEE** = availability × performance × quality. **Availability**: run time ÷ planned "
+                "time. **Performance**: quantity produced ÷ (run time × ideal rate), capped at "
+                "100%. **Quality**: good quantity ÷ quantity produced.",
             ),
         ))
 
@@ -389,8 +448,8 @@ def production_quality(
     }
 
 
-def build(dataset_id: str, columns: dict, params: dict) -> dict:
-    """Catalog entry point: column mapping (blank optional → None) to the template."""
+def build(dataset_id: str, columns: dict, params: dict, lang: str = DEFAULT_LANG) -> dict:
+    """Catalog entry point: column mapping (blank optional → None) to the template, in ``lang``."""
     mapping: dict[str, Any] = {key: columns.get(key) or "" for key in _REQUIRED}
     mapping.update({key: columns.get(key) or None for key in _OPTIONAL})
-    return production_quality(dataset_id, **mapping)
+    return production_quality(dataset_id, **mapping, lang=lang)

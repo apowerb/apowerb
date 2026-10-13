@@ -1,0 +1,520 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "tickets",
+    "steps": [],
+    "text": "{{filters.equipe}}, du {{period.from}} au {{period.to}} : {{tickets|integer}} tickets reçus, {{backlog|integer}} encore ouverts. {{sla|percent}} des tickets respectent le SLA.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "tickets",
+     "sparkline": "tickets"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "tickets",
+    "steps": [],
+    "title": "Tickets reçus",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "backlog",
+     "secondary": "sans date de résolution",
+     "sparkline": "backlog"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "tickets",
+    "steps": [],
+    "title": "Backlog ouvert",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "delai_reponse",
+     "sparkline": "delai_reponse",
+     "target_label": "cible ≤ 4 h"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "tickets",
+    "steps": [],
+    "title": "Délai médian de première réponse",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "sla",
+     "secondary": "objectifs : réponse 4 h, résolution 48 h",
+     "sparkline": "sla",
+     "target_label": "cible ≥ 95 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "tickets",
+    "steps": [],
+    "title": "SLA respecté",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "tickets",
+      "label": "Tickets",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "right",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "sla",
+      "label": "SLA respecté",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "tickets",
+    "steps": [],
+    "subtitle": "Selon la date d'ouverture. Part de tickets dans le SLA sur l'axe de droite.",
+    "title": "Tickets par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "priorite": "priority"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "priorite"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "tickets",
+      "label": "Tickets",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "tickets",
+    "steps": [],
+    "subtitle": "Cliquer pour filtrer le tableau de bord.",
+    "title": "Tickets par priorité",
+    "total_row": false,
+    "type": "hbar",
+    "x": "priority"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 16,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "equipe": "team"
+    },
+    "columns": [
+     {
+      "key": "team",
+      "label": "Équipe",
+      "use_thresholds": false
+     },
+     {
+      "key": "tickets",
+      "label": "Tickets",
+      "use_thresholds": false
+     },
+     {
+      "key": "backlog",
+      "label": "Backlog",
+      "use_thresholds": false
+     },
+     {
+      "key": "delai_resolution",
+      "label": "Résolution (médiane, h)",
+      "use_thresholds": true
+     },
+     {
+      "key": "delai_reponse",
+      "label": "Réponse (médiane, h)",
+      "use_thresholds": true
+     },
+     {
+      "key": "sla",
+      "label": "SLA respecté",
+      "use_thresholds": true
+     }
+    ],
+    "highlight_filter": "equipe",
+    "ignore_filters": [
+     "equipe"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "sort": "value_desc",
+    "source": "tickets",
+    "steps": [],
+    "subtitle": "La ligne « Toutes » reprend les définitions globales, pas la moyenne des équipes.",
+    "title": "SLA par équipe",
+    "total_row": true,
+    "type": "table",
+    "x": "team"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 22,
+    "width": 12
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Objectifs : première réponse sous 4 h, résolution sous 48 h (paramétrables à la création). Un ticket est hors SLA si un objectif est dépassé, y compris pour un ticket encore sans réponse ou sans résolution dont l'échéance est passée. La date de référence est la plus récente du fichier (et non la date du jour). Vert à partir de 95 % de SLA, orange entre 90 % et 95 %, rouge en dessous.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "26w",
+   "field": "date_ouverture",
+   "id": "periode",
+   "label": "Période (date d'ouverture)",
+   "presets": [
+    "13w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "team",
+   "id": "equipe",
+   "label": "Équipe",
+   "type": "select"
+  },
+  {
+   "field": "priority",
+   "id": "priorite",
+   "label": "Priorité",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Ticket",
+     "name": "ticket_id",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Date d'ouverture",
+     "name": "date_ouverture",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Date de première réponse",
+     "name": "first_response_at",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Date de résolution",
+     "name": "resolved_at",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Priorité",
+     "name": "priority",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Équipe",
+     "name": "team",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "label": "Semaine",
+     "name": "periode_semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    },
+    {
+     "format": "decimal1",
+     "label": "Délai de première réponse (h)",
+     "name": "delai_reponse_h",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Réponse hors objectif",
+     "name": "reponse_hors_delai",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Ticket ouvert",
+     "name": "ticket_ouvert",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "decimal1",
+     "label": "Délai de résolution (h)",
+     "name": "delai_resolution_h",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Résolution hors objectif",
+     "name": "resolution_hors_delai",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "SLA respecté",
+     "name": "sla_respecte",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Tickets de support",
+   "measures": [
+    {
+     "expr": "COUNT(DISTINCT \"ticket_id\")",
+     "format": "integer",
+     "label": "Tickets reçus",
+     "name": "tickets",
+     "unit": "tickets"
+    },
+    {
+     "description": "Tickets sans date de résolution.",
+     "expr": "COALESCE(SUM(ticket_ouvert), 0)",
+     "format": "integer",
+     "label": "Backlog ouvert",
+     "name": "backlog",
+     "unit": "tickets"
+    },
+    {
+     "description": "Heures entre l'ouverture et la résolution, tickets résolus.",
+     "expr": "MEDIAN(delai_resolution_h)",
+     "format": "decimal1",
+     "label": "Délai médian de résolution",
+     "name": "delai_resolution",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 48.0,
+      "warn": 96.0
+     },
+     "unit": "h"
+    },
+    {
+     "description": "Heures entre l'ouverture et la première réponse, tickets répondus.",
+     "expr": "MEDIAN(delai_reponse_h)",
+     "format": "decimal1",
+     "label": "Délai médian de première réponse",
+     "name": "delai_reponse",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 4.0,
+      "warn": 8.0
+     },
+     "unit": "h"
+    },
+    {
+     "description": "Tickets sans objectif dépassé (première réponse, résolution), ouverts dont l'objectif n'est pas encore échu compris.",
+     "expr": "AVG(sla_respecte)",
+     "format": "percent",
+     "label": "SLA respecté",
+     "name": "sla",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.95,
+      "warn": 0.9
+     }
+    }
+   ],
+   "name": "tickets",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_semaine",
+     "expr": "date_trunc('week', CAST(\"date_ouverture\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "delai_reponse_h",
+     "expr": "CASE WHEN \"first_response_at\" IS NOT NULL THEN date_diff('second', CAST(\"date_ouverture\" AS TIMESTAMP), CAST(\"first_response_at\" AS TIMESTAMP)) / 3600.0 END",
+     "op": "derive"
+    },
+    {
+     "column": "reponse_hors_delai",
+     "expr": "CASE WHEN \"first_response_at\" IS NOT NULL THEN CASE WHEN date_diff('second', CAST(\"date_ouverture\" AS TIMESTAMP), CAST(\"first_response_at\" AS TIMESTAMP)) > 14400 THEN 1 ELSE 0 END WHEN date_diff('second', CAST(\"date_ouverture\" AS TIMESTAMP), GREATEST(MAX(CAST(\"date_ouverture\" AS TIMESTAMP)) OVER (), MAX(CAST(\"first_response_at\" AS TIMESTAMP)) OVER (), MAX(CAST(\"resolved_at\" AS TIMESTAMP)) OVER ())) > 14400 THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "ticket_ouvert",
+     "expr": "CASE WHEN \"resolved_at\" IS NULL THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "delai_resolution_h",
+     "expr": "CASE WHEN \"resolved_at\" IS NOT NULL THEN date_diff('second', CAST(\"date_ouverture\" AS TIMESTAMP), CAST(\"resolved_at\" AS TIMESTAMP)) / 3600.0 END",
+     "op": "derive"
+    },
+    {
+     "column": "resolution_hors_delai",
+     "expr": "CASE WHEN \"resolved_at\" IS NOT NULL THEN CASE WHEN date_diff('second', CAST(\"date_ouverture\" AS TIMESTAMP), CAST(\"resolved_at\" AS TIMESTAMP)) > 172800 THEN 1 ELSE 0 END WHEN date_diff('second', CAST(\"date_ouverture\" AS TIMESTAMP), GREATEST(MAX(CAST(\"date_ouverture\" AS TIMESTAMP)) OVER (), MAX(CAST(\"first_response_at\" AS TIMESTAMP)) OVER (), MAX(CAST(\"resolved_at\" AS TIMESTAMP)) OVER ())) > 172800 THEN 1 ELSE 0 END",
+     "op": "derive"
+    },
+    {
+     "column": "sla_respecte",
+     "expr": "CASE WHEN reponse_hors_delai = 1 OR resolution_hors_delai = 1 THEN 0 ELSE 1 END",
+     "op": "derive"
+    }
+   ]
+  }
+ ]
+}

@@ -125,7 +125,7 @@ def test_noms_de_colonnes_invalides():
 
 def test_descripteur():
     assert DESCRIPTOR["id"] == "purchasing_suppliers" and DESCRIPTOR["version"] == 1 and DESCRIPTOR["params"] == []
-    assert DESCRIPTOR["label"] == "Achats et fournisseurs"
+    assert DESCRIPTOR["label"]["fr"] == "Achats et fournisseurs"
     assert {"id", "label", "description", "version", "columns", "params"} == set(DESCRIPTOR)
     cols = {c["key"]: c for c in DESCRIPTOR["columns"]}
     assert set(cols) == {"date", "supplier", "item", "quantity", "amount", "promised_date", "received_date"}

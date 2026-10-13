@@ -1,0 +1,389 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "text": "{{filters.famille}} · {{filters.periode}} (jusqu'à {{period.last}}) : chiffre d'affaires de {{ca_total|compact}}, en évolution de {{evolution_n1|percent}} par rapport à la même période de l'an dernier.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "ca_total",
+     "secondary": "N-1 : {{ca_n1_total|compact}}",
+     "sparkline": "ca_total"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "title": "Chiffre d'affaires",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "evolution_n1",
+     "secondary": "{{ca_comparable|compact}} contre {{ca_n1_total|compact}}",
+     "target_label": "alerte sous -5 %"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "ventes",
+    "steps": [],
+    "title": "Évolution vs même période N-1",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca_total",
+      "label": "Chiffre d'affaires",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": true,
+      "key": "ca_n1_mensuel",
+      "label": "Même mois N-1",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "ventes",
+    "steps": [],
+    "subtitle": "Les mois sans équivalent un an plus tôt n'ont pas de courbe N-1.",
+    "title": "CA mensuel vs même mois N-1",
+    "total_row": false,
+    "type": "combo",
+    "x": "mois"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "famille": "famille"
+    },
+    "columns": [],
+    "highlight_filter": "famille",
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca_total",
+      "label": "Chiffre d'affaires",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "ventes",
+    "steps": [],
+    "subtitle": "Cliquer sur une famille pour filtrer le tableau de bord.",
+    "title": "CA par famille",
+    "total_row": false,
+    "type": "hbar",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 17,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "famille": "famille"
+    },
+    "columns": [
+     {
+      "key": "famille",
+      "label": "Famille",
+      "use_thresholds": false
+     },
+     {
+      "key": "ca_total",
+      "label": "CA",
+      "use_thresholds": false
+     },
+     {
+      "key": "part_ca",
+      "label": "Part du CA",
+      "use_thresholds": false
+     },
+     {
+      "key": "ca_n1_total",
+      "label": "CA N-1",
+      "use_thresholds": false
+     },
+     {
+      "key": "evolution_n1",
+      "label": "Évolution vs N-1",
+      "use_thresholds": true
+     }
+    ],
+    "highlight_filter": "famille",
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "sort": "value_desc",
+    "source": "ventes",
+    "steps": [],
+    "subtitle": "Cliquer sur une famille pour filtrer le tableau de bord.",
+    "title": "Comparatif par famille",
+    "total_row": true,
+    "type": "table",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 23,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Toutes les valeurs viennent des lignes de vente importées (colonnes `date`, `montant`, `famille`), additionnées par mois. Aucune valeur n'est simulée ni prévue. La période initiale est les 12 derniers mois, modifiable en haut du tableau de bord.",
+    "title": "Origine des données",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 5,
+    "row": 23,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**Évolution vs N-1** : chiffre d'affaires des mois de la période, divisé par celui des mêmes mois un an plus tôt, moins 1 ; seuls les mois qui ont un équivalent un an plus tôt comptent. Le voyant passe à l'orange sous 0 % et au rouge sous -5 %. **Part du CA** : CA de la ligne ÷ CA de toutes les familles de la période.",
+    "title": "Définition des indicateurs",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 5,
+    "row": 23,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Le dernier mois est partiel si les données s'arrêtent en cours de mois : son CA paraît alors inférieur à celui du même mois l'an dernier. Les retours et avoirs, s'ils sont saisis en négatif, viennent en déduction du CA.",
+    "title": "Limites",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "field": "famille",
+   "id": "famille",
+   "label": "Famille",
+   "type": "select"
+  },
+  {
+   "default": "12m",
+   "field": "mois",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "3m",
+    "12m",
+    "24m",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Mois",
+     "name": "mois",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Famille",
+     "name": "famille",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Chiffre d'affaires",
+     "name": "ca",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "CA même mois N-1",
+     "name": "ca_n1",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Ventes par mois",
+   "measures": [
+    {
+     "expr": "SUM(ca)",
+     "format": "compact",
+     "label": "Chiffre d'affaires",
+     "name": "ca_total"
+    },
+    {
+     "description": "Chiffre d'affaires des mêmes mois un an plus tôt.",
+     "expr": "SUM(ca_n1)",
+     "format": "compact",
+     "label": "CA même période N-1",
+     "name": "ca_n1_total"
+    },
+    {
+     "description": "Chiffre d'affaires des mois qui ont un équivalent un an plus tôt.",
+     "expr": "SUM(ca) FILTER (WHERE n1_dispo = 1)",
+     "format": "compact",
+     "label": "CA des mois comparables",
+     "name": "ca_comparable"
+    },
+    {
+     "description": "CA des mois comparables ÷ CA des mêmes mois un an plus tôt, moins 1.",
+     "expr": "SUM(ca) FILTER (WHERE n1_dispo = 1) / NULLIF(SUM(ca_n1), 0) - 1",
+     "format": "percent",
+     "label": "Évolution vs N-1",
+     "name": "evolution_n1",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 0.0,
+      "warn": -0.05
+     }
+    },
+    {
+     "expr": "NULLIF(SUM(ca_n1) FILTER (WHERE n1_dispo = 1), 0)",
+     "format": "compact",
+     "label": "Même mois N-1",
+     "name": "ca_n1_mensuel"
+    },
+    {
+     "description": "Part de la ligne dans le CA de la période, toutes familles confondues.",
+     "expr": "SUM(ca) / NULLIF((SELECT SUM(ca) FROM frame), 0)",
+     "format": "percent",
+     "label": "Part du CA",
+     "name": "part_ca"
+    }
+   ],
+   "name": "ventes",
+   "source_options": {},
+   "transforms": [
+    {
+     "op": "sql",
+     "query": "WITH base AS (SELECT date_trunc('month', CAST(\"date\" AS DATE)) AS mois, \"famille\", SUM(\"montant\") AS ca FROM input WHERE \"date\" IS NOT NULL GROUP BY 1, 2), edge AS (SELECT MIN(mois) AS first_m, MAX(mois) AS last_m FROM base) SELECT mois, \"famille\", SUM(ca) AS ca, SUM(ca_n1) AS ca_n1, CASE WHEN mois - INTERVAL 12 MONTH >= (SELECT first_m FROM edge) THEN 1 ELSE 0 END AS n1_dispo FROM (SELECT mois, \"famille\", ca, 0.0 AS ca_n1 FROM base UNION ALL SELECT CAST(mois + INTERVAL 12 MONTH AS DATE) AS mois, \"famille\", 0.0 AS ca, ca AS ca_n1 FROM base WHERE mois + INTERVAL 12 MONTH <= (SELECT last_m FROM edge)) GROUP BY ALL"
+    }
+   ]
+  }
+ ]
+}

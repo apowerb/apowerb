@@ -1,13 +1,14 @@
 """
 bi/spec/templates_common.py
 ---------------------------
-Building blocks shared by the spec v2 template modules: column-name checks, SQL quoting
-and the 12-column grid layout helpers.
+Building blocks shared by the spec v2 template modules: languages, column-name checks,
+SQL quoting and the 12-column grid layout helpers.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -16,6 +17,31 @@ from apowerb.bi.spec.models import IDENT, VisualSpec
 
 _IDENT_RE = re.compile(IDENT)
 Placed = list[tuple[VisualSpec, dict[str, int]]]
+
+# Languages a template is built in; French is the default and the reference.
+LANGS = ("fr", "en")
+DEFAULT_LANG = "fr"
+
+
+def check_lang(lang: str | None) -> str:
+    """The language code, ``fr`` when blank; ``ValueError`` for an unsupported one."""
+    code = (lang or DEFAULT_LANG).strip().lower()
+    if code not in LANGS:
+        raise ValueError(f"Unsupported language '{lang}': use one of {', '.join(LANGS)}.")
+    return code
+
+
+def translator(lang: str | None) -> Callable[[str, str], str]:
+    """``T(fr, en)`` returning the text of the build language."""
+    english = check_lang(lang) == "en"
+    return lambda fr, en: en if english else fr
+
+
+def pick(text: str | dict[str, str], lang: str | None) -> str:
+    """A catalog text: a plain string, or ``{"fr": ..., "en": ...}`` read in ``lang``."""
+    if isinstance(text, str):
+        return text
+    return text.get(check_lang(lang)) or text[DEFAULT_LANG]
 
 
 def check_ident(label: str, value: str) -> str:

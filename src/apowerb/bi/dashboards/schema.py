@@ -8,6 +8,7 @@ Kept separate from core.py so the API contract evolves independently.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -158,6 +159,8 @@ class DashboardCreateRequest(BaseModel):
     # spec v2 (optional): the dashboard declares its own sources and filters.
     sources: list[SourceSpec] = Field(default_factory=list)
     filters: list[FilterSpec] = Field(default_factory=list)
+    # language of the texts written at compute time (numbers, dates, « Toutes »); None = French
+    locale: Literal["fr", "en"] | None = None
 
     model_config = {
         "json_schema_extra": {
@@ -311,6 +314,7 @@ class DashboardResponse(BaseModel):
     sources: list[SourceSpec] = Field(default_factory=list)
     filters: list[FilterSpec] = Field(default_factory=list)
     template: TemplateRef | None = None
+    locale: Literal["fr", "en"] | None = None
 
     @classmethod
     def from_domain(cls, dashboard: Dashboard) -> "DashboardResponse":

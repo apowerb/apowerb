@@ -29,6 +29,7 @@ from apowerb.bi.spec.models import (
     VisualSpec,
 )
 from apowerb.bi.spec.templates import BLUE, _check_ident, _dump
+from apowerb.bi.spec.templates_common import DEFAULT_LANG, translator
 
 _PERIOD_RE = re.compile(r"^(all|\d{1,3}[wm])$")
 _RESERVED = ("mois", "ca", "ca_n1", "quantite", "n1_dispo")
@@ -38,29 +39,37 @@ _TOP_CUSTOMERS = 10
 
 DESCRIPTOR: dict[str, Any] = {
     "id": "sales_tracking",
-    "label": "Suivi des ventes",
-    "description": (
-        "Tableau de bord de suivi des ventes à partir de lignes de vente : chiffre d'affaires et évolution "
-        "par rapport à la même période de l'an dernier, courbe mensuelle, familles, clients et régions. "
-        "Les données sont agrégées par mois."
-    ),
+    "label": {"fr": "Suivi des ventes", "en": "Sales tracking"},
+    "description": {
+        "fr": (
+            "Tableau de bord de suivi des ventes à partir de lignes de vente : chiffre d'affaires et évolution "
+            "par rapport à la même période de l'an dernier, courbe mensuelle, familles, clients et régions. "
+            "Les données sont agrégées par mois."
+        ),
+        "en": (
+            "Sales tracking dashboard built from sales lines: revenue and change against the same period "
+            "last year, monthly curve, product families, customers and regions. "
+            "Data is aggregated by month."
+        ),
+    },
     "version": 1,
     "columns": [
         {"key": "date", "label": "Date", "type": "date", "required": True, "default": "date"},
-        {"key": "amount", "label": "Montant", "type": "number", "required": True, "default": "montant"},
-        {"key": "quantity", "label": "Quantité", "type": "number", "required": False, "default": None},
-        {"key": "family", "label": "Famille", "type": "string", "required": True, "default": "famille"},
-        {"key": "customer", "label": "Client", "type": "string", "required": False, "default": None},
-        {"key": "region", "label": "Région", "type": "string", "required": False, "default": None},
+        {"key": "amount", "label": {"fr": "Montant", "en": "Amount"}, "type": "number", "required": True, "default": "montant"},
+        {"key": "quantity", "label": {"fr": "Quantité", "en": "Quantity"}, "type": "number", "required": False, "default": None},
+        {"key": "family", "label": {"fr": "Famille", "en": "Product family"}, "type": "string", "required": True, "default": "famille"},
+        {"key": "customer", "label": {"fr": "Client", "en": "Customer"}, "type": "string", "required": False, "default": None},
+        {"key": "region", "label": {"fr": "Région", "en": "Region"}, "type": "string", "required": False, "default": None},
     ],
     "params": [
-        {"key": "period_months", "label": "Période affichée par défaut (mois)", "type": "integer",
+        {"key": "period_months", "label": {"fr": "Période affichée par défaut (mois)", "en": "Default displayed period (months)"},
+         "type": "integer",
          "default": 12, "min": 1, "max": _MAX_PERIOD_MONTHS},
     ],
 }
 
 
-def build(dataset_id: str, columns: dict[str, str | None], params: dict[str, Any]) -> dict:
+def build(dataset_id: str, columns: dict[str, str | None], params: dict[str, Any], lang: str = DEFAULT_LANG) -> dict:
     defaults = {c["key"]: c["default"] for c in DESCRIPTOR["columns"]}
     months = params.get("period_months") or DESCRIPTOR["params"][0]["default"]
     return sales_tracking(
@@ -72,6 +81,7 @@ def build(dataset_id: str, columns: dict[str, str | None], params: dict[str, Any
         customer=columns.get("customer") or None,
         region=columns.get("region") or None,
         default_period=f"{months}m",
+        lang=lang,
     )
 
 
@@ -81,14 +91,17 @@ def _split(total: int, parts: int) -> list[int]:
     return [base + (1 if i < extra else 0) for i in range(parts)]
 
 
-def _period_text(period: str) -> str:
+def _period_text(period: str, lang: str = DEFAULT_LANG) -> str:
+    T = translator(lang)
     if period == "all":
-        return "toute la période"
+        return T("toute la période", "whole period")
     count, unit = int(period[:-1]), period[-1]
-    word = "mois" if unit == "m" else "semaine"
+    word = T("mois", "month") if unit == "m" else T("semaine", "week")
     if count == 1:
-        return f"dernier {word}"
-    return f"{count} derniers mois" if unit == "m" else f"{count} dernières semaines"
+        return T(f"dernier {word}", f"last {word}")
+    if unit == "m":
+        return T(f"{count} derniers mois", f"last {count} months")
+    return T(f"{count} dernières semaines", f"last {count} weeks")
 
 
 def _monthly_query(date: str, amount: str, quantity: str | None, dims: list[str]) -> str:
@@ -122,13 +135,15 @@ def sales_tracking(
     customer: str | None = None,
     region: str | None = None,
     default_period: str = "12m",
+    lang: str = DEFAULT_LANG,
 ) -> dict:
-    """Build the "Suivi des ventes" spec for a dataset of sales lines.
+    """Build the "Suivi des ventes" spec for a dataset of sales lines, in ``lang``.
 
     ``date``/``amount``/``family`` name the dataset columns; ``quantity``,
     ``customer`` and ``region`` are optional and each adds its indicators.
     ``default_period`` is a relative period (``12m``, ``26w``, ``all``...).
     """
+    T = translator(lang)
     if not dataset_id:
         raise ValueError("dataset_id is required.")
     d = _check_ident("date", date)
@@ -144,49 +159,65 @@ def sales_tracking(
         raise ValueError(
             f"family, customer and region must be distinct columns and not one of the reserved names {_RESERVED}."
         )
-    label = f.replace("_", " ").capitalize()
+    def dim_label(column: str, default: str, en: str) -> str:
+        """Label derived from the column name; the default French names read in ``lang``."""
+        return T(column.replace("_", " ").capitalize(), en) if column == default else column.replace("_", " ").capitalize()
+
+    label = dim_label(f, "famille", "Product family")
     noun = label.lower()
 
     # ---- source -------------------------------------------------------
     fields = [
-        FieldSpec(name="mois", label="Mois", type="date", role="date"),
+        FieldSpec(name="mois", label=T("Mois", "Month"), type="date", role="date"),
         FieldSpec(name=f, label=label, role="dimension"),
-        *([FieldSpec(name=c, label=c.replace("_", " ").capitalize(), role="dimension")] if c else []),
-        *([FieldSpec(name=r, label=r.replace("_", " ").capitalize(), role="dimension")] if r else []),
-        FieldSpec(name="ca", label="Chiffre d'affaires", type="number", role="measure", format="compact"),
-        FieldSpec(name="ca_n1", label="CA même mois N-1", type="number", role="measure", format="compact"),
-        *([FieldSpec(name="quantite", label="Quantité", type="number", role="measure", format="compact")] if q else []),
+        *([FieldSpec(name=c, label=dim_label(c, "client", "Customer"), role="dimension")] if c else []),
+        *([FieldSpec(name=r, label=dim_label(r, "region", "Region"), role="dimension")] if r else []),
+        FieldSpec(name="ca", label=T("Chiffre d'affaires", "Revenue"), type="number", role="measure", format="compact"),
+        FieldSpec(name="ca_n1", label=T("CA même mois N-1", "Revenue same month PY"), type="number", role="measure", format="compact"),
+        *([FieldSpec(name="quantite", label=T("Quantité", "Quantity"), type="number", role="measure", format="compact")] if q else []),
     ]
     ca_n1 = "SUM(ca_n1)"
     comparable = "SUM(ca) FILTER (WHERE n1_dispo = 1)"
     evolution_thr = ThresholdSpec(direction="higher_is_better", good=0, warn=-0.05)
     measures = [
-        MeasureSpec(name="ca_total", label="Chiffre d'affaires", expr="SUM(ca)", format="compact"),
-        MeasureSpec(name="ca_n1_total", label="CA même période N-1", expr=ca_n1, format="compact",
-                    description="Chiffre d'affaires des mêmes mois un an plus tôt."),
-        MeasureSpec(name="ca_comparable", label="CA des mois comparables", expr=comparable, format="compact",
-                    description="Chiffre d'affaires des mois qui ont un équivalent un an plus tôt."),
-        MeasureSpec(name="evolution_n1", label="Évolution vs N-1", expr=f"{comparable} / NULLIF({ca_n1}, 0) - 1",
+        MeasureSpec(name="ca_total", label=T("Chiffre d'affaires", "Revenue"), expr="SUM(ca)", format="compact"),
+        MeasureSpec(name="ca_n1_total", label=T("CA même période N-1", "Revenue same period PY"), expr=ca_n1,
+                    format="compact",
+                    description=T("Chiffre d'affaires des mêmes mois un an plus tôt.",
+                                  "Revenue of the same months one year earlier.")),
+        MeasureSpec(name="ca_comparable", label=T("CA des mois comparables", "Revenue of comparable months"), expr=comparable,
+                    format="compact",
+                    description=T("Chiffre d'affaires des mois qui ont un équivalent un an plus tôt.",
+                                  "Revenue of the months that have an equivalent one year earlier.")),
+        MeasureSpec(name="evolution_n1", label=T("Évolution vs N-1", "Change vs PY"),
+                    expr=f"{comparable} / NULLIF({ca_n1}, 0) - 1",
                     format="percent", thresholds=evolution_thr,
-                    description="CA des mois comparables ÷ CA des mêmes mois un an plus tôt, moins 1."),
-        MeasureSpec(name="ca_n1_mensuel", label="Même mois N-1", expr="NULLIF(SUM(ca_n1) FILTER (WHERE n1_dispo = 1), 0)",
+                    description=T("CA des mois comparables ÷ CA des mêmes mois un an plus tôt, moins 1.",
+                                  "Revenue of comparable months ÷ revenue of the same months one year earlier, minus 1.")),
+        MeasureSpec(name="ca_n1_mensuel", label=T("Même mois N-1", "Same month PY"), expr="NULLIF(SUM(ca_n1) FILTER (WHERE n1_dispo = 1), 0)",
                     format="compact"),
-        MeasureSpec(name="part_ca", label="Part du CA", expr="SUM(ca) / NULLIF((SELECT SUM(ca) FROM frame), 0)",
-                    format="percent", description="Part de la ligne dans le CA de la période, toutes familles confondues."),
+        MeasureSpec(name="part_ca", label=T("Part du CA", "Revenue share"),
+                    expr="SUM(ca) / NULLIF((SELECT SUM(ca) FROM frame), 0)",
+                    format="percent",
+                    description=T("Part de la ligne dans le CA de la période, toutes familles confondues.",
+                                  "Share of the row in the revenue of the period, all product families combined.")),
     ]
     if q:
         measures += [
-            MeasureSpec(name="quantite_totale", label="Quantité", expr="SUM(quantite)", format="compact"),
-            MeasureSpec(name="prix_moyen", label="Prix moyen", expr="SUM(ca) / NULLIF(SUM(quantite), 0)",
-                        format="decimal2", description="Chiffre d'affaires ÷ quantité vendue."),
+            MeasureSpec(name="quantite_totale", label=T("Quantité", "Quantity"), expr="SUM(quantite)", format="compact"),
+            MeasureSpec(name="prix_moyen", label=T("Prix moyen", "Average price"),
+                        expr="SUM(ca) / NULLIF(SUM(quantite), 0)",
+                        format="decimal2",
+                        description=T("Chiffre d'affaires ÷ quantité vendue.", "Revenue ÷ quantity sold.")),
         ]
     if c:
-        measures.append(MeasureSpec(name="nb_clients", label="Clients actifs",
+        measures.append(MeasureSpec(name="nb_clients", label=T("Clients actifs", "Active customers"),
                                     expr=f"COUNT(DISTINCT {quote_ident(c)}) FILTER (WHERE ca <> 0)", format="integer",
-                                    description="Clients avec au moins un achat sur la période."))
+                                    description=T("Clients avec au moins un achat sur la période.",
+                                                  "Customers with at least one purchase in the period.")))
     source = SourceSpec(
         name="ventes",
-        label="Ventes par mois",
+        label=T("Ventes par mois", "Sales by month"),
         kind="dataset",
         dataset_id=dataset_id,
         transforms=[SqlStep(query=_monthly_query(d, a, q, dims))],
@@ -197,7 +228,7 @@ def sales_tracking(
     presets = _PRESETS if default_period in _PRESETS else [*_PRESETS[:-1], default_period, "all"]
     filters = [
         FilterSpec(id="famille", label=label, field=f, type="select", default=None),
-        FilterSpec(id="periode", label="Période", field="mois", type="relative_period", default=default_period,
+        FilterSpec(id="periode", label=T("Période", "Period"), field="mois", type="relative_period", default=default_period,
                    presets=presets),
     ]
 
@@ -205,48 +236,62 @@ def sales_tracking(
     def kpi(title: str, measure: str, **kw: Any) -> VisualSpec:
         return VisualSpec(type="kpi", title=title, source="ventes", kpi=KpiSpec(measure=measure, **kw))
 
-    clients_text = " {{nb_clients|integer}} clients actifs." if c else ""
+    clients_text = T(" {{nb_clients|integer}} clients actifs.", " {{nb_clients|integer}} active customers.") if c else ""
     synthese = VisualSpec(
         type="text",
         source="ventes",
-        text=(
-            "{{filters.famille}} · {{filters.periode}} (jusqu'à {{period.last}}) : chiffre d'affaires de "
-            "{{ca_total|compact}}, en évolution de {{evolution_n1|percent}} par rapport à la même période "
-            f"de l'an dernier.{clients_text}"
+        text=T(
+            (
+                "{{filters.famille}} · {{filters.periode}} (jusqu'à {{period.last}}) : chiffre d'affaires de "
+                "{{ca_total|compact}}, en évolution de {{evolution_n1|percent}} par rapport à la même période "
+                f"de l'an dernier.{clients_text}"
+            ),
+            (
+                "{{filters.famille}} · {{filters.periode}} (up to {{period.last}}): revenue of "
+                "{{ca_total|compact}}, changing by {{evolution_n1|percent}} against the same period "
+                f"last year.{clients_text}"
+            ),
         ),
     )
     kpis = [
-        kpi("Chiffre d'affaires", "ca_total", sparkline="ca_total", secondary="N-1 : {{ca_n1_total|compact}}"),
-        kpi("Évolution vs même période N-1", "evolution_n1",
-            secondary="{{ca_comparable|compact}} contre {{ca_n1_total|compact}}", target_label="alerte sous -5 %"),
+        kpi(T("Chiffre d'affaires", "Revenue"), "ca_total", sparkline="ca_total",
+            secondary=T("N-1 : {{ca_n1_total|compact}}", "PY: {{ca_n1_total|compact}}")),
+        kpi(T("Évolution vs même période N-1", "Change vs same period PY"), "evolution_n1",
+            secondary=T("{{ca_comparable|compact}} contre {{ca_n1_total|compact}}",
+                        "{{ca_comparable|compact}} against {{ca_n1_total|compact}}"),
+            target_label=T("alerte sous -5 %", "alert below -5%")),
     ]
     if q:
         kpis += [
-            kpi("Quantité", "quantite_totale", sparkline="quantite_totale"),
-            kpi("Prix moyen", "prix_moyen", sparkline="prix_moyen", secondary="CA ÷ quantité"),
+            kpi(T("Quantité", "Quantity"), "quantite_totale", sparkline="quantite_totale"),
+            kpi(T("Prix moyen", "Average price"), "prix_moyen", sparkline="prix_moyen",
+                secondary=T("CA ÷ quantité", "Revenue ÷ quantity")),
         ]
     if c:
-        kpis.append(kpi("Clients actifs", "nb_clients", secondary="au moins un achat sur la période"))
+        kpis.append(kpi(T("Clients actifs", "Active customers"), "nb_clients",
+                        secondary=T("au moins un achat sur la période", "at least one purchase in the period")))
 
     combo = VisualSpec(
         type="combo",
-        title="CA mensuel vs même mois N-1",
-        subtitle="Les mois sans équivalent un an plus tôt n'ont pas de courbe N-1.",
+        title=T("CA mensuel vs même mois N-1", "Monthly revenue vs same month PY"),
+        subtitle=T("Les mois sans équivalent un an plus tôt n'ont pas de courbe N-1.",
+                   "Months with no equivalent one year earlier have no PY curve."),
         source="ventes",
         x="mois",
         series=[
-            SeriesSpec(key="ca_total", label="Chiffre d'affaires", mark="bar", color=BLUE),
-            SeriesSpec(key="ca_n1_mensuel", label="Même mois N-1", mark="line", color="muted", dash=True),
+            SeriesSpec(key="ca_total", label=T("Chiffre d'affaires", "Revenue"), mark="bar", color=BLUE),
+            SeriesSpec(key="ca_n1_mensuel", label=T("Même mois N-1", "Same month PY"), mark="line", color="muted", dash=True),
         ],
         sort="x_asc",
     )
     top_families = VisualSpec(
         type="hbar",
-        title=f"CA par {noun}",
-        subtitle=f"Cliquer sur une {noun} pour filtrer le tableau de bord.",
+        title=T(f"CA par {noun}", f"Revenue by {noun}"),
+        subtitle=T(f"Cliquer sur une {noun} pour filtrer le tableau de bord.",
+                   "Click a bar to filter the dashboard."),
         source="ventes",
         x=f,
-        series=[SeriesSpec(key="ca_total", label="Chiffre d'affaires", mark="bar", color=BLUE)],
+        series=[SeriesSpec(key="ca_total", label=T("Chiffre d'affaires", "Revenue"), mark="bar", color=BLUE)],
         sort="value_desc",
         click_filters={"famille": f},
         ignore_filters=["famille"],
@@ -256,34 +301,35 @@ def sales_tracking(
     if c:
         charts.append(VisualSpec(
             type="hbar",
-            title=f"Top {_TOP_CUSTOMERS} clients",
+            title=T(f"Top {_TOP_CUSTOMERS} clients", f"Top {_TOP_CUSTOMERS} customers"),
             source="ventes",
             x=c,
-            series=[SeriesSpec(key="ca_total", label="Chiffre d'affaires", mark="bar", color=BLUE)],
+            series=[SeriesSpec(key="ca_total", label=T("Chiffre d'affaires", "Revenue"), mark="bar", color=BLUE)],
             sort="value_desc",
             top_n=_TOP_CUSTOMERS,
         ))
     if r:
         charts.append(VisualSpec(
             type="pie",
-            title="Répartition par région",
+            title=T("Répartition par région", "Breakdown by region"),
             source="ventes",
             x=r,
-            series=[SeriesSpec(key="ca_total", label="Chiffre d'affaires")],
+            series=[SeriesSpec(key="ca_total", label=T("Chiffre d'affaires", "Revenue"))],
         ))
     columns = [
         ColumnSpec(key=f, label=label),
-        ColumnSpec(key="ca_total", label="CA"),
-        ColumnSpec(key="part_ca", label="Part du CA"),
-        ColumnSpec(key="ca_n1_total", label="CA N-1"),
-        ColumnSpec(key="evolution_n1", label="Évolution vs N-1", use_thresholds=True),
+        ColumnSpec(key="ca_total", label=T("CA", "Revenue")),
+        ColumnSpec(key="part_ca", label=T("Part du CA", "Revenue share")),
+        ColumnSpec(key="ca_n1_total", label=T("CA N-1", "Revenue PY")),
+        ColumnSpec(key="evolution_n1", label=T("Évolution vs N-1", "Change vs PY"), use_thresholds=True),
     ]
     if q:
-        columns.append(ColumnSpec(key="quantite_totale", label="Quantité"))
+        columns.append(ColumnSpec(key="quantite_totale", label=T("Quantité", "Quantity")))
     table = VisualSpec(
         type="table",
-        title=f"Comparatif par {noun}",
-        subtitle=f"Cliquer sur une {noun} pour filtrer le tableau de bord.",
+        title=T(f"Comparatif par {noun}", f"Comparison by {noun}"),
+        subtitle=T(f"Cliquer sur une {noun} pour filtrer le tableau de bord.",
+                   "Click a row to filter the dashboard."),
         source="ventes",
         x=f,
         columns=columns,
@@ -298,33 +344,57 @@ def sales_tracking(
     notes = [
         VisualSpec(
             type="note",
-            title="Origine des données",
+            title=T("Origine des données", "Data source"),
             badges=[Provenance.REAL],
-            text=(
-                f"Toutes les valeurs viennent des lignes de vente importées (colonnes {used}), additionnées par "
-                "mois. Aucune valeur n'est simulée ni prévue. La période initiale est les "
-                f"{_period_text(default_period)}, modifiable en haut du tableau de bord."
+            text=T(
+                (
+                    f"Toutes les valeurs viennent des lignes de vente importées (colonnes {used}), additionnées par "
+                    "mois. Aucune valeur n'est simulée ni prévue. La période initiale est les "
+                    f"{_period_text(default_period)}, modifiable en haut du tableau de bord."
+                ),
+                (
+                    f"All values come from the imported sales lines (columns {used}), summed by "
+                    "month. No value is simulated or forecast. The initial period is the "
+                    f"{_period_text(default_period, lang)}, adjustable at the top of the dashboard."
+                ),
             ),
         ),
         VisualSpec(
             type="note",
-            title="Définition des indicateurs",
-            text=(
-                "**Évolution vs N-1** : chiffre d'affaires des mois de la période, divisé par celui des mêmes mois "
-                "un an plus tôt, moins 1 ; seuls les mois qui ont un équivalent un an plus tôt comptent. Le voyant "
-                "passe à l'orange sous 0 % et au rouge sous -5 %. **Part du CA** : CA de la ligne ÷ CA de toutes "
-                f"les {noun}s de la période."
-                + (" **Prix moyen** : CA ÷ quantité." if q else "")
-                + (" **Clients actifs** : clients avec au moins une vente." if c else "")
+            title=T("Définition des indicateurs", "Indicator definitions"),
+            text=T(
+                (
+                    "**Évolution vs N-1** : chiffre d'affaires des mois de la période, divisé par celui des mêmes mois "
+                    "un an plus tôt, moins 1 ; seuls les mois qui ont un équivalent un an plus tôt comptent. Le voyant "
+                    "passe à l'orange sous 0 % et au rouge sous -5 %. **Part du CA** : CA de la ligne ÷ CA de toutes "
+                    f"les {noun}s de la période."
+                    + (" **Prix moyen** : CA ÷ quantité." if q else "")
+                    + (" **Clients actifs** : clients avec au moins une vente." if c else "")
+                ),
+                (
+                    "**Change vs PY**: revenue of the months of the period, divided by that of the same months "
+                    "one year earlier, minus 1; only months that have an equivalent one year earlier count. The "
+                    "indicator turns orange below 0% and red below -5%. **Revenue share**: row revenue ÷ total "
+                    "revenue of the period."
+                    + (" **Average price**: revenue ÷ quantity." if q else "")
+                    + (" **Active customers**: customers with at least one sale." if c else "")
+                ),
             ),
         ),
         VisualSpec(
             type="note",
-            title="Limites",
-            text=(
-                "Le dernier mois est partiel si les données s'arrêtent en cours de mois : son CA paraît alors "
-                "inférieur à celui du même mois l'an dernier. Les retours et avoirs, s'ils sont saisis en "
-                "négatif, viennent en déduction du CA."
+            title=T("Limites", "Limitations"),
+            text=T(
+                (
+                    "Le dernier mois est partiel si les données s'arrêtent en cours de mois : son CA paraît alors "
+                    "inférieur à celui du même mois l'an dernier. Les retours et avoirs, s'ils sont saisis en "
+                    "négatif, viennent en déduction du CA."
+                ),
+                (
+                    "The last month is partial if the data stops mid-month: its revenue then looks "
+                    "lower than that of the same month last year. Returns and credit notes, if entered as "
+                    "negatives, are deducted from revenue."
+                ),
             ),
         ),
     ]

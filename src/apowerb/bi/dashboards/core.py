@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -377,6 +377,8 @@ class Dashboard(BaseModel):
     sources: list[SourceSpec] = Field(default_factory=list)
     filters: list[FilterSpec] = Field(default_factory=list)
     template: TemplateRef | None = None
+    # Language of the texts written at compute time (numbers, dates, « Toutes »); None = French.
+    locale: Literal["fr", "en"] | None = None
 
     # layout
     columns: int = Field(default=12, ge=1, le=24, description="Grid column count")
@@ -422,6 +424,7 @@ class Dashboard(BaseModel):
         filters: list[FilterSpec] | None = None,
         spec_version: int | None = None,
         template: TemplateRef | dict | None = None,
+        locale: str | None = None,
     ) -> "Dashboard":
         sources = sources or []
         filters = filters or []
@@ -441,6 +444,7 @@ class Dashboard(BaseModel):
             filters=filters,
             spec_version=spec_version or (2 if has_v2 else 1),
             template=template,
+            locale=locale,
         )
 
     # ------------------------------------------------------------------

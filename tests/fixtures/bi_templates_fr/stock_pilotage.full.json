@@ -1,0 +1,808 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "text": "{{filters.famille}} : stock actuel de {{stock_actuel|compact}} unités, soit {{couverture_actuelle|weeks}} de ventes prévues. À commander cette semaine : {{commande_semaine|compact}} unités ({{familles_a_commander|integer}} famille(s)). {{familles_a_risque|integer}} famille(s) passent sous le seuil de sécurité avant qu'une commande puisse arriver.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "stock_actuel",
+     "secondary": "Couverture : {{couverture_actuelle|weeks}}"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "Stock actuel",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "prevision_semaine",
+     "secondary": "{{prevision_horizon|compact}} sur 8 semaines"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "Prévision de la semaine",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "commande_semaine",
+     "secondary": "{{familles_a_commander|integer}} famille(s) concernée(s)"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "À commander cette semaine",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "familles_a_risque",
+     "secondary": "sous le seuil avant l'arrivée d'une commande"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "title": "Familles à risque",
+    "total_row": false,
+    "type": "kpi"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "good",
+      "color_rules": [],
+      "dash": false,
+      "key": "stock_plan",
+      "label": "Stock",
+      "mark": "area",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "muted",
+      "color_rules": [],
+      "dash": false,
+      "key": "ventes_plan",
+      "label": "Ventes",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "prevision_plan",
+      "label": "Prévision",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "appro_plan",
+      "label": "Approvisionnements",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "bad",
+      "color_rules": [],
+      "dash": true,
+      "key": "seuil_total",
+      "label": "Seuil de sécurité",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "plan",
+    "steps": [],
+    "subtitle": "Stock réel jusqu'à aujourd'hui, puis projeté sur 8 semaines avec les commandes recommandées.",
+    "title": "Stock, prévision et approvisionnements",
+    "total_row": false,
+    "type": "combo",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 11,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {
+     "famille": "famille"
+    },
+    "columns": [
+     {
+      "key": "famille",
+      "label": "Famille",
+      "use_thresholds": false
+     },
+     {
+      "key": "stock_actuel",
+      "label": "Stock actuel",
+      "use_thresholds": false
+     },
+     {
+      "key": "couverture_actuelle",
+      "label": "Couverture",
+      "use_thresholds": true
+     },
+     {
+      "key": "semaines_avant_rupture",
+      "label": "Semaines avant rupture sans commande",
+      "total_measure": "semaines_avant_rupture_min",
+      "use_thresholds": true
+     },
+     {
+      "key": "commande_semaine",
+      "label": "À commander cette semaine",
+      "use_thresholds": false
+     },
+     {
+      "key": "prochaine_commande",
+      "label": "Prochaine commande (semaine)",
+      "use_thresholds": false
+     },
+     {
+      "key": "commandes_horizon",
+      "label": "Commandes sur 8 semaines",
+      "use_thresholds": false
+     },
+     {
+      "key": "semaines_sous_seuil",
+      "label": "Semaines sous le seuil",
+      "use_thresholds": true
+     }
+    ],
+    "highlight_filter": "famille",
+    "ignore_filters": [
+     "famille"
+    ],
+    "reference_lines": [],
+    "series": [],
+    "source": "plan",
+    "steps": [],
+    "subtitle": "Cliquer sur une famille pour filtrer le tableau de bord.",
+    "title": "Plan par famille",
+    "total_row": true,
+    "type": "table",
+    "x": "famille"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 5,
+    "row": 16,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "commande_prevue",
+      "label": "Commande",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "horizon",
+    "steps": [],
+    "subtitle": "Quantité à commander chaque semaine pour ne pas passer sous le seuil.",
+    "title": "Commandes à passer, semaine par semaine",
+    "total_row": false,
+    "type": "bar",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 5,
+    "row": 16,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "good",
+      "color_rules": [],
+      "dash": false,
+      "key": "stock_hebdo",
+      "label": "Stock",
+      "mark": "area",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "ventes_hebdo",
+      "label": "Ventes",
+      "mark": "line",
+      "use_thresholds": false
+     },
+     {
+      "axis": "left",
+      "color": "bad",
+      "color_rules": [],
+      "dash": true,
+      "key": "seuil_hebdo",
+      "label": "Seuil de sécurité",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "stocks",
+    "steps": [],
+    "title": "Historique : stock réel et ventes",
+    "total_row": false,
+    "type": "combo",
+    "x": "semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "real",
+     "forecast",
+     "simulated"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les ventes (`ventes`) et le stock (`stock`) sont les données réelles du fichier. Le stock des semaines à venir est une projection ; les commandes et les approvisionnements sont des recommandations.",
+    "title": "Origine des données",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "badges": [
+     "simulated"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "On commande une semaine donnée si, à l'arrivée de cette commande (après le délai fournisseur), le stock passerait sous le seuil de sécurité. Quantité : de quoi revenir au seuil plus 4 semaines de prévision. Seuil de sécurité : la colonne `seuil_securite`. Délai fournisseur : la colonne `delai_fournisseur_sem`, famille par famille. La prévision vient du moteur th2forecast ; s'il ne répond pas, le plan utilise la moyenne des 4 dernières semaines de ventes et un avertissement l'indique.",
+    "title": "Règle de commande",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 4,
+    "row": 21,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Les commandes déjà passées ne sont pas connues : rien n'arrive pendant le premier délai. Une famille « à risque » passe sous le seuil avant qu'une commande puisse arriver : il faut une action immédiate (commande urgente, transfert).",
+    "title": "Limites",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "field": "famille",
+   "id": "famille",
+   "label": "Famille",
+   "type": "select"
+  },
+  {
+   "applies_to": [
+    "stocks"
+   ],
+   "default": "26w",
+   "field": "semaine",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "13w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Semaine",
+     "name": "semaine",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Famille",
+     "name": "famille",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Ventes",
+     "name": "ventes",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Stock",
+     "name": "stock",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Seuil de sécurité",
+     "name": "seuil_securite",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Historique des stocks",
+   "measures": [
+    {
+     "expr": "SUM(stock)",
+     "format": "compact",
+     "label": "Stock",
+     "name": "stock_hebdo",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(ventes)",
+     "format": "compact",
+     "label": "Ventes",
+     "name": "ventes_hebdo",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(seuil_securite)",
+     "format": "compact",
+     "label": "Seuil de sécurité",
+     "name": "seuil_hebdo",
+     "unit": "unités"
+    }
+   ],
+   "name": "stocks",
+   "source_options": {},
+   "transforms": [
+    {
+     "aggregates": {
+      "delai_fournisseur_sem": "MAX(delai_fournisseur_sem)",
+      "seuil_securite": "SUM(seuil_securite)",
+      "stock": "SUM(stock)",
+      "ventes": "SUM(ventes)"
+     },
+     "group_by": [
+      "semaine",
+      "famille"
+     ],
+     "op": "aggregate"
+    }
+   ]
+  },
+  {
+   "fields": [
+    {
+     "format": "compact",
+     "label": "Prévision",
+     "name": "prevision_moteur",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Stock (réel puis projeté)",
+     "name": "stock_projete",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Stock sans commande",
+     "name": "stock_sans_commande",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Approvisionnements",
+     "name": "reception",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Commande à passer",
+     "name": "commande",
+     "provenance": "simulated",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "compact",
+     "label": "Seuil de sécurité",
+     "name": "seuil_plan",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Délai fournisseur",
+     "name": "delai_plan",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Risque",
+     "name": "risque",
+     "provenance": "forecast",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Semaine du plan",
+     "name": "semaine_plan",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "number"
+    }
+   ],
+   "kind": "source",
+   "label": "Plan d'approvisionnement",
+   "measures": [
+    {
+     "description": "Stock de la dernière semaine connue.",
+     "expr": "SUM(stock) FILTER (WHERE semaine_plan = 0)",
+     "format": "compact",
+     "label": "Stock actuel",
+     "name": "stock_actuel",
+     "unit": "unités"
+    },
+    {
+     "description": "Stock actuel ÷ prévision moyenne d'une semaine de l'horizon.",
+     "expr": "SUM(stock) FILTER (WHERE semaine_plan = 0) / NULLIF(SUM(prevision_moteur) FILTER (WHERE semaine_plan >= 1) / NULLIF(COUNT(DISTINCT semaine) FILTER (WHERE semaine_plan >= 1), 0), 0)",
+     "format": "weeks",
+     "label": "Couverture",
+     "name": "couverture_actuelle",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 4.0,
+      "warn": 2.0
+     }
+    },
+    {
+     "expr": "SUM(prevision_moteur) FILTER (WHERE semaine_plan = 1)",
+     "format": "compact",
+     "label": "Prévision de la semaine",
+     "name": "prevision_semaine",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(prevision_moteur) FILTER (WHERE semaine_plan >= 1)",
+     "format": "compact",
+     "label": "Prévision sur l'horizon",
+     "name": "prevision_horizon",
+     "unit": "unités"
+    },
+    {
+     "expr": "COALESCE(SUM(commande) FILTER (WHERE semaine_plan = 1), 0)",
+     "format": "compact",
+     "label": "À commander cette semaine",
+     "name": "commande_semaine",
+     "unit": "unités"
+    },
+    {
+     "expr": "COUNT(DISTINCT famille) FILTER (WHERE semaine_plan = 1 AND commande > 0)",
+     "format": "integer",
+     "label": "Familles à commander cette semaine",
+     "name": "familles_a_commander"
+    },
+    {
+     "expr": "COALESCE(SUM(commande) FILTER (WHERE semaine_plan >= 1), 0)",
+     "format": "compact",
+     "label": "Commandes sur l'horizon",
+     "name": "commandes_horizon",
+     "unit": "unités"
+    },
+    {
+     "description": "Semaine du plan où passer la prochaine commande (1 = cette semaine).",
+     "expr": "MIN(semaine_plan) FILTER (WHERE semaine_plan >= 1 AND commande > 0)",
+     "format": "integer",
+     "label": "Prochaine commande",
+     "name": "prochaine_commande",
+     "unit": "semaine"
+    },
+    {
+     "description": "Familles qui passent sous le seuil avant qu'une commande puisse arriver.",
+     "expr": "COUNT(DISTINCT famille) FILTER (WHERE risque = 2)",
+     "format": "integer",
+     "label": "Familles à risque",
+     "name": "familles_a_risque",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.0,
+      "warn": 0.0
+     }
+    },
+    {
+     "description": "Semaines de l'horizon sous le seuil malgré les commandes.",
+     "expr": "COUNT(*) FILTER (WHERE risque = 2)",
+     "format": "integer",
+     "label": "Semaines sous le seuil",
+     "name": "semaines_sous_seuil",
+     "thresholds": {
+      "direction": "lower_is_better",
+      "good": 0.0,
+      "warn": 0.0
+     },
+     "unit": "semaines"
+    },
+    {
+     "description": "Semaines couvertes par le stock actuel sans commande (au plus 8).",
+     "expr": "COUNT(*) FILTER (WHERE semaine_plan >= 1 AND stock_sans_commande > 0)",
+     "format": "integer",
+     "label": "Semaines avant rupture sans commande",
+     "name": "semaines_avant_rupture",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 4.0,
+      "warn": 2.0
+     },
+     "unit": "semaines"
+    },
+    {
+     "expr": "(SELECT MIN(n) FROM (SELECT COUNT(*) FILTER (WHERE semaine_plan >= 1 AND stock_sans_commande > 0) AS n FROM frame GROUP BY famille))",
+     "format": "integer",
+     "label": "Semaines avant rupture sans commande",
+     "name": "semaines_avant_rupture_min",
+     "unit": "semaines"
+    },
+    {
+     "expr": "SUM(stock_projete)",
+     "format": "compact",
+     "label": "Stock (réel puis projeté)",
+     "name": "stock_plan",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(prevision_moteur)",
+     "format": "compact",
+     "label": "Prévision",
+     "name": "prevision_plan",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(ventes)",
+     "format": "compact",
+     "label": "Ventes",
+     "name": "ventes_plan",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(reception)",
+     "format": "compact",
+     "label": "Approvisionnements",
+     "name": "appro_plan",
+     "unit": "unités"
+    },
+    {
+     "expr": "SUM(seuil_plan)",
+     "format": "compact",
+     "label": "Seuil de sécurité",
+     "name": "seuil_total",
+     "unit": "unités"
+    }
+   ],
+   "name": "plan",
+   "parent": "stocks",
+   "source_options": {},
+   "transforms": [
+    {
+     "by": [
+      "famille"
+     ],
+     "date": "semaine",
+     "horizon": 8,
+     "op": "forecast",
+     "output": "prevision_moteur",
+     "value": "ventes"
+    },
+    {
+     "by": [
+      "famille"
+     ],
+     "date": "semaine",
+     "default_lot": 1,
+     "demand": "ventes",
+     "forecast": "prevision_moteur",
+     "horizon": 8,
+     "keep_history": 12,
+     "lead_time": 1,
+     "lead_time_column": "delai_fournisseur_sem",
+     "lot_sizes": {},
+     "op": "replenishment_plan",
+     "safety_column": "seuil_securite",
+     "safety_weeks": 0.5,
+     "stock": "stock",
+     "target_cover": 4
+    }
+   ]
+  },
+  {
+   "fields": [],
+   "kind": "source",
+   "label": "Plan sur 8 semaines",
+   "measures": [
+    {
+     "expr": "COALESCE(SUM(commande), 0)",
+     "format": "compact",
+     "label": "Commande",
+     "name": "commande_prevue",
+     "unit": "unités"
+    }
+   ],
+   "name": "horizon",
+   "parent": "plan",
+   "source_options": {},
+   "transforms": [
+    {
+     "op": "filter",
+     "where": "semaine_plan >= 1"
+    }
+   ]
+  }
+ ]
+}

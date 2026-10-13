@@ -143,14 +143,11 @@ def test_created_dashboard_link_is_relative_and_must_be_copied_verbatim(rows):
         assert "never add a domain" in res["message"]
 
 
-def test_created_message_says_component_ids_are_not_chart_ids(rows):
-    # PROD 13/10 : le modele a passe l'id d'un composant a embed_chart (carte en 404).
+def test_created_dashboard_says_its_components_are_not_charts(rows):
+    # PROD 13/10 : le modele a passe l'id d'un composant a embed_chart -> carte 404.
     for res in (_create(), t.tool_bi_create_stock_dashboard("ds-1")):
-        msg = res["message"]
-        assert "embed_chart" in msg
-        assert "NOT chart_ids" in msg
-        assert "'components'" in msg
-        assert f"/bi/{res['dashboard_id']}" in msg
+        assert "embed_chart" in res["message"]
+        assert "not chart" in res["message"]
 
 
 def test_embed_chart_doc_separates_chart_ids_from_dashboard_component_ids():

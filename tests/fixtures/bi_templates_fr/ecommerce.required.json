@@ -1,0 +1,276 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "text": "Du {{period.from}} au {{period.to}} : {{ca|compact}} € de chiffre d'affaires sur {{commandes|integer}} commandes, panier moyen de {{panier_moyen|decimal1}} €.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "ca",
+     "sparkline": "ca"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Chiffre d'affaires",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "commandes",
+     "sparkline": "commandes"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Commandes",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 2,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "panier_moyen",
+     "sparkline": "panier_moyen"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Panier moyen",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 5,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "Chiffre d'affaires",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "right",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "commandes",
+      "label": "Commandes",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "commandes",
+    "steps": [],
+    "subtitle": "Chiffre d'affaires en barres, nombre de commandes en ligne.",
+    "title": "CA et commandes par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**CA** : somme des montants, commandes annulées et remboursées exclues. **Panier moyen** : CA ÷ commandes.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 4,
+    "row": 11,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "La période se règle en haut du tableau de bord. Chaque ratio est calculé sur les sommes, jamais comme une moyenne de ratios.",
+    "title": "Seuils et lecture",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "26w",
+   "field": "date",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "4w",
+    "12w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Date de commande",
+     "name": "date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Commande",
+     "name": "commande_id",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Montant",
+     "name": "montant",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Semaine",
+     "name": "periode_semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Commandes",
+   "measures": [
+    {
+     "description": "Somme des montants des commandes (annulées et remboursées exclues).",
+     "expr": "SUM(\"montant\")",
+     "format": "compact",
+     "label": "Chiffre d'affaires",
+     "name": "ca",
+     "unit": "€"
+    },
+    {
+     "description": "Nombre de commandes distinctes.",
+     "expr": "COUNT(DISTINCT \"commande_id\")",
+     "format": "integer",
+     "label": "Commandes",
+     "name": "commandes",
+     "unit": "commandes"
+    },
+    {
+     "description": "Chiffre d'affaires ÷ nombre de commandes.",
+     "expr": "SUM(\"montant\") / NULLIF(COUNT(DISTINCT \"commande_id\"), 0)",
+     "format": "decimal1",
+     "label": "Panier moyen",
+     "name": "panier_moyen",
+     "unit": "€"
+    }
+   ],
+   "name": "commandes",
+   "source_options": {},
+   "transforms": [
+    {
+     "column": "periode_semaine",
+     "expr": "date_trunc('week', CAST(\"date\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    }
+   ]
+  }
+ ]
+}

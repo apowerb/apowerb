@@ -277,10 +277,14 @@ def _is_duplicate(exc: Exception) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def _async_create(title: str, description: str, spec: dict, owner: str, template: dict | None = None) -> dict:
+async def _async_create(
+    title: str, description: str, spec: dict, owner: str, template: dict | None = None, locale: str | None = None
+) -> dict:
     dashboard, error = _build_dashboard(title, description, spec, owner)
     if error:
         return {"success": False, "error": error}
+    if locale and locale != "fr":
+        dashboard = dashboard.model_copy(update={"locale": locale})
     if template is not None:
         from apowerb.bi.dashboards.core import TemplateRef
 
@@ -311,8 +315,7 @@ async def _async_create(title: str, description: str, spec: dict, owner: str, te
     message = (
         f"Dashboard '{dashboard.title}' created. Link for the user: /bi/{dashboard.id}"
         " (copy this relative path exactly as written; never add a domain in front of it)."
-        " The ids in 'components' are internal to this dashboard, NOT chart_ids: never pass"
-        " them to embed_chart. To show the dashboard, give the user the link above."
+        " Its component ids are not chart ids: never pass them to embed_chart; give this link instead."
     )
     if renamed:
         message = (
@@ -513,14 +516,16 @@ def _fail(tool: str, exc: Exception, title: str = "") -> dict:
     return {"success": False, "error": str(exc)}
 
 
-def _create(title: str, description: str, spec: dict, tool: str, template: dict | None = None) -> dict:
+def _create(
+    title: str, description: str, spec: dict, tool: str, template: dict | None = None, locale: str | None = None
+) -> dict:
     owner = _agent_owner()
     if not owner:
         return {"success": False, "error": "No owner context."}
     if not (title or "").strip():
         return {"success": False, "error": "title is required."}
     try:
-        return _run_tool(_async_create(title.strip(), description, spec, owner, template))
+        return _run_tool(_async_create(title.strip(), description, spec, owner, template, locale))
     except Exception as exc:
         return _fail(tool, exc, title)
 
@@ -644,7 +649,7 @@ def tool_bi_create_dashboard(
 
 def tool_bi_create_stock_dashboard(
     dataset_id: str = "",
-    title: str = "Pilotage stocks",
+    title: str = "",
     date: str = "semaine",
     family: str = "famille",
     sales: str = "ventes",
@@ -658,6 +663,7 @@ def tool_bi_create_stock_dashboard(
     safety_column: str = "",
     lead_time_column: str = "",
     target_cover: int = 4,
+    language: str = "fr",
 ) -> dict:
     """Creates a complete "Pilotage stocks" dashboard from a weekly sales dataset.
 
@@ -703,12 +709,15 @@ def tool_bi_create_stock_dashboard(
         lead_time_column: Supplier lead time column (weeks), with ``stock``.
                         Empty: ``lead_time``.
         target_cover:   Weeks of forecast an order covers above the threshold.
+        language:       Language of the dashboard texts, "fr" or "en": use the
+                        language of the conversation.
 
     Returns the dashboard id, url (/bi/<id>), computed KPIs and the text
     summary, and an "errors" map for components that failed.
     """
-    from apowerb.bi.spec.catalog import STOCK_PILOTAGE_VERSION
+    from apowerb.bi.spec.catalog import STOCK_PILOTAGE_VERSION, get_template
     from apowerb.bi.spec.templates import stock_pilotage
+    from apowerb.bi.spec.templates_common import check_lang
 
     if not (dataset_id or "").strip():
         return {
@@ -720,6 +729,7 @@ def tool_bi_create_stock_dashboard(
             ),
         }
     try:
+        lang = check_lang(language)
         spec = stock_pilotage(
             dataset_id.strip(),
             date=date,
@@ -735,6 +745,7 @@ def tool_bi_create_stock_dashboard(
             safety_column=safety_column.strip() or None,
             lead_time_column=lead_time_column.strip() or None,
             target_cover=target_cover,
+            lang=lang,
         )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
@@ -752,10 +763,11 @@ def tool_bi_create_stock_dashboard(
         },
         "params": {"horizon": horizon},
     }
-    return _create(title or "Pilotage stocks", "", spec, "tool_bi_create_stock_dashboard", provenance)
+    default_title = get_template("stock_pilotage", lang=lang).label
+    return _create(title or default_title, "", spec, "tool_bi_create_stock_dashboard", provenance, lang)
 
 
-def tool_bi_list_dashboard_templates() -> dict:
+def tool_bi_list_dashboard_templates(language: str = "fr") -> dict:
     """Lists the ready-made dashboard templates (stock steering, delivery OTIF, production quality...).
 
     Each template gives its id, what it shows, the columns it expects (key,
@@ -763,11 +775,18 @@ def tool_bi_list_dashboard_templates() -> dict:
     before tool_bi_create_dashboard_from_template to pick the template that
     fits the user's need and map the dataset columns.
 
+    Args:
+        language: "fr" or "en", the language of the conversation.
+
     Returns {"success": True, "templates": [...]}.
     """
     from apowerb.bi.spec.catalog import list_templates
 
-    return {"success": True, "templates": [tpl.describe() for tpl in list_templates()]}
+    try:
+        templates = list_templates(language)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    return {"success": True, "templates": [tpl.describe() for tpl in templates]}
 
 
 def tool_bi_create_dashboard_from_template(
@@ -776,6 +795,7 @@ def tool_bi_create_dashboard_from_template(
     title: str = "",
     columns_json: str = "{}",
     params_json: str = "{}",
+    language: str = "fr",
 ) -> dict:
     """Creates a complete dashboard from a ready-made template on one dataset.
 
@@ -783,9 +803,10 @@ def tool_bi_create_dashboard_from_template(
     tool_bi_list_dashboard_templates (for example delivery_otif for on-time
     in-full deliveries, production_quality for scrap and defect rates). Call
     bi_datasets.tool_describe_dataset first and map each template column key
-    to the dataset column that holds it; columns left out use the template
-    default name. The dashboard remembers its template so the user can later
-    update it or replace its file from the UI.
+    to the dataset column that holds it; a required column left out uses the
+    template default name, an optional one is used only when you map it. The
+    dashboard remembers its template so the user can later update it or
+    replace its file from the UI.
 
     Args:
         template_id:  Template id from tool_bi_list_dashboard_templates.
@@ -793,13 +814,18 @@ def tool_bi_create_dashboard_from_template(
         title:        Dashboard title. Empty: the template label.
         columns_json: JSON object {template column key: dataset column name}.
         params_json:  JSON object {parameter key: value}; empty uses defaults.
+        language:     Language of the dashboard texts, "fr" or "en": use the
+                      language of the conversation.
 
     Returns the dashboard id, url (/bi/<id>), computed KPIs and an "errors"
     map for components that failed to compute.
     """
     from apowerb.bi.spec.catalog import get_template, list_templates
 
-    template = get_template((template_id or "").strip())
+    try:
+        template = get_template((template_id or "").strip(), lang=language)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
     if template is None:
         known = ", ".join(tpl.id for tpl in list_templates())
         return {"success": False, "error": f"Unknown template '{template_id}'. Available: {known}."}
@@ -810,7 +836,8 @@ def tool_bi_create_dashboard_from_template(
     if error:
         return {"success": False, "error": error}
     given = {k: v for k, v in mapping.items() if v}
-    columns, column_errors = template.clean_columns({**{c.key: c.default for c in template.columns}, **given})
+    required = {c.key: c.default for c in template.columns if c.required}
+    columns, column_errors = template.clean_columns({**required, **given})
     params, param_errors = template.clean_params(raw_params)
     if column_errors or param_errors:
         return {"success": False, "error": " ".join(column_errors + param_errors)}
@@ -819,7 +846,8 @@ def tool_bi_create_dashboard_from_template(
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
     provenance = {"id": template.id, "version": template.version, "columns": columns, "params": params}
-    return _create(title or template.label, "", spec, "tool_bi_create_dashboard_from_template", provenance)
+    return _create(title or template.label, "", spec, "tool_bi_create_dashboard_from_template", provenance,
+                   template.lang)
 
 
 def tool_bi_patch_dashboard(dashboard_id: str, ops_json: str, dry_run: bool = False) -> dict:

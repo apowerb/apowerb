@@ -1,0 +1,610 @@
+{
+ "components": [
+  {
+   "position": {
+    "col": 0,
+    "height": 2,
+    "row": 0,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "text": "{{filters.canal}}, du {{period.from}} au {{period.to}} : {{ca|compact}} € de chiffre d'affaires sur {{commandes|integer}} commandes, panier moyen de {{panier_moyen|decimal1}} €. Marge de contribution de {{marge_contribution|compact}} € ({{taux_marge|percent}}). ROAS de {{roas|decimal1}} pour {{depense_pub|compact}} € de publicité.",
+    "total_row": false,
+    "type": "text"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "ca",
+     "sparkline": "ca"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Chiffre d'affaires",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 3,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "commandes",
+     "sparkline": "commandes"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Commandes",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "panier_moyen",
+     "sparkline": "panier_moyen"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Panier moyen",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 9,
+    "height": 3,
+    "row": 2,
+    "width": 3
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "marge_contribution",
+     "secondary": "{{taux_marge|percent}} du chiffre d'affaires",
+     "sparkline": "marge_contribution"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Marge de contribution",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 3,
+    "row": 5,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "roas",
+     "secondary": "{{depense_pub|compact}} € de publicité",
+     "sparkline": "roas",
+     "target_label": "alerte sous 2"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "ROAS",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 4,
+    "height": 3,
+    "row": 5,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "cac",
+     "secondary": "{{nouveaux_clients|integer}} nouveaux clients",
+     "sparkline": "cac"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Coût d'acquisition client",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 8,
+    "height": 3,
+    "row": 5,
+    "width": 4
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "kpi": {
+     "measure": "clients_recurrents",
+     "secondary": "{{clients_actifs|integer}} clients actifs"
+    },
+    "reference_lines": [],
+    "series": [],
+    "source": "commandes",
+    "steps": [],
+    "title": "Clients récurrents",
+    "total_row": false,
+    "type": "kpi",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 8,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "Chiffre d'affaires",
+      "mark": "bar",
+      "use_thresholds": false
+     },
+     {
+      "axis": "right",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "commandes",
+      "label": "Commandes",
+      "mark": "line",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "x_asc",
+    "source": "commandes",
+    "steps": [],
+    "subtitle": "Chiffre d'affaires en barres, nombre de commandes en ligne.",
+    "title": "CA et commandes par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 14,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [
+     {
+      "color": "bad",
+      "dash": true,
+      "label": "Seuil 2",
+      "value": 2.0
+     }
+    ],
+    "series": [
+     {
+      "axis": "left",
+      "color_rules": [],
+      "dash": false,
+      "key": "roas",
+      "label": "ROAS",
+      "mark": "bar",
+      "use_thresholds": true
+     }
+    ],
+    "sort": "x_asc",
+    "source": "commandes",
+    "steps": [],
+    "subtitle": "Rouge sous le seuil d'alerte de 2.",
+    "title": "ROAS par semaine",
+    "total_row": false,
+    "type": "combo",
+    "x": "periode_semaine"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 6,
+    "row": 14,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {
+     "canal": "channel"
+    },
+    "columns": [],
+    "ignore_filters": [
+     "canal"
+    ],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#3b6fd8",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "Chiffre d'affaires",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "commandes",
+    "steps": [],
+    "subtitle": "Cliquer pour filtrer le tableau de bord.",
+    "title": "CA par canal",
+    "total_row": false,
+    "type": "hbar",
+    "x": "channel"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 6,
+    "row": 20,
+    "width": 12
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [
+     {
+      "axis": "left",
+      "color": "#9a6b3f",
+      "color_rules": [],
+      "dash": false,
+      "key": "ca",
+      "label": "Chiffre d'affaires",
+      "mark": "bar",
+      "use_thresholds": false
+     }
+    ],
+    "sort": "value_desc",
+    "source": "commandes",
+    "steps": [],
+    "subtitle": "Les 10 clients au plus fort chiffre d'affaires sur la période.",
+    "title": "Top clients",
+    "top_n": 10,
+    "total_row": false,
+    "type": "hbar",
+    "x": "customer_id"
+   }
+  },
+  {
+   "position": {
+    "col": 0,
+    "height": 4,
+    "row": 26,
+    "width": 6
+   },
+   "visual": {
+    "badges": [
+     "real"
+    ],
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "**CA** : somme des montants, commandes annulées et remboursées exclues. **Panier moyen** : CA ÷ commandes. **Marge de contribution** : CA - coût des produits - dépense publicitaire. **ROAS** : CA ÷ dépense publicitaire. **Coût d'acquisition** : dépense publicitaire ÷ nouveaux clients. **Clients récurrents** : clients ayant au moins deux commandes sur la période.",
+    "title": "Définitions",
+    "total_row": false,
+    "type": "note"
+   }
+  },
+  {
+   "position": {
+    "col": 6,
+    "height": 4,
+    "row": 26,
+    "width": 6
+   },
+   "visual": {
+    "click_filters": {},
+    "columns": [],
+    "ignore_filters": [],
+    "reference_lines": [],
+    "series": [],
+    "steps": [],
+    "text": "Le ROAS passe en alerte sous 2 (seuil réglable à la création). Les dépenses publicitaires doivent figurer une seule fois dans le fichier. La période se règle en haut du tableau de bord. Chaque ratio est calculé sur les sommes, jamais comme une moyenne de ratios.",
+    "title": "Seuils et lecture",
+    "total_row": false,
+    "type": "note"
+   }
+  }
+ ],
+ "filters": [
+  {
+   "default": "26w",
+   "field": "date",
+   "id": "periode",
+   "label": "Période",
+   "presets": [
+    "4w",
+    "12w",
+    "26w",
+    "52w",
+    "all"
+   ],
+   "type": "relative_period"
+  },
+  {
+   "field": "channel",
+   "id": "canal",
+   "label": "Canal",
+   "type": "select"
+  }
+ ],
+ "sources": [
+  {
+   "dataset_id": "11111111-2222-3333-4444-555555555555",
+   "fields": [
+    {
+     "label": "Date de commande",
+     "name": "date",
+     "provenance": "real",
+     "role": "date",
+     "type": "date"
+    },
+    {
+     "label": "Commande",
+     "name": "commande_id",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Montant",
+     "name": "montant",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Client",
+     "name": "customer_id",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Coût des produits",
+     "name": "product_cost",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Canal",
+     "name": "channel",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "string"
+    },
+    {
+     "format": "compact",
+     "label": "Dépense publicitaire",
+     "name": "ad_spend",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "format": "integer",
+     "label": "Nouveau client",
+     "name": "client_nouveau",
+     "provenance": "real",
+     "role": "measure",
+     "type": "number"
+    },
+    {
+     "label": "Semaine",
+     "name": "periode_semaine",
+     "provenance": "real",
+     "role": "dimension",
+     "type": "date"
+    }
+   ],
+   "kind": "dataset",
+   "label": "Commandes",
+   "measures": [
+    {
+     "description": "Somme des montants des commandes (annulées et remboursées exclues).",
+     "expr": "SUM(\"montant\")",
+     "format": "compact",
+     "label": "Chiffre d'affaires",
+     "name": "ca",
+     "unit": "€"
+    },
+    {
+     "description": "Nombre de commandes distinctes.",
+     "expr": "COUNT(DISTINCT \"commande_id\")",
+     "format": "integer",
+     "label": "Commandes",
+     "name": "commandes",
+     "unit": "commandes"
+    },
+    {
+     "description": "Chiffre d'affaires ÷ nombre de commandes.",
+     "expr": "SUM(\"montant\") / NULLIF(COUNT(DISTINCT \"commande_id\"), 0)",
+     "format": "decimal1",
+     "label": "Panier moyen",
+     "name": "panier_moyen",
+     "unit": "€"
+    },
+    {
+     "expr": "SUM(\"ad_spend\")",
+     "format": "compact",
+     "label": "Dépense publicitaire",
+     "name": "depense_pub",
+     "unit": "€"
+    },
+    {
+     "description": "Return on ad spend : chiffre d'affaires ÷ dépense publicitaire.",
+     "expr": "SUM(\"montant\") / NULLIF(SUM(\"ad_spend\"), 0)",
+     "format": "decimal1",
+     "label": "ROAS",
+     "name": "roas",
+     "thresholds": {
+      "direction": "higher_is_better",
+      "good": 2.0,
+      "warn": 2.0
+     }
+    },
+    {
+     "description": "Chiffre d'affaires - coût des produits - dépense publicitaire.",
+     "expr": "SUM(\"montant\") - SUM(\"product_cost\") - COALESCE(SUM(\"ad_spend\"), 0)",
+     "format": "compact",
+     "label": "Marge de contribution",
+     "name": "marge_contribution",
+     "unit": "€"
+    },
+    {
+     "description": "Marge de contribution ÷ chiffre d'affaires.",
+     "expr": "(SUM(\"montant\") - SUM(\"product_cost\") - COALESCE(SUM(\"ad_spend\"), 0)) / NULLIF(SUM(\"montant\"), 0)",
+     "format": "percent",
+     "label": "Taux de marge de contribution",
+     "name": "taux_marge"
+    },
+    {
+     "expr": "COUNT(DISTINCT CASE WHEN client_nouveau = 1 THEN \"customer_id\" END)",
+     "format": "integer",
+     "label": "Nouveaux clients",
+     "name": "nouveaux_clients",
+     "unit": "clients"
+    },
+    {
+     "description": "Dépense publicitaire ÷ nouveaux clients.",
+     "expr": "SUM(\"ad_spend\") / NULLIF(COUNT(DISTINCT CASE WHEN client_nouveau = 1 THEN \"customer_id\" END), 0)",
+     "format": "decimal1",
+     "label": "Coût d'acquisition client",
+     "name": "cac",
+     "unit": "€"
+    },
+    {
+     "description": "Clients ayant passé au moins une commande sur la période.",
+     "expr": "(SELECT COUNT(DISTINCT \"customer_id\") FROM frame WHERE \"customer_id\" IS NOT NULL AND \"commande_id\" IS NOT NULL)",
+     "format": "integer",
+     "label": "Clients actifs",
+     "name": "clients_actifs",
+     "unit": "clients"
+    },
+    {
+     "description": "Clients ayant passé au moins deux commandes sur la période ÷ clients actifs.",
+     "expr": "(SELECT COUNT(*) FROM (SELECT \"customer_id\" FROM frame WHERE \"customer_id\" IS NOT NULL AND \"commande_id\" IS NOT NULL GROUP BY \"customer_id\" HAVING COUNT(DISTINCT \"commande_id\") >= 2)) / NULLIF((SELECT COUNT(DISTINCT \"customer_id\") FROM frame WHERE \"customer_id\" IS NOT NULL AND \"commande_id\" IS NOT NULL), 0)",
+     "format": "percent",
+     "label": "Clients récurrents",
+     "name": "clients_recurrents"
+    }
+   ],
+   "name": "commandes",
+   "source_options": {},
+   "transforms": [
+    {
+     "op": "filter",
+     "where": "\"status\" IS NULL OR NOT (LOWER(TRIM(CAST(\"status\" AS VARCHAR))) LIKE 'annul%' OR LOWER(TRIM(CAST(\"status\" AS VARCHAR))) LIKE 'rembours%' OR LOWER(TRIM(CAST(\"status\" AS VARCHAR))) LIKE 'cancel%' OR LOWER(TRIM(CAST(\"status\" AS VARCHAR))) LIKE 'refund%')"
+    },
+    {
+     "column": "periode_semaine",
+     "expr": "date_trunc('week', CAST(\"date\" AS TIMESTAMP))",
+     "op": "derive",
+     "provenance": "real"
+    },
+    {
+     "column": "client_nouveau",
+     "expr": "CASE WHEN \"new_customer\" IS NULL THEN NULL WHEN LOWER(TRIM(CAST(\"new_customer\" AS VARCHAR))) IN ('1', '1.0', 'true', 'vrai', 'oui', 'yes', 'y', 'o') THEN 1 ELSE 0 END",
+     "op": "derive"
+    }
+   ]
+  }
+ ]
+}
