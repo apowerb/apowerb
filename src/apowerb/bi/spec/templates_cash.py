@@ -1,0 +1,415 @@
+"""
+bi/spec/templates_cash.py
+-------------------------
+Spec v2 template « Prévision de trésorerie » : solde de trésorerie projeté sur
+l'horizon en trois scénarios (pessimiste / central / optimiste), à partir d'une
+ligne par période (semaine ou mois), et par compte si la colonne existe, avec
+le solde réel (optionnel), les encaissements et les décaissements.
+
+Règle (étape ``cash_forecast``) : solde(t) = solde(t-1) + encaissements(t) -
+décaissements(t), les flux étant prévus par le moteur th2forecast (repli : moyenne
+des 4 dernières périodes, avec un avertissement). Pessimiste : encaissements ×
+(1 - a), décaissements × (1 + b) ; optimiste : l'inverse.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from pydantic import BaseModel
+
+from apowerb.bi.spec.models import (
+    IDENT,
+    CashForecastStep,
+    ColumnSpec,
+    FieldSpec,
+    FilterSpec,
+    FilterStep,
+    ForecastStep,
+    KpiSpec,
+    MeasureSpec,
+    Provenance,
+    SeriesSpec,
+    SourceSpec,
+    VisualSpec,
+)
+
+_IDENT_RE = re.compile(IDENT)
+
+BROWN = "#9a6b3f"
+BLUE = "#3b6fd8"
+
+DESCRIPTOR: dict[str, Any] = {
+    "id": "cash_forecast",
+    "label": "Prévision de trésorerie",
+    "description": (
+        "Prévision de trésorerie à partir d'une ligne par période (semaine ou mois, et par compte si besoin) "
+        "avec le solde, les encaissements et les décaissements : solde projeté sur l'horizon en trois "
+        "scénarios (pessimiste, central, optimiste), seuil de trésorerie minimale, première période sous "
+        "le seuil et nombre de semaines de trésorerie. Les flux sont prévus par le moteur de prévision."
+    ),
+    "version": 1,
+    "columns": [
+        {"key": "date", "label": "Date de la période", "type": "date", "required": True, "default": "semaine"},
+        {"key": "inflow", "label": "Encaissements", "type": "number", "required": True,
+         "default": "encaissements"},
+        {"key": "outflow", "label": "Décaissements", "type": "number", "required": True,
+         "default": "decaissements"},
+        {"key": "balance", "label": "Solde réel", "type": "number", "required": False, "default": None},
+        {"key": "account", "label": "Compte", "type": "string", "required": False, "default": None},
+        {"key": "threshold", "label": "Seuil de trésorerie minimale", "type": "number", "required": False,
+         "default": None},
+    ],
+    "params": [
+        {"key": "horizon", "label": "Horizon de prévision (périodes)", "type": "integer", "default": 13,
+         "min": 1, "max": 26},
+        {"key": "inflow_shock_pct", "label": "Écart sur les encaissements, a (%)", "type": "integer",
+         "default": 10, "min": 0, "max": 50},
+        {"key": "outflow_shock_pct", "label": "Écart sur les décaissements, b (%)", "type": "integer",
+         "default": 10, "min": 0, "max": 50},
+        {"key": "min_cash", "label": "Seuil de trésorerie minimale (par compte)", "type": "integer",
+         "default": 0, "min": -1_000_000_000, "max": 1_000_000_000},
+        {"key": "opening_balance", "label": "Solde d'ouverture (sans colonne de solde)", "type": "integer",
+         "default": 0, "min": -1_000_000_000, "max": 1_000_000_000},
+        {"key": "monthly", "label": "Données mensuelles (0 = hebdomadaires, 1 = mensuelles)", "type": "integer",
+         "default": 0, "min": 0, "max": 1},
+    ],
+}
+_REQUIRED = [c["key"] for c in DESCRIPTOR["columns"] if c["required"]]
+_OPTIONAL = [c["key"] for c in DESCRIPTOR["columns"] if not c["required"]]
+
+
+def _check_ident(label: str, value: str) -> str:
+    if not _IDENT_RE.match(value or ""):
+        raise ValueError(
+            f"{label}='{value}' is not a valid column name: use lowercase letters, "
+            "digits and underscores (start with a letter), e.g. 'encaissements'."
+        )
+    return value
+
+
+def _dump(model: BaseModel) -> dict[str, Any]:
+    return model.model_dump(mode="json", exclude_none=True)
+
+
+def _fr(value: float, digits: int = 1) -> str:
+    text = f"{value:.{digits}f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",")
+
+
+def cash_forecast(
+    dataset_id: str,
+    *,
+    date: str = "semaine",
+    inflow: str = "encaissements",
+    outflow: str = "decaissements",
+    balance: str | None = None,
+    account: str | None = None,
+    threshold_column: str | None = None,
+    horizon: int = 13,
+    inflow_shock: float = 0.10,
+    outflow_shock: float = 0.10,
+    min_cash: float = 0.0,
+    opening_balance: float = 0.0,
+    monthly: bool = False,
+    keep_history: int | None = None,
+    default_period: str | None = None,
+) -> dict:
+    """Build the « Prévision de trésorerie » spec for a dataset of cash flows."""
+    if not dataset_id:
+        raise ValueError("dataset_id is required.")
+    d = _check_ident("date", date)
+    enc = _check_ident("inflow", inflow)
+    dec = _check_ident("outflow", outflow)
+    bal = _check_ident("balance", balance) if balance else None
+    acc = _check_ident("account", account) if account else None
+    thr = _check_ident("threshold_column", threshold_column) if threshold_column else None
+    if not 0 <= inflow_shock <= 1 or not 0 <= outflow_shock <= 1:
+        raise ValueError("inflow_shock and outflow_shock must be between 0 and 1.")
+    if not 1 <= horizon <= 104:
+        raise ValueError("horizon must be between 1 and 104.")
+
+    unit_one, unit_many = ("mois", "mois") if monthly else ("semaine", "semaines")
+    unit_short = "mois" if monthly else "sem."
+    frequency = "month" if monthly else None  # weekly: inferred by the engine
+    history = keep_history if keep_history is not None else (12 if monthly else 26)
+    period = default_period or ("24m" if monthly else "52w")
+    presets = ["12m", "24m", "36m", "all"] if monthly else ["26w", "52w", "104w", "all"]
+    if period not in presets:
+        presets.insert(0, period)
+    by = [acc] if acc else []
+    real, fc, sim = Provenance.REAL, Provenance.FORECAST, Provenance.SIMULATED
+    a_txt, b_txt = f"{_fr(inflow_shock * 100)} %", f"{_fr(outflow_shock * 100)} %"
+
+    # ---- history: the dataset as imported ----------------------------
+    hist_fields = [FieldSpec(name=d, label="Période", type="date", role="date")]
+    if acc:
+        hist_fields.append(FieldSpec(name=acc, label="Compte", role="dimension"))
+    hist_fields += [
+        FieldSpec(name=enc, label="Encaissements", type="number", role="measure", provenance=real, format="compact"),
+        FieldSpec(name=dec, label="Décaissements", type="number", role="measure", provenance=real, format="compact"),
+    ]
+    if bal:
+        hist_fields.append(FieldSpec(name=bal, label="Solde", type="number", role="measure", provenance=real,
+                                     format="compact"))
+    if thr:
+        hist_fields.append(FieldSpec(name=thr, label="Seuil de trésorerie minimale", type="number", role="measure",
+                                     provenance=real, format="compact"))
+    historique = SourceSpec(name="tresorerie", label="Historique de trésorerie", kind="dataset",
+                            dataset_id=dataset_id, fields=hist_fields)
+
+    # ---- plan: engine forecast of both flows, then the scenarios -------
+    plan_transforms: list[Any] = [
+        ForecastStep(date=d, value=enc, by=by, horizon=horizon, output="encaissements_prevus", frequency=frequency),
+        ForecastStep(date=d, value=dec, by=by, horizon=horizon, output="decaissements_prevus", frequency=frequency),
+        CashForecastStep(
+            date=d, by=by, balance=bal, inflow=enc, outflow=dec,
+            forecast_inflow="encaissements_prevus", forecast_outflow="decaissements_prevus",
+            inflow_shock=inflow_shock, outflow_shock=outflow_shock, min_cash=min_cash, min_cash_column=thr,
+            opening_balance=opening_balance, horizon=horizon, keep_history=history,
+        ),
+    ]
+    now, future = "semaine_plan = 0", "semaine_plan >= 1"
+    end = f"semaine_plan = {horizon}"
+    solde_now = "SUM(solde_projete_central) FILTER (WHERE " + now + ")"
+    periods = f"COUNT(DISTINCT {d}) FILTER (WHERE {future})"
+    money = dict(type="number", role="measure", format="compact")
+    plan_fields = [
+        FieldSpec(name="encaissements_prevus", label="Encaissements prévus (moteur)", provenance=fc, **money),
+        FieldSpec(name="decaissements_prevus", label="Décaissements prévus (moteur)", provenance=fc, **money),
+        FieldSpec(name="solde_projete_central", label="Solde (réel puis central)", provenance=fc, **money),
+        FieldSpec(name="solde_projete_pessimiste", label="Solde pessimiste", provenance=sim, **money),
+        FieldSpec(name="solde_projete_optimiste", label="Solde optimiste", provenance=sim, **money),
+        FieldSpec(name="encaissements_projetes", label="Encaissements projetés", provenance=fc, **money),
+        FieldSpec(name="decaissements_projetes", label="Décaissements projetés", provenance=fc, **money),
+        FieldSpec(name="flux_net_projete", label="Flux net projeté", provenance=fc, **money),
+        FieldSpec(name="seuil_tresorerie", label="Seuil de trésorerie minimale",
+                  provenance=real if thr else sim, **money),
+        FieldSpec(name="sous_seuil_central", label="Sous le seuil (central)", type="number", role="measure",
+                  provenance=fc, format="integer"),
+        FieldSpec(name="sous_seuil_pessimiste", label="Sous le seuil (pessimiste)", type="number", role="measure",
+                  provenance=sim, format="integer"),
+        FieldSpec(name="sous_seuil_optimiste", label="Sous le seuil (optimiste)", type="number", role="measure",
+                  provenance=sim, format="integer"),
+        FieldSpec(name="semaine_plan", label="Période du plan", type="number", role="dimension", format="integer"),
+    ]
+    runway_fmt = dict(format="decimal1", unit="mois") if monthly else dict(format="weeks")
+    plan_measures = [
+        MeasureSpec(name="solde_actuel", label="Solde actuel", expr=solde_now, format="compact", unit="€",
+                    description="Solde de la dernière période réelle."),
+        MeasureSpec(name="solde_horizon_central", label="Solde à l'horizon (central)",
+                    expr=f"SUM(solde_projete_central) FILTER (WHERE {end})", format="compact", unit="€"),
+        MeasureSpec(name="solde_horizon_pessimiste", label="Solde à l'horizon (pessimiste)",
+                    expr=f"SUM(solde_projete_pessimiste) FILTER (WHERE {end})", format="compact", unit="€"),
+        MeasureSpec(name="solde_horizon_optimiste", label="Solde à l'horizon (optimiste)",
+                    expr=f"SUM(solde_projete_optimiste) FILTER (WHERE {end})", format="compact", unit="€"),
+        MeasureSpec(name="premiere_sous_seuil", label="Première période sous le seuil",
+                    expr="MIN(semaine_plan) FILTER (WHERE sous_seuil_central = 1)", format="integer", unit=unit_short,
+                    description="Période du plan (1 = prochaine période) où un compte passe sous son seuil, "
+                                "scénario central ; vide si jamais."),
+        MeasureSpec(name="premiere_sous_seuil_pessimiste", label="Première période sous le seuil (pessimiste)",
+                    expr="MIN(semaine_plan) FILTER (WHERE sous_seuil_pessimiste = 1)", format="integer",
+                    unit=unit_short),
+        MeasureSpec(name="premiere_sous_seuil_optimiste", label="Première période sous le seuil (optimiste)",
+                    expr="MIN(semaine_plan) FILTER (WHERE sous_seuil_optimiste = 1)", format="integer",
+                    unit=unit_short),
+        MeasureSpec(name="semaines_tresorerie", label=f"{unit_many.capitalize()} de trésorerie",
+                    expr=(f"{solde_now} / NULLIF(SUM(decaissements_projetes) FILTER (WHERE {future}) "
+                          f"/ NULLIF({periods}, 0), 0)"),
+                    description="Solde actuel ÷ décaissements moyens par période de l'horizon.", **runway_fmt),
+        MeasureSpec(name="encaissements_horizon", label="Encaissements prévus sur l'horizon",
+                    expr=f"SUM(encaissements_projetes) FILTER (WHERE {future})", format="compact", unit="€"),
+        MeasureSpec(name="decaissements_horizon", label="Décaissements prévus sur l'horizon",
+                    expr=f"SUM(decaissements_projetes) FILTER (WHERE {future})", format="compact", unit="€"),
+        MeasureSpec(name="solde_central_plan", label="Central", expr="SUM(solde_projete_central)",
+                    format="compact", unit="€"),
+        MeasureSpec(name="solde_pessimiste_plan", label="Pessimiste", expr="SUM(solde_projete_pessimiste)",
+                    format="compact", unit="€"),
+        MeasureSpec(name="solde_optimiste_plan", label="Optimiste", expr="SUM(solde_projete_optimiste)",
+                    format="compact", unit="€"),
+        MeasureSpec(name="seuil_total", label="Seuil de trésorerie minimale", expr="SUM(seuil_tresorerie)",
+                    format="compact", unit="€"),
+    ]
+    plan = SourceSpec(name="plan", label="Prévision de trésorerie", kind="source", parent="tresorerie",
+                      transforms=plan_transforms, fields=plan_fields, measures=plan_measures)
+    # the horizon periods only, so the flows chart does not show the kept history as empty periods
+    horizon_src = SourceSpec(
+        name="horizon", label=f"Flux sur {horizon} {unit_many}", kind="source", parent="plan",
+        transforms=[FilterStep(where="semaine_plan >= 1")],
+        measures=[
+            MeasureSpec(name="encaissements_prevus_m", label="Encaissements", expr="COALESCE(SUM(encaissements_projetes), 0)",
+                        format="compact", unit="€"),
+            MeasureSpec(name="decaissements_prevus_m", label="Décaissements", expr="COALESCE(SUM(decaissements_projetes), 0)",
+                        format="compact", unit="€"),
+            MeasureSpec(name="flux_net_m", label="Flux net", expr="COALESCE(SUM(flux_net_projete), 0)",
+                        format="compact", unit="€"),
+        ],
+    )
+
+    filters: list[FilterSpec] = []
+    if acc:
+        filters.append(FilterSpec(id="compte", label="Compte", field=acc, type="select", default=None,
+                                  applies_to=None))
+    filters.append(FilterSpec(id="periode", label="Période", field=d, type="relative_period", default=period,
+                              applies_to=["tresorerie"], presets=presets))
+
+    # ---- visuals -----------------------------------------------------
+    def kpi(title: str, measure: str, **kw: Any) -> VisualSpec:
+        return VisualSpec(type="kpi", title=title, source="plan", kpi=KpiSpec(measure=measure, **kw))
+
+    synthese = VisualSpec(
+        type="text",
+        source="plan",
+        text=(
+            f"Solde actuel de {{{{solde_actuel|compact}}}} €. À {horizon} {unit_many} : "
+            "{{solde_horizon_central|compact}} € dans le scénario central, "
+            "{{solde_horizon_pessimiste|compact}} € dans le pessimiste et {{solde_horizon_optimiste|compact}} € "
+            "dans l'optimiste. Trésorerie couvrant {{semaines_tresorerie|decimal1}} "
+            f"{unit_many} de décaissements."
+        ),
+    )
+    kpis = [
+        kpi("Solde actuel", "solde_actuel", secondary="Dernière période réelle"),
+        kpi(f"Solde à {horizon} {unit_many}", "solde_horizon_central",
+            secondary="Pessimiste : {{solde_horizon_pessimiste|compact}} € · optimiste : "
+                      "{{solde_horizon_optimiste|compact}} €"),
+        kpi("Première période sous le seuil", "premiere_sous_seuil",
+            secondary="Pessimiste : {{premiere_sous_seuil_pessimiste|integer}} · optimiste : "
+                      "{{premiere_sous_seuil_optimiste|integer}} (— : jamais)"),
+        kpi(f"{unit_many.capitalize()} de trésorerie", "semaines_tresorerie",
+            secondary="Solde ÷ décaissements moyens prévus"),
+    ]
+    combo = VisualSpec(
+        type="combo",
+        title="Solde de trésorerie : trois scénarios",
+        subtitle=(f"Solde réel jusqu'à aujourd'hui, puis projeté sur {horizon} {unit_many}. Pessimiste : "
+                  f"encaissements -{a_txt}, décaissements +{b_txt}. Optimiste : l'inverse."),
+        source="plan",
+        x=d,
+        series=[
+            SeriesSpec(key="solde_central_plan", label="Central", mark="line", color=BLUE),
+            SeriesSpec(key="solde_pessimiste_plan", label="Pessimiste", mark="line", color="bad", dash=True),
+            SeriesSpec(key="solde_optimiste_plan", label="Optimiste", mark="line", color="good", dash=True),
+            SeriesSpec(key="seuil_total", label="Seuil de trésorerie minimale", mark="line", color="muted",
+                       dash=True),
+        ],
+        sort="x_asc",
+    )
+    flux = VisualSpec(
+        type="combo",
+        title=f"Flux prévus, {unit_one} par {unit_one}",
+        subtitle="Encaissements et décaissements prévus (scénario central) et flux net.",
+        source="horizon",
+        x=d,
+        series=[
+            SeriesSpec(key="encaissements_prevus_m", label="Encaissements", mark="bar", color=BLUE),
+            SeriesSpec(key="decaissements_prevus_m", label="Décaissements", mark="bar", color=BROWN),
+            SeriesSpec(key="flux_net_m", label="Flux net", mark="line", color="muted"),
+        ],
+        sort="x_asc",
+    )
+    table = None
+    if acc:
+        table = VisualSpec(
+            type="table",
+            title="Trésorerie par compte",
+            subtitle="Cliquer sur un compte pour filtrer le tableau de bord.",
+            source="plan",
+            x=acc,
+            columns=[
+                ColumnSpec(key=acc, label="Compte"),
+                ColumnSpec(key="solde_actuel", label="Solde actuel"),
+                ColumnSpec(key="solde_horizon_central", label="Central à l'horizon"),
+                ColumnSpec(key="solde_horizon_pessimiste", label="Pessimiste à l'horizon"),
+                ColumnSpec(key="solde_horizon_optimiste", label="Optimiste à l'horizon"),
+                ColumnSpec(key="premiere_sous_seuil", label="Première période sous le seuil"),
+            ],
+            total_row=True,
+            click_filters={"compte": acc},
+            ignore_filters=["compte"],
+            highlight_filter="compte",
+        )
+    seuil_src = f"la colonne `{thr}`" if thr else f"{_fr(min_cash, 0)} €"
+    solde_src = (f"le solde (`{bal}`)" if bal else
+                 f"un solde reconstitué à partir d'un solde d'ouverture de {_fr(opening_balance, 0)} € et des flux")
+    notes = [
+        VisualSpec(
+            type="note",
+            title="Origine des données",
+            badges=[real, fc, sim],
+            text=(
+                f"Les encaissements (`{enc}`), les décaissements (`{dec}`) et {solde_src} sont les données réelles "
+                "du fichier. Les flux à venir sont prévus par le moteur de prévision ; les scénarios pessimiste et "
+                "optimiste sont des hypothèses."
+            ),
+        ),
+        VisualSpec(
+            type="note",
+            title="Règle de calcul et scénarios",
+            badges=[fc, sim],
+            text=(
+                f"Solde = solde de la période précédente + encaissements - décaissements. Central : flux "
+                f"prévus. Pessimiste : encaissements × (1 - {a_txt}) et décaissements × (1 + {b_txt}). Optimiste : "
+                f"encaissements × (1 + {a_txt}) et décaissements × (1 - {b_txt}). Seuil de trésorerie minimale : "
+                f"{seuil_src}, par compte ; une période est « sous le seuil » si le solde lui est strictement "
+                "inférieur. Si le moteur ne répond pas, les flux valent la moyenne des 4 dernières périodes et un "
+                "avertissement l'indique."
+            ),
+        ),
+        VisualSpec(
+            type="note",
+            title="Limites",
+            text=(
+                "Une ligne par période (et par compte). Les encaissements et décaissements sont des montants "
+                "positifs. Les échéances connues (loyers, emprunts, salaires, factures à venir) ne sont pas "
+                "intégrées : la prévision extrapole l'historique. Sans filtre de compte, le seuil affiché est la "
+                "somme des seuils des comptes."
+            ),
+        ),
+    ]
+
+    grid: list[tuple[VisualSpec, dict[str, int]]] = [(synthese, dict(row=0, col=0, width=12, height=2))]
+    for i, k in enumerate(kpis):
+        grid.append((k, dict(row=2, col=3 * i, width=3, height=3)))
+    grid.append((combo, dict(row=5, col=0, width=12, height=6)))
+    row = 11
+    if table is not None:
+        grid.append((table, dict(row=row, col=0, width=12, height=5)))
+        row += 5
+    grid.append((flux, dict(row=row, col=0, width=12, height=5)))
+    row += 5
+    for i, n in enumerate(notes):
+        grid.append((n, dict(row=row, col=4 * i, width=4, height=4)))
+
+    return {
+        "sources": [_dump(historique), _dump(plan), _dump(horizon_src)],
+        "filters": [_dump(f) for f in filters],
+        "components": [{"visual": _dump(v), "position": pos} for v, pos in grid],
+    }
+
+
+def build(dataset_id: str, columns: dict, params: dict) -> dict:
+    """Catalog entry point: column mapping (blank optional → None) and parameters to the template."""
+    mapping: dict[str, Any] = {key: columns.get(key) or "" for key in _REQUIRED}
+    mapping.update({key: columns.get(key) or None for key in _OPTIONAL})
+    missing = [c["label"] for c in DESCRIPTOR["columns"] if c["required"] and not mapping[c["key"]]]
+    if missing:
+        raise ValueError("Colonne(s) obligatoire(s) manquante(s) : " + ", ".join(missing) + ".")
+    defaults = {p["key"]: p["default"] for p in DESCRIPTOR["params"]}
+    values = {k: (params.get(k) if params.get(k) is not None else v) for k, v in defaults.items()}
+    return cash_forecast(
+        dataset_id,
+        date=mapping["date"],
+        inflow=mapping["inflow"],
+        outflow=mapping["outflow"],
+        balance=mapping["balance"],
+        account=mapping["account"],
+        threshold_column=mapping["threshold"],
+        horizon=int(values["horizon"]),
+        inflow_shock=int(values["inflow_shock_pct"]) / 100,
+        outflow_shock=int(values["outflow_shock_pct"]) / 100,
+        min_cash=float(values["min_cash"]),
+        opening_balance=float(values["opening_balance"]),
+        monthly=bool(values["monthly"]),
+    )

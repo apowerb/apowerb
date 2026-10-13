@@ -21,6 +21,7 @@ from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.formatting import FORMATS
 from apowerb.bi.spec.models import (
     AggregateStep,
+    CashForecastStep,
     DeriveStep,
     FilterStep,
     ForecastStep,
@@ -44,6 +45,12 @@ _INVENTORY_OUTPUTS = (
 _PLAN_OUTPUTS = (
     "stock_projete", "stock_sans_commande", "reception", "commande",
     "seuil_plan", "delai_plan", "risque", "semaine_plan",
+)
+
+_CASH_OUTPUTS = (
+    "solde_projete_central", "solde_projete_pessimiste", "solde_projete_optimiste",
+    "encaissements_projetes", "decaissements_projetes", "flux_net_projete", "seuil_tresorerie",
+    "sous_seuil_central", "sous_seuil_pessimiste", "sous_seuil_optimiste", "semaine_plan",
 )
 
 
@@ -124,6 +131,9 @@ def _schema_of(
         elif isinstance(step, ReplenishmentPlanStep):
             schema.columns.update(_PLAN_OUTPUTS)
             schema.columns.add(step.forecast)
+        elif isinstance(step, CashForecastStep):
+            schema.columns.update(_CASH_OUTPUTS)
+            schema.columns.update((step.forecast_inflow, step.forecast_outflow))
         elif isinstance(step, JoinStep) and step.source in by_name:
             other = _schema_of(by_name[step.source], by_name, memo, visiting)
             if step.columns is not None:

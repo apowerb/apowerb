@@ -224,6 +224,49 @@ class ReplenishmentPlanStep(BaseModel):
     default_lot: int = Field(default=1, ge=1)
 
 
+class CashForecastStep(BaseModel):
+    """Projected cash balance in three scenarios, from the REAL balance of each
+    ``by`` group (e.g. a bank account).
+
+    Starts from the last row with a ``balance`` value (without ``balance``: the
+    last row with a flow, balance = ``opening_balance`` + cumulated inflow -
+    outflow). The future rows are the rows after it carrying a
+    ``forecast_inflow`` / ``forecast_outflow`` value (e.g. appended by two
+    ``forecast`` steps); a missing flow forecast is replaced by the mean of
+    the last ``fallback_window`` real periods of that flow, with a warning, and
+    ``horizon`` periods are appended when no future row exists. Flows are
+    positive amounts. For each future period t (forecasts floored at 0):
+      central     : balance(t) = balance(t-1) + inflow(t) - outflow(t)
+      pessimistic : inflow x (1 - inflow_shock), outflow x (1 + outflow_shock)
+      optimistic  : inflow x (1 + inflow_shock), outflow x (1 - outflow_shock)
+    The threshold is ``min_cash_column`` (last real value of the group) else
+    ``min_cash``; a scenario is under the threshold when balance < threshold.
+    Output columns: solde_projete_central / _pessimiste / _optimiste (real
+    balance on the kept history rows), encaissements_projetes,
+    decaissements_projetes, flux_net_projete (central), seuil_tresorerie (on
+    the history too), sous_seuil_central / _pessimiste / _optimiste (1 = under
+    the threshold, on the future rows and the last real period) and semaine_plan (0 = last real period,
+    1..H = horizon).
+    """
+
+    op: Literal["cash_forecast"] = "cash_forecast"
+    date: Ident
+    by: list[Ident] = Field(default_factory=list)
+    balance: Ident | None = None
+    inflow: Ident = "encaissements"
+    outflow: Ident = "decaissements"
+    forecast_inflow: Ident = "encaissements_prevus"
+    forecast_outflow: Ident = "decaissements_prevus"
+    inflow_shock: float = Field(default=0.10, ge=0, le=1)
+    outflow_shock: float = Field(default=0.10, ge=0, le=1)
+    min_cash: float = 0.0
+    min_cash_column: Ident | None = None
+    opening_balance: float = 0.0
+    horizon: int = Field(default=8, ge=1, le=104)
+    keep_history: int = Field(default=12, ge=0, le=520)
+    fallback_window: int = Field(default=4, ge=1, le=52)
+
+
 TransformStep = Annotated[
     Union[
         FilterStep,
@@ -235,6 +278,7 @@ TransformStep = Annotated[
         ForecastStep,
         InventorySimStep,
         ReplenishmentPlanStep,
+        CashForecastStep,
     ],
     Field(discriminator="op"),
 ]

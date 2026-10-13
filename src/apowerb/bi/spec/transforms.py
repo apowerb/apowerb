@@ -34,6 +34,7 @@ from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.frames import MatSource, combine, referenced_columns
 from apowerb.bi.spec.models import (
     AggregateStep,
+    CashForecastStep,
     DeriveStep,
     FilterStep,
     ForecastStep,
@@ -71,6 +72,20 @@ PLAN_COLUMNS = (
     "seuil_plan",
     "delai_plan",
     "risque",
+    "semaine_plan",
+)
+
+CASH_COLUMNS = (
+    "solde_projete_central",
+    "solde_projete_pessimiste",
+    "solde_projete_optimiste",
+    "encaissements_projetes",
+    "decaissements_projetes",
+    "flux_net_projete",
+    "seuil_tresorerie",
+    "sous_seuil_central",
+    "sous_seuil_pessimiste",
+    "sous_seuil_optimiste",
     "semaine_plan",
 )
 
@@ -135,6 +150,8 @@ async def apply_transforms(
             state = await _forecast_step(state, step, what)
         elif isinstance(step, ReplenishmentPlanStep):
             state = await asyncio.to_thread(_replenishment_plan_step, state, step, what)
+        elif isinstance(step, CashForecastStep):
+            state = await asyncio.to_thread(_cash_forecast_step, state, step, what)
         else:  # pragma: no cover - the union is closed
             raise SpecError(f"{what} : opération inconnue.")
     return state
@@ -556,6 +573,184 @@ def _replenishment_plan_step(state: TransformState, step: ReplenishmentPlanStep,
                 **new.failed_columns,
                 step.forecast: "plan calculé avec la moyenne des 4 dernières semaines de ventes",
             }
+    return new
+
+
+# ---------------------------------------------------------------------------
+# cash_forecast
+# ---------------------------------------------------------------------------
+
+_CASH_SCENARIOS = (
+    # name, inflow factor sign, outflow factor sign (applied to the shocks)
+    ("central", 0, 0),
+    ("pessimiste", -1, 1),
+    ("optimiste", 1, -1),
+)
+
+
+def project_cash(
+    balance0: float,
+    inflow: np.ndarray,
+    outflow: np.ndarray,
+    *,
+    inflow_shock: float,
+    outflow_shock: float,
+    threshold: float,
+) -> dict[str, np.ndarray]:
+    """Projected balance of one group over its future periods, in three scenarios.
+
+    balance(t) = balance(t-1) + inflow(t) x fi - outflow(t) x fo with
+    (fi, fo) = (1, 1) central, (1 - a, 1 + b) pessimistic, (1 + a, 1 - b)
+    optimistic. Flows are floored at 0; the balance is never floored.
+    """
+    enc = np.where(np.isfinite(inflow), np.maximum(inflow, 0.0), 0.0)
+    dec = np.where(np.isfinite(outflow), np.maximum(outflow, 0.0), 0.0)
+    out: dict[str, np.ndarray] = {
+        "encaissements_projetes": enc,
+        "decaissements_projetes": dec,
+        "flux_net_projete": enc - dec,
+    }
+    for name, si, so in _CASH_SCENARIOS:
+        balance = balance0 + np.cumsum(enc * (1 + si * inflow_shock) - dec * (1 + so * outflow_shock))
+        out[f"solde_projete_{name}"] = balance
+        out[f"sous_seuil_{name}"] = (balance < threshold - 1e-9).astype(float)
+    return out
+
+
+def _cash_future_dates(dates: pd.Series, n: int) -> list[pd.Timestamp]:
+    """The next ``n`` periods: calendar months for monthly data, else the median step."""
+    known = pd.to_datetime(dates, errors="coerce").dropna().sort_values().drop_duplicates()
+    steps = known.diff().dropna()
+    if len(known) and len(steps) and pd.Timedelta(days=27) <= steps.median() <= pd.Timedelta(days=32):
+        last = known.iloc[-1]
+        if last.is_month_end:
+            return [last + pd.offsets.MonthEnd(i + 1) for i in range(n)]
+        return [last + pd.DateOffset(months=i + 1) for i in range(n)]
+    return _future_dates(known, n)
+
+
+def _cash_forecast_step(state: TransformState, step: CashForecastStep, what: str) -> TransformState:
+    needed = [step.date, step.inflow, step.outflow, *step.by]
+    needed += [c for c in (step.balance, step.min_cash_column) if c]
+    _need(state.df, needed, what)
+    df = state.df.copy()
+    for column in (step.forecast_inflow, step.forecast_outflow):
+        if column not in df.columns:
+            df[column] = np.nan
+    df[step.date] = pd.to_datetime(df[step.date], errors="coerce")
+    out, groups = _sorted_groups(df, step.by, step.date)
+
+    def num(column: str) -> np.ndarray:
+        return pd.to_numeric(out[column], errors="coerce").to_numpy(dtype=float)
+
+    inflow, outflow = num(step.inflow), num(step.outflow)
+    fc_in, fc_out = num(step.forecast_inflow), num(step.forecast_outflow)
+    balance = num(step.balance) if step.balance else None
+    dated = out[step.date].notna().to_numpy()
+
+    parts: list[pd.DataFrame] = []
+    fallback: list[str] = []
+    window = step.fallback_window
+
+    for key, idx in groups:
+        idx = idx[dated[idx]]
+        if balance is not None:
+            real = idx[np.isfinite(balance[idx])]
+        else:
+            real = idx[np.isfinite(inflow[idx]) | np.isfinite(outflow[idx])]
+        if not len(real):
+            continue
+        last = int(real[-1])
+        if balance is not None:
+            real_balance = balance[real]
+        else:
+            real_balance = step.opening_balance + np.cumsum(
+                np.nan_to_num(inflow[real]) - np.nan_to_num(outflow[real])
+            )
+        threshold = None
+        if step.min_cash_column:
+            threshold = _last_finite(out[step.min_cash_column].iloc[real])
+        threshold = step.min_cash if threshold is None else float(threshold)
+        keep = real[-step.keep_history:] if step.keep_history else real[-1:]
+        keep_balance = real_balance[-len(keep):]
+
+        hist = out.iloc[keep].copy()
+        for name in ("central", "pessimiste", "optimiste"):
+            hist[f"solde_projete_{name}"] = keep_balance
+        hist["seuil_tresorerie"] = threshold
+        hist["semaine_plan"] = np.where(keep == last, 0.0, np.nan)
+        # the last real period carries the flags too: a balance already under the threshold counts as period 0
+        for name in ("central", "pessimiste", "optimiste"):
+            hist[f"sous_seuil_{name}"] = np.where(keep == last, float(real_balance[-1] < threshold - 1e-9), np.nan)
+        parts.append(hist)
+
+        # future periods: one row per date, merging the rows of several forecast steps
+        after = idx[idx > last]
+        future = pd.DataFrame({
+            step.date: out[step.date].to_numpy()[after], "i": fc_in[after], "o": fc_out[after],
+        })
+        future = future.groupby(step.date, sort=True).first()
+        future = future[future["i"].notna() | future["o"].notna()].head(step.horizon)
+        if len(future):
+            dates = list(future.index)
+            f_in = future["i"].to_numpy(dtype=float, copy=True)
+            f_out = future["o"].to_numpy(dtype=float, copy=True)
+        else:
+            dates = _cash_future_dates(out[step.date].iloc[real], step.horizon)
+            f_in = np.full(len(dates), np.nan)
+            f_out = np.full(len(dates), np.nan)
+        used_mean = False
+        for arr, source in ((f_in, inflow), (f_out, outflow)):
+            missing = ~np.isfinite(arr)
+            if missing.any():
+                recent = pd.Series(source[real]).dropna().tail(window)
+                arr[missing] = float(recent.mean()) if len(recent) else 0.0
+                used_mean = True
+        if used_mean:
+            fallback.append(key or "total")
+
+        plan = project_cash(
+            float(real_balance[-1]), f_in, f_out,
+            inflow_shock=step.inflow_shock, outflow_shock=step.outflow_shock, threshold=threshold,
+        )
+        n = len(dates)
+        fut = pd.DataFrame({step.date: dates})
+        for b in step.by:
+            fut[b] = out[b].iloc[last]
+        fut[step.forecast_inflow], fut[step.forecast_outflow] = f_in, f_out
+        for name, arr in plan.items():
+            fut[name] = arr
+        fut["seuil_tresorerie"] = threshold
+        fut["semaine_plan"] = np.arange(1, n + 1, dtype=float)
+        parts.append(fut)
+
+    if parts:
+        frame = pd.concat(parts, ignore_index=True, sort=False)
+        frame = frame.sort_values([*step.by, step.date], kind="stable")
+    else:
+        frame = out.iloc[0:0].copy()
+    for name in CASH_COLUMNS:
+        if name not in frame.columns:
+            frame[name] = np.nan
+    frame = frame.reset_index(drop=True)
+
+    prov = dict(state.prov)
+    for name in ("solde_projete_central", "encaissements_projetes", "decaissements_projetes", "flux_net_projete",
+                 "sous_seuil_central", step.forecast_inflow, step.forecast_outflow):
+        prov[name] = Provenance.FORECAST
+    for name in ("solde_projete_pessimiste", "solde_projete_optimiste", "sous_seuil_pessimiste",
+                 "sous_seuil_optimiste"):
+        prov[name] = Provenance.SIMULATED
+    prov["seuil_tresorerie"] = Provenance.REAL if step.min_cash_column else Provenance.SIMULATED
+    prov["semaine_plan"] = Provenance.REAL
+    new = _with(state, frame, prov)
+    if fallback:
+        message = f"flux calculés avec la moyenne des {window} dernières périodes"
+        new.warnings = [*new.warnings, "Prévision moteur absente pour " + ", ".join(fallback) + " : " + message + "."]
+        new.failed_columns = {
+            **new.failed_columns,
+            **{c: message for c in (step.forecast_inflow, step.forecast_outflow) if c in new.failed_columns},
+        }
     return new
 
 
