@@ -340,7 +340,10 @@ def embed_chart(chart_id: str, title: str | None = None) -> dict:
     """Embed an existing BI chart in the conversation.
 
     Args:
-        chart_id: Identifier of the chart to render.
+        chart_id: The ``chart_id`` returned by ``tool_create_chart``. The ``id``
+            of a dashboard component (``components[].id`` in the result of the
+            ``tool_bi_*`` dashboard tools) is not a chart and cannot be embedded:
+            link the dashboard (``/bi/<id>``) instead.
         title: Optional override title displayed above the chart.
 
     Returns:
