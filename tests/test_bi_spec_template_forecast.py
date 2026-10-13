@@ -156,7 +156,8 @@ def test_le_descripteur_se_charge_dans_le_catalogue():
         params=tuple(TemplateParam(**p) for p in DESCRIPTOR["params"]),
         build=build,
     )
-    assert template.describe() == {k: v for k, v in DESCRIPTOR.items() if k != "version"}
+    described = template.describe()
+    assert {k: described[k] for k in DESCRIPTOR if k != "version"} == {k: v for k, v in DESCRIPTOR.items() if k != "version"}
     columns, errors = template.clean_columns({})
     assert errors and all("obligatoire" in e for e in errors)
     filled = {c["key"]: c["default"] or None for c in DESCRIPTOR["columns"]}

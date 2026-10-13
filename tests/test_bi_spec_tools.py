@@ -342,7 +342,7 @@ def test_list_dashboard_templates_shows_otif_and_quality_with_their_columns():
     assert any(c["required"] for c in by_id["delivery_otif"]["columns"])
 
 
-@pytest.mark.parametrize("template_id", ["delivery_otif", "production_quality"])
+@pytest.mark.parametrize("template_id", ["delivery_otif", "production_quality", "sales_tracking", "sales_forecast"])
 def test_create_dashboard_from_template_with_renamed_columns(env, template_id):
     from apowerb.bi.spec.catalog import get_template
 
