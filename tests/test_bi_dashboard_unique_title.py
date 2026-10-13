@@ -141,3 +141,21 @@ def test_created_dashboard_link_is_relative_and_must_be_copied_verbatim(rows):
         assert res["url"] == path
         assert path in res["message"]
         assert "never add a domain" in res["message"]
+
+
+def test_created_message_says_component_ids_are_not_chart_ids(rows):
+    # PROD 13/10 : le modele a passe l'id d'un composant a embed_chart (carte en 404).
+    for res in (_create(), t.tool_bi_create_stock_dashboard("ds-1")):
+        msg = res["message"]
+        assert "embed_chart" in msg
+        assert "NOT chart_ids" in msg
+        assert "'components'" in msg
+        assert f"/bi/{res['dashboard_id']}" in msg
+
+
+def test_embed_chart_doc_separates_chart_ids_from_dashboard_component_ids():
+    from apowerb.core.agent_helpers.chat_action_tools import embed_chart
+
+    doc = embed_chart.__doc__
+    assert "tool_create_chart" in doc
+    assert "components[].id" in doc
