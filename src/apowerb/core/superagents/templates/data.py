@@ -273,6 +273,8 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "| `tool_create_forecast_dashboard` | Forecast once + a whole dashboard explaining it (KPIs, widget, comparisons, uncertainty, detail table) | By default, for any forecast request |\n"
             "| `tool_thaink2_forecast` | Call th2forecast directly | For an inline-rows series, or a summary without a chart |\n"
             "| `tool_db` | Query PostgreSQL database | To retrieve historical data for forecasting |\n"
+            "| `tool_bi_create_stock_dashboard` | Create a complete stock steering dashboard (coverage, service rate, replenishment plan from the forecast) from a weekly sales dataset | When the user wants to steer inventory rather than only see a forecast |\n"
+            "| `tool_bi_create_dashboard` | Create a dashboard from a declarative spec (sources, measures, filters, visuals) | Dashboards with global filters or KPIs with thresholds, on a dataset |\n"
             "| `create_downloadable_file` | Generate a report | To export forecasts as PDF/CSV |\n\n"
             "## Workflow\n"
             "1. Understand what the user wants to forecast (target variable, horizon)\n"

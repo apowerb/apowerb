@@ -255,9 +255,18 @@ async def _preview(dashboard, owner: str, filters: dict | None = None, *, detail
     return result
 
 
+_NAME_CONSTRAINT = "uq_bi_name_type_org_project"
+
+
 def _is_duplicate(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return "unique" in msg or "duplicate key" in msg or "already exists" in msg
+    """Whether ``exc`` is a dashboard-name conflict (and nothing else)."""
+    from sqlalchemy.exc import IntegrityError
+
+    from apowerb.bi.dashboards.service import DashboardNameConflictError
+
+    if isinstance(exc, DashboardNameConflictError):
+        return True
+    return isinstance(exc, IntegrityError) and _NAME_CONSTRAINT in str(exc.orig)
 
 
 # ---------------------------------------------------------------------------
@@ -296,9 +305,9 @@ async def _async_create(title: str, description: str, spec: dict, owner: str, te
     )
     message = f"Dashboard '{dashboard.title}' created. Open it at /bi/{dashboard.id}."
     if renamed:
-        message += (
-            f" A dashboard named '{requested}' already existed, so this one is named"
-            f" '{dashboard.title}': tell the user."
+        message = (
+            f"Le nom « {requested} » était déjà pris : le tableau s'appelle « {dashboard.title} ». "
+            f"Tell the user. {message}"
         )
     if preview["errors"]:
         message += " Some components have errors: see 'errors'."
@@ -519,6 +528,10 @@ def tool_bi_create_dashboard(
     charts or a computed text. For a stock/inventory dashboard prefer
     tool_bi_create_stock_dashboard. To change an existing one use
     tool_bi_describe_dashboard then tool_bi_patch_dashboard.
+
+    If the title is already taken the dashboard is renamed "Title (2)", "Title (3)"...
+    and the result carries "renamed_from"; its "message" then starts with the
+    sentence for the user: tell them the final title in your answer.
 
     The dashboard OWNS its data: sources point at a dataset (see
     bi_datasets.tool_list_datasets / tool_describe_dataset), measures are SQL
