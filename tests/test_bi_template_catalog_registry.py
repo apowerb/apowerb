@@ -4,7 +4,15 @@ import pytest
 
 from apowerb.bi.spec import catalog
 
-NEW_TEMPLATES = ["delivery_otif", "production_quality", "sales_tracking", "sales_forecast"]
+NEW_TEMPLATES = [
+    "delivery_otif",
+    "production_quality",
+    "sales_tracking",
+    "sales_forecast",
+    "receivables_aging",
+    "purchasing_suppliers",
+    "support_sla",
+]
 
 
 @pytest.mark.parametrize("template_id", NEW_TEMPLATES)
