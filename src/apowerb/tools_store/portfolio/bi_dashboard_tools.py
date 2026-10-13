@@ -663,6 +663,73 @@ def tool_bi_create_stock_dashboard(
     return _create(title or "Pilotage stocks", "", spec, "tool_bi_create_stock_dashboard", provenance)
 
 
+def tool_bi_list_dashboard_templates() -> dict:
+    """Lists the ready-made dashboard templates (stock steering, delivery OTIF, production quality...).
+
+    Each template gives its id, what it shows, the columns it expects (key,
+    label, type, required, default column name) and its parameters. Use it
+    before tool_bi_create_dashboard_from_template to pick the template that
+    fits the user's need and map the dataset columns.
+
+    Returns {"success": True, "templates": [...]}.
+    """
+    from apowerb.bi.spec.catalog import list_templates
+
+    return {"success": True, "templates": [tpl.describe() for tpl in list_templates()]}
+
+
+def tool_bi_create_dashboard_from_template(
+    template_id: str,
+    dataset_id: str,
+    title: str = "",
+    columns_json: str = "{}",
+    params_json: str = "{}",
+) -> dict:
+    """Creates a complete dashboard from a ready-made template on one dataset.
+
+    Use it when the user's need matches a template listed by
+    tool_bi_list_dashboard_templates (for example delivery_otif for on-time
+    in-full deliveries, production_quality for scrap and defect rates). Call
+    bi_datasets.tool_describe_dataset first and map each template column key
+    to the dataset column that holds it; columns left out use the template
+    default name. The dashboard remembers its template so the user can later
+    update it or replace its file from the UI.
+
+    Args:
+        template_id:  Template id from tool_bi_list_dashboard_templates.
+        dataset_id:   Dataset id (UUID).
+        title:        Dashboard title. Empty: the template label.
+        columns_json: JSON object {template column key: dataset column name}.
+        params_json:  JSON object {parameter key: value}; empty uses defaults.
+
+    Returns the dashboard id, url (/bi/<id>), computed KPIs and an "errors"
+    map for components that failed to compute.
+    """
+    from apowerb.bi.spec.catalog import get_template, list_templates
+
+    template = get_template((template_id or "").strip())
+    if template is None:
+        known = ", ".join(tpl.id for tpl in list_templates())
+        return {"success": False, "error": f"Unknown template '{template_id}'. Available: {known}."}
+    mapping, error = _loads(columns_json or "{}", "columns_json", dict)
+    if error:
+        return {"success": False, "error": error}
+    raw_params, error = _loads(params_json or "{}", "params_json", dict)
+    if error:
+        return {"success": False, "error": error}
+    given = {k: v for k, v in mapping.items() if v}
+    columns, column_errors = template.clean_columns({**{c.key: c.default for c in template.columns}, **given})
+    params, param_errors = template.clean_params(raw_params)
+    if column_errors or param_errors:
+        return {"success": False, "error": " ".join(column_errors + param_errors)}
+    try:
+        spec = template.build(dataset_id.strip(), columns, params)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}
+    provenance = {"id": template.id, "version": template.version, "columns": columns, "params": params}
+    return _create(title or template.label, "", spec, "tool_bi_create_dashboard_from_template", provenance)
+
+
 def tool_bi_patch_dashboard(dashboard_id: str, ops_json: str, dry_run: bool = False) -> dict:
     """Edits a spec v2 dashboard with a list of operations, atomically.
 

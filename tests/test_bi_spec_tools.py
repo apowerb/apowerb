@@ -332,3 +332,42 @@ def test_tools_are_discovered_and_registered():
 
     for tpl in (DASHBOARD_TEMPLATES[0], DATA_TEMPLATES[0]):
         assert {f"bi_dashboard_tools.{n}" for n in names} <= set(tpl["recommended_tools"])
+
+
+def test_list_dashboard_templates_shows_otif_and_quality_with_their_columns():
+    res = t.tool_bi_list_dashboard_templates()
+    assert res["success"] is True
+    by_id = {tpl["id"]: tpl for tpl in res["templates"]}
+    assert {"stock_pilotage", "delivery_otif", "production_quality"} <= set(by_id)
+    assert any(c["required"] for c in by_id["delivery_otif"]["columns"])
+
+
+@pytest.mark.parametrize("template_id", ["delivery_otif", "production_quality"])
+def test_create_dashboard_from_template_with_renamed_columns(env, template_id):
+    from apowerb.bi.spec.catalog import get_template
+
+    template = get_template(template_id)
+    columns = {c.key: f"col_{c.key}" for c in template.columns if c.required}
+    res = t.tool_bi_create_dashboard_from_template(template_id, "ds-7", columns_json=json.dumps(columns))
+    assert res["success"] is True, res
+    dash = env.db.rows[res["dashboard_id"]][1]
+    assert dash.title == template.label
+    assert dash.sources[0].dataset_id == "ds-7"
+    assert dash.template.id == template_id and dash.template.version == template.version
+    assert {k: v for k, v in dash.template.columns.items() if v} == columns
+
+
+def test_create_dashboard_from_template_uses_default_columns(env):
+    res = t.tool_bi_create_dashboard_from_template("delivery_otif", "ds-7", title="OTIF Nord")
+    assert res["success"] is True, res
+    assert env.db.rows[res["dashboard_id"]][1].title == "OTIF Nord"
+
+
+def test_create_dashboard_from_template_rejects_unknown_template_and_columns(env):
+    res = t.tool_bi_create_dashboard_from_template("nope", "ds-7")
+    assert res["success"] is False and "delivery_otif" in res["error"]
+    res = t.tool_bi_create_dashboard_from_template("delivery_otif", "ds-7", columns_json='{"zzz": "a"}')
+    assert res["success"] is False and "zzz" in res["error"]
+    res = t.tool_bi_create_dashboard_from_template("delivery_otif", "ds-7", columns_json="[1]")
+    assert res["success"] is False
+    assert env.db.rows == {}

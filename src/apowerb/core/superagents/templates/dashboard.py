@@ -37,6 +37,7 @@ DASHBOARD_TEMPLATES = [
             "| `tool_list_dashboards` | List existing dashboards | To check what dashboards already exist |\n"
             "| `tool_update_chart_data` | Refresh chart data | To update an existing chart with new query results |\n"
             "| `tool_bi_create_dashboard` | Create a dashboard from a declarative spec (sources, measures, filters, visuals) | Dashboards with global filters or KPIs with thresholds, on a dataset |\n"
+            "| `tool_bi_list_dashboard_templates` / `tool_bi_create_dashboard_from_template` | List the ready-made templates and create one on a dataset | Delivery OTIF, production quality and every catalogue template |\n"
             "| `tool_bi_create_stock_dashboard` | Create a complete stock steering dashboard from a weekly sales dataset | Inventory coverage, service rate, forecast reliability |\n"
             "| `tool_bi_describe_dashboard` | Read the spec of a spec-based dashboard | Before editing or querying it |\n"
             "| `tool_bi_patch_dashboard` | Edit a spec-based dashboard (visuals, measures, filters) | To modify it without rebuilding |\n"
@@ -168,6 +169,8 @@ DASHBOARD_TEMPLATES = [
             "business_intelligence.tool_create_forecast_dashboard",
             "bi_dashboard_tools.tool_bi_create_dashboard",
             "bi_dashboard_tools.tool_bi_create_stock_dashboard",
+            "bi_dashboard_tools.tool_bi_list_dashboard_templates",
+            "bi_dashboard_tools.tool_bi_create_dashboard_from_template",
             "bi_dashboard_tools.tool_bi_patch_dashboard",
             "bi_dashboard_tools.tool_bi_query_dashboard",
             "bi_dashboard_tools.tool_bi_describe_dashboard",

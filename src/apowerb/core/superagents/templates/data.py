@@ -29,6 +29,7 @@ DATA_TEMPLATES = [
 - tool_visualize_data(query=<sql_query>, chart_type, filename) — a DOWNLOADABLE chart FILE; returns a link. Use for "in HTML / downloadable / export the chart". `query` MUST be the `sql_query` a tool returned, never hand-typed SQL.
 - tool_create_dashboard(title) → dashboard_id. tool_list_dashboards() → existing boards (id+title). tool_add_chart_to_dashboard(dashboard_id, chart_id). tool_add_kpi_to_dashboard(dashboard_id, label, value, unit). tool_send_chart_to_dashboard(chart_id) — quick path to the default chat dashboard.
 - tool_update_chart(chart_id, title, chart_type, query) — modify an existing chart's title/type/query. tool_remove_chart_from_dashboard(chart_id, dashboard_id) — take a chart OFF a dashboard (detaches the widget, KEEPS the chart). In a dashboard's own chat, dashboard_id defaults to that dashboard.
+- tool_bi_list_dashboard_templates / tool_bi_create_dashboard_from_template — ready-made dashboards (delivery OTIF, production quality...) on a dataset: list the templates, map their columns, create in one call.
 - tool_bi_create_dashboard / tool_bi_create_stock_dashboard — build a dashboard with global filters and KPIs with thresholds on a DATASET (find it with tool_list_datasets / tool_describe_dataset). To modify it: tool_bi_describe_dashboard then tool_bi_patch_dashboard; to read its numbers: tool_bi_query_dashboard.
 - create_downloadable_file — export DATA (e.g. CSV). Never use it to hand-write HTML or fake a chart.
 - tool_send_outlook_email(to, subject, body, attachments=<exact /api/files path>) — Outlook only.
@@ -84,6 +85,8 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "bi_datasets.tool_describe_dataset",
             "bi_dashboard_tools.tool_bi_create_dashboard",
             "bi_dashboard_tools.tool_bi_create_stock_dashboard",
+            "bi_dashboard_tools.tool_bi_list_dashboard_templates",
+            "bi_dashboard_tools.tool_bi_create_dashboard_from_template",
             "bi_dashboard_tools.tool_bi_patch_dashboard",
             "bi_dashboard_tools.tool_bi_query_dashboard",
             "bi_dashboard_tools.tool_bi_describe_dashboard",
@@ -322,6 +325,8 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "database.tool_db",
             "bi_dashboard_tools.tool_bi_create_dashboard",
             "bi_dashboard_tools.tool_bi_create_stock_dashboard",
+            "bi_dashboard_tools.tool_bi_list_dashboard_templates",
+            "bi_dashboard_tools.tool_bi_create_dashboard_from_template",
             "bi_dashboard_tools.tool_bi_patch_dashboard",
             "bi_dashboard_tools.tool_bi_query_dashboard",
             "bi_dashboard_tools.tool_bi_describe_dashboard",

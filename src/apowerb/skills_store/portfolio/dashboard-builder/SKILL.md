@@ -70,7 +70,7 @@ Call `tool_publish_dashboard` with appropriate visibility:
 ## Declarative dashboards (filters, KPIs with thresholds)
 When the user wants global filters (family, period), KPIs with traffic-light thresholds or linked charts on a dataset, build the dashboard from a spec instead of chart by chart:
 1. `tool_list_datasets` / `tool_describe_dataset` to find the dataset and its columns.
-2. Weekly sales per family and stock steering: `tool_bi_create_stock_dashboard` (complete dashboard in one call). Otherwise `tool_bi_create_dashboard` with a `spec_json` (sources, measures, filters, components).
+2. Weekly sales per family and stock steering: `tool_bi_create_stock_dashboard` (complete dashboard in one call). Deliveries (OTIF), production quality and the other ready-made templates: `tool_bi_list_dashboard_templates` then `tool_bi_create_dashboard_from_template`. Otherwise `tool_bi_create_dashboard` with a `spec_json` (sources, measures, filters, components).
 3. Read the returned KPI values and the `errors` map; fix failing components with `tool_bi_patch_dashboard`.
 4. To modify: `tool_bi_describe_dashboard` (ids, measure names), then `tool_bi_patch_dashboard` (use `dry_run` to check). To answer questions about the numbers: `tool_bi_query_dashboard`.
 Mark clearly what is real, forecast or simulated in the commentary.
