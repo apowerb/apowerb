@@ -214,6 +214,8 @@ class TestEmbedChart:
             result = embed_chart(chart_id="invente")
         assert result["success"] is False
         assert "tool_create_chart" in result["error"]
+        # Un id de composant de tableau de bord BI n'est pas un graphique.
+        assert "/bi/" in result["error"]
 
     def test_fails_open_when_the_lookup_breaks(self) -> None:
         # Une panne de base ne doit jamais bloquer un vrai graphique.

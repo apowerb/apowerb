@@ -311,6 +311,7 @@ async def _async_create(title: str, description: str, spec: dict, owner: str, te
     message = (
         f"Dashboard '{dashboard.title}' created. Link for the user: /bi/{dashboard.id}"
         " (copy this relative path exactly as written; never add a domain in front of it)."
+        " Its component ids are not chart ids: never pass them to embed_chart; give this link instead."
     )
     if renamed:
         message = (
