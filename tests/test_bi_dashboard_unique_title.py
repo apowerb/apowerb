@@ -19,17 +19,13 @@ SPEC = {
 }
 
 
-class UniqueViolation(Exception):
-    pass
-
-
 class UniqueStore:
     def __init__(self, rows, owner):
         self.rows, self.owner = rows, owner
 
     async def save(self, dashboard):
         if any(o == self.owner and d.title == dashboard.title for o, d in self.rows.values()):
-            raise UniqueViolation("duplicate key value violates unique constraint")
+            raise DashboardNameConflictError(dashboard.title)
         self.rows[dashboard.id] = (self.owner, dashboard)
         return dashboard
 
@@ -65,7 +61,9 @@ def test_successive_creations_get_numbered_titles_in_the_store(rows):
     assert [r["title"] for r in (first, second, third)] == ["Pilotage", "Pilotage (2)", "Pilotage (3)"]
     assert _titles(rows) == ["Pilotage", "Pilotage (2)", "Pilotage (3)"]
     assert "renamed_from" not in first
-    assert second["renamed_from"] == "Pilotage" and "Pilotage (2)" in second["message"]
+    assert second["renamed_from"] == "Pilotage"
+    assert second["message"].startswith("Le nom « Pilotage » était déjà pris : le tableau s'appelle « Pilotage (2) ».")
+    assert third["message"].startswith("Le nom « Pilotage » était déjà pris : le tableau s'appelle « Pilotage (3) ».")
     assert rows[second["dashboard_id"]][1].title == "Pilotage (2)"
 
 
@@ -129,3 +127,8 @@ async def test_helper_raises_name_conflict_after_twenty():
 
     with pytest.raises(DashboardNameConflictError):
         await create_with_unique_title("X", create)
+
+
+def test_generic_tool_instructs_the_agent_to_report_the_rename():
+    doc = t.tool_bi_create_dashboard.__doc__
+    assert "renamed_from" in doc and "tell them the final title" in doc
