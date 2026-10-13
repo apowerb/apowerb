@@ -458,7 +458,10 @@ async def replace_dashboard_source(
     except SpecError as exc:
         raise _invalid(exc.errors)
     if dashboard.template is not None:
-        columns = {**dashboard.template.columns, **{slot: found.get(name) for slot, name in slots.items()}}
+        columns = {
+            **dashboard.template.columns,
+            **{slot: found.get(name) for slot, name in slots.items() if name in mapping},
+        }
         updated = updated.model_copy(update={"template": dashboard.template.model_copy(update={"columns": columns})})
     if not body.dry_run:
         updated = await svc.save(updated)

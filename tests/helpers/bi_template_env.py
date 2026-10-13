@@ -48,8 +48,11 @@ def dashboard_from_spec(spec: dict, created_by: str = "alice@example.com", title
     )
 
 
-def sales_frame(weeks: int = 130, renamed: bool = False) -> pd.DataFrame:
+def sales_frame(weeks: int = 130, renamed: bool = False, sites: tuple[str, ...] = ()) -> pd.DataFrame:
+    """Weekly sales per family; with ``sites``, one row per site and week (sales halved)."""
     frame = weekly_sales(weeks=weeks)[["semaine", "famille", "ventes"]]
+    if sites:
+        frame = pd.concat([frame.assign(ventes=frame["ventes"] / len(sites), site=s) for s in sites], ignore_index=True)
     return frame.rename(columns=RENAMED) if renamed else frame
 
 

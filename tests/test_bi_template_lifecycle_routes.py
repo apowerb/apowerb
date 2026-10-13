@@ -191,6 +191,23 @@ async def test_replace_file_without_provenance_maps_the_current_names_to_the_new
             ("semaine", "week"), ("famille", "product_group"), ("ventes", "qty")]
 
 
+async def test_replace_file_keeps_the_site_column_of_a_multi_site_dashboard():
+    async with db_env() as env:
+        sites = ("nord", "sud")
+        dashboard_id = await _create(env, {**NATIVE, "site": "site"}, sales_frame(renamed=True, sites=sites))
+        env.datasets[DS2] = (ALICE, sales_frame(weeks=100, renamed=True, sites=sites))
+        resp = await _post(env, f"/dashboards/{dashboard_id}/source", {"dataset_id": DS2})
+        assert resp.status_code == 200, resp.text
+        assert (await env.load(dashboard_id)).template.columns["site"] == "site"
+        errors, _ = await _errors(env, dashboard_id)
+        assert errors == {}
+        assert (await _post(env, f"/dashboards/{dashboard_id}/upgrade", {})).status_code == 200
+        upgraded = await env.load(dashboard_id)
+        assert upgraded.sources[0].transforms[0].op == "aggregate"
+        errors, _ = await _errors(env, dashboard_id)
+        assert errors == {}
+
+
 async def test_replace_file_of_a_real_stock_dashboard_keeps_the_three_sources():
     async with db_env() as env:
         dashboard_id = await _create(env, STOCK_NATIVE, stock_frame(renamed=True))
