@@ -19,6 +19,7 @@ from apowerb.bi.dashboards.core import (
     Dashboard,
     DashboardStatus,
     DashboardVisibility,
+    TemplateRef,
 )
 from apowerb.bi.dashboards.schema import (
     AddComponentRequest,
@@ -230,6 +231,7 @@ class DashboardService:
         req: DashboardCreateRequest,
         *,
         created_by: str | None = None,
+        template: TemplateRef | None = None,
     ) -> Dashboard:
         if req.slug:
             existing = await self._store.get_by_slug(req.slug)
@@ -247,6 +249,7 @@ class DashboardService:
             agent_id=req.agent_id,
             sources=req.sources,
             filters=req.filters,
+            template=template,
         )
         _check_spec(dashboard)
         return await self._save_named(dashboard)

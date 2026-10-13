@@ -23,6 +23,7 @@ from apowerb.bi.dashboards.core import (
     KeyValue,
     TableColumn,
     TableWidget,
+    TemplateRef,
     Trend,
     TrendDirection,
     TrendSentiment,
@@ -309,6 +310,7 @@ class DashboardResponse(BaseModel):
     spec_version: int = 1
     sources: list[SourceSpec] = Field(default_factory=list)
     filters: list[FilterSpec] = Field(default_factory=list)
+    template: TemplateRef | None = None
 
     @classmethod
     def from_domain(cls, dashboard: Dashboard) -> "DashboardResponse":

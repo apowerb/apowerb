@@ -20,6 +20,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -333,6 +334,16 @@ class DashboardComponent(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class TemplateRef(BaseModel):
+    """Provenance of a dashboard built from a template: which template and version,
+    the file column behind each template slot, and the parameters used."""
+
+    id: str
+    version: int = Field(default=1, ge=1)
+    columns: dict[str, str | None] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class Dashboard(BaseModel):
     """
     A named, versioned grid of components.
@@ -365,6 +376,7 @@ class Dashboard(BaseModel):
     spec_version: int = Field(default=1, ge=1)
     sources: list[SourceSpec] = Field(default_factory=list)
     filters: list[FilterSpec] = Field(default_factory=list)
+    template: TemplateRef | None = None
 
     # layout
     columns: int = Field(default=12, ge=1, le=24, description="Grid column count")
@@ -409,6 +421,7 @@ class Dashboard(BaseModel):
         sources: list[SourceSpec] | None = None,
         filters: list[FilterSpec] | None = None,
         spec_version: int | None = None,
+        template: TemplateRef | dict | None = None,
     ) -> "Dashboard":
         sources = sources or []
         filters = filters or []
@@ -427,6 +440,7 @@ class Dashboard(BaseModel):
             sources=sources,
             filters=filters,
             spec_version=spec_version or (2 if has_v2 else 1),
+            template=template,
         )
 
     # ------------------------------------------------------------------

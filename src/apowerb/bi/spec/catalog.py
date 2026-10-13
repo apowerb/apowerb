@@ -45,12 +45,22 @@ class DashboardTemplate:
     columns: tuple[TemplateColumn, ...]
     params: tuple[TemplateParam, ...]
     build: Callable[[str, dict[str, str | None], dict[str, Any]], dict]
+    version: int = 1
+    origin: str = "builtin"
+    owner: str | None = None
+    visibility: str | None = None
+    can_delete: bool = False
 
     def describe(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "label": self.label,
             "description": self.description,
+            "version": self.version,
+            "origin": self.origin,
+            "owner": self.owner,
+            "visibility": self.visibility,
+            "can_delete": self.can_delete,
             "columns": [asdict(c) for c in self.columns],
             "params": [asdict(p) for p in self.params],
         }
@@ -90,6 +100,10 @@ class DashboardTemplate:
         return clean, errors
 
 
+# Incremented whenever the builder of the template changes.
+STOCK_PILOTAGE_VERSION = 1
+
+
 def _build_stock_pilotage(dataset_id: str, columns: dict[str, str | None], params: dict[str, Any]) -> dict:
     return stock_pilotage(
         dataset_id,
@@ -98,6 +112,9 @@ def _build_stock_pilotage(dataset_id: str, columns: dict[str, str | None], param
         sales=columns["sales"] or "",
         site=columns.get("site"),
         horizon=params["horizon"],
+        stock=columns.get("stock"),
+        safety_column=columns.get("safety"),
+        lead_time_column=columns.get("lead_time"),
     )
 
 
@@ -114,9 +131,13 @@ _STOCK_PILOTAGE = DashboardTemplate(
         TemplateColumn("family", "Famille", "string", True, "famille"),
         TemplateColumn("sales", "Ventes", "number", True, "ventes"),
         TemplateColumn("site", "Site", "string", False, None),
+        TemplateColumn("stock", "Stock", "number", False, "stock"),
+        TemplateColumn("safety", "Seuil de sécurité", "number", False, "seuil_securite"),
+        TemplateColumn("lead_time", "Délai fournisseur (semaines)", "number", False, "delai_fournisseur_sem"),
     ),
     params=(TemplateParam("horizon", "Horizon de prévision (semaines)", "integer", 8, 1, 26),),
     build=_build_stock_pilotage,
+    version=STOCK_PILOTAGE_VERSION,
 )
 
 _TEMPLATES: dict[str, DashboardTemplate] = {_STOCK_PILOTAGE.id: _STOCK_PILOTAGE}
