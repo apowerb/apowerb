@@ -260,6 +260,7 @@ async def process_subscription(
     """Recalcule le tableau de bord, emet les alertes et, si `send_digest`, le
     resume. Renvoie False si le tableau de bord n'existe plus."""
     owner = sub.owner_email
+    frequency = sub.frequency  # lu avant les commits, qui expirent `sub`
     dashboard = await load_dashboard(db, sub.dashboard_id, owner)
     if dashboard is None:
         logger.warning("bi digest: dashboard %s introuvable pour %s", sub.dashboard_id, owner)
@@ -329,7 +330,7 @@ async def process_subscription(
         subject, html, plain = render_alert(dashboard, newly_bad, link=abs_link)
         await _mail(owner, subject, html, plain)
     if send_digest:
-        subject, html, plain = render_digest(dashboard, kpis, texts, link=abs_link, frequency=sub.frequency)
+        subject, html, plain = render_digest(dashboard, kpis, texts, link=abs_link, frequency=frequency)
         await _mail(owner, subject, html, plain)
     return True
 
@@ -350,26 +351,24 @@ async def tick_once(db: AsyncSession, *, now: datetime | None = None) -> int:
     """
     moment = now or datetime.now(UTC)
     t = BIDashboardDigest
+    # Colonnes scalaires, pas d'instances ORM : chaque commit de la boucle
+    # expire les instances de la session, et relire un attribut expire en
+    # contexte async leve MissingGreenlet (cf. scheduler/webhook_renewal.py).
     due = (
-        (
-            await db.execute(
-                select(t).where(or_(t.next_digest_at <= moment, and_(t.alerts_enabled.is_(True), t.next_alert_check_at <= moment)))
-            )
+        await db.execute(
+            select(
+                t.id, t.next_digest_at, t.next_alert_check_at, t.alerts_enabled,
+                t.frequency, t.weekday, t.hour, t.timezone,
+            ).where(or_(t.next_digest_at <= moment, and_(t.alerts_enabled.is_(True), t.next_alert_check_at <= moment)))
         )
-        .scalars()
-        .all()
-    )
+    ).all()
     done = 0
-    for row in due:
-        sub_id = row.id
-        old_digest, old_check = row.next_digest_at, row.next_alert_check_at
+    for sub_id, old_digest, old_check, alerts_enabled, frequency, weekday, hour, tz in due:
         do_digest = _aware(old_digest) <= moment
         values: dict = {}
         if do_digest:
-            values["next_digest_at"] = next_run(
-                row.frequency, weekday=row.weekday, hour=row.hour, tz=row.timezone, after=moment
-            )
-        if row.alerts_enabled and (do_digest or _aware(old_check) <= moment):
+            values["next_digest_at"] = next_run(frequency, weekday=weekday, hour=hour, tz=tz, after=moment)
+        if alerts_enabled and (do_digest or _aware(old_check) <= moment):
             values["next_alert_check_at"] = moment + ALERT_CHECK_INTERVAL
         try:
             claim = await db.execute(
@@ -380,8 +379,8 @@ async def tick_once(db: AsyncSession, *, now: datetime | None = None) -> int:
             await db.commit()
             if claim.rowcount != 1:
                 continue  # une autre replique a pris ce creneau
-            await db.refresh(row)
-            if await process_subscription(db, row, now=moment, send_digest=do_digest):
+            row = await db.get(t, sub_id, populate_existing=True)
+            if row is not None and await process_subscription(db, row, now=moment, send_digest=do_digest):
                 done += 1
         except Exception:  # noqa: BLE001 - un abonnement en panne ne doit pas arreter les autres
             await db.rollback()

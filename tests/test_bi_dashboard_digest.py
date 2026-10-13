@@ -279,6 +279,33 @@ async def test_tick_survives_a_failing_subscription(db, env, monkeypatch):
     assert sub.next_digest_at.replace(tzinfo=UTC) > NOW  # creneau consomme, pas de boucle infinie
 
 
+@pytest.fixture
+async def db_expiring():
+    """Session de production : `expire_on_commit` garde son defaut (True)."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+    schema = BIDashboardDigest.__table__.schema
+    async with engine.begin() as conn:
+        if schema:
+            await conn.execute(text(f"ATTACH DATABASE ':memory:' AS {schema}"))
+        await conn.run_sync(Base.metadata.create_all)
+    async with async_sessionmaker(engine)() as session:
+        session.add(User(first_name="Own", last_name="Er", email=OWNER, role=UserRole.USER))
+        await session.commit()
+        yield session
+    await engine.dispose()
+
+
+async def test_tick_handles_several_due_subscriptions_with_expiring_session(db_expiring, env):
+    store = dd.DigestStore(db_expiring)
+    for dash_id in ("dash-1", "dash-2", "dash-3"):
+        sub = await store.upsert(dashboard_id=dash_id, owner_email=OWNER, now=NOW, timezone="UTC")
+        sub.next_digest_at = NOW - timedelta(minutes=1)
+    await db_expiring.commit()
+    env.responses = [_response(), _response(), _response()]
+    assert await dd.tick_once(db_expiring, now=NOW) == 3
+    assert len(env.digest_mails()) == 3
+
+
 # --------------------------------------------------------------------------- routes
 
 
