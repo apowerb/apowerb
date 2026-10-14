@@ -8,6 +8,7 @@ server's scheme and host, never those values.
 from __future__ import annotations
 
 import logging
+import re
 
 import pytest
 
@@ -48,7 +49,8 @@ def test_credentials_are_not_logged(transport, caplog):
         mcp_loader.load_mcp_servers(cfg, tools)
 
     assert len(tools) == 1  # the server is still loaded
-    assert "mcp.example.com" in caplog.text  # the host is still logged
+    # The scheme and host are still logged, nothing after them.
+    assert re.search(r"https://mcp\.example\.com\)", caplog.text)
     assert TOKEN not in caplog.text
     assert PARAM_VALUE not in caplog.text
 
