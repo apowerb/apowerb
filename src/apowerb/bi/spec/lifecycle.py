@@ -32,6 +32,7 @@ from apowerb.bi.spec.models import (
     SourceSpec,
     TransformStep,
 )
+from apowerb.bi.spec.templates_common import translator
 from apowerb.bi.spec.validate import _INVENTORY_OUTPUTS, _PLAN_OUTPUTS
 
 _PURE_RENAME_RE = re.compile(r'^"((?:[^"]|"")+)"$')
@@ -46,13 +47,16 @@ class SourceColumn:
     current: str | None
 
 
-def root_dataset_source(sources: list[SourceSpec]) -> SourceSpec:
+def root_dataset_source(sources: list[SourceSpec], lang: str | None = None) -> SourceSpec:
     """The only ``dataset`` source (child sources, sql and connector sources do not count)."""
     datasets = [s for s in sources if s.kind == "dataset"]
     if len(datasets) != 1:
         raise SpecError(
-            "Le tableau doit avoir exactement une source de type fichier (jeu de données) ; "
-            f"il en a {len(datasets)}."
+            translator(lang)(
+                "Le tableau doit avoir exactement une source de type fichier (jeu de données) ; "
+                f"il en a {len(datasets)}.",
+                f"The dashboard must have exactly one file source (dataset); it has {len(datasets)}.",
+            )
         )
     return datasets[0]
 
@@ -70,11 +74,18 @@ def pure_renames(transforms: list[TransformStep]) -> tuple[dict[str, str], list[
     return renames, list(transforms[index:])
 
 
-def apply_mapping(transforms: list[TransformStep], mapping: dict[str, str | None]) -> list[TransformStep]:
+def apply_mapping(
+    transforms: list[TransformStep], mapping: dict[str, str | None], lang: str | None = None
+) -> list[TransformStep]:
     """``transforms`` preceded by one rename per column whose file column differs from the spec name."""
     renamed = {name: column for name, column in mapping.items() if column and column != name}
     if set(renamed) & set(renamed.values()):
-        raise SpecError("Un échange de colonnes (A vers B et B vers A) n'est pas pris en charge.")
+        raise SpecError(
+            translator(lang)(
+                "Un échange de colonnes (A vers B et B vers A) n'est pas pris en charge.",
+                "Swapping columns (A to B and B to A) is not supported.",
+            )
+        )
     derives: list[TransformStep] = [DeriveStep(column=name, expr=quote_ident(column)) for name, column in renamed.items()]
     return [*derives, *transforms]
 
@@ -154,7 +165,8 @@ def file_mapping(
     ``requested`` is keyed by template slot for a dashboard with provenance, by spec name
     otherwise. What it leaves out keeps its current file column.
     """
-    root = root_dataset_source(dashboard.sources)
+    T = translator(dashboard.locale)
+    root = root_dataset_source(dashboard.sources, dashboard.locale)
     renames, _ = pure_renames(root.transforms)
     mapping: dict[str, str | None] = {c.key: c.current for c in source_columns(dashboard)}
     slots: dict[str, str] = {}
@@ -167,17 +179,20 @@ def file_mapping(
         column = (value or "").strip() or None
         if reference is None:
             if key not in mapping:
-                errors.append(f"Colonne inconnue pour ce tableau : {key}.")
+                errors.append(T(f"Colonne inconnue pour ce tableau : {key}.", f"Unknown column for this dashboard: {key}."))
             else:
                 mapping[key] = column
         elif key in slots:
             mapping[slots[key]] = column
         elif key not in reference.columns:
-            errors.append(f"Colonne inconnue pour ce modèle : {key}.")
+            errors.append(T(f"Colonne inconnue pour ce modèle : {key}.", f"Unknown column for this template: {key}."))
         elif column:
             errors.append(
-                f"La colonne « {key} » n'est pas utilisée par ce tableau : "
-                "utilisez la mise à niveau pour la prendre en compte."
+                T(
+                    f"La colonne « {key} » n'est pas utilisée par ce tableau : "
+                    "utilisez la mise à niveau pour la prendre en compte.",
+                    f"The column “{key}” is not used by this dashboard: use the upgrade to take it into account.",
+                )
             )
     if errors:
         raise SpecError(" ".join(errors), errors=errors)

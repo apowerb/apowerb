@@ -24,8 +24,10 @@ FRENCH = re.compile(
     r"|chiffre|factures?|tr[eé]sorerie|effectifs?|chantiers?|marges?|prévu\w*|réel\w*)\b",
     re.IGNORECASE,
 )
+OPTIONAL_PLURAL = re.compile(r"\w\((s|es|ies|x)\)")  # "famille(s)", "product family(ies)"
 _LITERAL = re.compile(r"'((?:[^']|'')*)'")
-_TOKEN = re.compile(r"\{\{[^}]*\}\}|`[^`]*`")  # {{measure|format}} tokens and `column` names are identifiers
+# {{measure|format}} tokens and `column` names are identifiers; the words of {{measure|plural:one:other}} are text
+_TOKEN = re.compile(r"\{\{[^}|]*(?:\|\s*plural:([^}]*))?[^}]*\}\}|`[^`]*`")
 
 
 def _visible_texts(node: Any, key: str | None = None) -> list[tuple[str, str]]:
@@ -44,8 +46,12 @@ def _visible_texts(node: Any, key: str | None = None) -> list[tuple[str, str]]:
     return found
 
 
+def _words(text: str) -> str:
+    return _TOKEN.sub(lambda m: (m.group(1) or "").replace(":", " "), text)
+
+
 def _french(texts: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    return [(k, t) for k, t in texts if FRENCH.search(_TOKEN.sub("", t))]
+    return [(k, t) for k, t in texts if FRENCH.search(_words(t))]
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -53,6 +59,14 @@ def _french(texts: list[tuple[str, str]]) -> list[tuple[str, str]]:
 def test_english_build_has_no_french_visible_text(template_id: str, case: str) -> None:
     spec = build_case(template_id, case, lang="en")
     assert _french(_visible_texts(spec)) == []
+
+
+@pytest.mark.parametrize("lang", ["fr", "en"])
+@pytest.mark.parametrize("case", CASES)
+@pytest.mark.parametrize("template_id", TEMPLATE_IDS)
+def test_build_has_no_optional_plural_marks(template_id: str, case: str, lang: str) -> None:
+    spec = build_case(template_id, case, lang=lang)
+    assert [(k, t) for k, t in _visible_texts(spec) if OPTIONAL_PLURAL.search(_words(t))] == []
 
 
 @pytest.mark.parametrize("template_id", TEMPLATE_IDS)

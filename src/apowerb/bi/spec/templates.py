@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from apowerb.bi.spec.formatting import format_plural
 from apowerb.bi.spec.models import (
     IDENT,
     AggregateStep,
@@ -657,12 +658,12 @@ def _replenishment_spec(
         text=T(
             "{{filters.famille}} : stock actuel de {{stock_actuel|compact}} unités, soit {{couverture_actuelle|weeks}} "
             "de ventes prévues. À commander cette semaine : {{commande_semaine|compact}} unités "
-            "({{familles_a_commander|integer}} famille(s)). {{familles_a_risque|integer}} famille(s) passent sous le "
-            "seuil de sécurité avant qu'une commande puisse arriver.",
+            "({{familles_a_commander|plural:famille:familles}}). {{familles_a_risque|plural:famille passe:familles passent}} "
+            "sous le seuil de sécurité avant qu'une commande puisse arriver.",
             "{{filters.famille}}: current stock of {{stock_actuel|compact}} units, i.e. {{couverture_actuelle|weeks}} "
             "of forecast sales. To order this week: {{commande_semaine|compact}} units "
-            "({{familles_a_commander|integer}} product family(ies)). {{familles_a_risque|integer}} product family(ies) "
-            "fall below safety stock before an order can arrive.",
+            "({{familles_a_commander|plural:product family:product families}}). "
+            "{{familles_a_risque|plural:product family falls:product families fall}} below safety stock before an order can arrive.",
         ),
     )
     kpis = [
@@ -671,7 +672,8 @@ def _replenishment_spec(
             secondary=T(f"{{{{prevision_horizon|compact}}}} sur {horizon} semaines",
                         f"{{{{prevision_horizon|compact}}}} over {horizon} weeks")),
         kpi(T("À commander cette semaine", "To order this week"), "commande_semaine",
-            secondary=T("{{familles_a_commander|integer}} famille(s) concernée(s)", "{{familles_a_commander|integer}} product family(ies) affected")),
+            secondary=T("{{familles_a_commander|plural:famille concernée:familles concernées}}",
+                        "{{familles_a_commander|plural:product family affected:product families affected}}")),
         kpi(T("Familles à risque", "Product families at risk"), "familles_a_risque", secondary=T("sous le seuil avant l'arrivée d'une commande", "below threshold before an order can arrive")),
     ]
     combo = VisualSpec(
@@ -739,11 +741,12 @@ def _replenishment_spec(
 
     seuil_src = (
         T(f"la colonne `{safety_column}`", f"the `{safety_column}` column") if safety_column
-        else T(f"{_fr(safety_weeks)} semaine(s) de prévision", f"{_fr(safety_weeks, lang=lang)} week(s) of forecast")
+        else T(format_plural(safety_weeks, "semaine de prévision", "semaines de prévision"),
+               format_plural(safety_weeks, "week of forecast", "weeks of forecast", lang="en"))
     )
     delai_src = (
         T(f"la colonne `{lead_time_column}`", f"the `{lead_time_column}` column") if lead_time_column
-        else T(f"{lead_time} semaine(s)", f"{lead_time} week(s)")
+        else T(format_plural(lead_time, "semaine", "semaines"), format_plural(lead_time, "week", "weeks", lang="en"))
     )
     seuil_txt = T(f"Seuil de sécurité : {seuil_src}. Délai fournisseur : {delai_src}, famille par famille.",
                   f"Safety stock: {seuil_src}. Supplier lead time: {delai_src}, product family by product family.")

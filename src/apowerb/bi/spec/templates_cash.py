@@ -471,7 +471,8 @@ def build(dataset_id: str, columns: dict, params: dict, lang: str = DEFAULT_LANG
     missing = [pick(c["label"], lang) for c in DESCRIPTOR["columns"] if c["required"] and not mapping[c["key"]]]
     if missing:
         raise ValueError(
-            T("Colonne(s) obligatoire(s) manquante(s) : ", "Missing required column(s): ") + ", ".join(missing) + "."
+            (T("Colonnes obligatoires manquantes : ", "Missing required columns: ") if len(missing) > 1
+             else T("Colonne obligatoire manquante : ", "Missing required column: ")) + ", ".join(missing) + "."
         )
     defaults = {p["key"]: p["default"] for p in DESCRIPTOR["params"]}
     values = {k: (params.get(k) if params.get(k) is not None else v) for k, v in defaults.items()}

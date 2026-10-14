@@ -60,9 +60,12 @@ def parse_dataset_bytes(data: bytes, *, key: str = "", sheet: str | None = None)
                 delim = ","
             df = pd.read_csv(io.StringIO(text), sep=delim, nrows=MAX_SOURCE_ROWS + 1)
     except Exception as exc:  # noqa: BLE001 - any parser error is reported the same way
-        raise SpecError(f"Lecture du jeu de données impossible : {exc}") from None
+        raise SpecError(f"Lecture du jeu de données impossible : {exc}", en=f"Could not read the dataset: {exc}") from None
     if len(df) > MAX_SOURCE_ROWS:
-        raise SpecError(f"Jeu de données trop volumineux (plus de {MAX_SOURCE_ROWS} lignes).")
+        raise SpecError(
+            f"Jeu de données trop volumineux (plus de {MAX_SOURCE_ROWS} lignes).",
+            en=f"Dataset too large (more than {MAX_SOURCE_ROWS} rows).",
+        )
     return df
 
 
@@ -79,10 +82,10 @@ async def load_dataset(dataset_id: str, owner: str, sheet: str | None = None) ->
     key = await _resolve_s3_key(dataset_id, owner)
     if key is None:
         # Same message whether it does not exist or belongs to someone else.
-        raise SpecError(f"Jeu de données introuvable : {dataset_id}")
+        raise SpecError(f"Jeu de données introuvable : {dataset_id}", en=f"Dataset not found: {dataset_id}")
     data = await asyncio.to_thread(read_file, key)
     if data is None:
-        raise SpecError(f"Jeu de données introuvable : {dataset_id}")
+        raise SpecError(f"Jeu de données introuvable : {dataset_id}", en=f"Dataset not found: {dataset_id}")
     df = await asyncio.to_thread(lambda: coerce_frame(parse_dataset_bytes(data, key=key, sheet=sheet)))
     _dataset_cache.set(cache_key, df)
     return df
@@ -102,7 +105,10 @@ async def load_sql(connection_config_id: str, query: str, owner: str) -> pd.Data
         raise SpecError(str(exc)) from None
     except RuntimeError as exc:
         logger.warning("[BiSpec] SQL source failed: %s", exc)
-        raise SpecError("La requête de la source a échoué (voir les journaux du serveur).") from None
+        raise SpecError(
+            "La requête de la source a échoué (voir les journaux du serveur).",
+            en="The source query failed (see the server logs).",
+        ) from None
     return coerce_frame(pd.DataFrame.from_records(rows))
 
 
@@ -118,20 +124,24 @@ async def load_tool(spec: SourceSpec, owner: str) -> pd.DataFrame:
     from apowerb.bi.data.tool_executor import ToolQueryExecutor, ToolSourceError
 
     label = f"Source « {spec.name} »"
+    label_en = f"Source “{spec.name}”"
     opts = spec.source_options
     tool, args = opts.get("tool"), opts.get("args") or {}
     if not isinstance(tool, str) or not tool.strip():
-        raise SpecError(f"{label} : outil manquant (source_options.tool).")
+        raise SpecError(f"{label} : outil manquant (source_options.tool).", en=f"{label_en}: missing tool (source_options.tool).")
     if not isinstance(args, dict):
-        raise SpecError(f"{label} : source_options.args doit être un objet.")
+        raise SpecError(f"{label} : source_options.args doit être un objet.", en=f"{label_en}: source_options.args must be an object.")
     executor = ToolQueryExecutor(owner, spec.connection_config_id, max_rows=MAX_SOURCE_ROWS)
     try:
         rows = await executor.run(tool.strip(), args)
     except ToolSourceError as exc:
-        raise SpecError(f"{label} : {exc}") from None
+        raise SpecError(f"{label} : {exc}", en=f"{label_en}: {exc}") from None
     except Exception as exc:  # noqa: BLE001 - tool errors are logged, not shown
         logger.warning("[BiSpec] tool source %s failed: %s", spec.name, type(exc).__name__)
-        raise SpecError(f"{label} : la lecture a échoué (voir les journaux du serveur).") from None
+        raise SpecError(
+            f"{label} : la lecture a échoué (voir les journaux du serveur).",
+            en=f"{label_en}: reading failed (see the server logs).",
+        ) from None
     return coerce_frame(pd.DataFrame.from_records(rows))
 
 
@@ -144,10 +154,13 @@ async def load_connector(spec: SourceSpec, owner: str) -> pd.DataFrame:
     from apowerb.bi.data import service as data_service
 
     label = f"Source « {spec.name} »"
+    label_en = f"Source “{spec.name}”"
     try:
         source_type = SourceType(spec.source_type or "")
     except ValueError:
-        raise SpecError(f"{label} : source_type inconnu « {spec.source_type} ».") from None
+        raise SpecError(
+            f"{label} : source_type inconnu « {spec.source_type} ».", en=f"{label_en}: unknown source_type “{spec.source_type}”."
+        ) from None
     query = spec.query or ""
     if source_type == SourceType.DATABASE:
         query = sql_guard.check_query(query, f"Requête de la {label.lower()}")
@@ -168,13 +181,16 @@ async def load_connector(spec: SourceSpec, owner: str) -> pd.DataFrame:
     except SpecError:
         raise
     except (data_service.NoDataSourceError, ValueError) as exc:
-        raise SpecError(f"{label} : {exc}") from None
+        raise SpecError(f"{label} : {exc}", en=f"{label_en}: {exc}") from None
     except Exception as exc:  # noqa: BLE001 - provider errors are logged, not shown
         logger.warning("[BiSpec] connector source %s failed: %s", spec.name, exc)
-        raise SpecError(f"{label} : la lecture a échoué (voir les journaux du serveur).") from None
+        raise SpecError(
+            f"{label} : la lecture a échoué (voir les journaux du serveur).",
+            en=f"{label_en}: reading failed (see the server logs).",
+        ) from None
     # Some executors report a failure as a single {"error": ...} row.
     if len(rows) == 1 and set(rows[0]) == {"error"}:
-        raise SpecError(f"{label} : {rows[0]['error']}")
+        raise SpecError(f"{label} : {rows[0]['error']}", en=f"{label_en}: {rows[0]['error']}")
     return coerce_frame(pd.DataFrame.from_records(rows))
 
 
@@ -182,12 +198,15 @@ async def load_source(spec: SourceSpec, owner: str) -> pd.DataFrame:
     """Raw frame of a ``dataset``, ``sql`` or ``connector`` source."""
     if spec.kind == "dataset":
         if not spec.dataset_id:
-            raise SpecError(f"Source « {spec.name} » : dataset_id manquant.")
+            raise SpecError(f"Source « {spec.name} » : dataset_id manquant.", en=f"Source “{spec.name}”: missing dataset_id.")
         return await load_dataset(spec.dataset_id, owner, spec.sheet)
     if spec.kind == "sql":
         if not spec.connection_config_id or not spec.query:
-            raise SpecError(f"Source « {spec.name} » : connection_config_id et query sont requis.")
+            raise SpecError(
+                f"Source « {spec.name} » : connection_config_id et query sont requis.",
+                en=f"Source “{spec.name}”: connection_config_id and query are required.",
+            )
         return await load_sql(spec.connection_config_id, spec.query, owner)
     if spec.kind == "connector":
         return await load_connector(spec, owner)
-    raise SpecError(f"Source « {spec.name} » : type inattendu {spec.kind}.")
+    raise SpecError(f"Source « {spec.name} » : type inattendu {spec.kind}.", en=f"Source “{spec.name}”: unexpected type {spec.kind}.")

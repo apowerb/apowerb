@@ -425,6 +425,7 @@ class VisualSpec(BaseModel):
 
     Text templates (``text``, ``KpiSpec.secondary``, ``subtitle``) accept
     ``{{measure}}``, ``{{measure|percent}}`` (any MeasureSpec.format),
+    ``{{measure|plural:famille:familles}}`` (the count, then the word that agrees with it),
     ``{{filters.<id>}}`` (resolved label) and ``{{period.from}}``,
     ``{{period.to}}``, ``{{period.last}}``.
     """

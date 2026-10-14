@@ -22,7 +22,7 @@ from apowerb.bi.spec import sql_guard
 from apowerb.bi.spec.duck import SqlRunner, quote_ident, to_python
 from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.filters import AGGREGATION_SQL, ActiveFilter, apply_filters
-from apowerb.bi.spec.formatting import format_date, format_delta, format_value
+from apowerb.bi.spec.formatting import PLURAL, format_date, format_delta, format_plural, format_value
 from apowerb.bi.spec.frames import MatSource, referenced_columns
 from apowerb.bi.spec.models import (
     ColorRule,
@@ -121,9 +121,12 @@ class VisualBuilder:
 
         if visual.source:
             if visual.source in ctx.source_errors:
-                raise SpecError(f"Source « {visual.source} » indisponible : {ctx.source_errors[visual.source]}")
+                raise SpecError(
+                    f"Source « {visual.source} » indisponible : {ctx.source_errors[visual.source]}",
+                    en=f"Source “{visual.source}” unavailable: {ctx.source_errors[visual.source]}",
+                )
             if visual.source not in ctx.sources:
-                raise SpecError(f"Source inconnue « {visual.source} ».")
+                raise SpecError(f"Source inconnue « {visual.source} ».", en=f"Unknown source “{visual.source}”.")
             self.src = ctx.sources[visual.source]
             self.mat = ctx.mats[visual.source]
             self.measures = {m.name: m for m in self.src.measures}
@@ -150,7 +153,10 @@ class VisualBuilder:
     def measure(self, name: str) -> MeasureSpec:
         m = self.measures.get(name)
         if m is None:
-            raise SpecError(f"Mesure inconnue « {name} » dans la source « {self.v.source} ».")
+            raise SpecError(
+                f"Mesure inconnue « {name} » dans la source « {self.v.source} ».",
+                en=f"Unknown measure “{name}” in source “{self.v.source}”.",
+            )
         self.used_measures[name] = m
         return m
 
@@ -203,7 +209,10 @@ class VisualBuilder:
                 out.append(_Series(s.key, s, m.expr, m))
             else:
                 if self.mat is None or s.key not in self.mat.df.columns:
-                    raise SpecError(f"Série « {s.key} » : ni mesure ni champ de la source « {self.v.source} ».")
+                    raise SpecError(
+                        f"Série « {s.key} » : ni mesure ni champ de la source « {self.v.source} ».",
+                        en=f"Series “{s.key}”: neither a measure nor a field of source “{self.v.source}”.",
+                    )
                 self.used_columns.add(s.key)
                 out.append(_Series(s.key, s, self._agg(s.key), None))
         return out
@@ -212,7 +221,10 @@ class VisualBuilder:
         """``SELECT x, expr... FROM frame GROUP BY x`` → columns ``_x``, ``_c0``…"""
         frame = self.df if df is None else df
         if x not in frame.columns:
-            raise SpecError(f"Champ x inconnu « {x} » dans la source « {self.v.source} ».")
+            raise SpecError(
+                f"Champ x inconnu « {x} » dans la source « {self.v.source} ».",
+                en=f"Unknown x field “{x}” in source “{self.v.source}”.",
+            )
         self.used_columns.add(x)
         qx = quote_ident(x)
         bx = self._x_expr(x, frame)
@@ -234,21 +246,29 @@ class VisualBuilder:
 
         def replace(match: Any) -> str:
             nonlocal period
-            token, fmt = match.group(1), match.group(2)
+            token, fmt, args = match.groups()
             if token.startswith("filters."):
                 fid = token.split(".", 1)[1]
                 flt = self.ctx.active.get(fid)
                 if flt is None:
-                    raise SpecError(f"Filtre inconnu « {fid} » dans le gabarit.")
+                    raise SpecError(f"Filtre inconnu « {fid} » dans le gabarit.", en=f"Unknown filter “{fid}” in the template.")
                 return flt.public.label
             if token.startswith("period."):
                 if period is None:
                     period = self.period()
                 key = token.split(".", 1)[1]
                 if key not in period:
-                    raise SpecError(f"« {token} » inconnu dans le gabarit.")
+                    raise SpecError(f"« {token} » inconnu dans le gabarit.", en=f"“{token}” is unknown in the template.")
                 return period[key]
             m = self.measure(token)
+            if fmt == PLURAL:
+                words = [w.strip() for w in (args or "").split(":")]
+                if len(words) != 2:
+                    raise SpecError(
+                        f"« {token}|{PLURAL} » attend deux mots (singulier:pluriel).",
+                        en=f"“{token}|{PLURAL}” expects two words (singular:plural).",
+                    )
+                return format_plural(values.get(token), words[0], words[1], lang=self.ctx.lang)
             if fmt:
                 return format_value(values.get(token), fmt, lang=self.ctx.lang)
             return format_value(values.get(token), m.format, m.unit, lang=self.ctx.lang)
@@ -363,10 +383,10 @@ class VisualBuilder:
     def chart(self) -> ComponentResult:
         v = self.v
         if not v.x:
-            raise SpecError("`x` est requis pour ce type de visuel.")
+            raise SpecError("`x` est requis pour ce type de visuel.", en="`x` is required for this type of visual.")
         defs = self.series_defs()
         if not defs:
-            raise SpecError("Au moins une série est requise.")
+            raise SpecError("Au moins une série est requise.", en="At least one series is required.")
         res = self.grouped(v.x, [(d.key, d.expr) for d in defs])
         res = self.order(res, "_c0", "x_asc")
         rows: list[dict[str, Any]] = []
@@ -398,10 +418,10 @@ class VisualBuilder:
     def pie(self) -> ComponentResult:
         v = self.v
         if not v.x:
-            raise SpecError("`x` est requis pour un camembert.")
+            raise SpecError("`x` est requis pour un camembert.", en="`x` is required for a pie chart.")
         defs = self.series_defs()
         if not defs:
-            raise SpecError("Une série est requise pour un camembert.")
+            raise SpecError("Une série est requise pour un camembert.", en="A series is required for a pie chart.")
         res = self.grouped(v.x, [(defs[0].key, defs[0].expr)])
         res = self.order(res, "_c0", "value_desc")
         rows = [{"x": to_python(r["_x"]), "value": _num(r["_c0"])} for _, r in res.iterrows()]
@@ -410,7 +430,7 @@ class VisualBuilder:
     def kpi(self) -> ComponentResult:
         k = self.v.kpi
         if k is None:
-            raise SpecError("Bloc `kpi` manquant.")
+            raise SpecError("Bloc `kpi` manquant.", en="Missing `kpi` block.")
         m = self.measure(k.measure)
         value = self.scalars([k.measure])[k.measure]
         delta: float | None = None
@@ -488,7 +508,7 @@ class VisualBuilder:
     def waterfall(self) -> ComponentResult:
         steps = self.v.steps
         if not steps:
-            raise SpecError("Au moins une étape est requise.")
+            raise SpecError("Au moins une étape est requise.", en="At least one step is required.")
         values = self.scalars([s.measure for s in steps])
         rows: list[dict[str, Any]] = []
         running = 0.0
@@ -539,7 +559,7 @@ class VisualBuilder:
                 cols.append(ColumnSpec(key=v.x))
             cols.extend(ColumnSpec(key=m.name) for m in self.src.measures)
         if not cols:
-            raise SpecError("Aucune colonne à afficher.")
+            raise SpecError("Aucune colonne à afficher.", en="No column to display.")
         defs: list[tuple[str, str]] = []
         total_defs: list[tuple[str, str]] = []
         for c in cols:
@@ -554,7 +574,10 @@ class VisualBuilder:
                 )
                 defs.append((c.key, self._agg(c.key) if numeric else f"ANY_VALUE({quote_ident(c.key)})"))
             else:
-                raise SpecError(f"Colonne « {c.key} » : ni mesure ni champ de la source « {v.source} ».")
+                raise SpecError(
+                    f"Colonne « {c.key} » : ni mesure ni champ de la source « {v.source} ».",
+                    en=f"Column “{c.key}”: neither a measure nor a field of source “{v.source}”.",
+                )
             if c.total_measure:
                 total_defs.append((c.total_measure, self.measure(c.total_measure).expr))
             else:
@@ -614,7 +637,7 @@ class VisualBuilder:
 
     def text(self) -> ComponentResult:
         if not self.v.text:
-            raise SpecError("`text` manquant.")
+            raise SpecError("`text` manquant.", en="Missing `text`.")
         return ComponentResult(type="text", text=self.render(self.v.text))
 
     def forecast(self) -> ComponentResult:
@@ -623,11 +646,14 @@ class VisualBuilder:
 
         f = self.v.forecast
         if f is None:
-            raise SpecError("Bloc `forecast` manquant.")
+            raise SpecError("Bloc `forecast` manquant.", en="Missing `forecast` block.")
         cols = [f.date_var, f.target_var] + ([f.group_var] if f.group_var else [])
         missing = [c for c in cols if c not in self.df.columns]
         if missing:
-            raise SpecError(f"Champ inconnu dans la source « {self.v.source} » : {', '.join(missing)}.")
+            raise SpecError(
+                f"Champ inconnu dans la source « {self.v.source} » : {', '.join(missing)}.",
+                en=f"Unknown field in source “{self.v.source}”: {', '.join(missing)}.",
+            )
         self.used_columns.update(cols)
         frame = self.df[cols].dropna(subset=[f.date_var])
         order = ([f.group_var] if f.group_var else []) + [f.date_var]
@@ -675,13 +701,17 @@ def build_component(ctx: ComputeContext, comp_id: str, visual: VisualSpec) -> Co
         builder = VisualBuilder(ctx, comp_id, visual)
         return builder.build()
     except SpecError as exc:
-        return ComponentResult(type=visual.type, error=str(exc), meta=ComponentMeta(source=visual.source))
+        return ComponentResult(type=visual.type, error=exc.text(ctx.lang), meta=ComponentMeta(source=visual.source))
     except Exception as exc:  # noqa: BLE001 - never let one visual break the dashboard
         import logging
 
         logging.getLogger(__name__).exception("[BiSpec] visual %s failed: %s", comp_id, exc)
         return ComponentResult(
             type=visual.type,
-            error="Erreur de calcul inattendue (voir les journaux du serveur).",
+            error=(
+                "Unexpected computation error (see the server logs)."
+                if ctx.lang == "en"
+                else "Erreur de calcul inattendue (voir les journaux du serveur)."
+            ),
             meta=ComponentMeta(source=visual.source),
         )

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from apowerb.bi.dashboards.core import ComponentType, Dashboard
 from apowerb.bi.spec import sql_guard
 from apowerb.bi.spec.errors import SpecError
-from apowerb.bi.spec.formatting import FORMATS
+from apowerb.bi.spec.formatting import FORMATS, PLURAL
 from apowerb.bi.spec.models import (
     AGGREGATIONS,
     TIME_GRAINS,
@@ -36,7 +36,7 @@ from apowerb.bi.spec.models import (
     VisualSpec,
 )
 
-TEMPLATE_TOKEN_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*(?:\|\s*([A-Za-z0-9_]+)\s*)?\}\}")
+TEMPLATE_TOKEN_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*(?:\|\s*([A-Za-z0-9_]+)(?::([^{}|]*?))?\s*)?\}\}")
 _PRESET_RE = re.compile(r"^(all|ytd|mtd|\d{1,3}[dwmy])$")
 _PERIOD_KEYS = ("from", "to", "last")
 _CHART_TYPES = ("combo", "bar", "hbar", "line", "area", "diverging_bar", "pie")
@@ -148,11 +148,11 @@ def _schema_of(
     return schema
 
 
-def template_tokens(template: str | None) -> list[tuple[str, str | None]]:
-    """``[(name, format)]`` of the ``{{...}}`` placeholders of a text template."""
+def template_tokens(template: str | None) -> list[tuple[str, str | None, str | None]]:
+    """``[(name, format, arguments)]`` of the ``{{...}}`` placeholders of a text template."""
     if not template:
         return []
-    return [(m.group(1), m.group(2)) for m in TEMPLATE_TOKEN_RE.finditer(template)]
+    return [(m.group(1), m.group(2), m.group(3)) for m in TEMPLATE_TOKEN_RE.finditer(template)]
 
 
 def validate_spec(dashboard: Dashboard) -> list[str]:
@@ -405,7 +405,7 @@ def _validate_visual(
 
     for template, where in ((v.text if v.type == "text" else None, "text"), (v.subtitle, "subtitle"),
                             (v.kpi.secondary if v.kpi else None, "kpi.secondary")):
-        for token, fmt in template_tokens(template):
+        for token, fmt, args in template_tokens(template):
             if token.startswith("filters."):
                 if token.split(".", 1)[1] not in filter_ids:
                     add(f"{name} : filtre inconnu « {token} » dans {where}.")
@@ -414,7 +414,10 @@ def _validate_visual(
                     add(f"{name} : « {token} » inconnu dans {where} (period.from, period.to, period.last).")
             else:
                 need_measure(token, where)
-            if fmt and fmt not in FORMATS:
+            if fmt == PLURAL:
+                if len((args or "").split(":")) != 2:
+                    add(f"{name} : « {token}|{PLURAL} » attend deux mots (singulier:pluriel) dans {where}.")
+            elif fmt and fmt not in FORMATS:
                 add(f"{name} : format inconnu « {fmt} » dans {where}.")
 
     for fid in v.ignore_filters:

@@ -92,21 +92,27 @@ class SqlRunner:
         if self._deadline is not None:
             remaining = self._deadline - time.monotonic()
             if remaining <= 0:
-                raise SpecError("Délai de calcul dépassé (budget global épuisé).")
+                raise SpecError(
+                    "Délai de calcul dépassé (budget global épuisé).",
+                    en="Computation time exceeded (overall budget used up).",
+                )
             timeout = min(timeout, remaining)
         try:
             statements = duckdb.extract_statements(sql)
         except duckdb.Error as exc:
-            raise SpecError(f"Erreur SQL : {_short_error(exc)}") from None
+            raise SpecError(f"Erreur SQL : {_short_error(exc)}", en=f"SQL error: {_short_error(exc)}") from None
         if len(statements) != 1 or statements[0].type != duckdb.StatementType.SELECT:
-            raise SpecError("Une seule requête SELECT est permise.")
+            raise SpecError("Une seule requête SELECT est permise.", en="Only one SELECT query is allowed.")
 
         for name, frame in relations.items():
             if not _NAME_RE.match(name):
-                raise SpecError(f"Nom de relation invalide : {name}")
+                raise SpecError(f"Nom de relation invalide : {name}", en=f"Invalid relation name: {name}")
         # Global cap on concurrent executions; waiting counts against the time limit.
         if not _slots.acquire(timeout=timeout):
-            raise SpecError(f"Délai de calcul dépassé ({timeout:g} s, serveur occupé).")
+            raise SpecError(
+                f"Délai de calcul dépassé ({timeout:g} s, serveur occupé).",
+                en=f"Computation time exceeded ({timeout:g} s, server busy).",
+            )
         started = time.monotonic()
         timer = threading.Timer(max(timeout - (time.monotonic() - started), 0.01), conn.interrupt)
         timer.daemon = True
@@ -116,9 +122,11 @@ class SqlRunner:
                 conn.register(name, frame)
             result = conn.execute(f"SELECT * FROM ({sql}) AS _q LIMIT {cap + 1}").df()
         except duckdb.InterruptException:
-            raise SpecError(f"Délai de calcul dépassé ({timeout:g} s).") from None
+            raise SpecError(
+                f"Délai de calcul dépassé ({timeout:g} s).", en=f"Computation time exceeded ({timeout:g} s)."
+            ) from None
         except duckdb.Error as exc:
-            raise SpecError(f"Erreur SQL : {_short_error(exc)}") from None
+            raise SpecError(f"Erreur SQL : {_short_error(exc)}", en=f"SQL error: {_short_error(exc)}") from None
         finally:
             timer.cancel()
             _slots.release()
@@ -128,7 +136,9 @@ class SqlRunner:
                 except duckdb.Error:  # pragma: no cover - already gone
                     pass
         if len(result) > cap:
-            raise SpecError(f"Résultat trop volumineux (plus de {cap} lignes).")
+            raise SpecError(
+                f"Résultat trop volumineux (plus de {cap} lignes).", en=f"Result too large (more than {cap} rows)."
+            )
         return result
 
 

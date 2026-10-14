@@ -33,6 +33,7 @@ from apowerb.bi.spec.catalog import DashboardTemplate, TemplateColumn
 from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.lifecycle import apply_mapping, pure_renames, root_dataset_source, source_columns
 from apowerb.bi.spec.models import SourceSpec
+from apowerb.bi.spec.templates_common import translator
 from apowerb.helpers.emails import get_domain_from_email_or_none
 from apowerb.models import BIItemStatus, BusinessIntelligence
 
@@ -47,8 +48,13 @@ _PROJECT_ID = "thaink2"
 def freeze(dashboard: Dashboard, label: str, description: str, visibility: str) -> dict[str, Any]:
     """Config of a user template from ``dashboard`` (raises SpecError when it cannot be one)."""
     if dashboard.spec_version < 2:
-        raise SpecError("Seul un tableau de bord à la spécification v2 peut devenir un modèle.")
-    root = root_dataset_source(dashboard.sources)
+        raise SpecError(
+            translator(dashboard.locale)(
+                "Seul un tableau de bord à la spécification v2 peut devenir un modèle.",
+                "Only a spec v2 dashboard can become a template.",
+            )
+        )
+    root = root_dataset_source(dashboard.sources, dashboard.locale)
     _, transforms = pure_renames(root.transforms)
     frozen_root = root.model_copy(update={"dataset_id": DATASET_MARKER, "transforms": transforms})
     sources = [frozen_root if s.name == root.name else s for s in dashboard.sources]

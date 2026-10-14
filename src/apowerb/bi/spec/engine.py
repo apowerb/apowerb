@@ -80,38 +80,43 @@ class _Materializer:
     def __init__(self, dashboard: Dashboard, owner: str) -> None:
         self.dashboard = dashboard
         self.owner = owner
+        self.lang = dashboard.locale
         self.by_name = {s.name: s for s in dashboard.sources}
         self.cycle = find_cycle_members(dashboard.sources)
         self._tasks: dict[str, asyncio.Task[MatSource]] = {}
 
     async def get_source(self, name: str) -> MatSource:
         if name not in self.by_name:
-            raise SpecError(f"Source inconnue « {name} ».")
+            raise SpecError(f"Source inconnue « {name} ».", en=f"Unknown source “{name}”.")
         if name in self.cycle:
-            raise SpecError(f"Cycle de sources : « {name} » dépend de lui-même.")
+            raise SpecError(
+                f"Cycle de sources : « {name} » dépend de lui-même.",
+                en=f"Source cycle: “{name}” depends on itself.",
+            )
         if name not in self._tasks:
             self._tasks[name] = asyncio.ensure_future(self._build(name))
         return await self._tasks[name]
 
     async def _build(self, name: str) -> MatSource:
         spec = self.by_name[name]
-        key = (self.owner.lower(), self.dashboard.id, source_signature(name, self.by_name))
+        key = (self.owner.lower(), self.dashboard.id, source_signature(name, self.by_name), self.lang)
         cached = _source_cache.get(key)
         if cached is not None:
             return cached
         if spec.kind == "source":
             if not spec.parent:
-                raise SpecError(f"Source « {name} » : `parent` manquant.")
+                raise SpecError(f"Source « {name} » : `parent` manquant.", en=f"Source “{name}”: missing `parent`.")
             parent = await self.get_source(spec.parent)
             state = TransformState(
                 df=parent.df,
                 prov=dict(parent.prov),
                 warnings=list(parent.warnings),
                 failed_columns=dict(parent.failed_columns),
+                lang=self.lang,
             )
         else:
             df = await source_loader.load_source(spec, self.owner)
-            state = TransformState(df=df, prov={}, warnings=[], failed_columns={})
+            state = TransformState(df=df, prov={}, warnings=[], failed_columns={}, lang=self.lang)
         state = await apply_transforms(state, spec.transforms, self)
         mat = MatSource(
             name=name,
@@ -133,12 +138,16 @@ class _Materializer:
             if isinstance(res, MatSource):
                 mats[name] = res
             elif isinstance(res, SpecError):
-                errors[name] = str(res)
+                errors[name] = res.text(self.lang)
             elif isinstance(res, asyncio.CancelledError):
                 raise res
             else:
                 logger.error("[BiSpec] source %s failed: %r", name, res)
-                errors[name] = "Erreur inattendue lors du chargement de la source."
+                errors[name] = (
+                    "Unexpected error while loading the source."
+                    if self.lang == "en"
+                    else "Erreur inattendue lors du chargement de la source."
+                )
         return mats, errors
 
 

@@ -66,8 +66,16 @@ from apowerb.bi.spec.models import (
     UpsertSourceOp,
     VisualSpec,
 )
-from apowerb.bi.spec.lifecycle import apply_mapping, file_mapping, pure_renames, root_dataset_source, source_columns
+from apowerb.bi.spec.lifecycle import (
+    SourceColumn,
+    apply_mapping,
+    file_mapping,
+    pure_renames,
+    root_dataset_source,
+    source_columns,
+)
 from apowerb.bi.spec.ops import apply_ops
+from apowerb.bi.spec.templates_common import translator
 from apowerb.bi.spec.user_templates import UserTemplateStore
 from apowerb.helpers.database import get_db
 from apowerb.users import schemas as user_schemas
@@ -86,20 +94,23 @@ def _owner_of(dashboard: Dashboard, fallback: str) -> str:
     return dashboard.created_by or fallback
 
 
-def _unprocessable(exc: SpecError) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.errors)
+def _unprocessable(exc: SpecError, lang: str | None = None) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.messages(lang))
 
 
 async def _compute(dashboard: Dashboard, body: DashboardDataRequest, owner: str) -> DashboardDataResponse:
     try:
         return await compute_dashboard(dashboard, body, owner=owner)
     except SpecError as exc:
-        raise _unprocessable(exc)
+        raise _unprocessable(exc, dashboard.locale)
     except Exception:  # noqa: BLE001 - never leak a trace to the client
         logger.exception("[BiSpec] dashboard %s computation failed", dashboard.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Le calcul du tableau de bord a échoué (voir les journaux du serveur).",
+            detail=translator(dashboard.locale)(
+                "Le calcul du tableau de bord a échoué (voir les journaux du serveur).",
+                "The dashboard computation failed (see the server logs).",
+            ),
         )
 
 
@@ -204,6 +215,13 @@ class TemplateDashboardResponse(BaseModel):
 
 def _invalid(errors: list[str]) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"errors": errors})
+
+
+def _template_not_found(template_id: str, lang: str | None) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=translator(lang)(f"Gabarit introuvable : {template_id}", f"Template not found: {template_id}"),
+    )
 
 
 def _create_request(title: str, spec: dict, locale: str | None = None) -> DashboardCreateRequest:
@@ -322,7 +340,7 @@ async def create_dashboard_from_template(
 ) -> TemplateDashboardResponse:
     template = await _resolve_template(db, template_id, user.email, body.lang)
     if template is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gabarit introuvable : {template_id}")
+        raise _template_not_found(template_id, body.lang)
 
     columns, column_errors = template.clean_columns(body.columns)
     params, param_errors = template.clean_params(body.params)
@@ -337,8 +355,8 @@ async def create_dashboard_from_template(
         frame = await sources.load_dataset(body.dataset_id.strip(), user.email)
     except SpecError as exc:
         if str(exc).startswith(_DATASET_NOT_FOUND):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-        raise _invalid(exc.errors)
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.text(body.lang))
+        raise _invalid(exc.messages(body.lang))
     missing = _missing_columns(template, columns, frame.columns)
     if missing:
         raise _invalid(missing)
@@ -377,18 +395,18 @@ async def _owned_dashboard(svc: DashboardService, dashboard_id: str) -> Dashboar
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-async def _frame_of(dataset_id: str, email: str, sheet: str | None = None):
+async def _frame_of(dataset_id: str, email: str, sheet: str | None = None, lang: str | None = None):
     try:
         return await sources.load_dataset(dataset_id.strip(), email, sheet)
     except SpecError as exc:
         if str(exc).startswith(_DATASET_NOT_FOUND):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-        raise _invalid(exc.errors)
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=exc.text(lang))
+        raise _invalid(exc.messages(lang))
 
 
 def _root_or_422(dashboard: Dashboard) -> SourceSpec:
     try:
-        return root_dataset_source(dashboard.sources)
+        return root_dataset_source(dashboard.sources, dashboard.locale)
     except SpecError as exc:
         raise _invalid(exc.errors)
 
@@ -421,6 +439,27 @@ async def get_source_requirements(dashboard_id: str, user: CurrentUser, svc: Ser
     }
 
 
+def _missing_in_new_file(
+    columns: list[SourceColumn], mapping: dict[str, str | None], available: list[str], lang: str | None
+) -> list[str]:
+    T = translator(lang)
+    listed = ", ".join(available[:_MAX_LISTED_COLUMNS])
+    missing = []
+    for column in columns:
+        file_column = mapping.get(column.key)
+        if not column.required or file_column in available:
+            continue
+        missing.append(
+            T(
+                f"La colonne {f'« {file_column} » ' if file_column else ''}({column.label}) est introuvable "
+                f"dans le nouveau fichier. Colonnes disponibles : {listed}.",
+                f"The column {f'“{file_column}” ' if file_column else ''}({column.label}) is not in the new file. "
+                f"Available columns: {listed}.",
+            )
+        )
+    return missing
+
+
 class ReplaceSourceRequest(BaseModel):
     dataset_id: str = Field(..., min_length=1)
     columns: dict[str, str | None] | None = None
@@ -437,24 +476,14 @@ async def replace_dashboard_source(
 ) -> dict[str, Any]:
     dashboard = await _owned_dashboard(svc, dashboard_id)
     root = _root_or_422(dashboard)
-    frame = await _frame_of(body.dataset_id, user.email, root.sheet)
+    frame = await _frame_of(body.dataset_id, user.email, root.sheet, dashboard.locale)
     available = [str(c) for c in frame.columns]
     try:
         mapping, slots = file_mapping(dashboard, body.columns)
     except SpecError as exc:
         raise _invalid(exc.errors)
 
-    missing = []
-    for column in source_columns(dashboard):
-        if not column.required:
-            continue
-        file_column = mapping.get(column.key)
-        if file_column not in available:
-            wanted = f"« {file_column} » " if file_column else ""
-            missing.append(
-                f"La colonne {wanted}({column.label}) est introuvable dans le nouveau fichier. "
-                f"Colonnes disponibles : {', '.join(available[:_MAX_LISTED_COLUMNS])}."
-            )
+    missing = _missing_in_new_file(source_columns(dashboard), mapping, available, dashboard.locale)
     if missing:
         raise _invalid(missing)
 
@@ -462,7 +491,7 @@ async def replace_dashboard_source(
     _, rest = pure_renames(root.transforms)
     try:
         new_root = root.model_copy(
-            update={"dataset_id": body.dataset_id.strip(), "transforms": apply_mapping(rest, found)}
+            update={"dataset_id": body.dataset_id.strip(), "transforms": apply_mapping(rest, found, dashboard.locale)}
         )
         updated = apply_ops(dashboard, [UpsertSourceOp(source=new_root)])
     except SpecError as exc:
@@ -508,11 +537,18 @@ async def upgrade_dashboard(
     reference = dashboard.template
     template_id = body.template_id or (reference.id if reference else None)
     if template_id is None:
-        raise _invalid(["Ce tableau n'est pas issu d'un modèle : précisez template_id et columns pour le rattacher."])
+        raise _invalid(
+            [
+                translator(dashboard.locale)(
+                    "Ce tableau n'est pas issu d'un modèle : précisez template_id et columns pour le rattacher.",
+                    "This dashboard does not come from a template: specify template_id and columns to attach it.",
+                )
+            ]
+        )
     # the dashboard keeps its language across upgrades
     template = await _resolve_template(db, template_id, user.email, dashboard.locale)
     if template is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Gabarit introuvable : {template_id}")
+        raise _template_not_found(template_id, dashboard.locale)
     root = _root_or_422(dashboard)
 
     same = reference is not None and reference.id == template.id
@@ -527,7 +563,7 @@ async def upgrade_dashboard(
         spec = template.build(dataset_id, columns, params)
     except ValueError as exc:
         raise _invalid([str(exc)])
-    frame = await _frame_of(dataset_id, user.email, root.sheet)
+    frame = await _frame_of(dataset_id, user.email, root.sheet, dashboard.locale)
     missing = _missing_columns(template, columns, frame.columns)
     if missing:
         raise _invalid(missing)

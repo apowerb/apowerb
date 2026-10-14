@@ -46,6 +46,7 @@ from apowerb.bi.spec.models import (
     SqlStep,
     TransformStep,
 )
+from apowerb.bi.spec.templates_common import translator
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,14 @@ def clear_cache() -> None:
 
 
 class ForecastUnavailable(RuntimeError):
-    """The th2forecast engine could not produce the requested periods."""
+    """The th2forecast engine could not produce the requested periods (``en``: the English reason)."""
+
+    def __init__(self, message: str, *, en: str | None = None) -> None:
+        super().__init__(message)
+        self.en = en
+
+    def text(self, lang: str | None) -> str:
+        return self.en if lang == "en" and self.en else str(self)
 
 
 class TransformContext(Protocol):
@@ -110,14 +118,18 @@ class TransformState:
     prov: dict[str, Provenance]
     warnings: list[str] = field(default_factory=list)
     failed_columns: dict[str, str] = field(default_factory=dict)
+    lang: str | None = None  # dashboard language of the warnings; None = French
 
 
 def _need(df: pd.DataFrame, columns: list[str], what: str) -> None:
     missing = [c for c in columns if c not in df.columns]
     if missing:
+        listed, available = ", ".join(missing), ", ".join(map(str, df.columns))
+        plural = len(missing) > 1
         raise SpecError(
-            f"{what} : colonne(s) introuvable(s) {', '.join(missing)} "
-            f"(colonnes disponibles : {', '.join(map(str, df.columns))})."
+            f"{what} : {'colonnes introuvables' if plural else 'colonne introuvable'} {listed} "
+            f"(colonnes disponibles : {available}).",
+            en=f"{what}: {'columns' if plural else 'column'} not found: {listed} (available columns: {available}).",
         )
 
 
@@ -153,7 +165,7 @@ async def apply_transforms(
         elif isinstance(step, CashForecastStep):
             state = await asyncio.to_thread(_cash_forecast_step, state, step, what)
         else:  # pragma: no cover - the union is closed
-            raise SpecError(f"{what} : opération inconnue.")
+            raise SpecError(f"{what} : opération inconnue.", en=f"{what}: unknown operation.")
     return state
 
 
@@ -163,6 +175,7 @@ def _with(state: TransformState, df: pd.DataFrame, prov: dict[str, Provenance]) 
         prov={c: prov.get(c, Provenance.REAL) for c in df.columns},
         warnings=state.warnings,
         failed_columns=state.failed_columns,
+        lang=state.lang,
     )
 
 
@@ -198,12 +211,12 @@ def _derive_step(state: TransformState, step: DeriveStep, what: str) -> Transfor
 def _aggregate_step(state: TransformState, step: AggregateStep, what: str) -> TransformState:
     _need(state.df, step.group_by, what)
     if not step.aggregates and not step.group_by:
-        raise SpecError(f"{what} : rien à agréger.")
+        raise SpecError(f"{what} : rien à agréger.", en=f"{what}: nothing to aggregate.")
     select = [quote_ident(g) for g in step.group_by]
     prov: dict[str, Provenance] = {g: state.prov.get(g, Provenance.REAL) for g in step.group_by}
     for name, agg in step.aggregates.items():
         if not name or not name.replace("_", "a").isalnum():
-            raise SpecError(f"{what} : nom de colonne invalide « {name} ».")
+            raise SpecError(f"{what} : nom de colonne invalide « {name} ».", en=f"{what}: invalid column name “{name}”.")
         expr = sql_guard.check_expression(agg, f"{what} ({name})")
         select.append(f"({expr}) AS {quote_ident(name)}")
         prov[name] = combine(
@@ -244,14 +257,16 @@ def _join_step(state: TransformState, step: JoinStep, other: MatSource, what: st
     if clash:
         raise SpecError(
             f"{what} : la colonne « {clash[0]} » existe déjà des deux côtés ; "
-            "précisez `columns` pour choisir celles à ramener."
+            "précisez `columns` pour choisir celles à ramener.",
+            en=f"{what}: column “{clash[0]}” exists on both sides; "
+            "specify `columns` to choose the ones to bring over.",
         )
     right = other.df[[*step.on, *[c for c in right_cols if c not in step.on]]]
     right = right.drop_duplicates(subset=step.on) if step.how == "left" else right
     try:
         out = state.df.merge(right, on=step.on, how=step.how)
     except (ValueError, TypeError) as exc:
-        raise SpecError(f"{what} : jointure impossible ({exc}).") from None
+        raise SpecError(f"{what} : jointure impossible ({exc}).", en=f"{what}: join failed ({exc}).") from None
     prov = dict(state.prov)
     for c in right_cols:
         prov[c] = other.prov.get(c, Provenance.REAL)
@@ -562,17 +577,19 @@ def _replenishment_plan_step(state: TransformState, step: ReplenishmentPlanStep,
         prov[step.forecast] = Provenance.FORECAST
     new = _with(state, frame, prov)
     if fallback:
+        T = translator(state.lang)
+        names = ", ".join(fallback)
+        message = T(
+            "plan calculé avec la moyenne des 4 dernières semaines de ventes",
+            "plan computed with the average of the last 4 weeks of sales",
+        )
         new.warnings = [
             *new.warnings,
-            "Prévision moteur absente pour " + ", ".join(fallback)
-            + " : plan calculé avec la moyenne des 4 dernières semaines de ventes.",
+            T(f"Prévision moteur absente pour {names} : {message}.", f"Engine forecast missing for {names}: {message}."),
         ]
         if step.forecast in new.failed_columns:
             # the column is filled now: the visuals say how, not that it is missing
-            new.failed_columns = {
-                **new.failed_columns,
-                step.forecast: "plan calculé avec la moyenne des 4 dernières semaines de ventes",
-            }
+            new.failed_columns = {**new.failed_columns, step.forecast: message}
     return new
 
 
@@ -745,8 +762,16 @@ def _cash_forecast_step(state: TransformState, step: CashForecastStep, what: str
     prov["semaine_plan"] = Provenance.REAL
     new = _with(state, frame, prov)
     if fallback:
-        message = f"flux calculés avec la moyenne des {window} dernières périodes"
-        new.warnings = [*new.warnings, "Prévision moteur absente pour " + ", ".join(fallback) + " : " + message + "."]
+        T = translator(state.lang)
+        names = ", ".join(fallback)
+        message = T(
+            f"flux calculés avec la moyenne des {window} dernières périodes",
+            f"flows computed with the average of the last {window} periods",
+        )
+        new.warnings = [
+            *new.warnings,
+            T(f"Prévision moteur absente pour {names} : {message}.", f"Engine forecast missing for {names}: {message}."),
+        ]
         new.failed_columns = {
             **new.failed_columns,
             **{c: message for c in (step.forecast_inflow, step.forecast_outflow) if c in new.failed_columns},
@@ -771,13 +796,21 @@ def _call_forecast_engine(body: dict[str, Any]) -> dict[str, Any]:
     try:
         client = Th2forecastClient()
     except Th2forecastNotConfigured:
-        raise ForecastUnavailable("service de prévision non configuré (TH2FORECAST_URL)") from None
+        raise ForecastUnavailable(
+            "service de prévision non configuré (TH2FORECAST_URL)",
+            en="forecasting service not configured (TH2FORECAST_URL)",
+        ) from None
     try:
         return client.forecast(body)
     except Th2forecastAPIError as exc:
-        raise ForecastUnavailable(f"le service de prévision a refusé la requête ({exc.status_code})") from None
+        raise ForecastUnavailable(
+            f"le service de prévision a refusé la requête ({exc.status_code})",
+            en=f"the forecasting service rejected the request ({exc.status_code})",
+        ) from None
     except Th2forecastUnavailable as exc:
-        raise ForecastUnavailable(f"service de prévision indisponible : {exc}") from None
+        raise ForecastUnavailable(
+            f"service de prévision indisponible : {exc}", en=f"forecasting service unavailable: {exc}"
+        ) from None
 
 
 def _group_label(row: pd.Series, by: list[str]) -> str:
@@ -787,17 +820,17 @@ def _group_label(row: pd.Series, by: list[str]) -> str:
 def _forecast_frame(df: pd.DataFrame, step: ForecastStep) -> pd.DataFrame:
     """``df`` with the engine's future periods appended (output column filled)."""
     if not pd.api.types.is_datetime64_any_dtype(df[step.date]):
-        raise ForecastUnavailable(f"la colonne « {step.date} » n'est pas une date")
+        raise ForecastUnavailable(f"la colonne « {step.date} » n'est pas une date", en=f"column “{step.date}” is not a date")
     hist = df[[step.date, step.value, *step.by]].copy()
     hist[step.value] = pd.to_numeric(hist[step.value], errors="coerce")
     hist = hist.dropna(subset=[step.date, step.value])
     if hist.empty:
-        raise ForecastUnavailable("aucune donnée historique à prévoir")
+        raise ForecastUnavailable("aucune donnée historique à prévoir", en="no historical data to forecast")
 
     from apowerb.schema.forecast_schema import MAX_DATA_ROWS, ForecastRequestSchema
 
     if len(hist) > MAX_DATA_ROWS:
-        raise ForecastUnavailable(f"plus de {MAX_DATA_ROWS} lignes d'historique")
+        raise ForecastUnavailable(f"plus de {MAX_DATA_ROWS} lignes d'historique", en=f"more than {MAX_DATA_ROWS} rows of history")
 
     group_var: str | None = None
     if len(step.by) == 1:
@@ -822,7 +855,7 @@ def _forecast_frame(df: pd.DataFrame, step: ForecastStep) -> pd.DataFrame:
             models=["prophet"],
         )
     except Exception as exc:  # noqa: BLE001 - pydantic errors, reported as unavailable
-        raise ForecastUnavailable(f"requête de prévision invalide : {exc}") from None
+        raise ForecastUnavailable(f"requête de prévision invalide : {exc}", en=f"invalid forecast request: {exc}") from None
     body = request.model_dump(exclude_none=False)
     cache_key = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
     response = _forecast_cache.get(cache_key)
@@ -832,7 +865,7 @@ def _forecast_frame(df: pd.DataFrame, step: ForecastStep) -> pd.DataFrame:
 
     series = response.get("series") or []
     if not series:
-        raise ForecastUnavailable("réponse du service de prévision sans série")
+        raise ForecastUnavailable("réponse du service de prévision sans série", en="forecasting service response without series")
 
     # group label sent to the engine -> values of the `by` columns
     last_dates: dict[str, pd.Timestamp] = {}
@@ -863,7 +896,10 @@ def _forecast_frame(df: pd.DataFrame, step: ForecastStep) -> pd.DataFrame:
                 continue
             new_rows.append({step.date: ts, **by_values[label], step.output: float(value)})
     if not new_rows:
-        raise ForecastUnavailable("le service de prévision n'a renvoyé aucune période future")
+        raise ForecastUnavailable(
+            "le service de prévision n'a renvoyé aucune période future",
+            en="the forecasting service returned no future period",
+        )
 
     base = df.copy()
     base[step.output] = np.nan
@@ -881,16 +917,18 @@ async def _forecast_step(state: TransformState, step: ForecastStep, what: str) -
             asyncio.to_thread(_forecast_frame, state.df, step), timeout=FORECAST_TIMEOUT_S
         )
     except (ForecastUnavailable, asyncio.TimeoutError) as exc:
-        message = str(exc) or "délai dépassé"
+        T = translator(state.lang)
+        message = (exc.text(state.lang) if isinstance(exc, ForecastUnavailable) else str(exc)) or T("délai dépassé", "timed out")
         logger.warning("[BiSpec] forecast unavailable: %s", message)
         empty = state.df.copy()
         empty[step.output] = np.nan
-        warnings = [*state.warnings, f"Prévision indisponible : {message}."]
+        warnings = [*state.warnings, T(f"Prévision indisponible : {message}.", f"Forecast unavailable: {message}.")]
         failed = {**state.failed_columns, step.output: message}
         return TransformState(
             df=empty,
             prov={c: prov.get(c, Provenance.REAL) for c in empty.columns},
             warnings=warnings,
             failed_columns=failed,
+            lang=state.lang,
         )
     return _with(state, out, prov)

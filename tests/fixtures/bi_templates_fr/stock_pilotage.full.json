@@ -15,7 +15,7 @@
     "series": [],
     "source": "plan",
     "steps": [],
-    "text": "{{filters.famille}} : stock actuel de {{stock_actuel|compact}} unités, soit {{couverture_actuelle|weeks}} de ventes prévues. À commander cette semaine : {{commande_semaine|compact}} unités ({{familles_a_commander|integer}} famille(s)). {{familles_a_risque|integer}} famille(s) passent sous le seuil de sécurité avant qu'une commande puisse arriver.",
+    "text": "{{filters.famille}} : stock actuel de {{stock_actuel|compact}} unités, soit {{couverture_actuelle|weeks}} de ventes prévues. À commander cette semaine : {{commande_semaine|compact}} unités ({{familles_a_commander|plural:famille:familles}}). {{familles_a_risque|plural:famille passe:familles passent}} sous le seuil de sécurité avant qu'une commande puisse arriver.",
     "total_row": false,
     "type": "text"
    }
@@ -81,7 +81,7 @@
     "ignore_filters": [],
     "kpi": {
      "measure": "commande_semaine",
-     "secondary": "{{familles_a_commander|integer}} famille(s) concernée(s)"
+     "secondary": "{{familles_a_commander|plural:famille concernée:familles concernées}}"
     },
     "reference_lines": [],
     "series": [],

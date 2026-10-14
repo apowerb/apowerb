@@ -7,6 +7,7 @@ dashboard language.
 French (the default): thousands separated by a narrow no-break space (U+202F), a
 decimal comma, units after a plain space: ``1 234``, ``15,3 k``, ``96,9 %``, ``1,0 sem.``.
 English: ``1,234``, ``15.3k``, ``96.9%``, ``1.0 wk``.
+Plurals: ``format_plural`` (``0 famille``, ``2 familles``; ``1 family``, ``2 families``).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ THIN_SPACE = " "
 MISSING = "—"
 
 FORMATS = ("number", "integer", "compact", "percent", "decimal1", "decimal2", "weeks")
+PLURAL = "plural"  # {{measure|plural:one:other}}: the count followed by the word that agrees with it
 
 
 def _is_missing(value: Any) -> bool:
@@ -96,6 +98,15 @@ def format_value(value: Any, fmt: str = "number", unit: str | None = None, lang:
     if unit and fmt not in ("percent", "weeks"):
         text = f"{text} {unit}"
     return text
+
+
+def format_plural(value: Any, one: str, other: str, lang: str | None = None) -> str:
+    """``value`` then ``one`` or ``other``: French is singular below 2 (``0 famille``), English only for 1."""
+    if _is_missing(value):
+        return MISSING
+    v = float(value)
+    singular = abs(v) == 1 if lang == "en" else abs(v) < 2
+    return f"{format_value(v, 'number', lang=lang)} {one if singular else other}"
 
 
 def format_delta(

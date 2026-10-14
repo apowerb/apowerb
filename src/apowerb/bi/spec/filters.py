@@ -216,7 +216,9 @@ def _resolve_relative(
     if preset != "all" and preset not in _TO_DATE and not match:
         raise SpecError(
             f"Filtre « {spec.id} » : période « {raw} » inconnue "
-            "(attendu <n>d, <n>w, <n>m, <n>y, ytd, mtd ou all ; ex. 7d, 13w, 12m, 1y)."
+            "(attendu <n>d, <n>w, <n>m, <n>y, ytd, mtd ou all ; ex. 7d, 13w, 12m, 1y).",
+            en=f"Filter “{spec.id}”: unknown period “{raw}” "
+            "(expected <n>d, <n>w, <n>m, <n>y, ytd, mtd or all; e.g. 7d, 13w, 12m, 1y).",
         )
     lasts = [d for d in (mats[n].real_last_date(spec.field) for n in having) if d is not None]
     if not lasts:
@@ -261,7 +263,10 @@ def _resolve_choice(spec: FilterSpec, raw: Any, having: set[str], lang: str | No
     )
     value = None if _is_all(raw) or str(raw).strip().lower() == "none" else str(raw).strip().lower()
     if value is not None and value not in allowed:
-        raise SpecError(f"Filtre « {spec.id} » : valeur « {raw} » inconnue (attendu {', '.join(allowed)}).")
+        raise SpecError(
+            f"Filtre « {spec.id} » : valeur « {raw} » inconnue (attendu {', '.join(allowed)}).",
+            en=f"Filter “{spec.id}”: unknown value “{raw}” (expected {', '.join(allowed)}).",
+        )
     label = default if value is None else labels[value]
     return ActiveFilter(spec, ResolvedFilter(value=value, label=label), value, sources=having)
 

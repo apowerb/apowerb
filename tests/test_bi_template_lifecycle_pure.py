@@ -8,11 +8,13 @@ from apowerb.bi.spec.errors import SpecError
 from apowerb.bi.spec.lifecycle import (
     SourceColumn,
     apply_mapping,
+    file_mapping,
     pure_renames,
     root_dataset_source,
     source_columns,
 )
 from apowerb.bi.spec.models import DeriveStep, SourceSpec
+from apowerb.bi.spec.user_templates import freeze
 from apowerb.bi.spec.templates import stock_pilotage
 from tests.helpers.bi_template_env import dashboard_from_spec
 
@@ -82,3 +84,59 @@ def test_zero_or_two_dataset_sources_are_refused():
 def test_column_swap_is_refused():
     with pytest.raises(SpecError):
         apply_mapping([], {"semaine": "famille", "famille": "semaine"})
+
+
+def _error(call, *args, **kwargs) -> SpecError:
+    with pytest.raises(SpecError) as caught:
+        call(*args, **kwargs)
+    return caught.value
+
+
+def test_lifecycle_errors_follow_the_dashboard_language():
+    sql = SourceSpec(name="a", kind="sql", connection_config_id="c", query="select 1")
+    assert str(_error(root_dataset_source, [sql])).startswith("Le tableau doit avoir exactement une source")
+    assert str(_error(root_dataset_source, [sql], lang="en")) == (
+        "The dashboard must have exactly one file source (dataset); it has 0."
+    )
+    swap = {"semaine": "famille", "famille": "semaine"}
+    assert str(_error(apply_mapping, [], swap)).startswith("Un échange de colonnes")
+    assert str(_error(apply_mapping, [], swap, lang="en")) == "Swapping columns (A to B and B to A) is not supported."
+
+
+def test_file_mapping_errors_follow_the_dashboard_language():
+    dashboard = dashboard_from_spec(stock_pilotage("ds-1"))
+    french = _error(file_mapping, dashboard, {"inconnue": "x"})
+    english = _error(file_mapping, dashboard.model_copy(update={"locale": "en"}), {"inconnue": "x"})
+    assert french.errors == ["Colonne inconnue pour ce tableau : inconnue."]
+    assert english.errors == ["Unknown column for this dashboard: inconnue."]
+
+
+def test_freezing_a_legacy_dashboard_is_refused_in_the_dashboard_language():
+    legacy = dashboard_from_spec(stock_pilotage("ds-1")).model_copy(update={"spec_version": 1})
+    assert str(_error(freeze, legacy, "L", "", "private")) == (
+        "Seul un tableau de bord à la spécification v2 peut devenir un modèle."
+    )
+    english = legacy.model_copy(update={"locale": "en"})
+    assert str(_error(freeze, english, "L", "", "private")) == "Only a spec v2 dashboard can become a template."
+
+
+def test_route_messages_follow_the_dashboard_language():
+    from apowerb.bi.spec.router import _missing_in_new_file, _template_not_found, _unprocessable
+
+    assert _template_not_found("t1", None).detail == "Gabarit introuvable : t1"
+    assert _template_not_found("t1", "en").detail == "Template not found: t1"
+    assert _template_not_found("t1", "en").status_code == 404
+
+    columns = [SourceColumn("ventes", "Ventes", "number", True, "ventes")]
+    assert _missing_in_new_file(columns, {"ventes": "qty"}, ["a", "b"], None) == [
+        "La colonne « qty » (Ventes) est introuvable dans le nouveau fichier. Colonnes disponibles : a, b."
+    ]
+    assert _missing_in_new_file(columns, {"ventes": "qty"}, ["a", "b"], "en") == [
+        "The column “qty” (Ventes) is not in the new file. Available columns: a, b."
+    ]
+    assert _missing_in_new_file(columns, {}, ["a"], None)[0].startswith("La colonne (Ventes) est introuvable")
+    assert _missing_in_new_file(columns, {"ventes": "a"}, ["a"], "en") == []
+
+    exc = SpecError("bonjour", en="hello")
+    assert _unprocessable(exc).detail == ["bonjour"]
+    assert _unprocessable(exc, "en").detail == ["hello"]
