@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from apowerb.sqlgen.generator import extract_sql
 from apowerb.sqlgen.safety import validate_sql_safety
 from apowerb.sqlgen.schema_format import build_schema_prompt, compact_table_line
@@ -22,9 +24,11 @@ def _schema():
                 ],
                 "primary_keys": ["id"],
                 "foreign_keys": [
-                    {"column_name": "customer_id",
-                     "foreign_table_name": "customers",
-                     "foreign_column_name": "id"},
+                    {
+                        "column_name": "customer_id",
+                        "foreign_table_name": "customers",
+                        "foreign_column_name": "id",
+                    },
                 ],
                 "sample_data": [{"id": 1, "customer_id": 2, "total": 10}],
             },
@@ -74,8 +78,9 @@ class TestBuildSchemaPrompt:
 
     def test_char_budget_omits_tables_and_lists_them(self):
         # Tiny budget: only the most relevant table fits, the rest are listed.
-        out = build_schema_prompt(_schema(), question="orders by customer",
-                                  max_chars=60)
+        out = build_schema_prompt(
+            _schema(), question="orders by customer", max_chars=60
+        )
         assert "Other tables (call tool_get_database_schema" in out
         # The single most relevant table is always kept.
         assert "orders(" in out
@@ -104,13 +109,109 @@ class TestSafety:
         assert validate_sql_safety("UPDATE orders SET x=1")[0] is False
 
 
+class TestSafetyReadOnly:
+    """A query that starts with SELECT can still write, lock or stall.
+
+    The gate must refuse what a read-only analytics query never needs:
+    writing a result into a table or file, row locks, and the functions
+    that sleep, read the server's files or reach other connections.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * INTO new_orders FROM orders",
+            "SELECT id INTO TEMP t FROM orders",
+            "SELECT * FROM orders INTO OUTFILE '/tmp/orders.csv'",
+            "WITH a AS (SELECT 1 AS n) SELECT n INTO t FROM a",
+            "SELECT pg_sleep(10)",
+            "SELECT pg_sleep_for('5 minutes')",
+            "SELECT SLEEP(10)",
+            "SELECT BENCHMARK(1000000000, MD5('x'))",
+            "SELECT * FROM orders WAITFOR DELAY '00:00:10'",
+            "SELECT pg_read_file('/etc/passwd')",
+            "SELECT lo_export(1, '/tmp/x')",
+            "SELECT * FROM dblink('host=evil', 'SELECT 1') AS t(n int)",
+            "SELECT pg_terminate_backend(42)",
+            "SELECT set_config('search_path', 'other', false)",
+            "SELECT * FROM orders FOR UPDATE",
+            "SELECT * FROM orders FOR SHARE",
+            "SELECT * FROM orders FOR KEY SHARE",
+            # Quoting, schema-qualifying or commenting the name changes nothing.
+            'SELECT "pg_sleep"(10)',
+            'SELECT pg_catalog."pg_sleep"(10)',
+            "SELECT pg_catalog.pg_sleep(10)",
+            "SELECT Pg_Sleep(10)",
+            "SELECT pg_sleep/**/(10)",
+            "SELECT pg_sleep -- c\n(10)",
+            "SELECT * FROM orders FOR/**/SHARE",
+            "SELECT * /* x */ INTO t FROM orders",
+            "SELECT lo_unlink(1)",
+            "SELECT pg_reload_conf()",
+            "SELECT pg_advisory_lock(1)",
+            "SELECT nextval('s')",
+            # An unterminated literal or comment cannot be read safely.
+            "SELECT 'abc",
+            "SELECT 1 /* never closed",
+            # Backslash escapes (E'...' in Postgres, MySQL strings) make the end
+            # of a literal ambiguous, so a call could hide behind them.
+            "SELECT E'\\'', pg_sleep(10), 'abc', E'\\''",
+            "SELECT 'it\\'s'",
+            # Other quoting the reader does not model: Postgres dollar quotes,
+            # MySQL backticks, and MySQL comments that MySQL executes.
+            "SELECT $$'$$, pg_sleep(10), $$'$$",
+            "SELECT $a$'$a$, pg_sleep(10), $a$'$a$",
+            "SELECT `'`, SLEEP(1), `'`",
+            "SELECT /*! SLEEP(5) */ 1",
+            # '#' starts a comment in MySQL but is an operator in Postgres.
+            "SELECT 1 #'\n, SLEEP(1) #'",
+            "SELECT 1 # 2, pg_sleep(1)",
+            # The cost of that rule: jsonb path operators are refused too.
+            "SELECT payload #> '{a}' FROM events",
+            # A '--' comment also ends at a bare carriage return.
+            "SELECT 1 -- x\r, pg_sleep(1)",
+            # SQL Server bracket identifiers holding a quote.
+            "SELECT [a'] , pg_sleep(1), [b'] FROM t",
+            "SELECT [x]]'], pg_sleep(1), [y]]']",
+        ],
+    )
+    def test_rejects_select_that_writes_locks_or_stalls(self, sql):
+        ok, err = validate_sql_safety(sql)
+        assert ok is False
+        assert err
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT sleep_hours, intolerance FROM patients",
+            "SELECT * FROM orders WHERE note = 'for sharing'",
+            "SELECT customer_id, SUM(total) FROM orders GROUP BY customer_id",
+            "WITH t AS (SELECT 1 AS n) SELECT * FROM t",
+            # Keywords inside string literals or comments are just text.
+            "SELECT 'INTO' AS k",
+            "SELECT * FROM orders WHERE note LIKE '%into the cart%'",
+            "SELECT * FROM orders WHERE status = 'updated; drop later'",
+            "SELECT * FROM orders WHERE note = 'it''s pg_sleep(1)'",
+            "SELECT id FROM orders -- copy INTO later\n",
+            "/* monthly report */ SELECT id FROM orders",
+            "SELECT * FROM orders WHERE ref LIKE '%#%'",
+            "SELECT [Order Date], tags[1] FROM orders",
+        ],
+    )
+    def test_still_allows_plain_reads(self, sql):
+        ok, err = validate_sql_safety(sql)
+        assert ok, err
+
+
 class TestExtractSql:
     def test_strips_markdown_fence(self):
         assert extract_sql("```sql\nSELECT 1\n```") == "SELECT 1"
 
     def test_strips_preamble(self):
-        assert extract_sql("Here is the query: SELECT id FROM orders;") == \
-            "SELECT id FROM orders"
+        assert (
+            extract_sql("Here is the query: SELECT id FROM orders;")
+            == "SELECT id FROM orders"
+        )
 
     def test_handles_with_cte(self):
         out = extract_sql("```\nWITH t AS (SELECT 1) SELECT * FROM t\n```")
