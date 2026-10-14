@@ -18,8 +18,10 @@ from logging import getLogger
 from pathlib import Path
 
 import psycopg2
+import psycopg2.errors
 
 from apowerb.configs.paths import uploads_dir
+from apowerb.sqlgen.readonly import read_only_transaction
 from psycopg2.extras import RealDictCursor
 
 from apowerb.tools_store.portfolio.rag import tool_create_knowledge
@@ -139,10 +141,11 @@ def tool_load_from_db_and_index(
         conn = _get_connection()
         try:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute(f'SET search_path TO "{db_schema}", public')
-            cursor.execute(safe_query)
-            rows = cursor.fetchall()
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            with read_only_transaction(conn, cursor, "postgresql"):
+                cursor.execute(f'SET search_path TO "{db_schema}", public')
+                cursor.execute(safe_query)
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
             cursor.close()
         finally:
             conn.close()
@@ -159,6 +162,16 @@ def tool_load_from_db_and_index(
 
     except ValueError as e:
         return {"status": "error", "message": str(e)}
+    # Both come from the read-only transaction; QueryCanceled would otherwise
+    # pass for a connection error.
+    except psycopg2.errors.QueryCanceled:
+        return {
+            "status": "error",
+            "message": "Query cancelled: it ran longer than SQL_STATEMENT_TIMEOUT_S "
+            "(30 s by default). Narrow it, or raise the limit.",
+        }
+    except psycopg2.errors.ReadOnlySqlTransaction as e:
+        return {"status": "error", "message": f"The database refused a write: {e}"}
     except psycopg2.OperationalError as e:
         return {"status": "error", "message": f"Database connection error: {e}"}
     except psycopg2.ProgrammingError as e:

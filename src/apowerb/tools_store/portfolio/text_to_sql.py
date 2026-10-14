@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional
 from logging import getLogger
 from apowerb.sqlgen.generator import extract_sql
 from apowerb.sqlgen.safety import validate_sql_safety
+from apowerb.sqlgen.readonly import read_only_transaction
 from apowerb.sqlgen.schema_format import build_schema_prompt
 
 logger = getLogger(__name__)
@@ -215,8 +216,9 @@ def _execute_sql_query(sql_query: str, limit: int = 100) -> List[Dict[str, Any]]
         cur = conn.cursor(cursor_factory=RealDictCursor)
         if "LIMIT" not in sql_query.upper():
             sql_query = f"{sql_query.rstrip(';')} LIMIT {limit}"
-        cur.execute(sql_query)
-        results = cur.fetchall()
+        with read_only_transaction(conn, cur, "postgresql"):
+            cur.execute(sql_query)
+            results = cur.fetchall()
         cur.close()
         return [_json_safe(dict(r)) for r in results]
     except Exception as e:
@@ -630,10 +632,13 @@ def _agent_execute_sql(agent_name: str, sql_query: str, limit: int = 100) -> Lis
         cur = _agent_cursor(conn, s.db_type)
         if "LIMIT" not in sql_query.upper():
             sql_query = f"{sql_query.rstrip(';')} LIMIT {limit}"
-        if s.db_type == "postgresql":
-            cur.execute(f'SET search_path TO "{s.db_schema}", public')
-        cur.execute(sql_query)
-        results = cur.fetchall()
+        # The database refuses writes and cancels a query past the timeout,
+        # whatever the gate above let through.
+        with read_only_transaction(conn, cur, s.db_type):
+            if s.db_type == "postgresql":
+                cur.execute(f'SET search_path TO "{s.db_schema}", public')
+            cur.execute(sql_query)
+            results = cur.fetchall()
         cur.close()
         return [_json_safe(dict(r)) for r in results]
     except Exception as e:
