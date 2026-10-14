@@ -224,3 +224,22 @@ async def test_real_stock_dashboard_with_a_replaced_file_becomes_a_reusable_mode
                 assert created.status_code == 201, created.text
                 data = (await client.post(f"{URL}/dashboards/{created.json()['dashboard_id']}/data", json={})).json()
         assert {cid: r["error"] for cid, r in data["components"].items() if r.get("error")} == {}
+
+
+async def test_language_switch_of_a_dashboard_from_a_user_model_is_422():
+    async with db_env() as env:
+        dashboard_id = await _stock_dashboard(env)
+        model = (await _make_model(env, dashboard_id)).json()
+        with env.patched():
+            async with env.client() as client:
+                created = await client.post(
+                    f"{URL}/dashboard-templates/{model['id']}/dashboards",
+                    json={"dataset_id": DS_WEEKS, "title": "Depuis modele",
+                          "columns": {"week": "week", "product_group": "product_group", "qty": "qty"}},
+                )
+                new_id = created.json()["dashboard_id"]
+                switched = await client.post(f"{URL}/dashboards/{new_id}/upgrade", json={"lang": "en"})
+                same = await client.post(f"{URL}/dashboards/{new_id}/upgrade", json={"lang": "fr", "dry_run": True})
+        assert switched.status_code == 422, switched.text
+        assert (await env.load(new_id)).locale == "fr"
+        assert same.status_code == 200, same.text

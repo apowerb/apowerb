@@ -511,6 +511,8 @@ class UpgradeRequest(BaseModel):
     template_id: str | None = None
     columns: dict[str, str | None] | None = None
     params: dict[str, Any] | None = None
+    # rebuild in this language and keep it on the dashboard; omitted: the dashboard keeps its language
+    lang: Literal["fr", "en"] | None = None
     dry_run: bool = False
 
 
@@ -545,10 +547,21 @@ async def upgrade_dashboard(
                 )
             ]
         )
-    # the dashboard keeps its language across upgrades
-    template = await _resolve_template(db, template_id, user.email, dashboard.locale)
+    # the dashboard keeps its language across upgrades unless the request switches it
+    lang = body.lang or dashboard.locale
+    template = await _resolve_template(db, template_id, user.email, lang)
     if template is None:
-        raise _template_not_found(template_id, dashboard.locale)
+        raise _template_not_found(template_id, lang)
+    # a user template is stored as built, in one language
+    if template.origin != "builtin" and (lang or "fr") != (dashboard.locale or "fr"):
+        raise _invalid(
+            [
+                translator(dashboard.locale)(
+                    "Ce modèle n'existe qu'en une langue : la langue du tableau ne peut pas changer.",
+                    "This template exists in one language only: the dashboard language cannot change.",
+                )
+            ]
+        )
     root = _root_or_422(dashboard)
 
     same = reference is not None and reference.id == template.id
@@ -576,6 +589,7 @@ async def upgrade_dashboard(
                 "components": _components_of(spec),
                 "spec_version": 2,
                 "template": TemplateRef(id=template.id, version=template.version, columns=columns, params=params),
+                "locale": lang,
                 "version": dashboard.version + 1,
                 "updated_at": datetime.now(timezone.utc),
             }

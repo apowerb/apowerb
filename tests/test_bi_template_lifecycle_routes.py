@@ -370,3 +370,32 @@ async def test_english_dashboard_is_built_and_computed_in_english_and_keeps_it_o
         after = await env.load(dashboard_id)
         assert after.locale == "en"
         assert any(c.visual.title == "Comparison by product family" for c in after.components)
+
+
+async def test_upgrade_with_lang_switches_the_dashboard_language_and_keeps_its_mapping():
+    async with db_env() as env:
+        env.datasets[DS] = (ALICE, sales_frame(renamed=True))
+        resp = await _post(env, "/dashboard-templates/stock_pilotage/dashboards", {"dataset_id": DS, "columns": NATIVE})
+        dashboard_id = resp.json()["dashboard_id"]
+        before = await env.load(dashboard_id)
+        assert before.locale == "fr"
+
+        dry = await _post(env, f"/dashboards/{dashboard_id}/upgrade", {"lang": "en", "dry_run": True})
+        assert dry.status_code == 200, dry.text
+        assert dry.json()["dashboard"]["locale"] == "en"
+        assert (await env.load(dashboard_id)).locale == "fr"
+
+        switched = await _post(env, f"/dashboards/{dashboard_id}/upgrade", {"lang": "en"})
+        assert switched.status_code == 200, switched.text
+        after = await env.load(dashboard_id)
+        assert after.locale == "en"
+        assert after.title == before.title
+        assert after.template.columns == before.template.columns
+        assert any(c.visual.title == "Comparison by product family" for c in after.components)
+        data = await _post(env, f"/dashboards/{dashboard_id}/data", {})
+        assert data.json()["filters"]["famille"]["label"] == "All product families"
+
+        back = await _post(env, f"/dashboards/{dashboard_id}/upgrade", {"lang": "fr"})
+        assert back.status_code == 200, back.text
+        assert (await env.load(dashboard_id)).locale == "fr"
+        assert (await _post(env, f"/dashboards/{dashboard_id}/upgrade", {"lang": "de"})).status_code == 422
