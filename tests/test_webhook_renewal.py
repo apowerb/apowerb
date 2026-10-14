@@ -268,3 +268,12 @@ class TestRenewalLoopSurvivesFailures:
             "otherwise a single failure ends the renewal background task "
             "and subscriptions silently expire"
         )
+
+    def test_no_silent_exception_swallowing_in_renewal(self):
+        """Verify webhook_renewal does not swallow errors with silent pass."""
+        import inspect
+
+        src = inspect.getsource(webhook_renewal)
+        assert "except Exception:\n                    pass" not in src
+        assert "except Exception:\n                pass" not in src
+
