@@ -375,7 +375,9 @@ def embed_chart(chart_id: str, title: str | None = None) -> dict:
                     "returned by tool_create_chart (do not invent one); if you have "
                     "not created it yet, call tool_create_chart first, then embed "
                     "the chart_id it returns. The component ids of a tool_bi_* dashboard "
-                    "are not charts: give that dashboard's /bi/<id> link instead."
+                    "are not charts: give that dashboard's /bi/<id> link instead. "
+                    "If you already gave that link, it is enough: do not apologize, do "
+                    "not repeat your summary, keep writing in the language of the user."
                 ),
             }
     except Exception:  # pragma: no cover - never block embedding
