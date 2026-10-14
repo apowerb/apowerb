@@ -266,9 +266,11 @@ def load_mcp_servers(
                     if toolset_name:
                         kwargs["toolset_name"] = toolset_name
                     tools_funcs.append(ToolboxToolset(**kwargs))
+                    _parsed_url = urlparse(mcp_url)
                     logger.info(
                         f"[TO_AGENT] Added MCP toolbox-db '{mcp_name}' "
-                        f"({mcp_url}, toolset={toolset_name or 'all'})"
+                        f"({_parsed_url.scheme}://{_parsed_url.netloc}, "
+                        f"toolset={toolset_name or 'all'})"
                     )
                     continue
 
@@ -336,9 +338,6 @@ def load_mcp_servers(
                         separator = "&" if "?" in mcp_url else "?"
                         query_string = urlencode(mcp_params)
                         mcp_url = f"{mcp_url}{separator}{query_string}"
-                    logger.info(
-                        f"[TO_AGENT] MCP SSE DEBUG: url={mcp_url!r}, headers={mcp_headers!r}"
-                    )
                     mcp_toolset = McpToolset(
                         connection_params=SseConnectionParams(
                             url=mcp_url,
@@ -380,8 +379,11 @@ def load_mcp_servers(
                         f"[TO_AGENT] Added MCP server '{mcp_name}' ({_parsed_url.scheme}://{_parsed_url.netloc})"
                     )
             except Exception as e:
+                # Only the exception type: its message can echo the connection
+                # parameters (URL with decrypted params, auth headers).
                 logger.error(
-                    f"[TO_AGENT] Failed to load MCP server '{mcp_cfg.get('name', '?')}': {e}"
+                    f"[TO_AGENT] Failed to load MCP server '{mcp_cfg.get('name', '?')}': "
+                    f"{type(e).__name__}"
                 )
     except (json.JSONDecodeError, TypeError) as e:
         logger.error(f"[TO_AGENT] Error parsing MCP servers config: {e}")
