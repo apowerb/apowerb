@@ -339,7 +339,7 @@ def test_list_dashboard_templates_shows_otif_and_quality_with_their_columns():
     assert res["success"] is True
     by_id = {tpl["id"]: tpl for tpl in res["templates"]}
     assert {"stock_pilotage", "delivery_otif", "production_quality"} <= set(by_id)
-    assert any(c["required"] for c in by_id["delivery_otif"]["columns"])
+    assert any("required" in line for line in by_id["delivery_otif"]["columns"].values())
 
 
 @pytest.mark.parametrize(
@@ -416,3 +416,56 @@ def test_stock_tool_speaks_the_requested_language(env):
     dash = env.db.rows[res["dashboard_id"]][1]
     assert dash.title == "Inventory steering" and dash.locale == "en"
     assert dash.filters[0].label == "Product family"
+
+
+# ---------------------------------------------------------------------------
+# Taille des réponses : chaque caractère renvoyé est relu à chaque appel suivant
+# du même tour (mesuré en DEV le 15/10 : la liste des gabarits ~6k tokens,
+# une requête de tableau ~4,6k tokens, relus 3 à 4 fois).
+# ---------------------------------------------------------------------------
+def test_list_dashboard_templates_is_compact_but_keeps_every_mapping_fact():
+    from apowerb.bi.spec.catalog import list_templates
+
+    res = t.tool_bi_list_dashboard_templates("en")
+    full = [tpl.describe() for tpl in list_templates("en")]
+    by_id = {tpl["id"]: tpl for tpl in res["templates"]}
+    assert set(by_id) == {tpl["id"] for tpl in full}
+    for tpl in full:
+        entry = by_id[tpl["id"]]
+        assert entry["label"] == tpl["label"] and entry["description"] == tpl["description"]
+        assert list(entry["columns"]) == [c["key"] for c in tpl["columns"]]
+        for col in tpl["columns"]:
+            text = entry["columns"][col["key"]]
+            assert col["type"] in text and col["label"] in text
+            assert ("required" if col["required"] else "optional") in text
+            if col["default"]:
+                assert f"default column: {col['default']}" in text
+        for p in tpl["params"]:
+            text = entry["params"][p["key"]]
+            assert all(str(p[k]) in text for k in ("type", "default", "min", "max"))
+    # 23 620 -> 16 339 caractères, 7 004 -> 4 196 tokens Gemini (15/10).
+    assert len(json.dumps(res["templates"])) < 0.7 * len(json.dumps(full))
+
+
+def test_query_rows_are_sent_as_columns_and_rows(env):
+    dash_id = _create()["dashboard_id"]
+    chart = next(c for c in t.tool_bi_query_dashboard(dash_id)["components"] if c["type"] == "bar")
+    assert chart["columns"] == ["x", "v"]  # _color_* reste dehors
+    assert chart["rows"][3] == [3, round(3 / 3, 4)]
+    assert len(chart["rows"]) == 30 and chart["truncated"] is True and chart["row_count"] == 500
+
+
+def test_query_can_be_limited_to_some_components(env):
+    created = _create()
+    kpi_id = next(c["id"] for c in created["components"] if c["type"] == "kpi")
+    res = t.tool_bi_query_dashboard(created["dashboard_id"], '{"famille": "A"}', component_ids=f" {kpi_id} ,Ventes")
+    assert res["success"] is True
+    assert [c["title"] for c in res["components"]] == ["Total", "Ventes"]
+    assert set(env.computed[-1]["components"]) == {kpi_id, next(c["id"] for c in created["components"] if c.get("title") == "Ventes")}
+
+
+def test_query_with_unknown_component_names_the_valid_ones(env):
+    dash_id = _create()["dashboard_id"]
+    res = t.tool_bi_query_dashboard(dash_id, component_ids="nope")
+    assert res["success"] is False
+    assert "nope" in res["error"] and "Total" in res["error"]
