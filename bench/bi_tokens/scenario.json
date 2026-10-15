@@ -1,0 +1,4163 @@
+{
+ "creation": {
+  "user": "[Uploaded files: online_store_orders.csv]\n\nHere are my online store orders for the last 12 months. Build me an English dashboard called Store Performance from the Online store template.",
+  "steps": [
+   {
+    "thoughts": [
+     "**Initiating Dashboard Creation**\n\nI've begun the process by focusing on the core requirement: creating a dashboard from the uploaded file. My first action is to utilize `tool_bi_import_attachment` to integrate `online_store_orders.csv` into the system as a BI dataset. Next, I plan to list the available dashboard templates to identify and select the \"Online store\" template. I'm taking things methodically to ensure a proper integration.\n\n\n",
+     "**Importing & Template Selection**\n\nI've moved past the initial file integration. I successfully imported `online_store_orders.csv` as a BI dataset. Now, I'm ready to list the available dashboard templates to find the desired \"Online store\" template with `tool_bi_list_dashboard_templates`. My primary focus is to ensure accurate template selection for the next step. I will use it to kick start dashboard creation.\n\n\n"
+    ],
+    "text": "",
+    "calls": [
+     {
+      "name": "tool_bi_import_attachment",
+      "args": {
+       "filename": "online_store_orders.csv"
+      }
+     }
+    ],
+    "responses": [
+     {
+      "name": "tool_bi_import_attachment",
+      "response": {
+       "name": "online_store_orders.csv #0cd95e47",
+       "reused": false,
+       "columns": [
+        "order_date",
+        "order_id",
+        "customer_id",
+        "order_amount",
+        "product_cost",
+        "channel",
+        "ad_spend",
+        "new_customer",
+        "status"
+       ],
+       "message": "File 'online_store_orders.csv' is dataset 79078357-3892-4252-9d15-2b4b3a993c39. Pass it as dataset_id to the dashboard tools.",
+       "success": true,
+       "row_count": 13554,
+       "dataset_id": "79078357-3892-4252-9d15-2b4b3a993c39"
+      }
+     }
+    ],
+    "measured_input_tokens": 14531
+   },
+   {
+    "thoughts": [
+     "**Importing Data: Success**\n\nI've successfully imported `online_store_orders.csv`, assigning it `dataset_id: 79078357-3892-4252-9d15-2b4b3a993c39`. The available columns include `order_date`, `order_id`, `customer_id`, `order_amount`, `product_cost`, `channel`, `ad_spend`, `new_customer`, and `status`. Now, I need...\n\n\n",
+     "**Locating BI Templates**\n\nI have located the dataset, and its attributes are as expected. I am now trying to find the appropriate \"Online store\" template using `tool_bi_list_dashboard_templates`.\n\n\n"
+    ],
+    "text": "",
+    "calls": [
+     {
+      "name": "tool_bi_list_dashboard_templates",
+      "args": {
+       "language": "en"
+      }
+     }
+    ],
+    "responses": [
+     {
+      "name": "tool_bi_list_dashboard_templates",
+      "response": {
+       "success": true,
+       "templates": [
+        {
+         "id": "stock_pilotage",
+         "label": "Inventory steering",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "horizon",
+           "max": 26,
+           "min": 1,
+           "type": "integer",
+           "label": "Forecast horizon (weeks)",
+           "default": 8
+          }
+         ],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Week",
+           "default": "semaine",
+           "required": true
+          },
+          {
+           "key": "family",
+           "type": "string",
+           "label": "Product family",
+           "default": "famille",
+           "required": true
+          },
+          {
+           "key": "sales",
+           "type": "number",
+           "label": "Sales",
+           "default": "ventes",
+           "required": true
+          },
+          {
+           "key": "site",
+           "type": "string",
+           "label": "Site",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "stock",
+           "type": "number",
+           "label": "Stock",
+           "default": "stock",
+           "required": false
+          },
+          {
+           "key": "safety",
+           "type": "number",
+           "label": "Safety stock",
+           "default": "seuil_securite",
+           "required": false
+          },
+          {
+           "key": "lead_time",
+           "type": "number",
+           "label": "Supplier lead time (weeks)",
+           "default": "delai_fournisseur_sem",
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Inventory steering dashboard built from weekly sales by product family: coverage, service level, forecast accuracy and weeks below safety stock. With a Stock column the real stock is used; otherwise stock and replenishments are simulated from sales."
+        },
+        {
+         "id": "sales_tracking",
+         "label": "Sales tracking",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "period_months",
+           "max": 120,
+           "min": 1,
+           "type": "integer",
+           "label": "Default displayed period (months)",
+           "default": 12
+          }
+         ],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Date",
+           "default": "date",
+           "required": true
+          },
+          {
+           "key": "amount",
+           "type": "number",
+           "label": "Amount",
+           "default": "montant",
+           "required": true
+          },
+          {
+           "key": "quantity",
+           "type": "number",
+           "label": "Quantity",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "family",
+           "type": "string",
+           "label": "Product family",
+           "default": "famille",
+           "required": true
+          },
+          {
+           "key": "customer",
+           "type": "string",
+           "label": "Customer",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "region",
+           "type": "string",
+           "label": "Region",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Sales tracking dashboard built from sales lines: revenue and change against the same period last year, monthly curve, product families, customers and regions. Data is aggregated by month."
+        },
+        {
+         "id": "sales_forecast",
+         "label": "Sales forecast",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "horizon",
+           "max": 26,
+           "min": 1,
+           "type": "integer",
+           "label": "Forecast horizon (weeks)",
+           "default": 8
+          }
+         ],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Week",
+           "default": "semaine",
+           "required": true
+          },
+          {
+           "key": "family",
+           "type": "string",
+           "label": "Product family",
+           "default": "famille",
+           "required": true
+          },
+          {
+           "key": "sales",
+           "type": "number",
+           "label": "Sales",
+           "default": "ventes",
+           "required": true
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Weekly sales forecast dashboard by product family: total forecast over the horizon, change versus the same period last year, reliability of the method on past data, peak week and breakdown by family. Forecast from the th2forecast engine, falling back on a naive forecast."
+        },
+        {
+         "id": "delivery_otif",
+         "label": "Deliveries / OTIF",
+         "owner": null,
+         "origin": "builtin",
+         "params": [],
+         "columns": [
+          {
+           "key": "order_date",
+           "type": "date",
+           "label": "Order date",
+           "default": "date_commande",
+           "required": true
+          },
+          {
+           "key": "promised_date",
+           "type": "date",
+           "label": "Promised date",
+           "default": "date_promise",
+           "required": true
+          },
+          {
+           "key": "delivered_date",
+           "type": "date",
+           "label": "Delivery date",
+           "default": "date_livraison",
+           "required": true
+          },
+          {
+           "key": "qty_ordered",
+           "type": "number",
+           "label": "Ordered quantity",
+           "default": "qte_commandee",
+           "required": true
+          },
+          {
+           "key": "qty_delivered",
+           "type": "number",
+           "label": "Delivered quantity",
+           "default": "qte_livree",
+           "required": true
+          },
+          {
+           "key": "customer",
+           "type": "string",
+           "label": "Customer",
+           "default": "client",
+           "required": true
+          },
+          {
+           "key": "carrier",
+           "type": "string",
+           "label": "Carrier",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "family",
+           "type": "string",
+           "label": "Product family",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Customer delivery tracking from one row per order line: delivered on time, delivered in full and OTIF (both), average delay, open late lines and quantity fill rate, by customer, carrier and product family."
+        },
+        {
+         "id": "production_quality",
+         "label": "Production quality",
+         "owner": null,
+         "origin": "builtin",
+         "params": [],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Date",
+           "default": "date",
+           "required": true
+          },
+          {
+           "key": "line",
+           "type": "string",
+           "label": "Production line",
+           "default": "ligne",
+           "required": true
+          },
+          {
+           "key": "product",
+           "type": "string",
+           "label": "Product",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "produced",
+           "type": "number",
+           "label": "Quantity produced",
+           "default": "qte_produite",
+           "required": true
+          },
+          {
+           "key": "rejected",
+           "type": "number",
+           "label": "Quantity rejected",
+           "default": "qte_rebut",
+           "required": true
+          },
+          {
+           "key": "defect",
+           "type": "string",
+           "label": "Reject cause",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "planned_time",
+           "type": "number",
+           "label": "Planned time",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "run_time",
+           "type": "number",
+           "label": "Run time",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "ideal_rate",
+           "type": "number",
+           "label": "Ideal rate (per unit of time)",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Production quality tracking from one row per batch or per shift: reject rate, first-pass yield, volumes, reject causes (Pareto) and, with the planned time, run time and ideal rate, the OEE (availability, performance, quality)."
+        },
+        {
+         "id": "receivables_aging",
+         "label": "Customer receivables aging",
+         "owner": null,
+         "origin": "builtin",
+         "params": [],
+         "columns": [
+          {
+           "key": "customer",
+           "type": "string",
+           "label": "Customer",
+           "default": "client",
+           "required": true
+          },
+          {
+           "key": "invoice",
+           "type": "string",
+           "label": "Invoice",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "invoice_date",
+           "type": "date",
+           "label": "Invoice date",
+           "default": "date_facture",
+           "required": true
+          },
+          {
+           "key": "due_date",
+           "type": "date",
+           "label": "Due date",
+           "default": "date_echeance",
+           "required": true
+          },
+          {
+           "key": "amount",
+           "type": "number",
+           "label": "Amount",
+           "default": "montant",
+           "required": true
+          },
+          {
+           "key": "open_amount",
+           "type": "number",
+           "label": "Open amount",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "paid_amount",
+           "type": "number",
+           "label": "Paid amount",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "payment_date",
+           "type": "date",
+           "label": "Payment date",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Customer receivables tracking from one row per invoice: total and overdue outstanding, overdue share, DSO, breakdown by aging band (not due, 0-30, 31-60, 61-90 and over 90 days past due), most overdue customers and monthly billing. Lateness is measured at the last invoice date of the file (not today's date). DSO is the outstanding amount divided by the billing of the last 90 days, multiplied by 90. The open amount comes from the Open amount column, otherwise from the Paid amount, otherwise from the Payment date; with none of the three, all invoices are considered open."
+        },
+        {
+         "id": "purchasing_suppliers",
+         "label": "Purchasing and suppliers",
+         "owner": null,
+         "origin": "builtin",
+         "params": [],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Date",
+           "default": "date",
+           "required": true
+          },
+          {
+           "key": "supplier",
+           "type": "string",
+           "label": "Supplier",
+           "default": "fournisseur",
+           "required": true
+          },
+          {
+           "key": "item",
+           "type": "string",
+           "label": "Item or family",
+           "default": "article",
+           "required": true
+          },
+          {
+           "key": "quantity",
+           "type": "number",
+           "label": "Quantity",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "amount",
+           "type": "number",
+           "label": "Amount",
+           "default": "montant",
+           "required": true
+          },
+          {
+           "key": "promised_date",
+           "type": "date",
+           "label": "Promised date",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "received_date",
+           "type": "date",
+           "label": "Received date",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Purchasing tracking from one row per purchase order or purchase invoice line: total spend and spend by month, number of suppliers, dependence on the top five suppliers, spend by supplier and by item. With the quantity, the average price per item; with the promised and received dates, the on-time delivery rate and the average delay."
+        },
+        {
+         "id": "support_sla",
+         "label": "Support and SLA",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "response_target_hours",
+           "max": 168,
+           "min": 1,
+           "type": "integer",
+           "label": "First response objective (hours)",
+           "default": 4
+          },
+          {
+           "key": "resolution_target_hours",
+           "max": 720,
+           "min": 1,
+           "type": "integer",
+           "label": "Resolution objective (hours)",
+           "default": 48
+          }
+         ],
+         "columns": [
+          {
+           "key": "ticket",
+           "type": "string",
+           "label": "Ticket ID",
+           "default": "ticket_id",
+           "required": true
+          },
+          {
+           "key": "opened_at",
+           "type": "date",
+           "label": "Opening date",
+           "default": "date_ouverture",
+           "required": true
+          },
+          {
+           "key": "first_response_at",
+           "type": "date",
+           "label": "First response date",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "resolved_at",
+           "type": "date",
+           "label": "Resolution date",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "priority",
+           "type": "string",
+           "label": "Priority or category",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "team",
+           "type": "string",
+           "label": "Agent or team",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Support tracking from one row per ticket: tickets received, open backlog, median first response time, share of tickets within SLA, tickets per week and per priority, and a table per team. A ticket is within SLA if its first response and its resolution meet the objectives in hours (configurable); an open ticket whose objective is already exceeded counts as outside SLA, the reference date being the most recent one in the file. Without a resolution date, there is no backlog."
+        },
+        {
+         "id": "finance_pilotage",
+         "label": "Financial management",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "periode_defaut_mois",
+           "max": 120,
+           "min": 1,
+           "type": "integer",
+           "label": "Default period shown (months)",
+           "default": 12
+          },
+          {
+           "key": "tresorerie_min",
+           "max": 1000000000,
+           "min": 0,
+           "type": "integer",
+           "label": "Minimum cash (€)",
+           "default": 0
+          },
+          {
+           "key": "marge_brute_cible_pct",
+           "max": 100,
+           "min": 0,
+           "type": "integer",
+           "label": "Target gross margin rate (%)",
+           "default": 30
+          },
+          {
+           "key": "part_variable_achats_pct",
+           "max": 100,
+           "min": 0,
+           "type": "integer",
+           "label": "Variable share of consumed purchases, accounts 60 (%)",
+           "default": 100
+          },
+          {
+           "key": "part_variable_services_pct",
+           "max": 100,
+           "min": 0,
+           "type": "integer",
+           "label": "Variable share of external services, accounts 61-62 (%)",
+           "default": 0
+          },
+          {
+           "key": "part_variable_personnel_pct",
+           "max": 100,
+           "min": 0,
+           "type": "integer",
+           "label": "Variable share of payroll costs, accounts 64 (%)",
+           "default": 0
+          }
+         ],
+         "columns": [
+          {
+           "key": "journalcode",
+           "type": "string",
+           "label": "Journal code",
+           "default": "journalcode",
+           "required": false
+          },
+          {
+           "key": "journallib",
+           "type": "string",
+           "label": "Journal label",
+           "default": "journallib",
+           "required": false
+          },
+          {
+           "key": "ecriturenum",
+           "type": "string",
+           "label": "Entry number",
+           "default": "ecriturenum",
+           "required": false
+          },
+          {
+           "key": "ecrituredate",
+           "type": "date",
+           "label": "Entry date",
+           "default": "ecrituredate",
+           "required": true
+          },
+          {
+           "key": "comptenum",
+           "type": "string",
+           "label": "Account number",
+           "default": "comptenum",
+           "required": true
+          },
+          {
+           "key": "comptelib",
+           "type": "string",
+           "label": "Account label",
+           "default": "comptelib",
+           "required": false
+          },
+          {
+           "key": "compauxnum",
+           "type": "string",
+           "label": "Subsidiary account",
+           "default": "compauxnum",
+           "required": false
+          },
+          {
+           "key": "compauxlib",
+           "type": "string",
+           "label": "Subsidiary label",
+           "default": "compauxlib",
+           "required": false
+          },
+          {
+           "key": "pieceref",
+           "type": "string",
+           "label": "Document reference",
+           "default": "pieceref",
+           "required": false
+          },
+          {
+           "key": "piecedate",
+           "type": "date",
+           "label": "Document date",
+           "default": "piecedate",
+           "required": false
+          },
+          {
+           "key": "ecriturelib",
+           "type": "string",
+           "label": "Entry label",
+           "default": "ecriturelib",
+           "required": false
+          },
+          {
+           "key": "debit",
+           "type": "number",
+           "label": "Debit",
+           "default": "debit",
+           "required": true
+          },
+          {
+           "key": "credit",
+           "type": "number",
+           "label": "Credit",
+           "default": "credit",
+           "required": true
+          },
+          {
+           "key": "ecriturelet",
+           "type": "string",
+           "label": "Reconciliation code",
+           "default": "ecriturelet",
+           "required": false
+          },
+          {
+           "key": "datelet",
+           "type": "date",
+           "label": "Reconciliation date",
+           "default": "datelet",
+           "required": false
+          },
+          {
+           "key": "validdate",
+           "type": "date",
+           "label": "Validation date",
+           "default": "validdate",
+           "required": false
+          },
+          {
+           "key": "montantdevise",
+           "type": "number",
+           "label": "Foreign currency amount",
+           "default": "montantdevise",
+           "required": false
+          },
+          {
+           "key": "idevise",
+           "type": "string",
+           "label": "Currency",
+           "default": "idevise",
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Monthly financial dashboard built on a FEC (French accounting entries file): cash, revenue, gross margin, approximate EBITDA, payroll costs, break-even point and approximate working capital requirement, with the waterfall from revenue to net result and the main expenses by account."
+        },
+        {
+         "id": "cash_forecast",
+         "label": "Cash forecast",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "horizon",
+           "max": 26,
+           "min": 1,
+           "type": "integer",
+           "label": "Forecast horizon (periods)",
+           "default": 13
+          },
+          {
+           "key": "inflow_shock_pct",
+           "max": 50,
+           "min": 0,
+           "type": "integer",
+           "label": "Deviation on cash in, a (%)",
+           "default": 10
+          },
+          {
+           "key": "outflow_shock_pct",
+           "max": 50,
+           "min": 0,
+           "type": "integer",
+           "label": "Deviation on cash out, b (%)",
+           "default": 10
+          },
+          {
+           "key": "min_cash",
+           "max": 1000000000,
+           "min": -1000000000,
+           "type": "integer",
+           "label": "Minimum cash threshold (per account)",
+           "default": 0
+          },
+          {
+           "key": "opening_balance",
+           "max": 1000000000,
+           "min": -1000000000,
+           "type": "integer",
+           "label": "Opening balance (without a balance column)",
+           "default": 0
+          },
+          {
+           "key": "monthly",
+           "max": 1,
+           "min": 0,
+           "type": "integer",
+           "label": "Monthly data (0 = weekly, 1 = monthly)",
+           "default": 0
+          }
+         ],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Period date",
+           "default": "semaine",
+           "required": true
+          },
+          {
+           "key": "inflow",
+           "type": "number",
+           "label": "Cash in",
+           "default": "encaissements",
+           "required": true
+          },
+          {
+           "key": "outflow",
+           "type": "number",
+           "label": "Cash out",
+           "default": "decaissements",
+           "required": true
+          },
+          {
+           "key": "balance",
+           "type": "number",
+           "label": "Actual balance",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "account",
+           "type": "string",
+           "label": "Account",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "threshold",
+           "type": "number",
+           "label": "Minimum cash threshold",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Cash forecast from one row per period (week or month, and per account if needed) with the balance, cash in and cash out: balance projected over the horizon in three scenarios (pessimistic, central, optimistic), minimum cash threshold, first period below the threshold and weeks of cash on hand. Flows are predicted by the forecast engine."
+        },
+        {
+         "id": "hr_people",
+         "label": "HR / Absenteeism and payroll",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "absenteeism_warn",
+           "max": 50,
+           "min": 1,
+           "type": "integer",
+           "label": "Absenteeism: warning threshold (%)",
+           "default": 5
+          },
+          {
+           "key": "absenteeism_bad",
+           "max": 100,
+           "min": 1,
+           "type": "integer",
+           "label": "Absenteeism: critical threshold (%)",
+           "default": 8
+          },
+          {
+           "key": "turnover_warn",
+           "max": 100,
+           "min": 1,
+           "type": "integer",
+           "label": "Turnover: warning threshold (%)",
+           "default": 10
+          },
+          {
+           "key": "turnover_bad",
+           "max": 200,
+           "min": 1,
+           "type": "integer",
+           "label": "Turnover: critical threshold (%)",
+           "default": 20
+          }
+         ],
+         "columns": [
+          {
+           "key": "mois",
+           "type": "date",
+           "label": "Month",
+           "default": "mois",
+           "required": true
+          },
+          {
+           "key": "salarie",
+           "type": "string",
+           "label": "Employee",
+           "default": "salarie",
+           "required": true
+          },
+          {
+           "key": "service",
+           "type": "string",
+           "label": "Department",
+           "default": "service",
+           "required": false
+          },
+          {
+           "key": "heures_theoriques",
+           "type": "number",
+           "label": "Theoretical hours",
+           "default": "heures_theoriques",
+           "required": true
+          },
+          {
+           "key": "heures_absence",
+           "type": "number",
+           "label": "Absence hours",
+           "default": "heures_absence",
+           "required": true
+          },
+          {
+           "key": "masse_salariale",
+           "type": "number",
+           "label": "Payroll (loaded gross)",
+           "default": "masse_salariale",
+           "required": true
+          },
+          {
+           "key": "entree",
+           "type": "date",
+           "label": "Hire date",
+           "default": "entree",
+           "required": false
+          },
+          {
+           "key": "sortie",
+           "type": "date",
+           "label": "Exit date",
+           "default": "sortie",
+           "required": false
+          },
+          {
+           "key": "motif_absence",
+           "type": "string",
+           "label": "Absence reason",
+           "default": "motif_absence",
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "HR dashboard for a small business from one row per employee and month (Silae, PayFit or Excel payroll export): absenteeism rate, turnover, headcount, payroll and its trend, average cost per employee, hires and exits, absence reasons and breakdown by department."
+        },
+        {
+         "id": "services_b2b",
+         "label": "B2B services / Utilization and billing",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "billable_target",
+           "max": 100,
+           "min": 1,
+           "type": "integer",
+           "label": "Target billable rate (%)",
+           "default": 75
+          },
+          {
+           "key": "occupancy_target",
+           "max": 100,
+           "min": 1,
+           "type": "integer",
+           "label": "Target utilization rate (%)",
+           "default": 85
+          }
+         ],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Date (day or week)",
+           "default": "date",
+           "required": true
+          },
+          {
+           "key": "consultant",
+           "type": "string",
+           "label": "Consultant",
+           "default": "consultant",
+           "required": true
+          },
+          {
+           "key": "client",
+           "type": "string",
+           "label": "Customer",
+           "default": "client",
+           "required": false
+          },
+          {
+           "key": "projet",
+           "type": "string",
+           "label": "Project",
+           "default": "projet",
+           "required": false
+          },
+          {
+           "key": "heures",
+           "type": "number",
+           "label": "Hours worked",
+           "default": "heures",
+           "required": true
+          },
+          {
+           "key": "facturable",
+           "type": "number",
+           "label": "Billable (boolean or 0/1)",
+           "default": "facturable",
+           "required": true
+          },
+          {
+           "key": "heures_disponibles",
+           "type": "number",
+           "label": "Available hours",
+           "default": "heures_disponibles",
+           "required": true
+          },
+          {
+           "key": "tjm",
+           "type": "number",
+           "label": "Day rate (TJM)",
+           "default": "tjm",
+           "required": false
+          },
+          {
+           "key": "montant_facture",
+           "type": "number",
+           "label": "Amount invoiced",
+           "default": "montant_facture",
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Management of a services business (consulting, engineering, agency) from one row per consultant and per day or week (time-tracking export): utilization rate, billable rate, average day rate, revenue per consultant, left to invoice, top customers and utilization by consultant."
+        },
+        {
+         "id": "ecommerce",
+         "label": "Online store",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "roas_threshold",
+           "max": 20,
+           "min": 1,
+           "type": "integer",
+           "label": "ROAS alert threshold",
+           "default": 2
+          }
+         ],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Order date",
+           "default": "date",
+           "required": true
+          },
+          {
+           "key": "order_id",
+           "type": "string",
+           "label": "Order number",
+           "default": "commande_id",
+           "required": true
+          },
+          {
+           "key": "customer_id",
+           "type": "string",
+           "label": "Customer",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "amount",
+           "type": "number",
+           "label": "Order amount",
+           "default": "montant",
+           "required": true
+          },
+          {
+           "key": "product_cost",
+           "type": "number",
+           "label": "Product cost",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "channel",
+           "type": "string",
+           "label": "Channel",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "ad_spend",
+           "type": "number",
+           "label": "Ad spend",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "new_customer",
+           "type": "number",
+           "label": "New customer (0/1)",
+           "default": null,
+           "required": false
+          },
+          {
+           "key": "status",
+           "type": "string",
+           "label": "Order status",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Online store dashboard built from one row per order (Shopify, WooCommerce, PrestaShop export): revenue, orders, average order value, contribution margin, ROAS with an alert below a threshold, customer acquisition cost and share of repeat customers. Cancelled or refunded orders are excluded. Ad spend can appear on dedicated rows of the same file."
+        },
+        {
+         "id": "restaurant",
+         "label": "Restaurant",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "food_cost_min",
+           "max": 99,
+           "min": 0,
+           "type": "integer",
+           "label": "Food cost: low target (%)",
+           "default": 25
+          },
+          {
+           "key": "food_cost_max",
+           "max": 100,
+           "min": 1,
+           "type": "integer",
+           "label": "Food cost: high target (%)",
+           "default": 35
+          },
+          {
+           "key": "prime_cost_min",
+           "max": 99,
+           "min": 0,
+           "type": "integer",
+           "label": "Prime cost: low target (%)",
+           "default": 55
+          },
+          {
+           "key": "prime_cost_max",
+           "max": 100,
+           "min": 1,
+           "type": "integer",
+           "label": "Prime cost: high target (%)",
+           "default": 65
+          }
+         ],
+         "columns": [
+          {
+           "key": "date",
+           "type": "date",
+           "label": "Date",
+           "default": "date",
+           "required": true
+          },
+          {
+           "key": "revenue",
+           "type": "number",
+           "label": "Revenue",
+           "default": "ca",
+           "required": true
+          },
+          {
+           "key": "covers",
+           "type": "number",
+           "label": "Covers",
+           "default": "couverts",
+           "required": true
+          },
+          {
+           "key": "food_cost",
+           "type": "number",
+           "label": "Food purchases",
+           "default": "achats_matieres",
+           "required": true
+          },
+          {
+           "key": "labor_cost",
+           "type": "number",
+           "label": "Payroll",
+           "default": "masse_salariale",
+           "required": true
+          },
+          {
+           "key": "service",
+           "type": "string",
+           "label": "Service (lunch / dinner)",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Restaurant management from one row per day (or per service): food cost and labor cost as % of revenue, prime cost with adjustable targets, average check, covers and revenue by day of the week."
+        },
+        {
+         "id": "construction_sites",
+         "label": "Construction sites",
+         "owner": null,
+         "origin": "builtin",
+         "params": [
+          {
+           "key": "drift_threshold",
+           "max": 100,
+           "min": 1,
+           "type": "integer",
+           "label": "Cost drift threshold (% of cost budget)",
+           "default": 5
+          }
+         ],
+         "columns": [
+          {
+           "key": "month",
+           "type": "date",
+           "label": "Statement month",
+           "default": "mois",
+           "required": true
+          },
+          {
+           "key": "site",
+           "type": "string",
+           "label": "Site",
+           "default": "chantier",
+           "required": true
+          },
+          {
+           "key": "sale_budget",
+           "type": "number",
+           "label": "Sales budget",
+           "default": "budget_vente",
+           "required": true
+          },
+          {
+           "key": "cost_budget",
+           "type": "number",
+           "label": "Cost budget",
+           "default": "budget_cout",
+           "required": true
+          },
+          {
+           "key": "cost_incurred",
+           "type": "number",
+           "label": "Cost incurred (cumulative)",
+           "default": "cout_engage",
+           "required": true
+          },
+          {
+           "key": "progress",
+           "type": "number",
+           "label": "Progress (0-1 or %)",
+           "default": "avancement",
+           "required": true
+          },
+          {
+           "key": "billed_cumul",
+           "type": "number",
+           "label": "Invoiced (cumulative)",
+           "default": "facture_cumul",
+           "required": true
+          },
+          {
+           "key": "client",
+           "type": "string",
+           "label": "Customer",
+           "default": null,
+           "required": false
+          }
+         ],
+         "version": 1,
+         "can_delete": false,
+         "visibility": null,
+         "description": "Construction site profitability tracking from one progress statement per site and per month (cumulative amounts): estimated margin at completion against budgeted margin, cost drift, gap between billing and progress (overbilled or billing late) and sites drifting beyond an adjustable threshold."
+        }
+       ]
+      }
+     }
+    ],
+    "measured_input_tokens": 14911
+   },
+   {
+    "thoughts": [
+     "**Mapping Template Columns**\n\nI've identified the \"Online store\" template, designated by the `ecommerce` ID. My next step is to accurately link the dataset columns from `online_store_orders.csv` to the template's required fields. The available columns in the dataset include `order_date`, `order_id`, and `customer`. I'm starting the mapping process now.\n\n\n",
+     "**Confirming Column Mapping**\n\nI've completed the column mapping for the \"Online store\" template.  All required and optional columns in the dataset have corresponding fields in the template. I'm now certain about the connections: `order_date`, `order_id`, `order_amount`, `customer_id`, `product_cost`, `channel`, `ad_spend`, `new_customer`, and `status`. I'll set the dashboard title as \"Store Performance\" in English.\n\n\n"
+    ],
+    "text": "",
+    "calls": [
+     {
+      "name": "tool_bi_create_dashboard_from_template",
+      "args": {
+       "title": "Store Performance",
+       "language": "en",
+       "dataset_id": "79078357-3892-4252-9d15-2b4b3a993c39",
+       "template_id": "ecommerce",
+       "columns_json": "{\"order_date\": \"order_date\", \"order_id\": \"order_id\", \"amount\": \"order_amount\", \"customer_id\": \"customer_id\", \"product_cost\": \"product_cost\", \"channel\": \"channel\", \"ad_spend\": \"ad_spend\", \"new_customer\": \"new_customer\", \"status\": \"status\"}"
+      }
+     }
+    ],
+    "responses": [
+     {
+      "name": "tool_bi_create_dashboard_from_template",
+      "response": {
+       "error": "Unknown column for this template: order_date.",
+       "success": false
+      }
+     }
+    ],
+    "measured_input_tokens": 21783
+   },
+   {
+    "thoughts": [
+     "**Revising Dashboard Creation**\n\nI encountered an \"Unknown column\" error, specifically for `order_date`, during the dashboard creation attempt. I now realize my initial assumptions about the `columns_json` mapping for the `ecommerce` template were incorrect. I'm re-examining the `tool_bi_list_dashboard_templates` output to pinpoint the accurate column information.\n\n\n",
+     "**Correcting Column Mapping**\n\nI've pinpointed the root cause: a mapping error within the `columns_json`. The `ecommerce` template uses 'date' for the order date, not 'order_date', as I initially assumed.  I've cross-referenced with `tool_bi_list_dashboard_templates` to ensure all keys and labels are accurate and updated.  I am reconfiguring the mapping now, and I hope this will resolve the \"unknown column\" issue.\n\n\n",
+     "**Adjusting Key Mappings**\n\nI've re-examined the column mappings for the ecommerce template, and I've confirmed the template uses the key \"date\" for order date, not \"order_date\". To ensure the dashboard creation succeeds, I need to adjust my data to match this key. Specifically, I'm now focusing on reconfiguring the `columns_json` mapping to correctly link the expected keys to their corresponding columns in my dataset.\n\n\n"
+    ],
+    "text": "",
+    "calls": [
+     {
+      "name": "tool_bi_create_dashboard_from_template",
+      "args": {
+       "title": "Store Performance",
+       "language": "en",
+       "dataset_id": "79078357-3892-4252-9d15-2b4b3a993c39",
+       "template_id": "ecommerce",
+       "columns_json": "{\"date\": \"order_date\", \"order_id\": \"order_id\", \"amount\": \"order_amount\", \"customer_id\": \"customer_id\", \"product_cost\": \"product_cost\", \"channel\": \"channel\", \"ad_spend\": \"ad_spend\", \"new_customer\": \"new_customer\", \"status\": \"status\"}"
+      }
+     }
+    ],
+    "responses": [
+     {
+      "name": "tool_bi_create_dashboard_from_template",
+      "response": {
+       "url": "/bi/e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "title": "Store Performance",
+       "errors": {},
+       "filters": {
+        "canal": {
+         "label": "All channels",
+         "value": null
+        },
+        "periode": {
+         "to": "2026-09-30",
+         "from": "2026-04-02",
+         "label": "Last 26 weeks",
+         "value": "26w"
+        }
+       },
+       "message": "Dashboard 'Store Performance' created. Link for the user: /bi/e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d (copy this relative path exactly as written; never add a domain in front of it). Its component ids are not chart ids: never pass them to embed_chart; give this link instead.",
+       "success": true,
+       "components": [
+        {
+         "id": "0826b45b-37af-4c86-9b9d-804eaed7c126",
+         "text": "All channels, from Apr 2, 2026 to Sep 30, 2026: 453.1k € of revenue from 5,413 orders, average order value of 83.7 €. Contribution margin of 147.6k € (32.6%). ROAS of 5.3 for 85.7k € of advertising.",
+         "type": "text"
+        },
+        {
+         "id": "1c75da75-653b-485e-a077-c7a35c9cf406",
+         "raw": 453120.17,
+         "type": "kpi",
+         "title": "Revenue",
+         "value": "453.1k €"
+        },
+        {
+         "id": "faeb8531-13e5-4278-9756-4a13c796728f",
+         "raw": 5413.0,
+         "type": "kpi",
+         "title": "Orders",
+         "value": "5,413 orders"
+        },
+        {
+         "id": "d7557198-86e4-446f-9c80-69c8d9d135ee",
+         "raw": 83.7096,
+         "type": "kpi",
+         "title": "Average order value",
+         "value": "83.7 €"
+        },
+        {
+         "id": "c7d956c4-6b1f-411a-a721-86ef47795677",
+         "raw": 147568.09,
+         "type": "kpi",
+         "title": "Contribution margin",
+         "value": "147.6k €",
+         "secondary": "32.6% of revenue"
+        },
+        {
+         "id": "135c8c65-2238-4285-94bd-6da45b71f818",
+         "raw": 5.2892,
+         "type": "kpi",
+         "title": "ROAS",
+         "value": "5.3",
+         "status": "good",
+         "secondary": "85.7k € of advertising"
+        },
+        {
+         "id": "197b523f-8532-41cc-872f-8ce2196b3be1",
+         "raw": 53.8464,
+         "type": "kpi",
+         "title": "Customer acquisition cost",
+         "value": "53.8 €",
+         "secondary": "1,591 new customers"
+        },
+        {
+         "id": "2b3bacaa-dbb1-41df-9143-17eaf5b37333",
+         "raw": 0.5433,
+         "type": "kpi",
+         "title": "Repeat customers",
+         "value": "54.3%",
+         "secondary": "2,886 active customers"
+        },
+        {
+         "id": "efce116c-de23-4632-afd7-20e73d0a3ddb",
+         "type": "combo",
+         "title": "Revenue and orders by week",
+         "sample": [
+          {
+           "x": "2026-03-30",
+           "ca": 12096.49,
+           "commandes": 146.0,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "ca": 22557.15,
+           "commandes": 269.0,
+           "periode_semaine": "2026-04-06"
+          }
+         ],
+         "row_count": 27
+        },
+        {
+         "id": "009b83d7-b8a5-454e-906b-56d527e7d4e3",
+         "type": "combo",
+         "title": "ROAS by week",
+         "sample": [
+          {
+           "x": "2026-03-30",
+           "roas": 5.2308,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "roas": 5.6956,
+           "periode_semaine": "2026-04-06"
+          }
+         ],
+         "row_count": 27
+        },
+        {
+         "id": "6a9c13af-70a8-4618-81da-bc25e8658fd1",
+         "type": "hbar",
+         "title": "Revenue by channel",
+         "sample": [
+          {
+           "x": "Google Ads",
+           "ca": 155971.82,
+           "channel": "Google Ads"
+          },
+          {
+           "x": "Instagram",
+           "ca": 119363.53,
+           "channel": "Instagram"
+          }
+         ],
+         "row_count": 4
+        },
+        {
+         "id": "036bdf1c-19f8-4ade-96cc-cdb7c8f3bf25",
+         "type": "hbar",
+         "title": "Top customers",
+         "sample": [
+          {
+           "x": "C3910",
+           "ca": 732.12,
+           "customer_id": "C3910"
+          },
+          {
+           "x": "C2123",
+           "ca": 680.53,
+           "customer_id": "C2123"
+          }
+         ],
+         "row_count": 10
+        }
+       ],
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "component_count": 14
+      }
+     }
+    ],
+    "measured_input_tokens": 22342
+   },
+   {
+    "thoughts": [
+     "**Generating Dashboard Access**\n\nI've successfully generated the \"Store Performance\" dashboard using the \"Online store\" template. I now have the dashboard ID (`e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d`) and URL (/bi/e3 ca56c3-3fc2-4e86-93ba-f51b5b8dd33d). I will be providing the user with the dashboard link. After that I intend to summarize the key performance indicators (KPIs) presented within the new dashboard.\n\n\n",
+     "**Providing Dashboard Insights**\n\nI've generated the dashboard and have the necessary details. I'm ready to share the dashboard URL. Furthermore, I've compiled a summary of key performance indicators, including revenue, orders, average order value, contribution margin, ROAS, customer acquisition cost, repeat customer data, and the reporting period. I am preparing to present these insights to the user.\n\n\n"
+    ],
+    "text": "Your \"Store Performance\" dashboard has been successfully created! You can access it here: /bi/e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d\n\nHere's a quick summary of your store's performance from April 2, 2026 to September 30, 2026:\n\n*   **Revenue**: 453.1k €\n*   **Orders**: 5,413\n*   **Average Order Value**: 83.7 €\n*   **Contribution Margin**: 147.6k € (32.6% of revenue)\n*   **ROAS (Return on Ad Spend)**: 5.3 (which is good!) for 85.7k € in advertising.\n*   **Customer Acquisition Cost**: 53.8 € for 1,591 new customers\n*   **Repeat Customers**: 54.3% (from 2,886 active customers)\n\nWhat would you like to do next?\n",
+    "calls": [
+     {
+      "name": "request_user_input",
+      "args": {
+       "choices": [
+        "View the dashboard",
+        "Export dashboard data",
+        "Forecast future performance"
+       ],
+       "question": "What would you like to do next?",
+       "input_type": "chips",
+       "placeholder": "Or type your own question..."
+      }
+     }
+    ],
+    "responses": [
+     {
+      "name": "request_user_input",
+      "response": {
+       "result": null
+      }
+     }
+    ],
+    "measured_input_tokens": 24577
+   }
+  ]
+ },
+ "question": {
+  "user": "[Dashboard context: dashboard_id=\"e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d\". You have access to tool_get_dashboard_data to read all chart data from this dashboard. Use it when the user asks about the dashboard content.]\n\nWhich channel brings the best return on ad spend?",
+  "steps": [
+   {
+    "thoughts": [
+     "**Investigating ROAS Data**\n\nI'm now focused on querying the dashboard data to ascertain if it contains ROAS information segmented by channel. My initial step involves employing `tool_bi_query_dashboard` to retrieve relevant data.\n\n\n",
+     "**Analyzing Dashboard Data**\n\nI've queried the dashboard and am reviewing the initial dataset to see if ROAS data, segmented by channel, is available. My aim is to identify the channel exhibiting the best ROAS, but I need to confirm the presence of these metrics first before I can begin the analysis. I'm prioritizing getting the data and seeing what I'm working with.\n\n\n"
+    ],
+    "text": "",
+    "calls": [
+     {
+      "name": "tool_bi_query_dashboard",
+      "args": {
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d"
+      }
+     }
+    ],
+    "responses": [
+     {
+      "name": "tool_bi_query_dashboard",
+      "response": {
+       "title": "Store Performance",
+       "errors": {},
+       "filters": {
+        "canal": {
+         "label": "All channels",
+         "value": null
+        },
+        "periode": {
+         "to": "2026-09-30",
+         "from": "2026-04-02",
+         "label": "Last 26 weeks",
+         "value": "26w"
+        }
+       },
+       "success": true,
+       "components": [
+        {
+         "id": "0826b45b-37af-4c86-9b9d-804eaed7c126",
+         "text": "All channels, from Apr 2, 2026 to Sep 30, 2026: 453.1k € of revenue from 5,413 orders, average order value of 83.7 €. Contribution margin of 147.6k € (32.6%). ROAS of 5.3 for 85.7k € of advertising.",
+         "type": "text"
+        },
+        {
+         "id": "1c75da75-653b-485e-a077-c7a35c9cf406",
+         "raw": 453120.17,
+         "type": "kpi",
+         "title": "Revenue",
+         "value": "453.1k €"
+        },
+        {
+         "id": "faeb8531-13e5-4278-9756-4a13c796728f",
+         "raw": 5413.0,
+         "type": "kpi",
+         "title": "Orders",
+         "value": "5,413 orders"
+        },
+        {
+         "id": "d7557198-86e4-446f-9c80-69c8d9d135ee",
+         "raw": 83.7096,
+         "type": "kpi",
+         "title": "Average order value",
+         "value": "83.7 €"
+        },
+        {
+         "id": "c7d956c4-6b1f-411a-a721-86ef47795677",
+         "raw": 147568.09,
+         "type": "kpi",
+         "title": "Contribution margin",
+         "value": "147.6k €",
+         "secondary": "32.6% of revenue"
+        },
+        {
+         "id": "135c8c65-2238-4285-94bd-6da45b71f818",
+         "raw": 5.2892,
+         "type": "kpi",
+         "title": "ROAS",
+         "value": "5.3",
+         "status": "good",
+         "secondary": "85.7k € of advertising"
+        },
+        {
+         "id": "197b523f-8532-41cc-872f-8ce2196b3be1",
+         "raw": 53.8464,
+         "type": "kpi",
+         "title": "Customer acquisition cost",
+         "value": "53.8 €",
+         "secondary": "1,591 new customers"
+        },
+        {
+         "id": "2b3bacaa-dbb1-41df-9143-17eaf5b37333",
+         "raw": 0.5433,
+         "type": "kpi",
+         "title": "Repeat customers",
+         "value": "54.3%",
+         "secondary": "2,886 active customers"
+        },
+        {
+         "id": "efce116c-de23-4632-afd7-20e73d0a3ddb",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "ca": 12096.49,
+           "commandes": 146.0,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "ca": 22557.15,
+           "commandes": 269.0,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "ca": 22310.22,
+           "commandes": 267.0,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "ca": 22032.85,
+           "commandes": 259.0,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "ca": 17349.65,
+           "commandes": 224.0,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "ca": 21280.47,
+           "commandes": 247.0,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "ca": 20581.08,
+           "commandes": 248.0,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "ca": 18031.69,
+           "commandes": 214.0,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "ca": 18799.96,
+           "commandes": 214.0,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "ca": 17400.21,
+           "commandes": 205.0,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "ca": 16565.09,
+           "commandes": 200.0,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "ca": 16586.37,
+           "commandes": 201.0,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "ca": 15276.67,
+           "commandes": 187.0,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "ca": 15916.69,
+           "commandes": 194.0,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "ca": 16138.72,
+           "commandes": 194.0,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "ca": 16258.8,
+           "commandes": 188.0,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "ca": 14477.09,
+           "commandes": 172.0,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "ca": 14092.41,
+           "commandes": 177.0,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "ca": 13896.29,
+           "commandes": 174.0,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "ca": 15663.8,
+           "commandes": 184.0,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "ca": 14404.28,
+           "commandes": 164.0,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "ca": 15640.76,
+           "commandes": 180.0,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "ca": 13551.34,
+           "commandes": 169.0,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "ca": 17840.36,
+           "commandes": 196.0,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "ca": 18982.82,
+           "commandes": 220.0,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "ca": 17537.95,
+           "commandes": 222.0,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "ca": 7850.96,
+           "commandes": 98.0,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "Revenue and orders by week",
+         "row_count": 27
+        },
+        {
+         "id": "009b83d7-b8a5-454e-906b-56d527e7d4e3",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "roas": 5.2308,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "roas": 5.6956,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "roas": 4.9595,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "roas": 5.2015,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "roas": 4.9183,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "roas": 5.104,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "roas": 5.2056,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "roas": 5.2336,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "roas": 5.3709,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "roas": 5.4363,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "roas": 5.6785,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "roas": 4.717,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "roas": 5.2345,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "roas": 5.5132,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "roas": 5.5846,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "roas": 5.6539,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "roas": 5.4603,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "roas": 5.6948,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "roas": 5.1639,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "roas": 5.6799,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "roas": 4.7476,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "roas": 5.4484,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "roas": 5.3537,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "roas": 4.9873,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "roas": 5.0915,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "roas": 5.1541,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "roas": 6.8751,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "ROAS by week",
+         "row_count": 27
+        },
+        {
+         "id": "6a9c13af-70a8-4618-81da-bc25e8658fd1",
+         "rows": [
+          {
+           "x": "Google Ads",
+           "ca": 155971.82,
+           "channel": "Google Ads"
+          },
+          {
+           "x": "Instagram",
+           "ca": 119363.53,
+           "channel": "Instagram"
+          },
+          {
+           "x": "Organic",
+           "ca": 94420.2,
+           "channel": "Organic"
+          },
+          {
+           "x": "Email",
+           "ca": 83364.62,
+           "channel": "Email"
+          }
+         ],
+         "type": "hbar",
+         "title": "Revenue by channel",
+         "row_count": 4
+        },
+        {
+         "id": "036bdf1c-19f8-4ade-96cc-cdb7c8f3bf25",
+         "rows": [
+          {
+           "x": "C3910",
+           "ca": 732.12,
+           "customer_id": "C3910"
+          },
+          {
+           "x": "C2123",
+           "ca": 680.53,
+           "customer_id": "C2123"
+          },
+          {
+           "x": "C2293",
+           "ca": 644.49,
+           "customer_id": "C2293"
+          },
+          {
+           "x": "C4528",
+           "ca": 629.03,
+           "customer_id": "C4528"
+          },
+          {
+           "x": "C1359",
+           "ca": 625.38,
+           "customer_id": "C1359"
+          },
+          {
+           "x": "C1004",
+           "ca": 609.16,
+           "customer_id": "C1004"
+          },
+          {
+           "x": "C4626",
+           "ca": 587.95,
+           "customer_id": "C4626"
+          },
+          {
+           "x": "C3714",
+           "ca": 578.32,
+           "customer_id": "C3714"
+          },
+          {
+           "x": "C1243",
+           "ca": 567.16,
+           "customer_id": "C1243"
+          },
+          {
+           "x": "C1870",
+           "ca": 548.42,
+           "customer_id": "C1870"
+          }
+         ],
+         "type": "hbar",
+         "title": "Top customers",
+         "row_count": 10
+        },
+        {
+         "id": "2408cfb7-9347-4a3e-bb03-e8484cfcc4c2",
+         "text": "**Revenue**: sum of amounts, cancelled and refunded orders excluded. **Average order value**: revenue ÷ orders. **Contribution margin**: revenue - product cost - ad spend. **ROAS**: revenue ÷ ad spend. **Acquisition cost**: ad spend ÷ new customers. **Repeat customers**: customers with at least two orders in the period.",
+         "type": "note",
+         "title": "Definitions"
+        },
+        {
+         "id": "eb79eb7e-14ad-4c25-afd3-f060580e5042",
+         "text": "ROAS raises an alert below 2 (threshold adjustable at creation). Ad spend must appear only once in the file. The period is set at the top of the dashboard. Every ratio is computed on sums, never as an average of ratios.",
+         "type": "note",
+         "title": "Thresholds and reading"
+        }
+       ],
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filter_options": {
+        "canal": [
+         "Email",
+         "Google Ads",
+         "Instagram",
+         "Organic"
+        ]
+       }
+      }
+     }
+    ],
+    "measured_input_tokens": 14573
+   },
+   {
+    "thoughts": [
+     "**Identifying ROAS Component**\n\nI've been examining the dashboard query results, specifically the 'components' list. My immediate focus is identifying the component displaying ROAS data per channel. I have identified the component with the id `0826b45b-37af-4c86-9b9d-804eaed7c126` as a text summary providing the overall ROAS of 5.3 for \"All channels.\" I am continuing to scan for the per-channel ROAS data point.\n\n\n",
+     "**Analyzing ROAS Components**\n\nI've exhausted the initial scan of components. While I found an \"All channels\" ROAS summary and several KPIs, the granular per-channel ROAS remains elusive. I've noted that \"Revenue by channel\" exists, but no corresponding ROAS component. I'll need to adjust my search strategy or explore related components for clues to find the desired data.\n\n\n",
+     "**Devising Iteration Strategy**\n\nI've made a key discovery: ROAS per channel isn't presented directly as a component, but appears to be filterable. The `filter_options.canal` provides a list of channels. To address this, I'll iterate through these channel filters, querying the dashboard for ROAS data specific to each channel. My strategy is to extract the ROAS data for each channel. Ultimately, I will compare the ROAS values to isolate the highest performing channel.\n\n\n"
+    ],
+    "text": "",
+    "calls": [
+     {
+      "name": "tool_bi_query_dashboard",
+      "args": {
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filters_json": "{\"canal\": \"Email\"}"
+      }
+     },
+     {
+      "name": "tool_bi_query_dashboard",
+      "args": {
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filters_json": "{\"canal\": \"Google Ads\"}"
+      }
+     },
+     {
+      "name": "tool_bi_query_dashboard",
+      "args": {
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filters_json": "{\"canal\": \"Instagram\"}"
+      }
+     },
+     {
+      "name": "tool_bi_query_dashboard",
+      "args": {
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filters_json": "{\"canal\": \"Organic\"}"
+      }
+     }
+    ],
+    "responses": [
+     {
+      "name": "tool_bi_query_dashboard",
+      "response": {
+       "title": "Store Performance",
+       "errors": {},
+       "filters": {
+        "canal": {
+         "label": "Email",
+         "value": "Email"
+        },
+        "periode": {
+         "to": "2026-09-30",
+         "from": "2026-04-02",
+         "label": "Last 26 weeks",
+         "value": "26w"
+        }
+       },
+       "success": true,
+       "components": [
+        {
+         "id": "0826b45b-37af-4c86-9b9d-804eaed7c126",
+         "text": "Email, from Apr 2, 2026 to Sep 30, 2026: 83.4k € of revenue from 1,022 orders, average order value of 81.6 €. Contribution margin of 40.4k € (48.5%). ROAS of 32.8 for 2.5k € of advertising.",
+         "type": "text"
+        },
+        {
+         "id": "1c75da75-653b-485e-a077-c7a35c9cf406",
+         "raw": 83364.62,
+         "type": "kpi",
+         "title": "Revenue",
+         "value": "83.4k €"
+        },
+        {
+         "id": "faeb8531-13e5-4278-9756-4a13c796728f",
+         "raw": 1022.0,
+         "type": "kpi",
+         "title": "Orders",
+         "value": "1,022 orders"
+        },
+        {
+         "id": "d7557198-86e4-446f-9c80-69c8d9d135ee",
+         "raw": 81.5701,
+         "type": "kpi",
+         "title": "Average order value",
+         "value": "81.6 €"
+        },
+        {
+         "id": "c7d956c4-6b1f-411a-a721-86ef47795677",
+         "raw": 40427.8,
+         "type": "kpi",
+         "title": "Contribution margin",
+         "value": "40.4k €",
+         "secondary": "48.5% of revenue"
+        },
+        {
+         "id": "135c8c65-2238-4285-94bd-6da45b71f818",
+         "raw": 32.8175,
+         "type": "kpi",
+         "title": "ROAS",
+         "value": "32.8",
+         "status": "good",
+         "secondary": "2.5k € of advertising"
+        },
+        {
+         "id": "197b523f-8532-41cc-872f-8ce2196b3be1",
+         "raw": 7.1758,
+         "type": "kpi",
+         "title": "Customer acquisition cost",
+         "value": "7.2 €",
+         "secondary": "354 new customers"
+        },
+        {
+         "id": "2b3bacaa-dbb1-41df-9143-17eaf5b37333",
+         "raw": 0.1298,
+         "type": "kpi",
+         "title": "Repeat customers",
+         "value": "13.0%",
+         "secondary": "894 active customers"
+        },
+        {
+         "id": "efce116c-de23-4632-afd7-20e73d0a3ddb",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "ca": 2517.56,
+           "commandes": 28.0,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "ca": 4400.94,
+           "commandes": 54.0,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "ca": 3839.85,
+           "commandes": 51.0,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "ca": 4284.71,
+           "commandes": 47.0,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "ca": 2921.45,
+           "commandes": 39.0,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "ca": 4100.7,
+           "commandes": 44.0,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "ca": 3110.09,
+           "commandes": 41.0,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "ca": 3352.03,
+           "commandes": 43.0,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "ca": 4076.52,
+           "commandes": 44.0,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "ca": 3507.41,
+           "commandes": 44.0,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "ca": 4227.89,
+           "commandes": 49.0,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "ca": 2797.29,
+           "commandes": 37.0,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "ca": 2736.61,
+           "commandes": 33.0,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "ca": 3118.61,
+           "commandes": 38.0,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "ca": 3053.77,
+           "commandes": 40.0,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "ca": 3060.21,
+           "commandes": 38.0,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "ca": 3113.49,
+           "commandes": 32.0,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "ca": 2195.8,
+           "commandes": 29.0,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "ca": 1859.94,
+           "commandes": 26.0,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "ca": 2466.19,
+           "commandes": 31.0,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "ca": 1977.46,
+           "commandes": 29.0,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "ca": 2940.61,
+           "commandes": 40.0,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "ca": 2766.03,
+           "commandes": 35.0,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "ca": 2855.14,
+           "commandes": 31.0,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "ca": 2779.58,
+           "commandes": 36.0,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "ca": 3116.79,
+           "commandes": 39.0,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "ca": 2187.95,
+           "commandes": 24.0,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "Revenue and orders by week",
+         "row_count": 27
+        },
+        {
+         "id": "009b83d7-b8a5-454e-906b-56d527e7d4e3",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "roas": 31.88,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "roas": 32.0395,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "roas": 32.3819,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "roas": 33.7645,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "roas": 32.8511,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "roas": 33.3472,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "roas": 32.4475,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "roas": 31.2573,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "roas": 32.459,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "roas": 32.7306,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "roas": 32.6579,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "roas": 32.2566,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "roas": 32.6603,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "roas": 33.3327,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "roas": 34.6075,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "roas": 32.7751,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "roas": 33.3743,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "roas": 31.8186,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "roas": 33.2905,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "roas": 31.7849,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "roas": 33.0624,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "roas": 33.607,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "roas": 33.1182,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "roas": 32.478,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "roas": 31.7739,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "roas": 34.3259,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "roas": 34.8511,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "ROAS by week",
+         "row_count": 27
+        },
+        {
+         "id": "6a9c13af-70a8-4618-81da-bc25e8658fd1",
+         "rows": [
+          {
+           "x": "Google Ads",
+           "ca": 155971.82,
+           "channel": "Google Ads"
+          },
+          {
+           "x": "Instagram",
+           "ca": 119363.53,
+           "channel": "Instagram"
+          },
+          {
+           "x": "Organic",
+           "ca": 94420.2,
+           "channel": "Organic"
+          },
+          {
+           "x": "Email",
+           "ca": 83364.62,
+           "channel": "Email"
+          }
+         ],
+         "type": "hbar",
+         "title": "Revenue by channel",
+         "row_count": 4
+        },
+        {
+         "id": "036bdf1c-19f8-4ade-96cc-cdb7c8f3bf25",
+         "rows": [
+          {
+           "x": "C3714",
+           "ca": 419.1,
+           "customer_id": "C3714"
+          },
+          {
+           "x": "C3783",
+           "ca": 391.19,
+           "customer_id": "C3783"
+          },
+          {
+           "x": "C2835",
+           "ca": 373.23,
+           "customer_id": "C2835"
+          },
+          {
+           "x": "C2738",
+           "ca": 365.61,
+           "customer_id": "C2738"
+          },
+          {
+           "x": "C2482",
+           "ca": 346.07,
+           "customer_id": "C2482"
+          },
+          {
+           "x": "C3549",
+           "ca": 342.86,
+           "customer_id": "C3549"
+          },
+          {
+           "x": "C3631",
+           "ca": 321.81,
+           "customer_id": "C3631"
+          },
+          {
+           "x": "C3821",
+           "ca": 308.7,
+           "customer_id": "C3821"
+          },
+          {
+           "x": "C3616",
+           "ca": 296.99,
+           "customer_id": "C3616"
+          },
+          {
+           "x": "C3485",
+           "ca": 292.85,
+           "customer_id": "C3485"
+          }
+         ],
+         "type": "hbar",
+         "title": "Top customers",
+         "row_count": 10
+        },
+        {
+         "id": "2408cfb7-9347-4a3e-bb03-e8484cfcc4c2",
+         "text": "**Revenue**: sum of amounts, cancelled and refunded orders excluded. **Average order value**: revenue ÷ orders. **Contribution margin**: revenue - product cost - ad spend. **ROAS**: revenue ÷ ad spend. **Acquisition cost**: ad spend ÷ new customers. **Repeat customers**: customers with at least two orders in the period.",
+         "type": "note",
+         "title": "Definitions"
+        },
+        {
+         "id": "eb79eb7e-14ad-4c25-afd3-f060580e5042",
+         "text": "ROAS raises an alert below 2 (threshold adjustable at creation). Ad spend must appear only once in the file. The period is set at the top of the dashboard. Every ratio is computed on sums, never as an average of ratios.",
+         "type": "note",
+         "title": "Thresholds and reading"
+        }
+       ],
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filter_options": {
+        "canal": [
+         "Email",
+         "Google Ads",
+         "Instagram",
+         "Organic"
+        ]
+       }
+      }
+     },
+     {
+      "name": "tool_bi_query_dashboard",
+      "response": {
+       "title": "Store Performance",
+       "errors": {},
+       "filters": {
+        "canal": {
+         "label": "Google Ads",
+         "value": "Google Ads"
+        },
+        "periode": {
+         "to": "2026-09-30",
+         "from": "2026-04-02",
+         "label": "Last 26 weeks",
+         "value": "26w"
+        }
+       },
+       "success": true,
+       "components": [
+        {
+         "id": "0826b45b-37af-4c86-9b9d-804eaed7c126",
+         "text": "Google Ads, from Apr 2, 2026 to Sep 30, 2026: 156.0k € of revenue from 1,859 orders, average order value of 83.9 €. Contribution margin of 36.8k € (23.6%). ROAS of 3.6 for 43.5k € of advertising.",
+         "type": "text"
+        },
+        {
+         "id": "1c75da75-653b-485e-a077-c7a35c9cf406",
+         "raw": 155971.82,
+         "type": "kpi",
+         "title": "Revenue",
+         "value": "156.0k €"
+        },
+        {
+         "id": "faeb8531-13e5-4278-9756-4a13c796728f",
+         "raw": 1859.0,
+         "type": "kpi",
+         "title": "Orders",
+         "value": "1,859 orders"
+        },
+        {
+         "id": "d7557198-86e4-446f-9c80-69c8d9d135ee",
+         "raw": 83.9009,
+         "type": "kpi",
+         "title": "Average order value",
+         "value": "83.9 €"
+        },
+        {
+         "id": "c7d956c4-6b1f-411a-a721-86ef47795677",
+         "raw": 36789.75,
+         "type": "kpi",
+         "title": "Contribution margin",
+         "value": "36.8k €",
+         "secondary": "23.6% of revenue"
+        },
+        {
+         "id": "135c8c65-2238-4285-94bd-6da45b71f818",
+         "raw": 3.5876,
+         "type": "kpi",
+         "title": "ROAS",
+         "value": "3.6",
+         "status": "good",
+         "secondary": "43.5k € of advertising"
+        },
+        {
+         "id": "197b523f-8532-41cc-872f-8ce2196b3be1",
+         "raw": 67.1946,
+         "type": "kpi",
+         "title": "Customer acquisition cost",
+         "value": "67.2 €",
+         "secondary": "647 new customers"
+        },
+        {
+         "id": "2b3bacaa-dbb1-41df-9143-17eaf5b37333",
+         "raw": 0.2316,
+         "type": "kpi",
+         "title": "Repeat customers",
+         "value": "23.2%",
+         "secondary": "1,464 active customers"
+        },
+        {
+         "id": "efce116c-de23-4632-afd7-20e73d0a3ddb",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "ca": 3869.55,
+           "commandes": 49.0,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "ca": 8251.55,
+           "commandes": 102.0,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "ca": 9074.87,
+           "commandes": 105.0,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "ca": 6512.45,
+           "commandes": 85.0,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "ca": 5779.56,
+           "commandes": 68.0,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "ca": 6978.32,
+           "commandes": 83.0,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "ca": 7577.42,
+           "commandes": 94.0,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "ca": 6690.26,
+           "commandes": 74.0,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "ca": 6873.75,
+           "commandes": 75.0,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "ca": 5833.16,
+           "commandes": 69.0,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "ca": 5040.5,
+           "commandes": 64.0,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "ca": 7388.4,
+           "commandes": 83.0,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "ca": 4359.97,
+           "commandes": 55.0,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "ca": 5350.13,
+           "commandes": 70.0,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "ca": 4724.79,
+           "commandes": 57.0,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "ca": 5585.98,
+           "commandes": 65.0,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "ca": 4992.29,
+           "commandes": 64.0,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "ca": 4699.55,
+           "commandes": 53.0,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "ca": 4866.27,
+           "commandes": 61.0,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "ca": 5004.59,
+           "commandes": 59.0,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "ca": 4841.19,
+           "commandes": 55.0,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "ca": 4519.65,
+           "commandes": 50.0,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "ca": 4390.49,
+           "commandes": 59.0,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "ca": 6905.56,
+           "commandes": 74.0,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "ca": 6356.98,
+           "commandes": 70.0,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "ca": 6838.59,
+           "commandes": 83.0,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "ca": 2666.0,
+           "commandes": 33.0,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "Revenue and orders by week",
+         "row_count": 27
+        },
+        {
+         "id": "009b83d7-b8a5-454e-906b-56d527e7d4e3",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "roas": 3.739,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "roas": 3.6387,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "roas": 3.51,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "roas": 3.556,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "roas": 3.4941,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "roas": 3.6301,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "roas": 3.6807,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "roas": 3.5813,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "roas": 3.4972,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "roas": 3.577,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "roas": 3.5918,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "roas": 3.5372,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "roas": 3.564,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "roas": 3.5873,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "roas": 3.5411,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "roas": 3.8552,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "roas": 3.7286,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "roas": 3.5706,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "roas": 3.6064,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "roas": 3.4909,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "roas": 3.496,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "roas": 3.6136,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "roas": 3.5768,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "roas": 3.6049,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "roas": 3.5549,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "roas": 3.6066,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "roas": 3.4852,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "ROAS by week",
+         "row_count": 27
+        },
+        {
+         "id": "6a9c13af-70a8-4618-81da-bc25e8658fd1",
+         "rows": [
+          {
+           "x": "Google Ads",
+           "ca": 155971.82,
+           "channel": "Google Ads"
+          },
+          {
+           "x": "Instagram",
+           "ca": 119363.53,
+           "channel": "Instagram"
+          },
+          {
+           "x": "Organic",
+           "ca": 94420.2,
+           "channel": "Organic"
+          },
+          {
+           "x": "Email",
+           "ca": 83364.62,
+           "channel": "Email"
+          }
+         ],
+         "type": "hbar",
+         "title": "Revenue by channel",
+         "row_count": 4
+        },
+        {
+         "id": "036bdf1c-19f8-4ade-96cc-cdb7c8f3bf25",
+         "rows": [
+          {
+           "x": "C3431",
+           "ca": 527.37,
+           "customer_id": "C3431"
+          },
+          {
+           "x": "C4647",
+           "ca": 484.74,
+           "customer_id": "C4647"
+          },
+          {
+           "x": "C4245",
+           "ca": 459.22,
+           "customer_id": "C4245"
+          },
+          {
+           "x": "C1554",
+           "ca": 436.82,
+           "customer_id": "C1554"
+          },
+          {
+           "x": "C2588",
+           "ca": 388.83,
+           "customer_id": "C2588"
+          },
+          {
+           "x": "C1876",
+           "ca": 382.86,
+           "customer_id": "C1876"
+          },
+          {
+           "x": "C4420",
+           "ca": 375.55,
+           "customer_id": "C4420"
+          },
+          {
+           "x": "C3910",
+           "ca": 371.03,
+           "customer_id": "C3910"
+          },
+          {
+           "x": "C4470",
+           "ca": 363.32,
+           "customer_id": "C4470"
+          },
+          {
+           "x": "C2649",
+           "ca": 363.21,
+           "customer_id": "C2649"
+          }
+         ],
+         "type": "hbar",
+         "title": "Top customers",
+         "row_count": 10
+        },
+        {
+         "id": "2408cfb7-9347-4a3e-bb03-e8484cfcc4c2",
+         "text": "**Revenue**: sum of amounts, cancelled and refunded orders excluded. **Average order value**: revenue ÷ orders. **Contribution margin**: revenue - product cost - ad spend. **ROAS**: revenue ÷ ad spend. **Acquisition cost**: ad spend ÷ new customers. **Repeat customers**: customers with at least two orders in the period.",
+         "type": "note",
+         "title": "Definitions"
+        },
+        {
+         "id": "eb79eb7e-14ad-4c25-afd3-f060580e5042",
+         "text": "ROAS raises an alert below 2 (threshold adjustable at creation). Ad spend must appear only once in the file. The period is set at the top of the dashboard. Every ratio is computed on sums, never as an average of ratios.",
+         "type": "note",
+         "title": "Thresholds and reading"
+        }
+       ],
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filter_options": {
+        "canal": [
+         "Email",
+         "Google Ads",
+         "Instagram",
+         "Organic"
+        ]
+       }
+      }
+     },
+     {
+      "name": "tool_bi_query_dashboard",
+      "response": {
+       "title": "Store Performance",
+       "errors": {},
+       "filters": {
+        "canal": {
+         "label": "Instagram",
+         "value": "Instagram"
+        },
+        "periode": {
+         "to": "2026-09-30",
+         "from": "2026-04-02",
+         "label": "Last 26 weeks",
+         "value": "26w"
+        }
+       },
+       "success": true,
+       "components": [
+        {
+         "id": "0826b45b-37af-4c86-9b9d-804eaed7c126",
+         "text": "Instagram, from Apr 2, 2026 to Sep 30, 2026: 119.4k € of revenue from 1,428 orders, average order value of 83.6 €. Contribution margin of 21.8k € (18.2%). ROAS of 3.0 for 39.7k € of advertising.",
+         "type": "text"
+        },
+        {
+         "id": "1c75da75-653b-485e-a077-c7a35c9cf406",
+         "raw": 119363.53,
+         "type": "kpi",
+         "title": "Revenue",
+         "value": "119.4k €"
+        },
+        {
+         "id": "faeb8531-13e5-4278-9756-4a13c796728f",
+         "raw": 1428.0,
+         "type": "kpi",
+         "title": "Orders",
+         "value": "1,428 orders"
+        },
+        {
+         "id": "d7557198-86e4-446f-9c80-69c8d9d135ee",
+         "raw": 83.5879,
+         "type": "kpi",
+         "title": "Average order value",
+         "value": "83.6 €"
+        },
+        {
+         "id": "c7d956c4-6b1f-411a-a721-86ef47795677",
+         "raw": 21754.73,
+         "type": "kpi",
+         "title": "Contribution margin",
+         "value": "21.8k €",
+         "secondary": "18.2% of revenue"
+        },
+        {
+         "id": "135c8c65-2238-4285-94bd-6da45b71f818",
+         "raw": 3.0101,
+         "type": "kpi",
+         "title": "ROAS",
+         "value": "3.0",
+         "status": "good",
+         "secondary": "39.7k € of advertising"
+        },
+        {
+         "id": "197b523f-8532-41cc-872f-8ce2196b3be1",
+         "raw": 74.2595,
+         "type": "kpi",
+         "title": "Customer acquisition cost",
+         "value": "74.3 €",
+         "secondary": "534 new customers"
+        },
+        {
+         "id": "2b3bacaa-dbb1-41df-9143-17eaf5b37333",
+         "raw": 0.184,
+         "type": "kpi",
+         "title": "Repeat customers",
+         "value": "18.4%",
+         "secondary": "1,185 active customers"
+        },
+        {
+         "id": "efce116c-de23-4632-afd7-20e73d0a3ddb",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "ca": 3604.61,
+           "commandes": 46.0,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "ca": 4999.29,
+           "commandes": 57.0,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "ca": 5387.49,
+           "commandes": 63.0,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "ca": 6827.3,
+           "commandes": 83.0,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "ca": 5260.14,
+           "commandes": 72.0,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "ca": 6287.84,
+           "commandes": 75.0,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "ca": 5392.67,
+           "commandes": 66.0,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "ca": 4291.79,
+           "commandes": 48.0,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "ca": 4206.84,
+           "commandes": 50.0,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "ca": 4323.81,
+           "commandes": 50.0,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "ca": 4230.51,
+           "commandes": 51.0,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "ca": 3934.27,
+           "commandes": 50.0,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "ca": 4926.42,
+           "commandes": 60.0,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "ca": 3884.99,
+           "commandes": 45.0,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "ca": 4457.49,
+           "commandes": 52.0,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "ca": 4140.99,
+           "commandes": 46.0,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "ca": 3671.77,
+           "commandes": 45.0,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "ca": 3335.88,
+           "commandes": 44.0,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "ca": 3878.83,
+           "commandes": 53.0,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "ca": 3805.06,
+           "commandes": 40.0,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "ca": 4796.62,
+           "commandes": 48.0,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "ca": 4444.53,
+           "commandes": 52.0,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "ca": 3668.79,
+           "commandes": 43.0,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "ca": 4678.84,
+           "commandes": 54.0,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "ca": 5593.42,
+           "commandes": 63.0,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "ca": 4344.23,
+           "commandes": 58.0,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "ca": 989.11,
+           "commandes": 14.0,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "Revenue and orders by week",
+         "row_count": 27
+        },
+        {
+         "id": "009b83d7-b8a5-454e-906b-56d527e7d4e3",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "roas": 3.0072,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "roas": 3.2142,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "roas": 3.0023,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "roas": 2.9976,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "roas": 2.9476,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "roas": 2.9603,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "roas": 2.9974,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "roas": 2.9195,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "roas": 2.9851,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "roas": 2.9557,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "roas": 3.0559,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "roas": 2.9343,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "roas": 3.0574,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "roas": 2.9838,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "roas": 3.0378,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "roas": 3.1057,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "roas": 3.0118,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "roas": 3.0621,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "roas": 3.0166,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "roas": 3.0525,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "roas": 3.0177,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "roas": 2.9003,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "roas": 3.0068,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "roas": 2.9732,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "roas": 3.0192,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "roas": 3.0685,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "roas": 3.1479,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "ROAS by week",
+         "row_count": 27
+        },
+        {
+         "id": "6a9c13af-70a8-4618-81da-bc25e8658fd1",
+         "rows": [
+          {
+           "x": "Google Ads",
+           "ca": 155971.82,
+           "channel": "Google Ads"
+          },
+          {
+           "x": "Instagram",
+           "ca": 119363.53,
+           "channel": "Instagram"
+          },
+          {
+           "x": "Organic",
+           "ca": 94420.2,
+           "channel": "Organic"
+          },
+          {
+           "x": "Email",
+           "ca": 83364.62,
+           "channel": "Email"
+          }
+         ],
+         "type": "hbar",
+         "title": "Revenue by channel",
+         "row_count": 4
+        },
+        {
+         "id": "036bdf1c-19f8-4ade-96cc-cdb7c8f3bf25",
+         "rows": [
+          {
+           "x": "C3246",
+           "ca": 397.81,
+           "customer_id": "C3246"
+          },
+          {
+           "x": "C1243",
+           "ca": 387.13,
+           "customer_id": "C1243"
+          },
+          {
+           "x": "C1085",
+           "ca": 368.27,
+           "customer_id": "C1085"
+          },
+          {
+           "x": "C1705",
+           "ca": 366.24,
+           "customer_id": "C1705"
+          },
+          {
+           "x": "C2801",
+           "ca": 347.16,
+           "customer_id": "C2801"
+          },
+          {
+           "x": "C2471",
+           "ca": 330.91,
+           "customer_id": "C2471"
+          },
+          {
+           "x": "C3987",
+           "ca": 326.35,
+           "customer_id": "C3987"
+          },
+          {
+           "x": "C3475",
+           "ca": 323.61,
+           "customer_id": "C3475"
+          },
+          {
+           "x": "C4799",
+           "ca": 310.32,
+           "customer_id": "C4799"
+          },
+          {
+           "x": "C4248",
+           "ca": 309.47,
+           "customer_id": "C4248"
+          }
+         ],
+         "type": "hbar",
+         "title": "Top customers",
+         "row_count": 10
+        },
+        {
+         "id": "2408cfb7-9347-4a3e-bb03-e8484cfcc4c2",
+         "text": "**Revenue**: sum of amounts, cancelled and refunded orders excluded. **Average order value**: revenue ÷ orders. **Contribution margin**: revenue - product cost - ad spend. **ROAS**: revenue ÷ ad spend. **Acquisition cost**: ad spend ÷ new customers. **Repeat customers**: customers with at least two orders in the period.",
+         "type": "note",
+         "title": "Definitions"
+        },
+        {
+         "id": "eb79eb7e-14ad-4c25-afd3-f060580e5042",
+         "text": "ROAS raises an alert below 2 (threshold adjustable at creation). Ad spend must appear only once in the file. The period is set at the top of the dashboard. Every ratio is computed on sums, never as an average of ratios.",
+         "type": "note",
+         "title": "Thresholds and reading"
+        }
+       ],
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filter_options": {
+        "canal": [
+         "Email",
+         "Google Ads",
+         "Instagram",
+         "Organic"
+        ]
+       }
+      }
+     },
+     {
+      "name": "tool_bi_query_dashboard",
+      "response": {
+       "title": "Store Performance",
+       "errors": {},
+       "filters": {
+        "canal": {
+         "label": "Organic",
+         "value": "Organic"
+        },
+        "periode": {
+         "to": "2026-09-30",
+         "from": "2026-04-02",
+         "label": "Last 26 weeks",
+         "value": "26w"
+        }
+       },
+       "success": true,
+       "components": [
+        {
+         "id": "0826b45b-37af-4c86-9b9d-804eaed7c126",
+         "text": "Organic, from Apr 2, 2026 to Sep 30, 2026: 94.4k € of revenue from 1,104 orders, average order value of 85.5 €. Contribution margin of 48.6k € (51.5%). ROAS of — for 0 € of advertising.",
+         "type": "text"
+        },
+        {
+         "id": "1c75da75-653b-485e-a077-c7a35c9cf406",
+         "raw": 94420.2,
+         "type": "kpi",
+         "title": "Revenue",
+         "value": "94.4k €"
+        },
+        {
+         "id": "faeb8531-13e5-4278-9756-4a13c796728f",
+         "raw": 1104.0,
+         "type": "kpi",
+         "title": "Orders",
+         "value": "1,104 orders"
+        },
+        {
+         "id": "d7557198-86e4-446f-9c80-69c8d9d135ee",
+         "raw": 85.5255,
+         "type": "kpi",
+         "title": "Average order value",
+         "value": "85.5 €"
+        },
+        {
+         "id": "c7d956c4-6b1f-411a-a721-86ef47795677",
+         "raw": 48595.81,
+         "type": "kpi",
+         "title": "Contribution margin",
+         "value": "48.6k €",
+         "secondary": "51.5% of revenue"
+        },
+        {
+         "id": "135c8c65-2238-4285-94bd-6da45b71f818",
+         "type": "kpi",
+         "title": "ROAS",
+         "value": "—",
+         "secondary": "0 € of advertising"
+        },
+        {
+         "id": "197b523f-8532-41cc-872f-8ce2196b3be1",
+         "raw": 0.0,
+         "type": "kpi",
+         "title": "Customer acquisition cost",
+         "value": "0.0 €",
+         "secondary": "402 new customers"
+        },
+        {
+         "id": "2b3bacaa-dbb1-41df-9143-17eaf5b37333",
+         "raw": 0.1376,
+         "type": "kpi",
+         "title": "Repeat customers",
+         "value": "13.8%",
+         "secondary": "959 active customers"
+        },
+        {
+         "id": "efce116c-de23-4632-afd7-20e73d0a3ddb",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "ca": 2104.77,
+           "commandes": 23.0,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "ca": 4905.37,
+           "commandes": 56.0,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "ca": 4008.01,
+           "commandes": 48.0,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "ca": 4408.39,
+           "commandes": 44.0,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "ca": 3388.5,
+           "commandes": 45.0,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "ca": 3913.61,
+           "commandes": 45.0,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "ca": 4500.9,
+           "commandes": 47.0,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "ca": 3697.61,
+           "commandes": 49.0,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "ca": 3642.85,
+           "commandes": 45.0,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "ca": 3735.83,
+           "commandes": 42.0,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "ca": 3066.19,
+           "commandes": 36.0,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "ca": 2466.41,
+           "commandes": 31.0,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "ca": 3253.67,
+           "commandes": 39.0,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "ca": 3562.96,
+           "commandes": 41.0,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "ca": 3902.67,
+           "commandes": 45.0,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "ca": 3471.62,
+           "commandes": 39.0,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "ca": 2699.54,
+           "commandes": 31.0,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "ca": 3861.18,
+           "commandes": 51.0,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "ca": 3291.25,
+           "commandes": 34.0,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "ca": 4387.96,
+           "commandes": 54.0,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "ca": 2789.01,
+           "commandes": 32.0,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "ca": 3735.97,
+           "commandes": 38.0,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "ca": 2726.03,
+           "commandes": 32.0,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "ca": 3400.82,
+           "commandes": 37.0,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "ca": 4252.84,
+           "commandes": 51.0,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "ca": 3238.34,
+           "commandes": 42.0,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "ca": 2007.9,
+           "commandes": 27.0,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "Revenue and orders by week",
+         "row_count": 27
+        },
+        {
+         "id": "009b83d7-b8a5-454e-906b-56d527e7d4e3",
+         "rows": [
+          {
+           "x": "2026-03-30",
+           "roas": null,
+           "periode_semaine": "2026-03-30"
+          },
+          {
+           "x": "2026-04-06",
+           "roas": null,
+           "periode_semaine": "2026-04-06"
+          },
+          {
+           "x": "2026-04-13",
+           "roas": null,
+           "periode_semaine": "2026-04-13"
+          },
+          {
+           "x": "2026-04-20",
+           "roas": null,
+           "periode_semaine": "2026-04-20"
+          },
+          {
+           "x": "2026-04-27",
+           "roas": null,
+           "periode_semaine": "2026-04-27"
+          },
+          {
+           "x": "2026-05-04",
+           "roas": null,
+           "periode_semaine": "2026-05-04"
+          },
+          {
+           "x": "2026-05-11",
+           "roas": null,
+           "periode_semaine": "2026-05-11"
+          },
+          {
+           "x": "2026-05-18",
+           "roas": null,
+           "periode_semaine": "2026-05-18"
+          },
+          {
+           "x": "2026-05-25",
+           "roas": null,
+           "periode_semaine": "2026-05-25"
+          },
+          {
+           "x": "2026-06-01",
+           "roas": null,
+           "periode_semaine": "2026-06-01"
+          },
+          {
+           "x": "2026-06-08",
+           "roas": null,
+           "periode_semaine": "2026-06-08"
+          },
+          {
+           "x": "2026-06-15",
+           "roas": null,
+           "periode_semaine": "2026-06-15"
+          },
+          {
+           "x": "2026-06-22",
+           "roas": null,
+           "periode_semaine": "2026-06-22"
+          },
+          {
+           "x": "2026-06-29",
+           "roas": null,
+           "periode_semaine": "2026-06-29"
+          },
+          {
+           "x": "2026-07-06",
+           "roas": null,
+           "periode_semaine": "2026-07-06"
+          },
+          {
+           "x": "2026-07-13",
+           "roas": null,
+           "periode_semaine": "2026-07-13"
+          },
+          {
+           "x": "2026-07-20",
+           "roas": null,
+           "periode_semaine": "2026-07-20"
+          },
+          {
+           "x": "2026-07-27",
+           "roas": null,
+           "periode_semaine": "2026-07-27"
+          },
+          {
+           "x": "2026-08-03",
+           "roas": null,
+           "periode_semaine": "2026-08-03"
+          },
+          {
+           "x": "2026-08-10",
+           "roas": null,
+           "periode_semaine": "2026-08-10"
+          },
+          {
+           "x": "2026-08-17",
+           "roas": null,
+           "periode_semaine": "2026-08-17"
+          },
+          {
+           "x": "2026-08-24",
+           "roas": null,
+           "periode_semaine": "2026-08-24"
+          },
+          {
+           "x": "2026-08-31",
+           "roas": null,
+           "periode_semaine": "2026-08-31"
+          },
+          {
+           "x": "2026-09-07",
+           "roas": null,
+           "periode_semaine": "2026-09-07"
+          },
+          {
+           "x": "2026-09-14",
+           "roas": null,
+           "periode_semaine": "2026-09-14"
+          },
+          {
+           "x": "2026-09-21",
+           "roas": null,
+           "periode_semaine": "2026-09-21"
+          },
+          {
+           "x": "2026-09-28",
+           "roas": null,
+           "periode_semaine": "2026-09-28"
+          }
+         ],
+         "type": "combo",
+         "title": "ROAS by week",
+         "row_count": 27
+        },
+        {
+         "id": "6a9c13af-70a8-4618-81da-bc25e8658fd1",
+         "rows": [
+          {
+           "x": "Google Ads",
+           "ca": 155971.82,
+           "channel": "Google Ads"
+          },
+          {
+           "x": "Instagram",
+           "ca": 119363.53,
+           "channel": "Instagram"
+          },
+          {
+           "x": "Organic",
+           "ca": 94420.2,
+           "channel": "Organic"
+          },
+          {
+           "x": "Email",
+           "ca": 83364.62,
+           "channel": "Email"
+          }
+         ],
+         "type": "hbar",
+         "title": "Revenue by channel",
+         "row_count": 4
+        },
+        {
+         "id": "036bdf1c-19f8-4ade-96cc-cdb7c8f3bf25",
+         "rows": [
+          {
+           "x": "C4528",
+           "ca": 570.15,
+           "customer_id": "C4528"
+          },
+          {
+           "x": "C1004",
+           "ca": 466.78,
+           "customer_id": "C1004"
+          },
+          {
+           "x": "C2123",
+           "ca": 430.86,
+           "customer_id": "C2123"
+          },
+          {
+           "x": "C3669",
+           "ca": 361.33,
+           "customer_id": "C3669"
+          },
+          {
+           "x": "C2723",
+           "ca": 336.97,
+           "customer_id": "C2723"
+          },
+          {
+           "x": "C2316",
+           "ca": 320.88,
+           "customer_id": "C2316"
+          },
+          {
+           "x": "C4119",
+           "ca": 311.04,
+           "customer_id": "C4119"
+          },
+          {
+           "x": "C2718",
+           "ca": 310.6,
+           "customer_id": "C2718"
+          },
+          {
+           "x": "C4133",
+           "ca": 305.14,
+           "customer_id": "C4133"
+          },
+          {
+           "x": "C1564",
+           "ca": 295.51,
+           "customer_id": "C1564"
+          }
+         ],
+         "type": "hbar",
+         "title": "Top customers",
+         "row_count": 10
+        },
+        {
+         "id": "2408cfb7-9347-4a3e-bb03-e8484cfcc4c2",
+         "text": "**Revenue**: sum of amounts, cancelled and refunded orders excluded. **Average order value**: revenue ÷ orders. **Contribution margin**: revenue - product cost - ad spend. **ROAS**: revenue ÷ ad spend. **Acquisition cost**: ad spend ÷ new customers. **Repeat customers**: customers with at least two orders in the period.",
+         "type": "note",
+         "title": "Definitions"
+        },
+        {
+         "id": "eb79eb7e-14ad-4c25-afd3-f060580e5042",
+         "text": "ROAS raises an alert below 2 (threshold adjustable at creation). Ad spend must appear only once in the file. The period is set at the top of the dashboard. Every ratio is computed on sums, never as an average of ratios.",
+         "type": "note",
+         "title": "Thresholds and reading"
+        }
+       ],
+       "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+       "filter_options": {
+        "canal": [
+         "Email",
+         "Google Ads",
+         "Instagram",
+         "Organic"
+        ]
+       }
+      }
+     }
+    ],
+    "measured_input_tokens": 19282
+   },
+   {
+    "thoughts": [
+     "**Analyzing ROAS Values**\n\nI've successfully pulled ROAS data from the dashboard for each channel. Now, I am in the process of comparing the values. I've noted a ROAS of 32.8 for email and need to analyze the figures for other channels, such as Google Ads, to pinpoint the best performing channel in terms of return on ad spend.\n\n\n",
+     "**Evaluating Channel Performance**\n\nI have compared the ROAS data. Email clearly outperforms Google Ads and Instagram with a ROAS of 32.8. Google Ads has a ROAS of 3.6, and Instagram is 3.0. Organic traffic doesn't involve ad spend. So, I will focus on optimizing email campaigns for the best return.\n\n\n"
+    ],
+    "text": "The channel that brings the best return on ad spend is **Email**, with a ROAS of **32.8**.\n\nHere's a breakdown of the ROAS for each channel:\n\n*   **Email**: 32.8\n*   **Google Ads**: 3.6\n*   **Instagram**: 3.0\n*   **Organic**: N/A (no advertising spend)",
+    "calls": [],
+    "responses": [],
+    "measured_input_tokens": 37762
+   }
+  ]
+ }
+}
