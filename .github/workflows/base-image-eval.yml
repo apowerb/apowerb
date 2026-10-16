@@ -1,0 +1,136 @@
+name: Evaluate base images (throwaway)
+
+# Évaluation jetable, à retirer avant tout merge : mesure, pour chaque base
+# candidate, la version de Python, les dépendances natives qui décident du
+# choix (pyodbc, psycopg2, torch CPU), la présence d'un shell capable de lancer
+# docker/entrypoint.sh, le gestionnaire de paquets laissé à qui étend l'image,
+# et les CRITICAL/HIGH Trivy 0.68.1 (même outil que les mesures du 16/10).
+# Rien n'est poussé : build local, pas d'identifiants Docker Hub.
+
+on:
+  pull_request:
+    paths:
+      - docker/eval/**
+      - .github/workflows/base-image-eval.yml
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: debian-r0-main, file: debian-ladder.Dockerfile, args: "RUNG=0" }
+          - { name: debian-r1-no-udev, file: debian-ladder.Dockerfile, args: "RUNG=1" }
+          - { name: debian-r2-no-apt, file: debian-ladder.Dockerfile, args: "RUNG=2" }
+          - { name: debian-r3-no-apt-no-bash, file: debian-ladder.Dockerfile, args: "RUNG=3" }
+          - { name: distroless-debian13, file: distroless.Dockerfile, args: "TAG=latest" }
+          - { name: distroless-debian13-debug, file: distroless.Dockerfile, args: "TAG=debug" }
+          - { name: wolfi-base-py313, file: wolfi.Dockerfile, args: "" }
+          - { name: chainguard-python-latest, file: chainguard-python.Dockerfile, args: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/eval/${{ matrix.file }}
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: ${{ matrix.args }}
+          tags: eval:${{ matrix.name }}
+
+      - name: Probe and scan
+        env:
+          IMG: eval:${{ matrix.name }}
+          NAME: ${{ matrix.name }}
+        run: |
+          set -u
+          run() { docker run --rm --entrypoint "$1" "$IMG" "${@:2}"; }
+
+          PY=$(run /opt/venv/bin/python -c 'import sys; print(sys.version.split()[0])' 2>&1)
+          echo "python: $PY"
+
+          if DEPS=$(run /opt/venv/bin/python -c '
+          import os, pyodbc, psycopg2
+          out = [f"pyodbc {pyodbc.version} drivers={pyodbc.drivers()}",
+                 f"psycopg2 {psycopg2.__version__.split()[0]} libpq={psycopg2.extensions.libpq_version()}"]
+          missing = "/opt/venv/TORCH_UNAVAILABLE"
+          if os.path.exists(missing):
+              out.append("torch ABSENT: " + open(missing).read().strip())
+          else:
+              import torch
+              out.append(f"torch {torch.__version__} sum={torch.ones(3).sum().item()}")
+          print("; ".join(out))
+          ' 2>&1); then DEPS_OK=yes; else DEPS_OK=no; fi
+          echo "deps($DEPS_OK): $DEPS"
+
+          SH=none
+          for s in /bin/sh /busybox/sh; do
+            if run "$s" -c 'true' >/dev/null 2>&1; then SH=$s; break; fi
+          done
+          echo "shell: $SH"
+
+          ENTRY=no; PKG=none
+          if [ "$SH" != none ]; then
+            # Chemin d'échec attendu (apowerb-config-env absent ici) puis exec :
+            # c'est exactement ce que fait le conteneur au démarrage sans base.
+            OUT=$(run "$SH" /usr/local/bin/apowerb-entrypoint /opt/venv/bin/python -c 'print("entrypoint-ok")' 2>&1) || true
+            echo "$OUT"
+            echo "$OUT" | grep -q entrypoint-ok && ENTRY=yes
+            PKG=$(run "$SH" -c 'for p in apt-get apk dpkg; do command -v $p >/dev/null 2>&1 && printf "%s " $p; done; true')
+            PKG=${PKG:-none}
+          fi
+          echo "entrypoint: $ENTRY ; package managers: $PKG"
+
+          SIZE=$(docker image inspect -f '{{.Size}}' "$IMG" | awk '{printf "%.0f MB", $1/1e6}')
+
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" aquasec/trivy:0.68.1 \
+            image -q --severity CRITICAL,HIGH --format json -o "/out/trivy-$NAME.json" "$IMG"
+          docker run --rm -v "$PWD:/out" aquasec/trivy:0.68.1 convert -q --format table "/out/trivy-$NAME.json"
+          J="trivy-$NAME.json"
+          test -s "$J" || { echo "FAIL: no Trivy report, no measurement"; exit 1; }
+          OS=$(jq -r '.Metadata.OS | "\(.Family) \(.Name)"' "$J")
+          cnt() { jq "[.Results[]? | select(.Class==\"$1\") | .Vulnerabilities[]? | select(.Severity==\"$2\")] | length" "$J"; }
+          OSC=$(cnt os-pkgs CRITICAL); OSH=$(cnt os-pkgs HIGH)
+          LC=$(cnt lang-pkgs CRITICAL); LH=$(cnt lang-pkgs HIGH)
+          OSPKGS=$(jq -r '[.Results[]? | select(.Class=="os-pkgs") | .Vulnerabilities[]? | .PkgName] | unique | join(",")' "$J")
+
+          ROW="| $NAME | $OS | $PY | $DEPS_OK | $SH | $ENTRY | $PKG | $OSC/$OSH | $LC/$LH | ${OSPKGS:--} | $SIZE |"
+          echo "$ROW" | tee "row-$NAME.md"
+          echo "$DEPS" > "deps-$NAME.txt"
+          echo "$ROW" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-${{ matrix.name }}
+          path: |
+            row-*.md
+            deps-*.txt
+            trivy-*.json
+          if-no-files-found: ignore
+
+  table:
+    needs: candidate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: eval
+      - name: Comparative table
+        run: |
+          {
+            echo "| Candidate | OS | Python | deps OK | shell | entrypoint.sh | pkg mgr | OS C/H | lang C/H | OS pkgs flagged | size |"
+            echo "|---|---|---|---|---|---|---|---|---|---|---|"
+            cat eval/*/row-*.md | sort
+            echo
+            for f in eval/*/deps-*.txt; do echo "- $(basename "$f" .txt | sed 's/^deps-//'): $(cat "$f" | tail -1)"; done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
