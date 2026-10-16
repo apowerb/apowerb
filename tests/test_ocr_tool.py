@@ -381,7 +381,7 @@ class TestUploadedFileByName:
     def test_s3_upload_resolved_for_root_agent(self, azure, monkeypatch):
         monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
         with patch(
-            "apowerb.artifacts.file_lookup.read_file_bytes", return_value=self.PDF
+            "apowerb.artifacts.file_lookup.read_file_and_names", return_value=(self.PDF, [])
         ) as read:
             result = tool_ocr_document("cv.pdf", provider="azure")
 
@@ -393,10 +393,8 @@ class TestUploadedFileByName:
     def test_s3_missing_upload_lists_available_files(self, azure, monkeypatch):
         monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
         with patch(
-            "apowerb.artifacts.file_lookup.read_file_bytes", return_value=None
-        ), patch(
-            "apowerb.artifacts.file_lookup.available_filenames",
-            return_value=["resume.pdf"],
+            "apowerb.artifacts.file_lookup.read_file_and_names",
+            return_value=(None, ["resume.pdf"]),
         ):
             result = tool_ocr_document("cv.pdf", provider="azure")
 
@@ -420,7 +418,7 @@ class TestUploadedFileByName:
     def test_no_active_agent_keeps_file_not_found(self, azure, monkeypatch):
         monkeypatch.delenv("ROOT_AGENT_ID")
         monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
-        with patch("apowerb.artifacts.file_lookup.read_file_bytes") as read:
+        with patch("apowerb.artifacts.file_lookup.read_file_and_names") as read:
             result = tool_ocr_document("cv.pdf", provider="azure")
 
         assert result["status"] == "error"

@@ -187,3 +187,72 @@ def test_read_uploaded_file_reports_the_reattached_file(bucket, monkeypatch):
 
     result = _make_read_uploaded_file(AGENT)(name)
     assert result["size"] == len(new), result
+
+
+# -- one listing per read --------------------------------------------------
+#
+# Measured 16/10: a missing file cost two full scans of artifacts/{agent}/
+# (read_file_bytes, then available_filenames for the error message) plus two
+# legacy LISTs -- 4 calls for the 311 objects of the busiest dev agent, 42 at
+# 20 000. The answer and the names come from the same listing.
+
+
+def _paged_bucket(monkeypatch, page_size: int) -> FakeS3Client:
+    fake = FakeS3Client(page_size=page_size)
+    monkeypatch.setattr(s3_storage, "_get_s3_client", lambda: fake)
+    monkeypatch.setattr(s3_storage.get_settings(), "s3_bucket_name", "test-bucket", raising=False)
+    for i in range(311):
+        name = f"f{i:03d}.csv"
+        _put(fake, f"artifacts/{AGENT}/session_{i:05d}/input/{name}/0/{name}", b"x")
+    return fake
+
+
+def test_a_missing_file_lists_the_agent_prefix_once(monkeypatch):
+    fake = _paged_bucket(monkeypatch, page_size=100)  # 311 objects = 4 pages
+    _put(fake, f"uploads/{AGENT}/vieux.csv", b"z")
+
+    content, names = file_lookup.read_file_and_names(AGENT, "absent.csv")
+
+    assert content is None
+    assert "f000.csv" in names and "vieux.csv" in names and len(names) == 312
+    # 4 pages of artifacts/{agent}/ + 1 legacy LIST; was 2 x 4 + 2 = 10.
+    assert fake.list_calls == 5
+
+
+def test_a_found_file_costs_one_scan_and_no_legacy_list(monkeypatch):
+    fake = _paged_bucket(monkeypatch, page_size=100)
+
+    content, names = file_lookup.read_file_and_names(AGENT, "f007.csv")
+
+    assert (content, names) == (b"x", [])
+    assert fake.list_calls == 4
+
+
+def test_a_legacy_file_is_read_without_listing_names(bucket):
+    _put(bucket, f"uploads/{AGENT}/vieux.csv", b"z")
+    _put(bucket, f"uploads/{AGENT}/vieux.csv.bak", b"bak")
+
+    assert file_lookup.read_file_and_names(AGENT, "vieux.csv") == (b"z", [])
+    # Exact membership, as file_exists_in_s3: a longer name does not answer.
+    assert file_lookup.read_file_and_names(AGENT, "vieux")[0] is None
+    assert bucket.list_calls == 4
+
+
+def test_the_newest_upload_still_wins_through_the_single_listing(bucket):
+    name = "online_store_orders.csv"
+    _put_at(bucket, f"artifacts/{AGENT}/session_1760432400000/input/{name}/0/{name}", b"14/10", _DAY_14)
+    _put_at(bucket, f"artifacts/{AGENT}/_shared/input/{name}/0/{name}", b"16/10", _DAY_16)
+    assert file_lookup.read_file_and_names(AGENT, name) == (b"16/10", [])
+
+
+def test_read_uploaded_file_lists_once_for_a_missing_file(monkeypatch):
+    from apowerb.configs.settings import get_settings
+    from apowerb.core.agent_helpers.read_file_tool import _make_read_uploaded_file
+
+    monkeypatch.setattr(get_settings(), "storage_mode", "S3", raising=False)
+    fake = _paged_bucket(monkeypatch, page_size=100)
+
+    result = _make_read_uploaded_file(AGENT)("absent.csv")
+
+    assert result["status"] == "error" and len(result["available_files"]) == 311
+    assert fake.list_calls == 5

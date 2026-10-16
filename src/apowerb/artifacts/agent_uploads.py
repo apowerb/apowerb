@@ -47,12 +47,9 @@ def read_agent_upload(folder: str, name: str) -> tuple[Optional[bytes], list[str
         return None, []
 
     if is_s3_storage():
-        from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
+        from apowerb.artifacts.file_lookup import read_file_and_names
 
-        content = read_file_bytes(folder, name)
-        if content is not None:
-            return content, []
-        return None, available_filenames(folder)
+        return read_file_and_names(folder, name)
 
     base = (paths.uploads_dir() / folder).resolve()
     path = (base / name).resolve()

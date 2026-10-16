@@ -331,10 +331,9 @@ def _resolve_attachment(file_id: str, owner: str) -> tuple[dict | None, dict | N
 
     folder = f"agent{root}"
     if _is_s3_storage():
-        from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
+        from apowerb.artifacts.file_lookup import read_file_and_names
 
-        content = read_file_bytes(folder, name)
-        available = [] if content is not None else available_filenames(folder)
+        content, available = read_file_and_names(folder, name)
     else:
         base = agent_upload_dir(root).resolve()
         path = (base / name).resolve()

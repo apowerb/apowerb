@@ -35,14 +35,12 @@ def s3(monkeypatch):
     monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
 
     def read(folder, name):
-        return store.get(f"{folder}/{name}")
+        content = store.get(f"{folder}/{name}")
+        if content is not None:
+            return content, []
+        return None, sorted(k.split("/", 1)[1] for k in store if k.startswith(folder + "/"))
 
-    def available(folder):
-        return sorted(k.split("/", 1)[1] for k in store if k.startswith(folder + "/"))
-
-    with patch("apowerb.artifacts.file_lookup.read_file_bytes", side_effect=read), patch(
-        "apowerb.artifacts.file_lookup.available_filenames", side_effect=available
-    ):
+    with patch("apowerb.artifacts.file_lookup.read_file_and_names", side_effect=read):
         yield store
 
 
