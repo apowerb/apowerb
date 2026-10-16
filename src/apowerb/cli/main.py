@@ -4,8 +4,24 @@ from apowerb.cli.agents import app as agents_app
 from apowerb.cli.tools import app as tools_app
 from apowerb.cli.runs import app as runs_app
 from apowerb.cli.config import app as config_app
+from importlib.metadata import version, PackageNotFoundError
 
 app = typer.Typer()
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    version_flag: bool = typer.Option(
+        False, "--version", "-v", is_eager=True, help="Show version and exit"
+    ),
+):
+    """apowerb — the agentic framework CLI."""
+    if version_flag:
+        try:
+            typer.echo(version("apowerb"))
+        except PackageNotFoundError:
+            typer.echo("unknown")
+        raise typer.Exit()
 
 api_host = "127.0.0.1"
 api_port = 8000
