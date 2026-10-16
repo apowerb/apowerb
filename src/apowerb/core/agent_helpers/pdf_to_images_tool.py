@@ -13,7 +13,7 @@ import io
 import os
 
 from apowerb.configs.th2logger import setup_logging
-from apowerb.configs.paths import uploads_dir
+from apowerb.artifacts.agent_uploads import agent_upload_path
 
 
 logger = setup_logging(__name__)
@@ -221,83 +221,85 @@ def _make_pdf_to_images(folder_name: str):
                 "message": f"Pillow is not installed: {exc}",
             }
 
-        file_path = str(uploads_dir() / folder_name / filename)
-        if not os.path.exists(file_path):
-            agent_dir = str(uploads_dir() / folder_name)
-            available = []
-            if os.path.exists(agent_dir):
-                available = [
-                    f
-                    for f in os.listdir(agent_dir)
-                    if os.path.isfile(os.path.join(agent_dir, f))
-                ]
-            return {
-                "status": "error",
-                "message": f"File '{filename}' not found in {folder_name}",
-                "available_files": available,
-            }
-
-        try:
-            doc = fitz.open(file_path)
-        except Exception as exc:
-            return {
-                "status": "error",
-                "message": f"Could not open PDF '{filename}': {exc}",
-            }
-
-        try:
-            zoom = max(0.5, min(4.0, dpi / 72.0))
-            matrix = fitz.Matrix(zoom, zoom)
-            pages: list[dict] = []
-            total_pages = doc.page_count
-
-            for i, page in enumerate(doc):
-                if i >= max_pages:
-                    break
-                pix = page.get_pixmap(matrix=matrix, alpha=False)
-                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-
-                # Resize if longest side > max_dimension (token efficiency).
-                longest = max(img.width, img.height)
-                if longest > max_dimension:
-                    ratio = max_dimension / longest
-                    new_size = (int(img.width * ratio), int(img.height * ratio))
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-
-                buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=85, optimize=True)
-                pages.append(
-                    {
-                        "page_number": i + 1,
-                        "mime_type": "image/jpeg",
-                        "data": base64.b64encode(buf.getvalue()).decode("ascii"),
-                    }
-                )
-
-            truncated = total_pages > len(pages)
-            if truncated:
-                logger.warning(
-                    "PDF '%s' truncated: %d page(s) ignored (kept %d of %d, max_pages=%d). "
-                    "Operator should validate that no critical AR data lives past page %d.",
-                    filename,
-                    total_pages - len(pages),
-                    len(pages),
-                    total_pages,
-                    max_pages,
-                    max_pages,
-                )
-            return {
-                "status": "success",
-                "page_count": len(pages),
-                "total_pages_in_pdf": total_pages,
-                "truncated": truncated,
-                "pages": pages,
-            }
-        finally:
-            doc.close()
+        with agent_upload_path(folder_name, filename) as (file_path, available):
+            if file_path is None:
+                return _not_found(filename, folder_name, available)
+            return _render_pages(
+                fitz, Image, file_path, filename, max_pages, dpi, max_dimension
+            )
 
     pdf_to_images.__name__ = "tool_pdf_to_images"
     return pdf_to_images
+
+
+def _not_found(filename: str, folder_name: str, available: list[str]) -> dict:
+    return {
+        "status": "error",
+        "message": f"File '{filename}' not found in {folder_name}",
+        "available_files": available,
+    }
+
+
+def _render_pages(fitz, Image, file_path, filename, max_pages, dpi, max_dimension) -> dict:
+    """Render up to ``max_pages`` pages of the PDF at ``file_path``."""
+    try:
+        doc = fitz.open(file_path)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "message": f"Could not open PDF '{filename}': {exc}",
+        }
+
+    try:
+        zoom = max(0.5, min(4.0, dpi / 72.0))
+        matrix = fitz.Matrix(zoom, zoom)
+        pages: list[dict] = []
+        total_pages = doc.page_count
+
+        for i, page in enumerate(doc):
+            if i >= max_pages:
+                break
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+            # Resize if longest side > max_dimension (token efficiency).
+            longest = max(img.width, img.height)
+            if longest > max_dimension:
+                ratio = max_dimension / longest
+                new_size = (int(img.width * ratio), int(img.height * ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85, optimize=True)
+            pages.append(
+                {
+                    "page_number": i + 1,
+                    "mime_type": "image/jpeg",
+                    "data": base64.b64encode(buf.getvalue()).decode("ascii"),
+                }
+            )
+
+        truncated = total_pages > len(pages)
+        if truncated:
+            logger.warning(
+                "PDF '%s' truncated: %d page(s) ignored (kept %d of %d, max_pages=%d). "
+                "Operator should validate that no critical AR data lives past page %d.",
+                filename,
+                total_pages - len(pages),
+                len(pages),
+                total_pages,
+                max_pages,
+                max_pages,
+            )
+        return {
+            "status": "success",
+            "page_count": len(pages),
+            "total_pages_in_pdf": total_pages,
+            "truncated": truncated,
+            "pages": pages,
+        }
+    finally:
+        doc.close()
 
 
 def _make_pdf_first_page(folder_name: str):
@@ -343,23 +345,10 @@ def _make_pdf_first_page(folder_name: str):
                 ),
             }
 
-        file_path = str(uploads_dir() / folder_name / filename)
-        if not os.path.exists(file_path):
-            agent_dir = str(uploads_dir() / folder_name)
-            available = []
-            if os.path.exists(agent_dir):
-                available = [
-                    f
-                    for f in os.listdir(agent_dir)
-                    if os.path.isfile(os.path.join(agent_dir, f))
-                ]
-            return {
-                "status": "error",
-                "message": f"File '{filename}' not found in {folder_name}",
-                "available_files": available,
-            }
-
-        extracted = extract_first_page_text(file_path)
+        with agent_upload_path(folder_name, filename) as (file_path, available):
+            if file_path is None:
+                return _not_found(filename, folder_name, available)
+            extracted = extract_first_page_text(file_path)
         if "error" in extracted:
             return {
                 "status": "error",

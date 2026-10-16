@@ -102,16 +102,6 @@ def _is_remote(source: str) -> bool:
     return source.strip().lower().startswith(("http://", "https://"))
 
 
-def _is_s3_storage() -> bool:
-    """Same predicate the upload route uses to decide where files are written."""
-    from apowerb.configs.artifact_service_config import (
-        is_s3_artifact_storage_configured,
-    )
-    from apowerb.configs.settings import get_settings
-
-    return is_s3_artifact_storage_configured(get_settings())
-
-
 def _read_uploaded_file(name: str) -> bytes | None:
     """Bytes of the file ``name`` uploaded to the current root agent.
 
@@ -120,34 +110,15 @@ def _read_uploaded_file(name: str) -> bytes | None:
     ValueError when the agent has no such upload, listing what it does have so
     the model can retry with the right name.
     """
+    from apowerb.artifacts.agent_uploads import is_bare_filename, read_agent_upload
     from apowerb.core.invocation_context import get_root_agent_id
 
-    if name in {"", ".", ".."} or name != os.path.basename(name) or "\\" in name:
-        return None
     root = get_root_agent_id()
-    if not root.isdigit():
+    if not is_bare_filename(name) or not root.isdigit():
         return None
 
     folder = f"agent{root}"
-    if _is_s3_storage():
-        from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
-
-        content = read_file_bytes(folder, name)
-        available = [] if content is not None else available_filenames(folder)
-    else:
-        from apowerb.configs.paths import agent_upload_dir
-
-        base = agent_upload_dir(root).resolve()
-        path = (base / name).resolve()
-        if path.parent == base and path.is_file():
-            content, available = path.read_bytes(), []
-        else:
-            content = None
-            available = (
-                sorted(p.name for p in base.iterdir() if p.is_file())
-                if base.is_dir()
-                else []
-            )
+    content, available = read_agent_upload(folder, name)
     if content is None:
         listing = f" Uploaded files: {', '.join(available)}." if available else ""
         raise ValueError(f"File not found: {name} in {folder}.{listing}")

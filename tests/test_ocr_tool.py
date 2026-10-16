@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from apowerb.tools_store.portfolio import ocr
+from apowerb.artifacts import agent_uploads
 from apowerb.tools_store.portfolio.ocr import (
     _MISTRAL_OCR_MODEL,
     _MISTRAL_OCR_URL,
@@ -380,7 +380,7 @@ class TestUploadedFileByName:
             yield mock_post
 
     def test_local_upload_resolved_in_agent_dir(self, azure, monkeypatch, tmp_path):
-        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: False)
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: False)
         monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
         (tmp_path / "agent42").mkdir()
         (tmp_path / "agent42" / "cv.pdf").write_bytes(self.PDF)
@@ -393,7 +393,7 @@ class TestUploadedFileByName:
         assert base64.b64decode(sent) == self.PDF
 
     def test_s3_upload_resolved_for_root_agent(self, azure, monkeypatch):
-        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: True)
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
         with patch(
             "apowerb.artifacts.file_lookup.read_file_bytes", return_value=self.PDF
         ) as read:
@@ -405,7 +405,7 @@ class TestUploadedFileByName:
         assert base64.b64decode(sent) == self.PDF
 
     def test_s3_missing_upload_lists_available_files(self, azure, monkeypatch):
-        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: True)
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
         with patch(
             "apowerb.artifacts.file_lookup.read_file_bytes", return_value=None
         ), patch(
@@ -421,7 +421,7 @@ class TestUploadedFileByName:
 
     def test_path_is_not_looked_up_in_uploads(self, azure, monkeypatch, tmp_path):
         # Only a bare filename is mapped; "../x.pdf" must not escape agent42/.
-        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: False)
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: False)
         monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
         (tmp_path / "x.pdf").write_bytes(self.PDF)
 
@@ -433,7 +433,7 @@ class TestUploadedFileByName:
 
     def test_no_active_agent_keeps_file_not_found(self, azure, monkeypatch):
         monkeypatch.delenv("ROOT_AGENT_ID")
-        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: True)
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
         with patch("apowerb.artifacts.file_lookup.read_file_bytes") as read:
             result = tool_ocr_document("cv.pdf", provider="azure")
 
