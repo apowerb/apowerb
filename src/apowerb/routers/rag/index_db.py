@@ -2,8 +2,9 @@
 
 Includes the synchronous worker helpers ``_sync_index_db`` and
 ``_sync_index_db_nl`` that encapsulate the blocking boto3 / SQL calls; both are
-executed via ``asyncio.to_thread`` under the shared ``_db_index_lock`` to avoid
-concurrent ``os.environ`` mutations for DB credentials.
+executed via ``asyncio.to_thread`` under the shared ``_db_index_lock``. The DB
+connection reaches the export tool through ``DB_*`` env vars applied only for
+the duration of the call (``tool_env``), so nothing outlives the request.
 """
 
 import asyncio
@@ -21,7 +22,8 @@ from apowerb.tools_store.portfolio.text_to_sql import (
     _validate_sql_safety,
     invalidate_schema_cache,
 )
-from apowerb.tools_store.tools_helpers import register_tool_config, set_tool_config_params_as_envvar
+from apowerb.tools_store.tool_env import declared_env_keys, tool_env
+from apowerb.tools_store.tools_helpers import load_tool_config_params, register_tool_config
 from apowerb.users import schemas as user_schemas
 
 from .schemas import IndexDbNlRequest, IndexDbRequest
@@ -89,14 +91,20 @@ def _sync_index_db(
     callback_url: str | None = None,
 ) -> dict:
     """Synchronous DB indexing — runs in a thread, protected by _db_index_lock."""
-    set_tool_config_params_as_envvar(data.tool_config_id, owner_id=owner_id)
+    _, params = load_tool_config_params(data.tool_config_id, owner_id=owner_id)
     os.environ["AGENT_FOLDER"] = data.session_id or data.agent_id
-    return tool_load_from_db_and_index(
-        sql_query=data.sql_query,
-        knowledge_name=data.name,
-        wait_for_completion=False,
-        callback_url=callback_url,
-    )
+    with tool_env(params or {}, _db_env_keys()):
+        return tool_load_from_db_and_index(
+            sql_query=data.sql_query,
+            knowledge_name=data.name,
+            wait_for_completion=False,
+            callback_url=callback_url,
+        )
+
+
+def _db_env_keys() -> tuple[str, ...]:
+    """DB_* variables the export and schema tools read."""
+    return tuple(dict.fromkeys(declared_env_keys("db_to_rag.x") + declared_env_keys("text_to_sql.x")))
 
 
 # ---------------------------------------------------------------------------
@@ -205,25 +213,27 @@ def _sync_index_db_nl(
     callback_url: str | None = None,
 ) -> dict:
     """Synchronous NL-to-SQL DB indexing — runs in a thread, protected by _db_index_lock."""
-    # Set DB credentials in env
     if data.credentials:
-        os.environ["DB_HOST"] = data.credentials.host
-        os.environ["DB_PORT"] = str(data.credentials.port)
-        os.environ["DB_NAME"] = data.credentials.database
-        os.environ["DB_USER"] = data.credentials.user
-        os.environ["DB_PASSWORD"] = data.credentials.password
-        os.environ["DB_SCHEMA"] = data.credentials.schema_name
-        # Invalidate schema cache to avoid stale data from another tenant
-        invalidate_schema_cache()
+        params = {
+            "DB_HOST": data.credentials.host,
+            "DB_PORT": str(data.credentials.port),
+            "DB_NAME": data.credentials.database,
+            "DB_USER": data.credentials.user,
+            "DB_PASSWORD": data.credentials.password,
+            "DB_SCHEMA": data.credentials.schema_name,
+        }
     else:
-        set_tool_config_params_as_envvar(data.tool_config_id, owner_id=owner_id)
-
-    # Set LLM API key from agent's model config (needed for SQL generation via litellm)
-    from apowerb.core.agent_helpers import set_model_params_as_envvar
-    set_model_params_as_envvar(data.agent_id)
+        _, params = load_tool_config_params(data.tool_config_id, owner_id=owner_id)
 
     os.environ["AGENT_FOLDER"] = data.session_id or data.agent_id
 
+    # Invalidate schema cache to avoid stale data from another tenant
+    invalidate_schema_cache()
+    with tool_env(params or {}, _db_env_keys()):
+        return _index_db_nl_steps(data, callback_url)
+
+
+def _index_db_nl_steps(data: IndexDbNlRequest, callback_url: str | None) -> dict:
     try:
         # Step 1: Introspect schema
         try:
