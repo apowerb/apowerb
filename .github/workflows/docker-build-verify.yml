@@ -156,7 +156,7 @@ jobs:
           KEY=$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
           docker run -d --name apowerb-health --network host \
             -e DB_HOST=127.0.0.1 -e DB_PORT=5432 -e DB_NAME=smoke \
-            -e DB_USER=postgres -e DB_PASSWORD=smoke -e ENCRYPT_KEY="$KEY" \
+            -e DB_USER=postgres -e DB_PASSWORD=smoke -e DB_SSLMODE=disable -e ENCRYPT_KEY="$KEY" \
             apowerb:pr-verify
           for attempt in $(seq 1 60); do
             if curl -sf --max-time 5 http://127.0.0.1:8000/health; then
