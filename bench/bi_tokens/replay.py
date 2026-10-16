@@ -67,7 +67,7 @@ def _agent_row() -> dict:
 def build_agent():
     from apowerb.core.agent_helpers import agent_utils, extras_loader
 
-    extras_loader._inject_tool_config_env = lambda *a, **k: None  # base tool_config absente
+    extras_loader._owner_category_params = lambda *a, **k: {}  # base tool_config absente
     row = _agent_row()
     agent_utils.get_agent_details = lambda agent_id, items_to_select="*": dict(row)
     return agent_utils.to_agent(AGENT)

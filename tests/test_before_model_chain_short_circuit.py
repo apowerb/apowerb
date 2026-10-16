@@ -31,7 +31,7 @@ def _build_agent(monkeypatch):
         "artifacts_enabled": "false", "mcp_servers": None,
         "guardrails_config": json.dumps({"blocked_terms": ["interdit"]}),
     }
-    monkeypatch.setattr(extras_loader, "_inject_tool_config_env", lambda *a, **k: None)
+    monkeypatch.setattr(extras_loader, "_owner_category_params", lambda *a, **k: {})
     monkeypatch.setattr(agent_utils, "get_agent_details", lambda agent_id, **_: dict(row))
     return agent_utils.to_agent("agent4242")
 

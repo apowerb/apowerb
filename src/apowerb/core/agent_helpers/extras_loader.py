@@ -9,7 +9,8 @@ import json
 import os
 
 from apowerb.configs.th2logger import setup_logging
-from apowerb.helpers.encryptor import decrypt_value_in_dict, dict_to_envvar
+from apowerb.helpers.encryptor import decrypt_value_in_dict
+from apowerb.tools_store.tool_env import with_tool_config
 from apowerb.tools_store.tools_helpers import (
     load_agent_tools_functions,
     tool_config_store,
@@ -43,12 +44,12 @@ def load_agent_skills_toolset(agent_name: str, agent_skills_raw, tools_funcs: li
         )
 
 
-def _inject_tool_config_env(new_tool_paths: list[str], owner_id: str) -> None:
-    """Inject env vars from owner's tool_configs for each recommended-tool category."""
+def _owner_category_params(categories: set[str], owner_id: str) -> dict[str, dict]:
+    """Decrypted params of the owner's first tool_config in each category."""
     if not owner_id:
-        return
-    categories = {tp.split(".")[0] for tp in new_tool_paths if "." in tp}
+        return {}
     t = tool_config_store.tool_config_table
+    found: dict[str, dict] = {}
     for cat in categories:
         q = t.select().where(
             (t.c.tool_category == cat) & (t.c.owner_id == owner_id)
@@ -61,17 +62,17 @@ def _inject_tool_config_env(new_tool_paths: list[str], owner_id: str) -> None:
                 params = (
                     json.loads(raw_params) if isinstance(raw_params, str) else raw_params
                 )
-                params = decrypt_value_in_dict(
+                found[cat] = decrypt_value_in_dict(
                     params, values_to_decrypt=params.keys()
                 )
-                dict_to_envvar(params)
                 logger.info(
-                    f"[TO_AGENT] Injected tool_config env vars for category '{cat}' (owner={owner_id})"
+                    f"[TO_AGENT] Bound tool_config params for category '{cat}' (owner={owner_id})"
                 )
         else:
             logger.warning(
                 f"[TO_AGENT] No tool_config found for category '{cat}' owner={owner_id}"
             )
+    return found
 
 
 def load_superagent_recommended_tools(
@@ -104,12 +105,18 @@ def load_superagent_recommended_tools(
     native_names, native_funcs = load_agent_tools_functions(
         tools=new_tool_paths, owner_id=owner_id
     )
+    # Each native tool runs with the owner's tool_config for its category.
+    category_params = _owner_category_params(
+        {tp.split(".")[0] for tp in new_tool_paths if "." in tp},
+        agent_details.get("owner_id"),
+    )
+    native_funcs = [
+        with_tool_config(fn, category_params.get(name.split(".")[0]), name)
+        for name, fn in zip(native_names, native_funcs)
+    ]
     tools_names.extend(native_names)
     tools_funcs.extend(native_funcs)
     logger.info(f"[TO_AGENT] Merged native tools: {native_names}")
-
-    # Inject env vars from owner's tool_configs for recommended tool categories
-    _inject_tool_config_env(new_tool_paths, agent_details.get("owner_id"))
 
 
 def inject_bi_dashboard_tools(

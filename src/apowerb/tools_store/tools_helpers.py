@@ -12,6 +12,7 @@ from apowerb.helpers.encryptor import (
     decrypt_value_in_dict,
     dict_to_envvar,
 )
+from apowerb.tools_store.tool_env import call_with_tool_config, with_tool_config
 from apowerb.schema.tool_config_schema import ToolConfigCreateSchema
 from google.adk.tools.mcp_tool import McpToolset
 from apowerb.tools_store.tool_manager import ToolsStore
@@ -462,10 +463,8 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
         else:
             continue
 
-        # Set env vars once for all tools sharing the same config
-        if tool_params:
-            dict_to_envvar(tool_params)
-
+        # The config's params reach its tools at call time only (tool_env):
+        # writing them to os.environ here would outlive this build.
         for current_tool_name in resolved_names:
             if current_tool_name in _LEGACY_TOOL_RENAMES:
                 new_name = _LEGACY_TOOL_RENAMES[current_tool_name]
@@ -501,7 +500,7 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
                 _tool_attr = _ovl.get(current_tool_name) or _ovl.get(current_tool_name.split(".")[-1])
                 if _tool_attr is None:
                     continue
-                tool_funcs.append(_tool_attr)
+                tool_funcs.append(with_tool_config(_tool_attr, tool_params, current_tool_name))
                 tools_names.append(current_tool_name)
                 continue
 
@@ -517,7 +516,9 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
             if callable(tool_attr) and not isinstance(tool_attr, McpToolset):
                 # For MCP factories, call to get fresh instance
                 if tool_func.startswith("mcp_tool_set_"):
-                    tool_attr = tool_attr()
+                    tool_attr = call_with_tool_config(tool_attr, tool_params, current_tool_name)
+                else:
+                    tool_attr = with_tool_config(tool_attr, tool_params, current_tool_name)
             tool_funcs.append(tool_attr)
             tools_names.append(current_tool_name)
 

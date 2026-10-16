@@ -17,7 +17,7 @@ def bench(monkeypatch):
     from apowerb.core.agent_helpers import agent_utils, extras_loader
 
     monkeypatch.setattr(agent_utils, "get_agent_details", agent_utils.get_agent_details)
-    monkeypatch.setattr(extras_loader, "_inject_tool_config_env", extras_loader._inject_tool_config_env)
+    monkeypatch.setattr(extras_loader, "_owner_category_params", extras_loader._owner_category_params)
     monkeypatch.delenv("AGENT_DASHBOARD_ID", raising=False)
     sys.path.insert(0, str(BENCH))
     try:

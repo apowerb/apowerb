@@ -26,7 +26,7 @@ def replay():
     saved = [(mod, name, getattr(mod, name)) for mod, name in (
         (t, "_dashboard_store"), (t, "_compute"), (t, "_agent_owner"), (t, "_run_tool"),
         (bi, "_get_session"), (bi, "_agent_owner"), (db_stores, "DatabaseDashboardStore"),
-        (agent_utils, "get_agent_details"), (extras_loader, "_inject_tool_config_env"),
+        (agent_utils, "get_agent_details"), (extras_loader, "_owner_category_params"),
     )]
     sys.path.insert(0, str(BENCH))
     try:

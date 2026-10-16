@@ -16,9 +16,9 @@ import inspect
 import json
 import logging
 import os
-import threading
 from typing import Any, Callable
 
+from apowerb.tools_store.tool_env import TOOL_ENV_LOCK, declared_env_keys, tool_env
 from apowerb.tools_store.bi_source import BiSourceError, credentials_of, resolve_bi_source
 from apowerb.tools_store.tools_helpers import load_tool_config_params
 
@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_S = float(os.getenv("BI_TOOL_TIMEOUT_S", "60"))
 
 # Tool configs reach tools through process-wide env vars: one call at a time
-# may own them, or two owners' tokens would mix.
-_ENV_LOCK = threading.Lock()
+# may own them, or two owners' tokens would mix. Same lock as agent tools.
+_ENV_LOCK = TOOL_ENV_LOCK
 
 _FAILURE_STATUSES = {"error", "failed", "failure"}
 _MESSAGE_KEYS = ("error", "error_message", "message")
@@ -137,33 +137,13 @@ class ToolQueryExecutor:
         _, params = load_tool_config_params(str(self._config_id), owner_id=self._owner)
         if not params:
             raise ToolSourceError(f"connexion introuvable ou vide : {self._config_id}.")
-        env = {str(k): str(v) for k, v in params.items()}
         # Variables the tool reads but the owner's config does not set must not
         # fall back to a value another tenant's agent left in the process env.
-        blanked = {k: None for k in self._declared_env(fn) if k not in env}
-        patch = {**blanked, **env}
-        saved = {k: os.environ.get(k) for k in patch}
-        try:
-            for key, value in patch.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+        with tool_env(params, self._declared_env(fn)):
             return self._invoke(fn, args)
-        finally:
-            for key, old in saved.items():
-                if old is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = old
 
     @staticmethod
-    def _declared_env(fn: Callable[..., Any]) -> list[str]:
+    def _declared_env(fn: Callable[..., Any]) -> tuple[str, ...]:
         """Env vars the tool's module reads (best effort; empty if unknown)."""
-        try:
-            from apowerb.tools_store.tool_manager import get_tools_store
-
-            category = getattr(fn, "__module__", "").rsplit(".", 1)[-1]
-            return [p["key"] for p in get_tools_store().get_tool_expected_params(f"{category}.x")]
-        except Exception:  # noqa: BLE001
-            return []
+        category = getattr(fn, "__module__", "").rsplit(".", 1)[-1]
+        return declared_env_keys(f"{category}.x")
