@@ -36,7 +36,6 @@ def _make_ingest_file(folder_name: str):
         """
         settings = get_settings()
 
-        import os
         from apowerb.tools_store.portfolio.rag import (
             tool_create_corpus,
             tool_index_documents,
@@ -116,7 +115,6 @@ def _make_ingest_file(folder_name: str):
             }
 
         else:
-            logger.info("==================================================USING S3 NOW in _make_ingest_file===================================================")
             import tempfile
             s3_key = f"uploads/{folder_name}/{filename}"
             prefix = f"uploads/{folder_name}/"

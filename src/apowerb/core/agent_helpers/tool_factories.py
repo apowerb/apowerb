@@ -76,7 +76,6 @@ def _make_create_downloadable_file(folder_name: str):
             A dict with the download path or an error message.
         """
         settings=get_settings()
-        import os
         import re
         safe_name = os.path.basename(filename)
         safe_name = re.sub(r'[<>:"/\\|?*]', "_", safe_name)
@@ -89,7 +88,6 @@ def _make_create_downloadable_file(folder_name: str):
 
         ### if we want to use it locally
         if settings.storage_mode=="local":
-            import os
             import re
 
             # Sanitize filename

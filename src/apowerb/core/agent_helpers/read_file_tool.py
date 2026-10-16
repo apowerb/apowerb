@@ -87,7 +87,6 @@ def _make_read_uploaded_file(folder_name: str, tabular_preview_rows: int = 0):
         """
         settings=get_settings()
         if settings.storage_mode=="local":
-            import os
             file_path = str(uploads_dir() / folder_name / filename)
 
             if not os.path.exists(file_path):
@@ -201,8 +200,7 @@ def _make_read_uploaded_file(folder_name: str, tabular_preview_rows: int = 0):
                 "message": "Could not decode file as text (not UTF-8 or CP1252)",
             }
         else:
-            logger.info("==================================================USING S3 NOW in _make_read_uploaded_file\n ===================================================\n========================================\n==================\n===================")
-            import os
+            logger.debug("[READ_FILE] S3 read of %s for %s", filename, folder_name)
             import tempfile
             content_bytes = read_file_bytes(folder_name, filename)
 
