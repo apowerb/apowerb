@@ -65,7 +65,7 @@ def test_generation_uses_the_requesting_agents_model_and_key(two_agents):
     assert kwargs["model"] == "mistral/mistral-small"
     assert kwargs["api_key"] == "key-two"
     # Same api_base fallback as make_text_to_sql_tools for mistral/ models.
-    assert "ovh.net" in kwargs["api_base"]
+    assert kwargs["api_base"] == t2s._agent_llm_endpoint(2)[1] is not None
 
 
 def test_generation_leaves_registered_agent_states_untouched(two_agents):
