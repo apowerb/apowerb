@@ -244,7 +244,7 @@ def _index_db_nl_steps(data: IndexDbNlRequest, callback_url: str | None) -> dict
 
         # Step 2: Generate SQL from natural language
         try:
-            generated_sql = _generate_sql_with_llm(data.nl_description, schema_info)
+            generated_sql = _generate_sql_with_llm(data.nl_description, schema_info, data.agent_id)
         except Exception as e:
             logger.error("[RAG_NL] SQL generation failed: %s", e)
             return {"status": "error", "message": "SQL generation failed. Try rephrasing your request.", "step": "generating_sql"}

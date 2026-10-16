@@ -231,14 +231,24 @@ def _execute_sql_query(sql_query: str, limit: int = 100) -> List[Dict[str, Any]]
         conn.close()
 
 
-def _generate_sql_with_llm(question: str, schema_info: Dict[str, Any]) -> str:
-    """Generate SQL via LLM (backward compat for rag.py)."""
-    if not _state_registry:
-        raise RuntimeError("No agent state registered yet.")
-    agent_name = next(iter(_state_registry))
-    # Not recorded in llm_usage: the borrowed agent is whichever registered
-    # first in this worker, not the caller -- its owner would be billed.
-    return _agent_generate_sql(agent_name, question, schema_info, record_usage=False)
+def _generate_sql_with_llm(question: str, schema_info: Dict[str, Any], agent_name: str) -> str:
+    """Generate SQL via LLM with *agent_name*'s model (/rag/index-db-nl).
+
+    Uses a transient state built from the agent's model params: the state
+    registered by make_text_to_sql_tools (DB params, schema cache) is
+    neither read nor replaced, and the agent need not be built in this worker.
+    """
+    model, api_base, api_key = _agent_llm_endpoint(int(agent_name.replace("agent", "")))
+    s = _AgentState(
+        model=model, api_base=api_base, api_key=api_key, agent_name=agent_name,
+        db_ok=False, db_type="postgresql", db_host="", db_port=5432, db_name="",
+        db_user="", db_password="", db_schema="", db_include="",
+        schema_samples=os.getenv("SQL_SCHEMA_SAMPLES", "0").strip().lower() in ("1", "true", "yes"),
+        cache={}, cache_ts=0.0,
+    )
+    # Not recorded in llm_usage: the route runs in a worker thread with no
+    # event loop, where record_completion_usage drops the row anyway.
+    return _state_generate_sql(s, question, schema_info, record_usage=False)
 
 
 # ── Tool Box param discovery (scan-time only, never at query time) ────────────
@@ -716,7 +726,13 @@ def _agent_execute_sql(agent_name: str, sql_query: str, limit: int = 100) -> Lis
 def _agent_generate_sql(
     agent_name: str, question: str, schema_info: Dict[str, Any], record_usage: bool = True
 ) -> str:
-    s = _get_state(agent_name)
+    return _state_generate_sql(_get_state(agent_name), question, schema_info, record_usage)
+
+
+def _state_generate_sql(
+    s: _AgentState, question: str, schema_info: Dict[str, Any], record_usage: bool = True
+) -> str:
+    agent_name = s.agent_name
     max_chars = int(os.getenv("SQL_SCHEMA_MAX_CHARS", "16000"))
     include_samples = s.schema_samples
     schema_description = build_schema_prompt(
@@ -1093,6 +1109,20 @@ def tool_business_analyst(question: str, max_steps: int = 4, max_rows: int = 100
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
+def _agent_llm_endpoint(agent_id: int) -> tuple:
+    """(model, api_base, api_key) the SQL tools call litellm with for the agent."""
+    from apowerb.core.agent_helpers import load_agent_model_params
+
+    model, model_params = load_agent_model_params(agent_id)
+    api_base = model_params.get("model_api_base")
+    if not api_base and model.startswith("mistral/"):
+        api_base = (
+            "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net"
+            "/api/openai_compat/v1"
+        )
+    return model, api_base, model_params.get("model_api_key")
+
+
 def make_text_to_sql_tools(
     agent_name: str,
     db_params: Optional[Dict[str, Any]] = None,
@@ -1112,10 +1142,8 @@ def make_text_to_sql_tools(
         [tool_text_to_sql, tool_get_database_schema, tool_text_to_sql_explain,
          tool_business_analyst]
     """
-    from apowerb.core.agent_helpers import load_agent_model_params
-
     agent_id = int(agent_name.replace("agent", ""))
-    agent_model_name, model_params = load_agent_model_params(agent_id)
+    agent_model_name, api_base, api_key = _agent_llm_endpoint(agent_id)
     # Best-effort: a missing identity costs the usage row's labels, never
     # the tools themselves.
     try:
@@ -1123,15 +1151,6 @@ def make_text_to_sql_tools(
     except Exception as e:
         logger.warning("[TEXT_TO_SQL] usage identity of %s not loaded: %s", agent_name, e)
         usage_agent_name, owner_id, billed_to_thaink2 = "", None, False
-    api_key  = model_params.get("model_api_key")
-    api_base = model_params.get("model_api_base")
-
-    if not api_base and agent_model_name.startswith("mistral/"):
-        api_base = (
-            "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net"
-            "/api/openai_compat/v1"
-        )
-
     if db_params and db_params.get("DB_NAME"):
         db_ok       = True
         db_type     = db_params.get("DB_TYPE", "postgresql").lower()

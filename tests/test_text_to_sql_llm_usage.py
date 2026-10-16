@@ -134,12 +134,17 @@ def test_reasoning_tokens_are_not_billed_twice(state, rows):
     assert (rows[0]["output_tokens"], rows[0]["thoughts_tokens"]) == (50, 200)
 
 
-def test_legacy_rag_generation_is_not_billed_to_a_borrowed_agent(state, rows):
+def test_index_db_nl_generation_is_not_recorded(state, rows, monkeypatch):
+    # /rag/index-db-nl runs in a worker thread: no loop to write the row.
+    import apowerb.core.agent_helpers as agent_helpers
+
+    monkeypatch.setattr(agent_helpers, "load_agent_model_params",
+                        lambda agent_id: ("gemini/gemini-2.5-flash", {"model_api_key": "k"}))
     schema = {"schema": "public", "db_type": "postgresql", "tables": {}}
 
     async def run():
         with patch.object(t2s.litellm, "completion", return_value=_resp("SELECT 1")):
-            t2s._generate_sql_with_llm("q", schema)
+            t2s._generate_sql_with_llm("q", schema, AGENT)
         await _drain()
 
     asyncio.run(run())

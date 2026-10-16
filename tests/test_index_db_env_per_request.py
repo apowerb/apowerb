@@ -54,7 +54,7 @@ def test_index_db_uses_the_config_then_restores_the_env(probe):
 
 def test_index_db_nl_uses_the_request_credentials_then_restores_the_env(probe, monkeypatch):
     monkeypatch.setattr(index_db, "_get_database_schema", lambda: {"tables": ["t"]})
-    monkeypatch.setattr(index_db, "_generate_sql_with_llm", lambda q, s: "SELECT 1")
+    monkeypatch.setattr(index_db, "_generate_sql_with_llm", lambda q, s, a: "SELECT 1")
     monkeypatch.setattr(index_db, "_validate_sql_safety", lambda sql: (True, ""))
     creds = SimpleNamespace(host="host-b", port=5432, database="db-b", user="user-b",
                             password="pw-b", schema_name="public")
@@ -71,7 +71,7 @@ def test_index_db_nl_uses_the_request_credentials_then_restores_the_env(probe, m
 
 def test_index_db_nl_from_a_tool_config_leaves_unset_keys_unset(probe, monkeypatch):
     monkeypatch.setattr(index_db, "_get_database_schema", lambda: {"tables": ["t"]})
-    monkeypatch.setattr(index_db, "_generate_sql_with_llm", lambda q, s: "SELECT 1")
+    monkeypatch.setattr(index_db, "_generate_sql_with_llm", lambda q, s, a: "SELECT 1")
     monkeypatch.setattr(index_db, "_validate_sql_safety", lambda sql: (True, ""))
     monkeypatch.setenv("DB_PASSWORD", "left-behind")
     data = SimpleNamespace(credentials=None, tool_config_id="tool_config1", session_id=None,
