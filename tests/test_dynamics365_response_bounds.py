@@ -15,17 +15,20 @@ def test_query_defaults_to_25_rows():
     assert req.call_args.kwargs["params"]["$top"] == 26
 
 
+_FORMATTED = "@OData.Community.Display.V1.FormattedValue"
+
+
 def test_clean_keeps_lookup_guids_next_to_their_display_value():
     row = {
         "@odata.etag": "x",
         "_owner_value": _GUID,
-        f"_owner_value{d365._FORMATTED_SUFFIX}": "Jane",
+        f"_owner_value{_FORMATTED}": "Jane",
         "_parent_value": _GUID,
         "name": "ACME",
     }
     out = d365._clean(row)
     assert out["_owner_value"] == _GUID  # needed for filters and @odata.bind
-    assert out[f"_owner_value{d365._FORMATTED_SUFFIX}"] == "Jane"
+    assert out[f"_owner_value{_FORMATTED}"] == "Jane"
     assert "@odata.etag" not in out
     assert out["_parent_value"] == _GUID
     assert out["name"] == "ACME"

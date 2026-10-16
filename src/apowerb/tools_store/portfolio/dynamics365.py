@@ -172,9 +172,6 @@ def _entity_set(value: str | None) -> str:
     return value.strip()
 
 
-_FORMATTED_SUFFIX = "@OData.Community.Display.V1.FormattedValue"
-
-
 def _clean(row: dict) -> dict:
     """Drop OData annotations (``@odata.etag`` and friends).
 
