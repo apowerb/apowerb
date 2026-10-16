@@ -114,7 +114,7 @@ RUN apt-get update \
 # Only ncurses-bin and ncurses-base are Essential and need the force flag.
 #
 # Kept: libtinfo6 (bash, readline), libacl1 (coreutils, tar, passwd),
-# libsystemd0 and libudev1 (apt, PAM) -- the four HIGH that remain.
+# libsystemd0 (apt, PAM) -- the three HIGH that remain; libudev1 goes below.
 #
 # Consequence for anyone extending this image: `docker exec -it ... bash`
 # still works, but without terminfo `clear`/`tput` are gone and full-screen
@@ -124,6 +124,12 @@ RUN dpkg --purge libuuid1 libncursesw6 \
     && dpkg --purge --force-remove-essential ncurses-bin ncurses-base \
     && rm -f /usr/local/lib/python3.13/lib-dynload/_uuid.* \
              /usr/local/lib/python3.13/lib-dynload/_curses*
+
+# libudev1 (systemd CVE-2026-16742, no trixie fix) lost its last consumer with
+# util-linux above: apt depends on libsystemd0, not libudev1, so apt stays
+# installed and `apt-get install` keeps working. dpkg refuses the purge if a
+# later change brings a consumer back.
+RUN dpkg --purge libudev1
 
 # pip is never used at runtime: the application runs out of /opt/venv, which uv
 # built and which carries no pip of its own. The copy shipped in the base image
