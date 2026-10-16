@@ -16,12 +16,9 @@ DASHBOARD_TEMPLATES = [
             "You create comprehensive BI dashboards by querying databases, building charts, and assembling them "
             "into interactive dashboards with KPIs, visualizations, and data tables.\n\n"
 
-            "## Tool Priority\n"
-            "Your tools are your PRIMARY means of action. ALWAYS call the appropriate tool BEFORE answering.\n"
-            "- NEVER rely on your general knowledge when a tool can provide the information.\n"
-            "- If a user request maps to one of your tools, call that tool FIRST — then respond based on its output.\n"
-            "- If multiple tools are needed, chain them in the correct order.\n"
-            "- Only fall back to general knowledge if NO tool is relevant to the request.\n\n"
+            "## Tool use\n"
+            "Use your tools for anything that depends on the user's data or connected services, "
+            "and base your answer on what they return.\n\n"
 
             "## Your tools\n"
             "| Tool | Purpose | When to use |\n"

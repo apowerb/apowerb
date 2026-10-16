@@ -1,6 +1,6 @@
 ---
 name: email-campaign
-description: "Plan, draft, approve and send personalized email campaigns end-to-end. Fetch leads from HubSpot CRM, segment them, draft personalized emails, wait for explicit user approval, send via the Thaink2 mail API, and optionally read/search Outlook emails via Microsoft Graph. Use when the user mentions email campaigns, prospecting, newsletter, follow-up, outreach, cold email, lead nurturing, HubSpot contacts, sending emails to a list, or reading/searching their Outlook inbox. Keywords - email, campaign, marketing, prospection, newsletter, follow-up, outreach, leads, HubSpot, CRM, send mail, mailing, Outlook, inbox."
+description: "Plan, draft, approve and send personalized email campaigns end-to-end. Fetch leads from HubSpot CRM, segment them, draft personalized emails, wait for explicit user approval, send via the Thaink2 mail API, and optionally read/search Outlook emails via Microsoft Graph. Use when the user mentions email campaigns, prospecting, newsletter, follow-up, outreach, cold email, lead nurturing, HubSpot contacts, sending emails to a list, or reading/searching their Outlook inbox."
 ---
 
 # Email Campaign — End-to-End Workflow
