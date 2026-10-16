@@ -19,7 +19,13 @@ FLAG = "APOWERB_ANTHROPIC_PROMPT_CACHE"
 CLAUDE = "anthropic/claude-sonnet-4-5-20250929"
 
 
-def _client(echecs=0):
+def _bad_request(message):
+    import litellm
+
+    return litellm.BadRequestError(message, model=CLAUDE, llm_provider="anthropic")
+
+
+def _client(echecs=0, erreur=_bad_request):
     appels, restant = [], [echecs]
 
     class _Enregistreur(CleaningLiteLLMClient):
@@ -27,7 +33,7 @@ def _client(echecs=0):
             appels.append(kwargs)
             if restant[0]:
                 restant[0] -= 1
-                raise RuntimeError("cache_control refuse")
+                raise erreur("cache_control refuse")
             return "reponse"
 
     return _Enregistreur(), appels
@@ -83,9 +89,19 @@ async def test_repli_sans_cache_si_le_fournisseur_refuse(monkeypatch):
 
 async def test_deux_echecs_remontent(monkeypatch):
     monkeypatch.delenv(FLAG, raising=False)
+    import litellm
+
     client, _ = _client(echecs=2)
+    with pytest.raises(litellm.BadRequestError):
+        await client.acompletion(**_kwargs(CLAUDE))
+
+
+async def test_une_erreur_autre_que_400_ne_rejoue_pas(monkeypatch):
+    monkeypatch.delenv(FLAG, raising=False)
+    client, appels = _client(echecs=1, erreur=RuntimeError)
     with pytest.raises(RuntimeError):
         await client.acompletion(**_kwargs(CLAUDE))
+    assert len(appels) == 1
 
 
 def test_chaque_appel_recoit_sa_propre_liste(monkeypatch):

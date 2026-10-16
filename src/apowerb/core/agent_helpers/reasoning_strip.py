@@ -39,6 +39,8 @@ from __future__ import annotations
 
 from logging import getLogger
 
+import litellm
+
 from apowerb.core.agent_helpers.anthropic_prompt_cache import with_cache_points
 from apowerb.core.agent_helpers.gemini_prompt_cache import (
     explicit_cache_enabled,
@@ -114,9 +116,11 @@ class CleaningLiteLLMClient(LiteLLMClient):
         if cached is not kwargs:
             try:
                 return await self._appel_reel(**cached)
-            except Exception as exc:  # noqa: BLE001
-                # Même règle que pour Gemini : le cache ne doit jamais coûter
-                # une réponse. Si l'appel sans marqueur échoue aussi, l'erreur remonte.
+            except litellm.BadRequestError as exc:
+                # Le cache ne doit jamais coûter une réponse : un marqueur refusé
+                # revient en 400, on rejoue sans. Un 429 ou un 5xx remonte tel quel,
+                # le rejouer doublerait la requête. Si l'appel sans marqueur échoue
+                # aussi, l'erreur remonte.
                 _cache_logger.warning(
                     "[PROMPT_CACHE] appel Claude avec cache en echec (%s), repli sans cache",
                     type(exc).__name__,
