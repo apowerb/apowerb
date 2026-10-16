@@ -10,16 +10,13 @@ jauge annoncerait un chiffre et la garde en appliquerait un autre.
 from __future__ import annotations
 
 import inspect
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import event, select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apowerb.admin import router as admin_router
 from apowerb.configs.settings import get_settings
@@ -32,12 +29,13 @@ from apowerb.core.agent_helpers.default_llm_usage import (
 )
 from apowerb.core.extensions.registry import registry
 from apowerb.core.usage_quota import get_quota_status
-from apowerb.helpers.database import Base, sessionmanager
+from apowerb.helpers.database import Base
 from apowerb.models import LlmUsage, User
 
 MOI = "eval@exemple.fr"
-# Le schema des modeles, fige a l'import (`settings.db_schema`). Vide (la CI),
-# les tables vivent dans `main`, le schema par defaut de SQLite.
+# Le schema des modeles (`settings.db_schema`), que la fixture `sqlite_engine`
+# attache tel quel. Vide (la CI), les tables vivent dans `main`, le schema par
+# defaut de SQLite. Aucun test ne le reecrit : la conftest l'interdit.
 SCHEMA = Base.metadata.schema or "main"
 
 
@@ -49,33 +47,13 @@ def registre_vierge(monkeypatch):
 
 
 @pytest.fixture
-async def base(monkeypatch):
-    # Les tables gardent leur vrai schema, attache en SQLite (une seule
-    # connexion : la base attachee vit avec elle). Le retirer des tables ne
-    # suffit pas : un test precedent (`test_default_superadmin`) peut avoir
-    # fige dans le cache SQLAlchemy des colonnes de `user` qualifiees.
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
-    async with engine.begin() as conn:
-        if SCHEMA != "main":
-            await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
-        await conn.run_sync(Base.metadata.create_all)
-
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        session = factory()
-        try:
-            yield session
-        finally:
-            await session.close()
-
-    monkeypatch.setattr(sessionmanager, "session", _session, raising=False)
+async def base(sqlite_engine, bind_sessionmanager):
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
+    bind_sessionmanager(factory)
     async with factory() as db:
         db.add(User(user_id=7, email=MOI, first_name="E", last_name="G"))
         await db.commit()
     yield factory
-    await engine.dispose()
 
 
 async def consomme(factory, *, jetons: int, il_y_a_min: float) -> None:

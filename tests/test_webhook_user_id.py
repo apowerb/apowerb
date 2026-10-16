@@ -16,35 +16,18 @@ MUST be the User row's ``email`` field, not ``str(user_id)``.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
-
 import pytest
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from apowerb.helpers.database import Base
 from apowerb.models import User
 from apowerb.routers.webhook_handlers import _common
 
 
 @pytest.fixture
-async def sqlite_with_user(monkeypatch):
+async def sqlite_with_user(sqlite_engine, bind_sessionmanager):
     """sqlite + seeded User; sessionmanager.session() patched onto the
     ``_common`` module so ``run_agent_for_webhook`` reads from our DB."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    # Strip Postgres schema for sqlite compatibility (cross-schema CREATE
-    # TABLE is unsupported).
-    for t in Base.metadata.tables.values():
-        t.schema = None
-    Base.metadata.schema = None
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
     async with factory() as db:
         db.add(
@@ -59,18 +42,9 @@ async def sqlite_with_user(monkeypatch):
         )
         await db.commit()
 
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        session = factory()
-        try:
-            yield session
-        finally:
-            await session.close()
-
-    monkeypatch.setattr(_common.sessionmanager, "session", _session, raising=False)
+    bind_sessionmanager(factory)
 
     yield factory
-    await engine.dispose()
 
 
 class TestAdkUserIdIsEmail:

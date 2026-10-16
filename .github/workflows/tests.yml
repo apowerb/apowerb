@@ -21,11 +21,19 @@ jobs:
     permissions:
       contents: read
 
+    # The models qualify their tables with settings.db_schema. Empty, they are
+    # unqualified; "public" is the default a developer gets without DB_SCHEMA,
+    # and what production runs. The tests attach that schema in SQLite
+    # (tests/conftest.py, sqlite_engine). Running only the empty leg once hid
+    # tests that failed on every laptop and passed here.
+    strategy:
+      fail-fast: false
+      matrix:
+        db_schema: ["", "public"]
+    name: unit (DB_SCHEMA=${{ matrix.db_schema || 'empty' }})
+
     env:
-      # The models qualify their tables with settings.db_schema. SQLite has no
-      # schemas, so an unqualified name is what lets these tests run without a
-      # Postgres at all.
-      DB_SCHEMA: ""
+      DB_SCHEMA: ${{ matrix.db_schema }}
 
     steps:
       - name: Checkout repository
@@ -91,6 +99,7 @@ jobs:
       # Runs the excluded thirteen anyway, without blocking, so the debt stays
       # in plain sight instead of quietly rotting behind an --ignore flag.
       - name: The excluded files, for visibility only
+        if: matrix.db_schema == ''
         continue-on-error: true
         run: |
           uv run pytest -q -m "not integration" \

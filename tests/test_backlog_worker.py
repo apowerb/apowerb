@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 
@@ -29,44 +28,24 @@ def _seconds_between(later: datetime, earlier: datetime) -> float:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
     return (_as_naive_utc(later) - _as_naive_utc(earlier)).total_seconds()
-from typing import AsyncIterator
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from apowerb.helpers.database import Base
 from apowerb.models import User, WebhookLog, WebhookSubscription
 from apowerb.scheduler import backlog_worker
 
 
 @pytest.fixture
-async def sqlite_session_factory(monkeypatch):
+async def sqlite_session_factory(sqlite_engine, bind_sessionmanager):
     """Build a sqlite:///:memory: async engine and make sessionmanager
     use it for the duration of the test."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        async with factory() as session:
-            yield session
-
-    # Worker imports sessionmanager at module load. Patch the symbol
-    # on the worker module (and on the outlook handler module, in case
-    # the integration test imports it later).
-    monkeypatch.setattr(
-        backlog_worker.sessionmanager, "session", _session, raising=False
-    )
+    bind_sessionmanager(factory)
 
     yield factory
-    await engine.dispose()
 
 
 async def _seed_user_and_subscription(factory) -> tuple[int, int]:
