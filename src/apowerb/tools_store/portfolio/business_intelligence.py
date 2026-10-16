@@ -1762,7 +1762,17 @@ async def _async_get_dashboard_data(
     The agent uses this to *read* a dashboard it is linked to (or any
     dashboard by id). Each chart contribution contains labels + rows so the
     LLM can summarise, compare, or answer questions about the data.
+
+    A spec v2 dashboard (built from a BI template) keeps its components in
+    ``visual``, which the loop below does not read: it is computed by the spec
+    engine instead, otherwise the agent sees an empty dashboard.
     """
+    from apowerb.tools_store.portfolio.bi_dashboard_tools import _async_spec_dashboard_data
+
+    spec = await _async_spec_dashboard_data(dashboard_id, owner_email)
+    if spec is not None:
+        return spec
+
     from apowerb.bi.dashboards.service import DashboardService
     from apowerb.bi.charts.service import ChartService
     from apowerb.bi.db_stores import DatabaseDashboardStore, DatabaseChartStore

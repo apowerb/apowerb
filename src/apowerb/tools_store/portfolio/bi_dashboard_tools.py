@@ -423,6 +423,25 @@ def _select_components(dashboard, wanted: str) -> tuple[list[str] | None, str | 
     return ids, None
 
 
+async def _async_spec_dashboard_data(dashboard_id: str, owner: str) -> dict | None:
+    """Computed values of a spec v2 dashboard, for ``tool_get_dashboard_data``.
+
+    None when the dashboard is not spec v2 or not visible to ``owner``: the
+    caller then reads it as a classic dashboard (``chart``/``key_value``).
+    """
+    from apowerb.bi.data.csv_executor import use_session_factory
+
+    async with _dashboard_store(owner) as store:
+        dashboard = await store.get(dashboard_id)
+    if dashboard is None or not dashboard.sources:
+        return None
+    with use_session_factory(lambda: _get_session()):
+        preview = await _preview(dashboard, owner, detail=True)
+    if "preview_error" in preview:
+        return {"success": False, "error": preview["preview_error"]}
+    return {"success": True, "dashboard_id": dashboard_id, "dashboard_title": dashboard.title, **preview}
+
+
 async def _async_query(dashboard_id: str, filters: dict, owner: str, component_ids: str = "") -> dict:
     async with _dashboard_store(owner) as store:
         dashboard = await store.get(dashboard_id)
