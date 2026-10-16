@@ -15,11 +15,13 @@ https://docs.mistral.ai/api/endpoint/ocr (verified 2026-10-02).
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
+from apowerb.tools_store.portfolio import ocr
 from apowerb.tools_store.portfolio.ocr import (
     _MISTRAL_OCR_MODEL,
     _MISTRAL_OCR_URL,
@@ -357,3 +359,85 @@ class TestHttpError:
         assert result["status"] == "error"
         assert "File not found" in result["error_message"]
         mock_post.assert_not_called()
+
+
+# ── Uploaded file referenced by name ──────────────────────────────────────
+# The agent only knows the name it was shown in ``[Uploaded files: cv.pdf]``,
+# not where the upload lives. Before this, "cv.pdf" was opened relative to the
+# worker's CWD and always came back "File not found".
+class TestUploadedFileByName:
+    PDF = b"%PDF-1.4 uploaded cv"
+
+    @pytest.fixture
+    def azure(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        monkeypatch.setenv("ROOT_AGENT_ID", "42")
+        pages = [{"pageNumber": 1, "lines": [{"content": "Jean Dupont"}]}]
+        with patch("httpx.post", return_value=_azure_accepted()) as mock_post, patch(
+            "httpx.get", return_value=_azure_result("succeeded", pages)
+        ):
+            yield mock_post
+
+    def test_local_upload_resolved_in_agent_dir(self, azure, monkeypatch, tmp_path):
+        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: False)
+        monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
+        (tmp_path / "agent42").mkdir()
+        (tmp_path / "agent42" / "cv.pdf").write_bytes(self.PDF)
+
+        result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "success", result
+        assert result["markdown"] == "Jean Dupont"
+        sent = azure.call_args.kwargs["json"]["base64Source"]
+        assert base64.b64decode(sent) == self.PDF
+
+    def test_s3_upload_resolved_for_root_agent(self, azure, monkeypatch):
+        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: True)
+        with patch(
+            "apowerb.artifacts.file_lookup.read_file_bytes", return_value=self.PDF
+        ) as read:
+            result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "success", result
+        read.assert_called_once_with("agent42", "cv.pdf")
+        sent = azure.call_args.kwargs["json"]["base64Source"]
+        assert base64.b64decode(sent) == self.PDF
+
+    def test_s3_missing_upload_lists_available_files(self, azure, monkeypatch):
+        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: True)
+        with patch(
+            "apowerb.artifacts.file_lookup.read_file_bytes", return_value=None
+        ), patch(
+            "apowerb.artifacts.file_lookup.available_filenames",
+            return_value=["resume.pdf"],
+        ):
+            result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "cv.pdf" in result["error_message"]
+        assert "resume.pdf" in result["error_message"]
+        azure.assert_not_called()
+
+    def test_path_is_not_looked_up_in_uploads(self, azure, monkeypatch, tmp_path):
+        # Only a bare filename is mapped; "../x.pdf" must not escape agent42/.
+        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: False)
+        monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
+        (tmp_path / "x.pdf").write_bytes(self.PDF)
+
+        result = tool_ocr_document("../x.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        azure.assert_not_called()
+
+    def test_no_active_agent_keeps_file_not_found(self, azure, monkeypatch):
+        monkeypatch.delenv("ROOT_AGENT_ID")
+        monkeypatch.setattr(ocr, "_is_s3_storage", lambda: True)
+        with patch("apowerb.artifacts.file_lookup.read_file_bytes") as read:
+            result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        read.assert_not_called()
+        azure.assert_not_called()

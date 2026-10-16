@@ -19,6 +19,10 @@ Input handling
   worker), so only the provider's own fetcher sees it.
 * a local file path — read from disk and sent inline as a base64 ``data:`` URL.
   This mirrors how ``audio.tool_speech_to_text`` accepts an uploaded file path.
+* the bare name of a file the user uploaded to the agent (``cv.pdf``, as shown
+  in ``[Uploaded files: …]``). The agent never knows where uploads live, so the
+  name is looked up in the root agent's upload store — S3 input artifacts or
+  ``uploads/agent{id}/`` on disk — the same places ``read_uploaded_file`` reads.
 
 Output is bounded: a huge scan can return megabytes of markdown (and, with
 ``include_images=True``, base64 image crops). The combined markdown is capped
@@ -98,25 +102,86 @@ def _is_remote(source: str) -> bool:
     return source.strip().lower().startswith(("http://", "https://"))
 
 
-def _read_supported_file(source: str) -> tuple[str, str, bytes]:
-    """Read a local file, validating it exists and is a supported type.
+def _is_s3_storage() -> bool:
+    """Same predicate the upload route uses to decide where files are written."""
+    from apowerb.configs.artifact_service_config import (
+        is_s3_artifact_storage_configured,
+    )
+    from apowerb.configs.settings import get_settings
 
-    Returns ``(mime, chunk_type, raw_bytes)``. Raises ValueError for a
+    return is_s3_artifact_storage_configured(get_settings())
+
+
+def _read_uploaded_file(name: str) -> bytes | None:
+    """Bytes of the file ``name`` uploaded to the current root agent.
+
+    Returns ``None`` when ``name`` is not a bare filename or no agent is bound
+    to the invocation, so the caller keeps its plain "File not found". Raises
+    ValueError when the agent has no such upload, listing what it does have so
+    the model can retry with the right name.
+    """
+    from apowerb.core.invocation_context import get_root_agent_id
+
+    if name in {"", ".", ".."} or name != os.path.basename(name) or "\\" in name:
+        return None
+    root = get_root_agent_id()
+    if not root.isdigit():
+        return None
+
+    folder = f"agent{root}"
+    if _is_s3_storage():
+        from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
+
+        content = read_file_bytes(folder, name)
+        available = [] if content is not None else available_filenames(folder)
+    else:
+        from apowerb.configs.paths import agent_upload_dir
+
+        base = agent_upload_dir(root).resolve()
+        path = (base / name).resolve()
+        if path.parent == base and path.is_file():
+            content, available = path.read_bytes(), []
+        else:
+            content = None
+            available = (
+                sorted(p.name for p in base.iterdir() if p.is_file())
+                if base.is_dir()
+                else []
+            )
+    if content is None:
+        listing = f" Uploaded files: {', '.join(available)}." if available else ""
+        raise ValueError(f"File not found: {name} in {folder}.{listing}")
+    return content
+
+
+def _read_supported_file(source: str) -> tuple[str, str, bytes]:
+    """Read a local file or an upload, validating it exists and is supported.
+
+    ``source`` is a path on disk or the bare name of a file uploaded to the
+    agent. Returns ``(mime, chunk_type, raw_bytes)``. Raises ValueError for a
     missing or unsupported file so the caller can report it as a fatal error.
     """
-    if not os.path.isfile(source):
-        raise ValueError(
-            f"File not found: {source}. Provide a readable file path or an "
-            f"http(s) URL."
-        )
     ext = Path(source).suffix.lower()
     if ext not in _DOC_TYPES:
+        if not os.path.isfile(source):
+            raise ValueError(
+                f"File not found: {source}. Provide a readable file path or an "
+                f"http(s) URL."
+            )
         raise ValueError(
             f"Unsupported file type '{ext}'. Supported: {_SUPPORTED_EXTS}."
         )
     mime, chunk_type = _DOC_TYPES[ext]
-    with open(source, "rb") as fh:
-        return mime, chunk_type, fh.read()
+    if os.path.isfile(source):
+        with open(source, "rb") as fh:
+            return mime, chunk_type, fh.read()
+    data = _read_uploaded_file(source)
+    if data is None:
+        raise ValueError(
+            f"File not found: {source}. Provide a readable file path or an "
+            f"http(s) URL."
+        )
+    return mime, chunk_type, data
 
 
 def _build_document_chunk(source: str) -> dict:
@@ -308,8 +373,9 @@ def tool_ocr_document(
 
     Args:
         source (str): What to OCR. Either an ``http(s)`` URL (the provider fetches
-            it) or a path to a local file. Supported file types: PDF, PPTX, DOCX,
-            PNG, JPG/JPEG, AVIF.
+            it), the name of a file the user uploaded (e.g. "cv.pdf", exactly as
+            listed in [Uploaded files: …]), or a path to a local file. Supported
+            file types: PDF, PPTX, DOCX, PNG, JPG/JPEG, AVIF.
         provider (str): Which OCR provider to use. Options: "auto" (tries available
             providers in order), "mistral" or "azure". Default: "auto".
         include_images (bool): When true, include base64-encoded image crops that
