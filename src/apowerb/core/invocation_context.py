@@ -157,6 +157,50 @@ def get_root_agent_id(default: str = "") -> str:
     return os.getenv("ROOT_AGENT_ID", default)
 
 
+# ---------------------------------------------------------------------------
+# Conversation context (linked dashboard, chat session) of the invocation.
+#
+# Read by the BI tools at call time. Bound by the same before_agent_callback,
+# from the ADK session the run belongs to: its id is the chat session, and the
+# dashboard is the ``dashboard_id`` the chat router put in the session state,
+# or the id carried by a ``dashboard-chat-<id>`` session. No env fallback: a
+# process-wide value would belong to whichever conversation set it last.
+# ---------------------------------------------------------------------------
+
+DASHBOARD_CHAT_PREFIX = "dashboard-chat-"
+
+_dashboard_id_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_dashboard_id", default=None
+)
+_chat_session_id_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_chat_session_id", default=None
+)
+
+
+def bind_conversation_context(callback_context) -> None:  # noqa: ANN001 - ADK context
+    """Bind the dashboard and chat session of the run ``callback_context`` is in."""
+    session = getattr(callback_context, "session", None)
+    session_id = str(getattr(session, "id", "") or "")
+    try:
+        dashboard_id = (getattr(callback_context, "state", None) or {}).get("dashboard_id")
+    except Exception:  # noqa: BLE001 - a context without state binds no dashboard
+        dashboard_id = None
+    if not dashboard_id and session_id.startswith(DASHBOARD_CHAT_PREFIX):
+        dashboard_id = session_id[len(DASHBOARD_CHAT_PREFIX):]
+    _dashboard_id_var.set(str(dashboard_id) if dashboard_id else None)
+    _chat_session_id_var.set(session_id or None)
+
+
+def get_dashboard_id() -> str:
+    """Dashboard linked to the current conversation, or ``""``."""
+    return _dashboard_id_var.get() or ""
+
+
+def get_chat_session_id() -> str:
+    """Chat session of the current invocation, or ``""``."""
+    return _chat_session_id_var.get() or ""
+
+
 def make_identity_before_agent_callback(
     *,
     owner: Optional[str],
@@ -181,6 +225,7 @@ def make_identity_before_agent_callback(
             agent_id=agent_id,
             invocation_id=invocation_id,
         )
+        bind_conversation_context(callback_context)
         return None
 
     return _bind_identity

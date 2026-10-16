@@ -795,14 +795,14 @@ def _chat_dashboard_identity(session_id: str | None = None) -> tuple[str, str]:
     Charts a user sends to the dashboard are collected into a board scoped to
     THAT conversation, so charts from different chats no longer pile into one
     shared board. ``session_id`` is passed explicitly by HTTP callers (the
-    "send to dashboard" button); agent runs fall back to the per-request
-    ``AGENT_CHAT_SESSION_ID`` env. Falls back to the legacy shared dashboard
-    when no session is known. Dashboard mini-chats (session ``dashboard-chat-*``)
-    embed into their linked dashboard via AGENT_DASHBOARD_ID, so they keep the
-    legacy slug here.
+    "send to dashboard" button); agent runs fall back to the chat session of
+    the invocation (``invocation_context.get_chat_session_id``). Falls back to
+    the legacy shared dashboard when no session is known. Dashboard mini-chats
+    (session ``dashboard-chat-*``) embed into their linked dashboard, so they
+    keep the legacy slug here.
     """
-    import os
-    sid = (session_id or os.getenv("AGENT_CHAT_SESSION_ID", "")).strip()
+    from apowerb.core.invocation_context import get_chat_session_id
+    sid = (session_id or get_chat_session_id()).strip()
     if not sid or sid.startswith("dashboard-chat-"):
         return _CHAT_DASHBOARD_SLUG, _CHAT_DASHBOARD_TITLE
     suffix = re.sub(r"[^a-z0-9]+", "-", sid.lower()).strip("-")[:80] or "default"
@@ -1616,8 +1616,8 @@ def tool_add_chart_to_dashboard(
     Returns:
         dict with success status, dashboard_id, and component_count.
     """
-    import os
-    dashboard_id = (dashboard_id or os.getenv("AGENT_DASHBOARD_ID", "")).strip()
+    from apowerb.core.invocation_context import get_dashboard_id
+    dashboard_id = (dashboard_id or get_dashboard_id()).strip()
     if not dashboard_id:
         return {"success": False, "error": (
             "No dashboard specified. From a dashboard's chat I target it "
@@ -1676,8 +1676,8 @@ def tool_add_kpi_to_dashboard(
     Returns:
         dict with success status, dashboard_id, and component_count.
     """
-    import os
-    dashboard_id = (dashboard_id or os.getenv("AGENT_DASHBOARD_ID", "")).strip()
+    from apowerb.core.invocation_context import get_dashboard_id
+    dashboard_id = (dashboard_id or get_dashboard_id()).strip()
     if not dashboard_id:
         return {"success": False, "error": (
             "No dashboard specified. From a dashboard's chat I target it "
@@ -1847,25 +1847,24 @@ def tool_get_dashboard_data(dashboard_id: str = "", folder_name: str = "") -> di
 
     Args:
         dashboard_id: Dashboard UUID. Leave empty to auto-use the dashboard
-            the current chat session is attached to (set via
-            ``AGENT_DASHBOARD_ID`` by the mini chat).
+            the current chat session is attached to.
         folder_name: Agent folder name (injected automatically).
 
     Returns:
         dict with ``success``, ``dashboard_title`` and ``components``
         (list of chart / kpi entries with their rows).
     """
-    import os
+    from apowerb.core.invocation_context import get_dashboard_id
 
     did = (dashboard_id or "").strip()
     if not did:
-        did = os.getenv("AGENT_DASHBOARD_ID", "").strip()
+        did = get_dashboard_id().strip()
     if not did:
         return {
             "success": False,
             "error": (
-                "No dashboard_id provided and no AGENT_DASHBOARD_ID found "
-                "in the current context. Pass the UUID of the dashboard "
+                "No dashboard_id provided and no dashboard linked to "
+                "this chat. Pass the UUID of the dashboard "
                 "you want to read."
             ),
         }
@@ -1976,8 +1975,8 @@ def tool_remove_chart_from_dashboard(
     Returns:
         dict with success status, dashboard_id, removed count, component_count.
     """
-    import os
-    dashboard_id = (dashboard_id or os.getenv("AGENT_DASHBOARD_ID", "")).strip()
+    from apowerb.core.invocation_context import get_dashboard_id
+    dashboard_id = (dashboard_id or get_dashboard_id()).strip()
     if not dashboard_id:
         return {"success": False, "error": (
             "No dashboard specified. From a dashboard's chat I target it "
@@ -2307,9 +2306,9 @@ def make_bi_tools(
             entries with title, chart_type, labels, rows and total_rows, and
             kpi entries with label, value and unit).
         """
-        import os
+        from apowerb.core.invocation_context import get_dashboard_id
         if not dashboard_id:
-            dashboard_id = os.getenv("AGENT_DASHBOARD_ID", "")
+            dashboard_id = get_dashboard_id()
         if not dashboard_id:
             return {"success": False, "error": "No dashboard_id provided and no linked dashboard found."}
         try:
