@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from logging import getLogger
 
+from apowerb.core.agent_helpers.anthropic_prompt_cache import with_cache_points
 from apowerb.core.agent_helpers.gemini_prompt_cache import (
     explicit_cache_enabled,
     mark_system_prefix_for_cache,
@@ -109,6 +110,18 @@ class CleaningLiteLLMClient(LiteLLMClient):
         messages = kwargs.get("messages")
         if messages is not None:
             kwargs = {**kwargs, "messages": strip_reasoning_content(messages)}
+        cached = with_cache_points(kwargs)
+        if cached is not kwargs:
+            try:
+                return await self._appel_reel(**cached)
+            except Exception as exc:  # noqa: BLE001
+                # Même règle que pour Gemini : le cache ne doit jamais coûter
+                # une réponse. Si l'appel sans marqueur échoue aussi, l'erreur remonte.
+                _cache_logger.warning(
+                    "[PROMPT_CACHE] appel Claude avec cache en echec (%s), repli sans cache",
+                    type(exc).__name__,
+                )
+                return await self._appel_reel(**kwargs)
         # Drapeau éteint (défaut) : exactement le chemin d'avant, sans nouvelle
         # tentative -- une erreur remonte telle quelle, un seul appel.
         if messages is None or not explicit_cache_enabled():
