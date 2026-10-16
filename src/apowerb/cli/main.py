@@ -14,10 +14,12 @@ api_port = 8000
 @app.command()
 def serve(
     host: str = typer.Option(
-        api_host, "--host", "-h", help="Host to bind the server to"
+        api_host, "--host", "-h", help="Host to bind the server to",
+        envvar="APOWERB_HOST"
     ),
     port: int = typer.Option(
-        api_port, "--port", "-p", help="Port to bind the server to"
+        api_port, "--port", "-p", help="Port to bind the server to",
+        envvar="APOWERB_PORT"
     ),
     reload: bool = typer.Option(
         True, "--reload/--no-reload", help="Enable auto-reload"
