@@ -130,6 +130,9 @@ s3 = [
     "fsspec>=2024.6.0",
     "aiobotocore>=2.13.0",
 ]
+langfuse = [
+    "langfuse>=4,<5",
+]
 
 [project.scripts]
 # Pointe la CLI Typer, pas ``apowerb:main`` : cette cible était morte
