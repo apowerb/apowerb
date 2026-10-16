@@ -778,7 +778,9 @@ def to_agent(agent_name: str) -> LlmAgent:
                 *, callback_context, llm_request,
                 _trunc=truncate_cb, _ex=_existing_for_truncate
             ):
-                _trunc(callback_context=callback_context, llm_request=llm_request)
+                result = _trunc(callback_context=callback_context, llm_request=llm_request)
+                if result is not None:
+                    return result
                 return _ex(callback_context=callback_context, llm_request=llm_request)
 
             before_model_cb = chained_with_truncate
@@ -797,10 +799,11 @@ def to_agent(agent_name: str) -> LlmAgent:
             ):
                 # Truncate EN PREMIER (levier principal) : reduit l'historique.
                 # Strip ensuite : nettoie les base64 dans les messages restants.
-                # Aucun des deux ne court-circuite l'autre (les deux retournent None).
-                _existing(callback_context=callback_context, llm_request=llm_request)
-                _strip(callback_context=callback_context, llm_request=llm_request)
-                return None
+                # Un LlmResponse rendu plus haut (garde-fou, RAG) court-circuite le modele.
+                result = _existing(callback_context=callback_context, llm_request=llm_request)
+                if result is not None:
+                    return result
+                return _strip(callback_context=callback_context, llm_request=llm_request)
 
             before_model_cb = chained_with_strip
         else:
