@@ -32,10 +32,16 @@ async def validate_agent_ownership(agent_id: str, current_user: user_schemas.Use
         HTTPException 404 – agent inexistant
         HTTPException 403 – agent d'un autre utilisateur
     """
+    await validate_agent_ownership_by_email(agent_id, current_user.email)
+
+
+async def validate_agent_ownership_by_email(agent_id: str, email: str) -> None:
+    """Même contrôle que :func:`validate_agent_ownership`, à partir du seul
+    email : les websockets n'ont que le ``sub`` du jeton, pas d'objet User."""
     if not re.match(r"^agent\d+$", agent_id):
         logger.warning(
             "[OWNERSHIP] Invalid agent_id format: %r from user %s",
-            agent_id, current_user.email,
+            agent_id, email,
         )
         raise HTTPException(status_code=400, detail="Invalid agent_id format")
 
@@ -52,10 +58,10 @@ async def validate_agent_ownership(agent_id: str, current_user: user_schemas.Use
         raise HTTPException(status_code=404, detail="Agent not found")
 
     agent = rows[0]._asdict()
-    if str(agent.get("owner_id")) != str(current_user.email):
+    if str(agent.get("owner_id")) != str(email):
         logger.warning(
             "[OWNERSHIP] Denied: user %s tried to access agent %s (owner=%s)",
-            current_user.email, agent_id, agent.get("owner_id"),
+            email, agent_id, agent.get("owner_id"),
         )
         raise HTTPException(status_code=403, detail="Not your agent")
 

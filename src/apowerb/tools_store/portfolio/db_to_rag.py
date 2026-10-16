@@ -128,6 +128,38 @@ def tool_load_from_db_and_index(
         dict with keys: status, knowledge_id, sql_query, row_count, columns,
         csv_path, download_path, message.
     """
+    from apowerb.core.invocation_context import get_root_agent_id
+
+    root = get_root_agent_id()
+    return load_from_db_and_index(
+        sql_query=sql_query,
+        knowledge_name=knowledge_name,
+        description=description,
+        max_rows=max_rows,
+        prompt=prompt,
+        wait_for_completion=wait_for_completion,
+        callback_url=callback_url,
+        folder=f"agent{root}" if root.isdigit() else "default",
+    )
+
+
+def load_from_db_and_index(
+    sql_query: str,
+    knowledge_name: str,
+    description: str = "",
+    max_rows: int = 500,
+    prompt: str = "You are a helpful assistant that answers questions about the provided data.",
+    wait_for_completion: bool = True,
+    callback_url: str | None = None,
+    *,
+    folder: str,
+) -> dict:
+    """Run ``sql_query``, export the rows as CSV under ``uploads/<folder>/``
+    and index the file into a RAG knowledge base.
+
+    ``folder`` is explicit: the index-db routes pass the folder of their
+    request, the agent tool the folder of its root agent.
+    """
     # 1. Validate SQL safety
     is_safe, error_msg = _validate_sql(sql_query)
     if not is_safe:
@@ -179,9 +211,8 @@ def tool_load_from_db_and_index(
     except Exception as e:
         return {"status": "error", "message": f"Unexpected DB error: {e}"}
 
-    # 3. Write CSV to uploads/{AGENT_FOLDER}/
+    # 3. Write CSV to uploads/{folder}/
     try:
-        folder = os.getenv("AGENT_FOLDER", "default")
         out_dir = uploads_dir() / folder
         out_dir.mkdir(parents=True, exist_ok=True)
 

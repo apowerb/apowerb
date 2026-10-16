@@ -21,14 +21,13 @@ _KEYS = ("DB_HOST", "DB_USER", "DB_PASSWORD", "DB_SCHEMA")
 def probe(monkeypatch):
     for k in _KEYS:
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("AGENT_FOLDER", "unchanged")
     seen = {}
 
     def export(**kwargs):
         seen.update({k: os.environ.get(k) for k in _KEYS})
         return {"status": "ok", "knowledge_id": "k1"}
 
-    monkeypatch.setattr(index_db, "tool_load_from_db_and_index", export)
+    monkeypatch.setattr(index_db, "load_from_db_and_index", export)
     monkeypatch.setattr("apowerb.tools_store.tools_helpers.load_tool_config_params",
                         lambda tid, owner_id: ("text_to_sql", {"DB_HOST": "host-a", "DB_USER": "user-a"}))
     monkeypatch.setattr(index_db, "load_tool_config_params",

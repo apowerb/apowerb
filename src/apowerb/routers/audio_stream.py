@@ -23,6 +23,7 @@ if _ENV_PATH.exists():
 from apowerb.configs.settings import get_settings
 from apowerb.configs.paths import uploads_dir
 from apowerb.core.invocation_context import set_current_invoker
+from apowerb.helpers.ownership import validate_agent_ownership_by_email
 from apowerb.helpers.security import get_algorithm, get_secret_key
 from apowerb.core.audio_streaming import (
     FallbackSTT,
@@ -320,12 +321,12 @@ async def audio_websocket(websocket: WebSocket, session_id: str) -> None:
         return
 
     if _use_gemini():
-        await _handle_gemini_mode(websocket, session_id)
+        await _handle_gemini_mode(websocket, session_id, email)
     else:
         await _handle_fallback_mode(websocket, session_id)
 
 
-async def _handle_gemini_mode(websocket: WebSocket, session_id: str) -> None:
+async def _handle_gemini_mode(websocket: WebSocket, session_id: str, email: str) -> None:
     """Gemini Live: single session handles both STT and TTS."""
     session: GeminiLiveSession | None = None
 
@@ -400,6 +401,17 @@ async def _handle_gemini_mode(websocket: WebSocket, session_id: str) -> None:
                         language = message.get("language", "auto")
                         agent_name = message.get("agent_name")
                         agent_display_name = message.get("agent_display_name")
+                        # The agent's persona, knowledge and tools are its
+                        # owner's: only the owner may open a voice session on it.
+                        if agent_name:
+                            try:
+                                await validate_agent_ownership_by_email(agent_name, email)
+                            except HTTPException:
+                                await websocket.send_json(
+                                    {"type": "error", "message": "Agent not available"}
+                                )
+                                await websocket.close(code=4003, reason="Agent not available")
+                                return
                         system_instruction = _build_agent_system_instruction(
                             agent_name, agent_display_name, session_id
                         )

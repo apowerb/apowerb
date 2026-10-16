@@ -90,7 +90,7 @@ def test_to_agent_writes_no_identity_to_the_environment(monkeypatch):
             "guardrails_config": json.dumps({}), **AGENTS[agent_id],
         }
 
-    monkeypatch.setattr(extras_loader, "_inject_tool_config_env", lambda *a, **k: None)
+    monkeypatch.setattr(extras_loader, "_owner_category_params", lambda *a, **k: {})
     monkeypatch.setattr(agent_utils, "get_agent_details", row)
 
     agent_utils.to_agent("agent1")
