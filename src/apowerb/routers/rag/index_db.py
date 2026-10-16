@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from apowerb.auth.dependencies import get_current_user
 from apowerb.configs.settings import get_settings
-from apowerb.tools_store.portfolio.db_to_rag import tool_load_from_db_and_index
+from apowerb.tools_store.portfolio.db_to_rag import load_from_db_and_index
 from apowerb.tools_store.portfolio.text_to_sql import (
     _generate_sql_with_llm,
     _get_database_schema,
@@ -90,12 +90,12 @@ def _sync_index_db(
 ) -> dict:
     """Synchronous DB indexing — runs in a thread, protected by _db_index_lock."""
     set_tool_config_params_as_envvar(data.tool_config_id, owner_id=owner_id)
-    os.environ["AGENT_FOLDER"] = data.session_id or data.agent_id
-    return tool_load_from_db_and_index(
+    return load_from_db_and_index(
         sql_query=data.sql_query,
         knowledge_name=data.name,
         wait_for_completion=False,
         callback_url=callback_url,
+        folder=data.session_id or data.agent_id,
     )
 
 
@@ -222,8 +222,6 @@ def _sync_index_db_nl(
     from apowerb.core.agent_helpers import set_model_params_as_envvar
     set_model_params_as_envvar(data.agent_id)
 
-    os.environ["AGENT_FOLDER"] = data.session_id or data.agent_id
-
     try:
         # Step 1: Introspect schema
         try:
@@ -254,11 +252,12 @@ def _sync_index_db_nl(
 
         # Step 4: Execute SQL and index into RAG
         try:
-            result = tool_load_from_db_and_index(
+            result = load_from_db_and_index(
                 sql_query=generated_sql,
                 knowledge_name=data.name,
                 wait_for_completion=False,
                 callback_url=callback_url,
+                folder=data.session_id or data.agent_id,
             )
         except Exception as e:
             logger.error("[RAG_NL] DB execution/indexation failed: %s", e)
