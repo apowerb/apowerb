@@ -419,21 +419,12 @@ def to_agent(agent_name: str) -> LlmAgent:
     logger.info(f"[TO_AGENT] Fetching agent details for ID: {agent_id}")
     agent_details = get_agent_details(agent_id=agent_id)
 
-    os.environ["ROOT_AGENT_ID"] = str(agent_id)  # Set AGENT_ID for tools that need it
     owner_id = agent_details.get("owner_id") or "unknown_user"
-    os.environ["AGENT_OWNER"] = owner_id  # Set AGENT_OWNER for tools that need it
-    os.environ["AGENT_ORGANIZATION_ID"] = agent_details.get(
-        "organization_id", "default"
-    )  # Set AGENT_ORGANIZATION_ID for BI tools
-    os.environ["AGENT_PROJECT_ID"] = agent_details.get(
-        "project_id", "thaink2"
-    )  # Set AGENT_PROJECT_ID for BI tools
 
-    # Per-invocation identity (async-safe). The env vars above stay as a
-    # fallback for background paths, but at RUN time owner-scoped tools read
-    # these ContextVars, bound below by a before_agent_callback, so two cached
-    # agents of two customers in the same worker no longer cross identities
-    # (measured 2026-09-29). See apowerb.core.invocation_context.
+    # Per-invocation identity (async-safe). Owner-scoped tools read these
+    # ContextVars, bound by a before_agent_callback at RUN time. Nothing is
+    # written to os.environ: a cached agent would otherwise leave its identity
+    # to any tool run without a binding. See apowerb.core.invocation_context.
     from apowerb.core.invocation_context import (
         make_identity_before_agent_callback,
     )
@@ -480,12 +471,8 @@ def to_agent(agent_name: str) -> LlmAgent:
     # load sub agents
     # Save parent env vars before recursive to_agent() calls overwrite them.
     # Sub-agent loading calls to_agent() recursively which overwrites global
-    # os.environ with the sub-agent's owner credentials.
+    # os.environ with the sub-agent's model and tool credentials.
     _ENVVARS_TO_SAVE = [
-        "ROOT_AGENT_ID",
-        "AGENT_OWNER",
-        "AGENT_ORGANIZATION_ID",
-        "AGENT_PROJECT_ID",
         # Model API keys (overwritten by set_model_params_as_envvar in recursion)
         "ANTHROPIC_API_KEY",
         "OVHCLOUD_API_KEY",
@@ -514,7 +501,7 @@ def to_agent(agent_name: str) -> LlmAgent:
             os.environ[_key] = _val
         else:
             os.environ.pop(_key, None)
-    logger.info(f"[TO_AGENT] Restored env vars for parent agent {agent_name} (owner={_saved_env.get('AGENT_OWNER')})")
+    logger.info(f"[TO_AGENT] Restored env vars for parent agent {agent_name} (owner={owner_id})")
 
     # load and set agent parameters as env variables
     logger.info(f"[TO_AGENT] Setting model params as env vars for {agent_name}")
