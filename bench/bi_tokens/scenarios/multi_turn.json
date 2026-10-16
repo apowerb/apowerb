@@ -1,0 +1,50 @@
+{
+ "description": "Une même conversation : création depuis le CSV, question ROAS, relance hebdomadaire",
+ "source": "tours DEV 14/10 enchaînés + relance construite",
+ "turns": [
+  {
+   "recorded": "creation",
+   "facts": [
+    "/bi/e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d"
+   ]
+  },
+  {
+   "recorded": "question",
+   "facts": [
+    "ROAS[^{}]{0,60}32\\.8",
+    "ROAS[^{}]{0,60}3\\.6",
+    "ROAS[^{}]{0,60}3\\.0"
+   ]
+  },
+  {
+   "user": "Which week brought the most revenue?",
+   "steps": [
+    {
+     "thoughts": [],
+     "text": "",
+     "calls": [
+      {
+       "name": "tool_bi_query_dashboard",
+       "args": {
+        "dashboard_id": "e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+        "component_ids": "Revenue and orders by week"
+       }
+      }
+     ],
+     "responses": [],
+     "measured_input_tokens": null
+    },
+    {
+     "thoughts": [],
+     "text": "The week of 2026-04-06 brought the most revenue: 22,557.15 € from 269 orders.",
+     "calls": [],
+     "responses": [],
+     "measured_input_tokens": null
+    }
+   ],
+   "facts": [
+    "2026-04-06"
+   ]
+  }
+ ]
+}

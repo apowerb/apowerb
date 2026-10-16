@@ -5,6 +5,8 @@ import datetime
 import time as _time
 from decimal import Decimal
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -234,7 +236,9 @@ def _generate_sql_with_llm(question: str, schema_info: Dict[str, Any]) -> str:
     if not _state_registry:
         raise RuntimeError("No agent state registered yet.")
     agent_name = next(iter(_state_registry))
-    return _agent_generate_sql(agent_name, question, schema_info)
+    # Not recorded in llm_usage: the borrowed agent is whichever registered
+    # first in this worker, not the caller -- its owner would be billed.
+    return _agent_generate_sql(agent_name, question, schema_info, record_usage=False)
 
 
 # ── Tool Box param discovery (scan-time only, never at query time) ────────────
@@ -270,6 +274,12 @@ class _AgentState:
     cache:       Dict[str, Any]
     cache_ts:    float
     lock:        threading.Lock = field(default_factory=threading.Lock)
+    # Usage accounting of the tools' own LLM calls (see _record_llm_usage):
+    # the agent this state is bound to, as the usage recorder names it.
+    agent_id:          int = 0
+    usage_agent_name:  str = ""
+    owner_id:          Optional[str] = None
+    billed_to_thaink2: bool = False
 
 
 _CACHE_TTL = int(os.getenv("SQL_SCHEMA_CACHE_TTL_S", "3600"))  # seconds
@@ -286,6 +296,60 @@ def _get_state(agent_name: str) -> _AgentState:
             "Ensure make_text_to_sql_tools() was called during agent init."
         )
     return s
+
+
+# ── Usage accounting of the tools' own LLM calls ─────────────────────────────
+# These calls go to litellm directly, not through ADK: the agent's
+# after_model_callback never sees them. Each one is recorded here, against
+# the agent the tools are bound to and the session that called the tool.
+
+# (session_id, invocation_id) of the tool call in progress. Set by the bound
+# wrappers from ADK's tool_context; sync, same thread as the LLM calls.
+_tool_call_ids: ContextVar[tuple] = ContextVar("text_to_sql_tool_call", default=(None, None))
+
+
+@contextmanager
+def _tool_call_scope(tool_context):
+    try:
+        session_id = tool_context.session.id
+    except Exception:
+        session_id = None
+    invocation_id = getattr(tool_context, "invocation_id", None)
+    token = _tool_call_ids.set((session_id, invocation_id))
+    try:
+        yield
+    finally:
+        _tool_call_ids.reset(token)
+
+
+def _record_llm_usage(s: _AgentState, response: Any) -> None:
+    from apowerb.core.agent_helpers.usage_recorder import record_completion_usage
+
+    session_id, invocation_id = _tool_call_ids.get()
+    record_completion_usage(
+        response,
+        agent_id=s.agent_id,
+        agent_name=s.usage_agent_name or s.agent_name,
+        owner_id=s.owner_id,
+        model_name=s.model,
+        billed_to_thaink2=s.billed_to_thaink2,
+        session_id=session_id,
+        invocation_id=invocation_id,
+    )
+
+
+def _load_agent_usage_identity(agent_id: int) -> tuple:
+    """(business name, owner_id, billed_to_thaink2) of the agent, as the
+    usage recorder attached by to_agent() names them."""
+    from apowerb.core.agent_helpers.agent_utils import get_agent_details
+    from apowerb.core.agent_helpers.default_llm import is_default_llm_model
+
+    details = get_agent_details(agent_id=agent_id) or {}
+    return (
+        details.get("agent_name") or "",
+        details.get("owner_id"),
+        is_default_llm_model(details.get("agent_model")),
+    )
 
 
 # ── Agent-level DB + schema helpers ──────────────────────────────────────────
@@ -649,7 +713,9 @@ def _agent_execute_sql(agent_name: str, sql_query: str, limit: int = 100) -> Lis
         _release_conn(agent_name, conn)
 
 
-def _agent_generate_sql(agent_name: str, question: str, schema_info: Dict[str, Any]) -> str:
+def _agent_generate_sql(
+    agent_name: str, question: str, schema_info: Dict[str, Any], record_usage: bool = True
+) -> str:
     s = _get_state(agent_name)
     max_chars = int(os.getenv("SQL_SCHEMA_MAX_CHARS", "16000"))
     include_samples = s.schema_samples
@@ -711,6 +777,8 @@ Output ONLY the SQL query without markdown."""
             max_tokens=1000,
             timeout=60,
         )
+        if record_usage:
+            _record_llm_usage(s, resp)
         return resp.choices[0].message.content or ""
 
     raw = _ask(messages)
@@ -744,6 +812,7 @@ def _agent_llm(agent_name: str, messages: list, max_tokens: int = 1200) -> str:
         model=s.model, api_base=s.api_base, api_key=s.api_key,
         messages=messages, temperature=0.0, max_tokens=max_tokens, timeout=90,
     )
+    _record_llm_usage(s, resp)
     return resp.choices[0].message.content or ""
 
 
@@ -976,6 +1045,7 @@ def _tool_text_to_sql_explain_impl(agent_name: str, question: str) -> dict:
             max_tokens=300,
             timeout=60,
         )
+        _record_llm_usage(s, expl_resp)
         explanation = expl_resp.choices[0].message.content.strip()
         return {
             "success":        True,
@@ -1039,13 +1109,20 @@ def make_text_to_sql_tools(
         db_params:  Decrypted DB tool-config params. Pass None if no DB configured.
 
     Returns:
-        [tool_text_to_sql, tool_get_database_schema, tool_text_to_sql_explain]
+        [tool_text_to_sql, tool_get_database_schema, tool_text_to_sql_explain,
+         tool_business_analyst]
     """
     from apowerb.core.agent_helpers import load_agent_model_params
 
-    agent_model_name, model_params = load_agent_model_params(
-        int(agent_name.replace("agent", ""))
-    )
+    agent_id = int(agent_name.replace("agent", ""))
+    agent_model_name, model_params = load_agent_model_params(agent_id)
+    # Best-effort: a missing identity costs the usage row's labels, never
+    # the tools themselves.
+    try:
+        usage_agent_name, owner_id, billed_to_thaink2 = _load_agent_usage_identity(agent_id)
+    except Exception as e:
+        logger.warning("[TEXT_TO_SQL] usage identity of %s not loaded: %s", agent_name, e)
+        usage_agent_name, owner_id, billed_to_thaink2 = "", None, False
     api_key  = model_params.get("model_api_key")
     api_base = model_params.get("model_api_base")
 
@@ -1090,6 +1167,8 @@ def make_text_to_sql_tools(
         db_user=db_user, db_password=db_password, db_schema=db_schema,
         db_include=db_include, schema_samples=schema_samples,
         cache={}, cache_ts=0.0,
+        agent_id=agent_id, usage_agent_name=usage_agent_name,
+        owner_id=owner_id, billed_to_thaink2=billed_to_thaink2,
     )
 
     logger.info(
@@ -1097,13 +1176,18 @@ def make_text_to_sql_tools(
         agent_name, agent_model_name, api_base or "not set", db_status, schema_samples,
     )
 
-    # Thin wrappers — capture agent_name, delegate to module-level _impl functions
-    def tool_text_to_sql(question: str, max_rows: int = 100, include_sql: bool = True) -> dict:
+    # Thin wrappers — capture agent_name, delegate to module-level _impl functions.
+    # ``tool_context`` is injected by ADK and hidden from the model; it gives
+    # the session the tools' own LLM calls are recorded against.
+    def tool_text_to_sql(
+        question: str, max_rows: int = 100, include_sql: bool = True, tool_context=None
+    ) -> dict:
         """Converts natural language to SQL and executes it against the configured database.
 
         max_rows is capped at 200; ``truncated`` is true when more rows exist.
         """
-        return _tool_text_to_sql_impl(agent_name, question, max_rows, include_sql)
+        with _tool_call_scope(tool_context):
+            return _tool_text_to_sql_impl(agent_name, question, max_rows, include_sql)
 
     def tool_get_database_schema(refresh: bool = False, tables: list[str] | None = None) -> dict:
         """Retrieves the database schema including tables, columns, and relationships.
@@ -1115,11 +1199,14 @@ def make_text_to_sql_tools(
         """
         return _tool_get_database_schema_impl(agent_name, refresh=refresh, tables=tables)
 
-    def tool_text_to_sql_explain(question: str) -> dict:
+    def tool_text_to_sql_explain(question: str, tool_context=None) -> dict:
         """Generates SQL from natural language with explanation, without executing it."""
-        return _tool_text_to_sql_explain_impl(agent_name, question)
+        with _tool_call_scope(tool_context):
+            return _tool_text_to_sql_explain_impl(agent_name, question)
 
-    def tool_business_analyst(question: str, max_steps: int = 4, max_rows: int = 100) -> dict:
+    def tool_business_analyst(
+        question: str, max_steps: int = 4, max_rows: int = 100, tool_context=None
+    ) -> dict:
         """Answers a business question through a multi-step SQL investigation.
 
         Runs several chained SELECT queries (not just one), then returns a
@@ -1129,7 +1216,8 @@ def make_text_to_sql_tools(
         A vs B', 'what are the trends in Y?'); use tool_text_to_sql for a single
         direct lookup.
         """
-        return _tool_business_analyst_impl(agent_name, question, max_steps, max_rows)
+        with _tool_call_scope(tool_context):
+            return _tool_business_analyst_impl(agent_name, question, max_steps, max_rows)
 
     return [
         tool_text_to_sql,

@@ -121,6 +121,12 @@ Rules:
 - Include a ``placeholder`` that makes the free-text fallback obvious.
 - For a single yes/no confirmation, prefer ``confirm_destructive`` (or plain
   text) — chips are for real choices between multiple alternatives.
+"""
+
+# Only for an agent built while ``AGENT_DASHBOARD_ID`` is set, the condition
+# under which ``tool_get_dashboard_data`` and the chart tools it names are
+# injected: elsewhere it named five tools the agent did not have, on every call.
+DASHBOARD_CONTEXT_INSTRUCTION = """
 
 ## Dashboard context — read before answering
 

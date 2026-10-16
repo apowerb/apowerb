@@ -193,6 +193,99 @@ async def _persist_usage_row(**fields: Any) -> None:
         logger.warning("[USAGE_RECORDER] failed to persist llm_usage row: %s", exc)
 
 
+def _litellm_usage(response: Any) -> Optional[dict]:
+    """The 5 token counts of a ``litellm.completion`` response (OpenAI
+    shape: ``usage.prompt_tokens`` ...), or ``None`` when it has no usage.
+    ``_extract_usage`` reads ADK's Gemini-shaped ``usage_metadata`` and
+    would map these to zeros."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+
+    def count(obj: Any, name: str) -> int:
+        try:
+            return int(getattr(obj, name, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    # OpenAI shape: completion_tokens INCLUDES the reasoning tokens. Split
+    # them the Gemini way (candidates exclude thoughts), since the pricing
+    # adds thoughts_tokens to output -- leaving them in both bills twice.
+    reasoning = count(
+        getattr(usage, "completion_tokens_details", None), "reasoning_tokens"
+    )
+    return {
+        "input_tokens": count(usage, "prompt_tokens"),
+        "output_tokens": max(count(usage, "completion_tokens") - reasoning, 0),
+        "thoughts_tokens": reasoning,
+        "cached_tokens": count(
+            getattr(usage, "prompt_tokens_details", None), "cached_tokens"
+        ),
+        "total_tokens": count(usage, "total_tokens"),
+    }
+
+
+def record_completion_usage(
+    response: Any,
+    *,
+    agent_id: int,
+    agent_name: str,
+    owner_id: Optional[str],
+    model_name: Optional[str],
+    billed_to_thaink2: bool = False,
+    session_id: Optional[str] = None,
+    invocation_id: Optional[str] = None,
+) -> None:
+    """Record a ``litellm.completion`` made by a tool, outside ADK.
+
+    Such calls (the Business Analyst's planner and interpreter, SQL
+    generation) never reach the agent's ``after_model_callback``: without
+    this, their tokens are missing from ``llm_usage`` and from the client
+    gauge. Synchronous on purpose -- tools are sync functions, which ADK
+    runs on the event loop's thread unless a tool thread pool is
+    configured (apowerb configures none). The write is scheduled on that
+    loop, like the callback's. Without a running loop the row is dropped
+    with a warning: the DB engine is bound to the main loop, so a private
+    loop cannot write it. Never raises.
+    """
+    try:
+        usage = _litellm_usage(response)
+        if usage is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning(
+                "[USAGE_RECORDER] no running event loop: llm_usage row of %s "
+                "(%s tokens) not recorded",
+                agent_name,
+                usage["total_tokens"],
+            )
+            return
+        try:
+            from apowerb.core.invocation_context import resolve_integration_user
+            invocation_source = resolve_integration_user(prefer_invoker=True)
+        except Exception:
+            invocation_source = None
+        task = loop.create_task(
+            _persist_usage_row(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                owner_id=owner_id,
+                session_id=session_id,
+                invocation_id=invocation_id,
+                invocation_source=invocation_source,
+                model=model_name,
+                billed_to_thaink2=billed_to_thaink2,
+                **usage,
+            )
+        )
+        _pending_writes.add(task)
+        task.add_done_callback(_pending_writes.discard)
+    except Exception as exc:
+        logger.warning("[USAGE_RECORDER] direct completion not recorded: %s", exc)
+
+
 def create_usage_recorder_callback(
     agent_id: int,
     agent_name: str,

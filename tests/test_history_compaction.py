@@ -224,3 +224,64 @@ def test_callback_strips_base64_inherited_from_upstream_subagent():
     assert intake_response["pages"][1]["data"].startswith("<stripped:")
     # Latest turn left untouched.
     assert latest["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# compact_previous_turns (BI templates)
+# ---------------------------------------------------------------------------
+
+
+def _history():
+    from google.genai import types
+
+    def user(text):
+        return types.Content(role="user", parts=[types.Part(text=text)])
+
+    def call(name):
+        return types.Content(role="model", parts=[types.Part(function_call=types.FunctionCall(name=name, args={}))])
+
+    def result(name, response):
+        return types.Content(role="user", parts=[types.Part(
+            function_response=types.FunctionResponse(name=name, response=response))])
+
+    big = {"success": True, "url": "/bi/abc", "components": [{"title": f"KPI {i}", "value": i} for i in range(200)]}
+    return [
+        user("Build my dashboard"), call("tool_bi_create_dashboard"), result("tool_bi_create_dashboard", big),
+        types.Content(role="model", parts=[types.Part(text="Done: /bi/abc")]),
+        user("Which KPI is highest?"), call("tool_bi_query_dashboard"), result("tool_bi_query_dashboard", dict(big)),
+    ]
+
+
+def _run(contents, compact):
+    cb = create_strip_large_payloads_callback("agentX", compact_previous_turns=compact)
+    request = SimpleNamespace(contents=list(contents))
+    cb(callback_context=None, llm_request=request)
+    return request.contents
+
+
+def test_previous_turn_results_are_compacted_current_turn_kept():
+    history = _history()
+    out = _run(history, compact=True)
+    earlier = out[2].parts[0].function_response.response
+    assert earlier["url"] == "/bi/abc" and earlier["success"] is True
+    assert earlier["components"] == "<200 items omitted>" and "_compacted" in earlier
+    current = out[6].parts[0].function_response.response
+    assert len(current["components"]) == 200 and "_compacted" not in current
+
+
+def test_session_events_are_not_mutated():
+    history = _history()
+    _run(history, compact=True)
+    assert len(history[2].parts[0].function_response.response["components"]) == 200
+
+
+def test_without_the_flag_nothing_changes():
+    out = _run(_history(), compact=False)
+    assert len(out[2].parts[0].function_response.response["components"]) == 200
+
+
+def test_small_previous_results_are_kept_whole():
+    history = _history()
+    history[2].parts[0].function_response.response = {"success": True, "url": "/bi/abc"}
+    out = _run(history, compact=True)
+    assert out[2].parts[0].function_response.response == {"success": True, "url": "/bi/abc"}

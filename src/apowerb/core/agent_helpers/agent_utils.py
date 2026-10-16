@@ -57,6 +57,7 @@ from apowerb.core.agent_helpers.extras_loader import (
     inject_bi_dashboard_tools,
 )
 from apowerb.core.agent_helpers.chat_action_tools import (
+    DASHBOARD_CONTEXT_INSTRUCTION,
     INTERACTIVE_UI_INSTRUCTION,
     confirm_destructive,
     embed_chart,
@@ -99,6 +100,25 @@ def _should_inject_chat_action_tools(agent_details: dict) -> bool:
     Chat agents (``output_schema_name`` None or absent) keep all tools.
     """
     return not bool(agent_details.get("output_schema_name"))
+
+
+def _suppressed_auto_tools(superagent_template_id) -> frozenset:
+    """Auto-added tools the agent's SuperAgent template opts out of.
+
+    Read from the template's ``suppressed_auto_tools`` (BI templates list the
+    chat tools a BI agent never calls). Only the automatic addition is
+    skipped: the same tool configured in ``agent_tools`` is kept.
+    """
+    return frozenset(_template_setting(superagent_template_id, "suppressed_auto_tools", ()) or ())
+
+
+def _template_setting(superagent_template_id, key: str, default):
+    """A runtime setting of the agent's SuperAgent template, ``default`` without one."""
+    if not superagent_template_id:
+        return default
+    from apowerb.core.superagents import get_superagent_template
+
+    return (get_superagent_template(superagent_template_id) or {}).get(key, default)
 
 
 def _should_inject_dashboard_tool() -> bool:
@@ -595,14 +615,22 @@ def to_agent(agent_name: str) -> LlmAgent:
 
         # Auto-add file reading tool — skip for RAG agents (they use the RAG API pipeline)
         _is_rag_template = is_rag_template(superagent_template_id)
-        tools_funcs = bind_read_uploaded_file(agent_name, tools_funcs, _is_rag_template)
+        tools_funcs = bind_read_uploaded_file(
+            agent_name, tools_funcs, _is_rag_template,
+            tabular_preview_rows=_template_setting(superagent_template_id, "tabular_file_preview_rows", 0),
+        )
 
         # Auto-add create_downloadable_file so the agent can generate files for download
         bind_create_downloadable_file(agent_name, tools_funcs)
 
         # Auto-add pdf_to_images so the agent can look at uploaded PDFs
         # (scanned ARs, complex layouts...); pages reach the model as images.
-        tools_funcs = bind_pdf_to_images(agent_name, tools_funcs)
+        # A template may opt out of auto-added tools it never uses (BI agents):
+        # each declaration is re-sent with every model call.
+        _suppressed = _suppressed_auto_tools(superagent_template_id)
+        tools_funcs = bind_pdf_to_images(
+            agent_name, tools_funcs, add="tool_pdf_to_images" not in _suppressed
+        )
         tools_funcs = bind_pdf_first_page(agent_name, tools_funcs)
 
         # Bind tool_get_webhook_backlog_status to the integer agent id so
@@ -646,6 +674,8 @@ def to_agent(agent_name: str) -> LlmAgent:
 
         def _add_auto_tool(fn):
             name = getattr(fn, "__name__", "")
+            if name in _suppressed:
+                return
             if name and name in _existing_names:
                 logger.debug(
                     f"[TO_AGENT] skipping auto-add of {name!r} for {agent_name} "
@@ -789,7 +819,12 @@ def to_agent(agent_name: str) -> LlmAgent:
                 return _trunc(callback_context=callback_context, llm_request=llm_request)
             before_model_cb = _truncate_only
 
-        strip_cb = create_strip_large_payloads_callback(agent_name)
+        strip_cb = create_strip_large_payloads_callback(
+            agent_name,
+            compact_previous_turns=bool(
+                _template_setting(superagent_template_id, "compact_previous_turn_results", False)
+            ),
+        )
         if before_model_cb:
             existing_cb2 = before_model_cb
 
@@ -848,6 +883,8 @@ def to_agent(agent_name: str) -> LlmAgent:
         # to call request_user_input instead of emitting the structured output.
         if _should_inject_chat_action_tools(agent_details):
             instruction = (instruction or "") + INTERACTIVE_UI_INSTRUCTION
+            if _should_inject_dashboard_tool():
+                instruction += DASHBOARD_CONTEXT_INSTRUCTION
 
         # Feature: Output Schema - inject output format instruction
         instruction = apply_output_schema(

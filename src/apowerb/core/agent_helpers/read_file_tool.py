@@ -29,8 +29,51 @@ from apowerb.core.agent_helpers.file_readers import (
 logger = setup_logging(__name__)
 
 
-def _make_read_uploaded_file(folder_name: str):
-    """Create a read_uploaded_file tool with the agent folder name pre-bound."""
+_TABULAR_EXTENSIONS = {".csv": ",", ".tsv": "\t"}
+_PREVIEW_MIN_CHARS = 4000
+
+
+def _tabular_preview(content: str, ext: str, rows: int) -> dict | None:
+    """Header, first ``rows`` rows and row count of a large CSV/TSV.
+
+    The raw file (up to 50,000 characters, ~39k tokens for the 13,554-row
+    demo CSV) went into the model context; picking columns or checking the
+    format only needs the header and a sample. The tools that use the data
+    (forecast, BI import) read the file themselves from its name. ``None``
+    for small files or other formats: they are returned whole as before.
+    """
+    if not rows or ext not in _TABULAR_EXTENSIONS or len(content) < _PREVIEW_MIN_CHARS:
+        return None
+    import csv
+    import io
+
+    records = csv.reader(io.StringIO(content), delimiter=_TABULAR_EXTENSIONS[ext])
+    try:
+        header = next(records, [])
+        row_count = sum(1 for _ in records)
+    except csv.Error:  # fichier mal formé : rendu brut comme avant
+        return None
+    lines = content.splitlines()
+    return {
+        "columns": header,
+        "row_count": row_count,
+        "content": "\n".join(lines[: rows + 1]),
+        "format": "tabular_preview",
+        "truncated": True,
+        "note": (
+            f"Header and first {rows} of {row_count} rows only. To use the data, pass "
+            "the file name to the tool that works on it (its file_id or filename "
+            "argument); do not re-read the file."
+        ),
+    }
+
+
+def _make_read_uploaded_file(folder_name: str, tabular_preview_rows: int = 0):
+    """Create a read_uploaded_file tool with the agent folder name pre-bound.
+
+    ``tabular_preview_rows`` > 0 returns a large CSV/TSV as header + sample +
+    row count instead of its raw content (set by BI templates).
+    """
 
     def read_uploaded_file(filename: str) -> dict:
         """Read a file that was uploaded by the user for this agent.
@@ -135,6 +178,10 @@ def _make_read_uploaded_file(folder_name: str):
                 try:
                     with open(file_path, "r", encoding=encoding) as f:
                         content = f.read()
+                    preview = _tabular_preview(content, ext, tabular_preview_rows)
+                    if preview:
+                        return {"status": "success", "filename": filename, "size": file_size,
+                                "encoding": encoding, **preview}
                     content, truncated = _truncate_content(content)
                     return {
                         "status": "success",
@@ -281,6 +328,10 @@ def _make_read_uploaded_file(folder_name: str):
             for encoding in ["utf-8", "cp1252"]:
                 try:
                     content = content_bytes.decode(encoding)
+                    preview = _tabular_preview(content, ext, tabular_preview_rows)
+                    if preview:
+                        return {"status": "success", "filename": filename, "size": file_size,
+                                "encoding": encoding, **preview}
                     content, truncated = _truncate_content(content)
                     return {
                         "status": "success",

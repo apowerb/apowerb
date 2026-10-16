@@ -1,5 +1,7 @@
 """Data-oriented SuperAgent templates (SQL, analyst, forecasting)."""
 
+from apowerb.core.superagents.templates.dashboard import BI_SUPPRESSED_AUTO_TOOLS
+
 DATA_TEMPLATES = [
     {
         "template_id": "text_to_sql_agent",
@@ -338,6 +340,11 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "bi_dashboard_tools.tool_bi_describe_dashboard",
         ],
         "agent_skills": ["forecasting", "data-visualization"],
+        "suppressed_auto_tools": BI_SUPPRESSED_AUTO_TOOLS,
+        # read_uploaded_file : en-tête + 20 lignes + nombre de lignes d'un gros CSV
+        "tabular_file_preview_rows": 20,
+        # historique : gros résultats d'outils des tours précédents raccourcis
+        "compact_previous_turn_results": True,
         "memory_enabled": False,
         "artifacts_enabled": True,
         "guardrails_config": None,

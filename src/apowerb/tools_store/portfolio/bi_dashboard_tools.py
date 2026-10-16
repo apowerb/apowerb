@@ -423,7 +423,28 @@ def _select_components(dashboard, wanted: str) -> tuple[list[str] | None, str | 
     return ids, None
 
 
-async def _async_query(dashboard_id: str, filters: dict, owner: str, component_ids: str = "") -> dict:
+async def _async_spec_dashboard_data(dashboard_id: str, owner: str) -> dict | None:
+    """Computed values of a spec v2 dashboard, for ``tool_get_dashboard_data``.
+
+    None when the dashboard is not spec v2 or not visible to ``owner``: the
+    caller then reads it as a classic dashboard (``chart``/``key_value``).
+    """
+    from apowerb.bi.data.csv_executor import use_session_factory
+
+    async with _dashboard_store(owner) as store:
+        dashboard = await store.get(dashboard_id)
+    if dashboard is None or not dashboard.sources:
+        return None
+    with use_session_factory(lambda: _get_session()):
+        preview = await _preview(dashboard, owner, detail=True)
+    if "preview_error" in preview:
+        return {"success": False, "error": preview["preview_error"]}
+    return {"success": True, "dashboard_id": dashboard_id, "dashboard_title": dashboard.title, **preview}
+
+
+async def _async_query(
+    dashboard_id: str, filters: dict, owner: str, component_ids: str = "", group_by: str = ""
+) -> dict:
     async with _dashboard_store(owner) as store:
         dashboard = await store.get(dashboard_id)
     if dashboard is None:
@@ -436,10 +457,33 @@ async def _async_query(dashboard_id: str, filters: dict, owner: str, component_i
     components, error = _select_components(dashboard, component_ids)
     if error:
         return {"success": False, "error": error}
+    if group_by and not components:
+        return {"success": False, "error": "group_by needs component_ids: name the figure(s) to compare."}
     preview = await _preview(dashboard, owner, filters, detail=True, components=components)
     if "preview_error" in preview:
         return {"success": False, "error": preview["preview_error"]}
-    return {"success": True, "dashboard_id": dashboard_id, "title": dashboard.title, **preview}
+    if not group_by:
+        return {"success": True, "dashboard_id": dashboard_id, "title": dashboard.title, **preview}
+    return await _grouped(dashboard, owner, filters, components, group_by.strip(), preview)
+
+
+async def _grouped(dashboard, owner: str, filters: dict, components: list[str], group_by: str, base: dict) -> dict:
+    """The selected components once per value of the filter ``group_by``."""
+    options = base.get("filter_options", {})
+    if group_by not in options:
+        return {"success": False, "error": f"Unknown filter {group_by!r} for group_by. Filters: {', '.join(options) or 'none'}."}
+    groups, errors = [], {}
+    for value in options[group_by]:
+        part = await _preview(dashboard, owner, {**filters, group_by: value}, components=components)
+        if "preview_error" in part:
+            errors[str(value)] = part["preview_error"]
+            continue
+        groups.append({"value": value, "components": [{k: v for k, v in c.items() if k != "id"} for c in part["components"]]})
+        errors.update({f"{value}/{k}": e for k, e in part["errors"].items()})
+    return {
+        "success": True, "dashboard_id": dashboard.id, "title": dashboard.title, "group_by": group_by,
+        "filters": {k: v for k, v in base["filters"].items() if k != group_by}, "groups": groups, "errors": errors,
+    }
 
 
 def _describe_transform(step) -> str:
@@ -966,7 +1010,9 @@ def tool_bi_patch_dashboard(dashboard_id: str, ops_json: str, dry_run: bool = Fa
         return _fail("tool_bi_patch_dashboard", exc)
 
 
-def tool_bi_query_dashboard(dashboard_id: str, filters_json: str = "{}", component_ids: str = "") -> dict:
+def tool_bi_query_dashboard(
+    dashboard_id: str, filters_json: str = "{}", component_ids: str = "", group_by: str = ""
+) -> dict:
     """Reads the computed values of a spec v2 dashboard to answer a question.
 
     Use it when the user asks about the numbers of a dashboard built with
@@ -983,12 +1029,14 @@ def tool_bi_query_dashboard(dashboard_id: str, filters_json: str = "{}", compone
     component_ids limits the answer to some components (comma-separated ids or
     titles). Once you have seen the dashboard, use it to compare a figure across
     several filter values: {"canal": "Email"} with component_ids="ROAS" returns
-    one KPI instead of the whole dashboard.
+    one KPI instead of the whole dashboard; group_by="canal" with
+    component_ids="ROAS" returns the ROAS of every channel in one call.
 
     Args:
         dashboard_id: Dashboard id (UUID).
         filters_json: JSON object of filter values, "{}" for the defaults.
         component_ids: Comma-separated component ids or titles, "" for all.
+        group_by: Filter id: component_ids for each of its values, "" for none.
     """
     owner = _agent_owner()
     if not owner:
@@ -997,7 +1045,7 @@ def tool_bi_query_dashboard(dashboard_id: str, filters_json: str = "{}", compone
     if error:
         return {"success": False, "error": error}
     try:
-        return _run_tool(_async_query(dashboard_id.strip(), filters, owner, component_ids or ""))
+        return _run_tool(_async_query(dashboard_id.strip(), filters, owner, component_ids or "", group_by or ""))
     except Exception as exc:
         return _fail("tool_bi_query_dashboard", exc)
 

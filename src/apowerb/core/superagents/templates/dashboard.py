@@ -1,5 +1,22 @@
 """Dashboard SuperAgent template."""
 
+# Outils que to_agent ajoute à tout agent de chat et qu'un agent BI n'utilise
+# pas : leurs déclarations partaient avec chaque appel du modèle (~3k tokens sur
+# ~17k, banc bench/bi_tokens). Seul l'ajout automatique est coupé : un outil
+# mis dans agent_tools par l'utilisateur reste. Lu par agent_utils.to_agent.
+BI_SUPPRESSED_AUTO_TOOLS = [
+    "create_tool",
+    "request_integration",
+    "tool_pdf_to_images",
+    "propose_agent_upgrade",
+    "find_tools",
+    "request_payment",
+    "schedule_followup",
+    "notify_user",
+    "propose_artifact_edit",
+    "request_location",
+]
+
 DASHBOARD_TEMPLATES = [
     {
         "template_id": "dashboard_agent",
@@ -177,6 +194,11 @@ DASHBOARD_TEMPLATES = [
             "bi_dashboard_tools.tool_bi_describe_dashboard",
         ],
         "agent_skills": ["dashboard-builder", "data-visualization", "forecasting"],
+        "suppressed_auto_tools": BI_SUPPRESSED_AUTO_TOOLS,
+        # read_uploaded_file : en-tête + 20 lignes + nombre de lignes d'un gros CSV
+        "tabular_file_preview_rows": 20,
+        # historique : gros résultats d'outils des tours précédents raccourcis
+        "compact_previous_turn_results": True,
         "memory_enabled": True,
         "artifacts_enabled": True,
         "guardrails_config": None,
