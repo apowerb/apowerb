@@ -4,10 +4,18 @@ These fixtures target a running th2agent server on localhost:8000.
 They are NOT meant for unit tests — unit tests should remain isolated.
 """
 
+import importlib.util
 import os
 
 import httpx
 import pytest
+
+# The SCEI suites import `th2customers`, the client overlay that lives outside
+# this repository. Without it they cannot even be collected: skip them here
+# rather than through flags every local run has to remember.
+if importlib.util.find_spec("th2customers") is None:
+    collect_ignore = ["unit_scei"]
+    collect_ignore_glob = ["test_scei*"]
 
 TEST_EMAIL = os.environ.get("E2E_TEST_EMAIL", "e2e-test@th2ai.com")
 # E2E_TEST_PASSWORD is only required for the integration fixtures below.

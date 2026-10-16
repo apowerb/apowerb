@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from conftest import TEST_EMAIL, TEST_PASSWORD
+from tests.conftest import TEST_EMAIL, TEST_PASSWORD
 
 pytestmark = pytest.mark.integration
 
