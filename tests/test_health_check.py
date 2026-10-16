@@ -119,3 +119,24 @@ class TestReadiness:
         detail = body.get("detail") or body
         assert detail["checks"]["database"]["ok"] is False
         assert "timeout" in detail["checks"]["database"]["error"].lower()
+
+
+class TestParseTimeout:
+    def test_default_when_env_not_set(self):
+        assert health_module._parse_timeout(None) == 2.0
+
+    def test_valid_value_is_used(self):
+        assert health_module._parse_timeout("5.0") == 5.0
+
+    def test_negative_value_falls_back_to_default(self):
+        assert health_module._parse_timeout("-1.0") == 2.0
+
+    def test_invalid_string_falls_back_to_default(self):
+        assert health_module._parse_timeout("abc") == 2.0
+
+    def test_env_variable_is_read(self, monkeypatch):
+        monkeypatch.setenv("HEALTH_DEPENDENCY_TIMEOUT_S", "7.5")
+        import importlib
+        import apowerb.routers.health as h
+        importlib.reload(h)
+        assert h.DEPENDENCY_TIMEOUT_S == 7.5
