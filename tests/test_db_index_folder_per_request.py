@@ -10,6 +10,7 @@ index-db request.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,8 +52,6 @@ def _db(monkeypatch, tmp_path):
         db_to_rag, "tool_create_knowledge", lambda **k: {"status": "success", "knowledge_id": "k"}
     )
     monkeypatch.setattr(index_db, "set_tool_config_params_as_envvar", lambda *a, **k: None)
-    for var in (ic._root_agent_id_var, ic._root_invocation_var):
-        var.set(None)
     yield
 
 
@@ -74,11 +73,17 @@ def test_agent_tool_does_not_export_into_the_previous_request_folder():
     )
     index_db._sync_index_db(data, owner_id="b@b.test")
 
-    # Now agent 1 calls the same function as a tool in its own run.
-    ic.bind_agent_identity(
-        owner="a@a.test", organization_id=None, project_id=None, agent_id=1, invocation_id="inv-a"
-    )
-    result = db_to_rag.tool_load_from_db_and_index("SELECT id FROM orders", "kb-a")
+    # Now agent 1 calls the same function as a tool in its own run. The run
+    # gets its own context, as an ADK invocation does, so the identity bound
+    # here does not stay set for the tests that follow.
+    def agent_run():
+        ic._root_invocation_var.set(None)  # a fresh invocation records its root
+        ic.bind_agent_identity(
+            owner="a@a.test", organization_id=None, project_id=None, agent_id=1, invocation_id="inv-a"
+        )
+        return db_to_rag.tool_load_from_db_and_index("SELECT id FROM orders", "kb-a")
+
+    result = contextvars.copy_context().run(agent_run)
 
     assert Path(result["csv_path"]).parent.name == "agent1"
     assert result["download_path"].startswith("/api/files/agent1/")
