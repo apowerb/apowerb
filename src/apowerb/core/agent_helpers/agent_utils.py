@@ -473,11 +473,6 @@ def to_agent(agent_name: str) -> LlmAgent:
     # Sub-agent loading calls to_agent() recursively which overwrites global
     # os.environ with the sub-agent's model and tool credentials.
     _ENVVARS_TO_SAVE = [
-        # Model API keys (overwritten by set_model_params_as_envvar in recursion)
-        "ANTHROPIC_API_KEY",
-        "OVHCLOUD_API_KEY",
-        "MISTRAL_API_KEY",
-        "MISTRAL_API_BASE",
         # Outlook/Microsoft token (overwritten by SuperAgent dict_to_envvar)
         "OUTLOOK_REFRESH_TOKEN",
         # DB vars — prevent sub-agent loading from corrupting parent's DB config
@@ -503,9 +498,9 @@ def to_agent(agent_name: str) -> LlmAgent:
             os.environ.pop(_key, None)
     logger.info(f"[TO_AGENT] Restored env vars for parent agent {agent_name} (owner={owner_id})")
 
-    # load and set agent parameters as env variables
-    logger.info(f"[TO_AGENT] Setting model params as env vars for {agent_name}")
-    set_model_params_as_envvar(agent_name=agent_name)
+    # The model key and endpoint go to the model as explicit api_key/api_base
+    # (build_litellm_model). Not to os.environ: litellm falls back to it for
+    # any call without them, whichever agent wrote it last.
 
     # Extract temperature from agent_model_params (if configured)
     _temperature = None
