@@ -174,12 +174,11 @@ jobs:
       # so the numbers compare. Report only: the HIGH left are Debian packages
       # with no published fix, and failing on them would block every PR.
       - name: Trivy scan of the built image (CRITICAL, HIGH)
-        continue-on-error: true
         run: |
           set -e
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.68.1/contrib/install.sh | sh -s -- -b /usr/local/bin v0.68.1
-          trivy image -q --severity CRITICAL,HIGH --format json -o trivy-apowerb.json apowerb:pr-verify
-          trivy convert -q --format table trivy-apowerb.json
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" aquasec/trivy:0.68.1 \
+            image -q --severity CRITICAL,HIGH --format json -o /out/trivy-apowerb.json apowerb:pr-verify
+          docker run --rm -v "$PWD:/out" aquasec/trivy:0.68.1 convert -q --format table /out/trivy-apowerb.json
 
       - name: Upload the Trivy report
         if: always()
