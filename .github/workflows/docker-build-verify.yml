@@ -31,6 +31,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    services:
+      # Only for the /health check below: the server refuses to boot without
+      # DB_HOST/DB_NAME/DB_USER/DB_PASSWORD. Fresh and throwaway on every run.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: smoke
+          POSTGRES_USER: postgres
+          POSTGRES_DB: smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -106,3 +122,69 @@ jobs:
           import psycopg2
           print('OK: google-adk, litellm, sqlalchemy, cryptography, pandas, pyodbc, psycopg2 all import cleanly')
           "
+
+      # The Dockerfile purges libuuid1 and ncurses (see the comment there).
+      # Assert they stay gone and that nothing left in the image links one of
+      # their shared objects: a consumer added later would otherwise only fail
+      # at import or call time in production.
+      - name: Smoke test — purged libraries have no consumer left
+        run: |
+          set -e
+          docker run --rm --entrypoint sh apowerb:pr-verify -c '
+            for pkg in libuuid1 libncursesw6 ncurses-bin ncurses-base; do
+              if dpkg-query -W -f="\${Status}" "$pkg" 2>/dev/null | grep -q "ok installed"; then
+                echo "FAIL: $pkg is installed"; exit 1
+              fi
+            done
+            broken=$(find / -xdev -type f \( -name "*.so" -o -name "*.so.*" \) 2>/dev/null \
+              | while read -r f; do
+                  ldd "$f" 2>/dev/null | grep -Eq "lib(uuid|ncursesw|formw|menuw|panelw)\.so[^ ]* => not found" && echo "$f"
+                done || true)
+            if [ -n "$broken" ]; then echo "FAIL: still linked against a purged library:"; echo "$broken"; exit 1; fi
+            echo "OK: purged packages absent, no shared object links them"
+          '
+          docker run --rm apowerb:pr-verify /opt/venv/bin/python -c "
+          import uuid
+          assert uuid.uuid4().version == 4 and uuid.uuid1().version == 1
+          import readline
+          print('OK: uuid1/uuid4 and readline work without libuuid1 / libncursesw6')
+          "
+
+      - name: Smoke test — the server boots and answers /health
+        run: |
+          set -e
+          KEY=$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+          docker run -d --name apowerb-health --network host \
+            -e DB_HOST=127.0.0.1 -e DB_PORT=5432 -e DB_NAME=smoke \
+            -e DB_USER=postgres -e DB_PASSWORD=smoke -e ENCRYPT_KEY="$KEY" \
+            apowerb:pr-verify
+          for attempt in $(seq 1 60); do
+            if curl -sf --max-time 5 http://127.0.0.1:8000/health; then
+              echo; echo "OK: /health answered (attempt ${attempt}/60)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "FAIL: /health never answered"; docker logs apowerb-health; exit 1
+
+      - name: Stop the /health container
+        if: always()
+        run: docker rm -f apowerb-health >/dev/null 2>&1 || true
+
+      # Same scanner and version as the measurements recorded for this image,
+      # so the numbers compare. Report only: the HIGH left are Debian packages
+      # with no published fix, and failing on them would block every PR.
+      - name: Trivy scan of the built image (CRITICAL, HIGH)
+        continue-on-error: true
+        run: |
+          set -e
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.68.1/contrib/install.sh | sh -s -- -b /usr/local/bin v0.68.1
+          trivy image -q --severity CRITICAL,HIGH --format json -o trivy-apowerb.json apowerb:pr-verify
+          trivy convert -q --format table trivy-apowerb.json
+
+      - name: Upload the Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-apowerb
+          path: trivy-apowerb.json
+          if-no-files-found: ignore

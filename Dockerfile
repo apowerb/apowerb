@@ -91,11 +91,39 @@ WORKDIR /app
 # keep being reported even though the vulnerable code -- the mount helpers --
 # is gone with the binaries above.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends unixodbc \
     && apt-get purge -y --allow-remove-essential perl-base \
     && apt-get purge -y --allow-remove-essential util-linux mount login bsdutils \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# libuuid1 and ncurses (libncursesw6, ncurses-bin, ncurses-base) carry seven of
+# the eleven HIGH advisories left on this image -- util-linux CVE-2026-76642,
+# -78408, -78409, -78410 and ncurses CVE-2025-69720 -- with no fix published
+# for Debian trixie (Trivy 0.68.1, 2026-10-16). Nothing in the runtime needs
+# them: libuuid1 lost its last dependant with util-linux above, and only
+# Python's own `_uuid` and `_curses` extension modules link these libraries.
+# Both are removed with them, so `import uuid` takes its pure-Python path
+# (uuid4 reads os.urandom, uuid1 falls back to a random node) and
+# `import curses` fails with ImportError instead of a dangling .so.
+#
+# dpkg --purge, not `apt-get purge --allow-remove-essential`: dpkg refuses to
+# remove a package another installed package depends on, so if a later change
+# pulls in a consumer the build fails here instead of apt silently cascading.
+# Only ncurses-bin and ncurses-base are Essential and need the force flag.
+#
+# Kept: libtinfo6 (bash, readline), libacl1 (coreutils, tar, passwd),
+# libsystemd0 and libudev1 (apt, PAM) -- the four HIGH that remain.
+#
+# Consequence for anyone extending this image: `docker exec -it ... bash`
+# still works, but without terminfo `clear`/`tput` are gone and full-screen
+# programs fall back to a dumb terminal. `apt-get install ncurses-base` brings
+# it back.
+RUN dpkg --purge libuuid1 libncursesw6 \
+    && dpkg --purge --force-remove-essential ncurses-bin ncurses-base \
+    && rm -f /usr/local/lib/python3.13/lib-dynload/_uuid.* \
+             /usr/local/lib/python3.13/lib-dynload/_curses*
 
 # pip is never used at runtime: the application runs out of /opt/venv, which uv
 # built and which carries no pip of its own. The copy shipped in the base image
