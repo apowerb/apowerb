@@ -197,31 +197,16 @@ class TestHappyPath:
 
         assert mock_post.call_args.kwargs["json"]["include_image_base64"] is True
         assert result["pages"][0]["image_count"] == 2
-        assert result["pages"][0]["images"] == [{"id": "img0_0"}, {"id": "img0_1"}]
+        assert "images" not in result["pages"][0]  # crops never sent to the model
 
 
 # ── Output is bounded ─────────────────────────────────────────────────────
 class TestTruncation:
-    def test_oversized_page_is_truncated(self, monkeypatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
-        from apowerb.tools_store.portfolio import ocr
-
-        monkeypatch.setattr(ocr, "_MAX_PAGE_MARKDOWN_CHARS", 100, raising=False)
-        payload = _ocr_payload(["x" * 5000])
-        with patch("httpx.post", return_value=_fake_response(payload)):
-            result = tool_ocr_document("https://example.com/big.pdf")
-
-        assert result["status"] == "success"
-        assert result["output_truncated"] is True
-        assert "[page truncated]" in result["pages"][0]["markdown"]
-        assert len(result["pages"][0]["markdown"]) < 1000
-
     def test_combined_cap_truncates(self, monkeypatch):
         # Pages each under the per-page cap, but summing over the combined cap.
         monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
         from apowerb.tools_store.portfolio import ocr
 
-        monkeypatch.setattr(ocr, "_MAX_PAGE_MARKDOWN_CHARS", 10_000, raising=False)
         monkeypatch.setattr(ocr, "_MAX_MARKDOWN_CHARS", 50, raising=False)
         payload = _ocr_payload(["a" * 30, "b" * 30, "c" * 30])
         with patch("httpx.post", return_value=_fake_response(payload)):
@@ -230,8 +215,8 @@ class TestTruncation:
         assert result["status"] == "success"
         assert result["output_truncated"] is True
         assert "[output truncated]" in result["markdown"]
-        # Per-page markdown is untouched (only the combined string is capped).
-        assert result["pages"][0]["markdown"] == "a" * 30
+        # Text is not duplicated per page.
+        assert result["pages"][0] == {"index": 0, "image_count": 0}
 
 
 # ── Azure Document Intelligence provider ──────────────────────────────────
@@ -271,7 +256,8 @@ class TestAzureProvider:
 
         assert result["status"] == "success"
         assert result["provider_used"] == "Azure Document Intelligence"
-        assert result["pages"][0]["markdown"] == "Hello\nWorld"
+        assert result["markdown"] == "Hello\nWorld"
+        assert "markdown" not in result["pages"][0]
         assert result["pages"][0]["index"] == 0  # pageNumber 1 → 0-based
         assert result["page_count"] == 1
         # analyze URL + auth header + body shape

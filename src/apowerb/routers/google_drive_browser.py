@@ -19,8 +19,8 @@ from apowerb.models import Integration, User
 from apowerb.tools_store.portfolio.google_drive import (
     _DRIVE_BASE,
     _EXPORT_MIME_TYPES,
-    tool_list_files,
-    tool_search_files,
+    tool_gdrive_list_files,
+    tool_gdrive_search_files,
 )
 from apowerb.tools_store.portfolio.google_auth import google_auth_headers
 
@@ -112,7 +112,7 @@ async def list_files(
         {"GOOGLE_DRIVE_REFRESH_TOKEN": refresh_token},
         lock=_gdrive_env_lock,
     ):
-        result = tool_list_files(
+        result = tool_gdrive_list_files(
             max_results=max_results,
             folder_id=folder_id,
             mime_type=mime_type,
@@ -158,7 +158,7 @@ async def search_files(
         {"GOOGLE_DRIVE_REFRESH_TOKEN": refresh_token},
         lock=_gdrive_env_lock,
     ):
-        result = tool_search_files(query=q, max_results=max_results)
+        result = tool_gdrive_search_files(query=q, max_results=max_results)
     return sanitize_tool_error(
         result,
         logger=logger,

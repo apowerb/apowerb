@@ -1,24 +1,24 @@
 """Agent-bound ``pdf_to_images`` tool factory.
 
-Renders each page of an uploaded PDF to a base64-encoded PNG so the LLM
-can "see" the document directly (vision-capable models like Claude
-Sonnet 4.5, GPT-4o, Gemini 2.5). Works on both text PDFs and scanned
-PDFs — no separate OCR step needed.
+Renders the first pages of an uploaded PDF to JPEG images that reach the
+model as images (see ``apowerb.core.tool_images``), so a vision model can
+"see" the document. Works on both text PDFs and scanned PDFs.
 """
 from __future__ import annotations
 
-import base64
 import importlib.util
 import io
 import os
 
 from apowerb.configs.th2logger import setup_logging
 from apowerb.artifacts.agent_uploads import agent_upload_path
+from apowerb.core.tool_images import attach_image
 
 
 logger = setup_logging(__name__)
 
 _MAX_PDF_BYTES = 25_000_000
+_MAX_PAGES = 10  # rendered pages per call
 
 
 def extract_first_page_text(path: str) -> dict:
@@ -177,30 +177,23 @@ def _make_pdf_to_images(folder_name: str):
         dpi: int = 84,
         max_dimension: int = 768,
     ) -> dict:
-        """Render each page of a PDF to a base64 PNG for vision-LLM analysis.
+        """Render the first pages of an uploaded PDF as images you can look at.
 
-        Use this when the LLM needs to "see" a document — typical for
-        scanned PDFs, supplier acknowledgements with complex tables /
-        layouts, or any document where text extraction returned little
-        or no content. Works on both text PDFs and scanned PDFs.
-
-        The defaults are tuned for cost: ``max_pages=5`` covers the
-        large majority of single-AR documents, ``dpi=120`` is enough
-        for OCR-quality vision, and ``max_dimension=1024`` keeps each
-        page below ~150k input tokens on Gemini Flash. Pass larger
-        values explicitly when a specific document genuinely needs
-        them — but understand that doubling ``max_dimension`` roughly
-        quadruples the token footprint.
+        Use it when you need to see a document: scans, complex tables or
+        layouts, or when reading its text returned little or nothing. For a
+        PDF with a text layer, reading the file is cheaper. Each page is
+        attached to this result as an image.
 
         Args:
             filename: Name of the PDF in the agent's uploads dir (no path).
-            max_pages: Hard cap on rendered pages (default 5).
-            dpi: Render DPI (default 120).
-            max_dimension: Resize so longest side ≤ this many pixels (default 1024).
+            max_pages: Number of pages to render, from the first (default 2, at most 10).
+            dpi: Render DPI (default 84).
+            max_dimension: Longest side of each image in pixels (default 768).
+                Raise it only when small print is unreadable.
 
         Returns:
-            dict: status, page_count, total_pages_in_pdf, pages (list of
-            {page_number, mime_type, data: base64 PNG}).
+            dict: status, page_count, total_pages_in_pdf, truncated, pages
+            (list of {page_number, image_ref}).
         """
         try:
             import fitz  # pymupdf
@@ -224,8 +217,12 @@ def _make_pdf_to_images(folder_name: str):
         with agent_upload_path(folder_name, filename) as (file_path, available):
             if file_path is None:
                 return _not_found(filename, folder_name, available)
+            try:
+                pages = max(1, min(int(max_pages), _MAX_PAGES))
+            except (TypeError, ValueError):
+                pages = 2
             return _render_pages(
-                fitz, Image, file_path, filename, max_pages, dpi, max_dimension
+                fitz, Image, file_path, filename, pages, dpi, max_dimension,
             )
 
     pdf_to_images.__name__ = "tool_pdf_to_images"
@@ -274,8 +271,7 @@ def _render_pages(fitz, Image, file_path, filename, max_pages, dpi, max_dimensio
             pages.append(
                 {
                     "page_number": i + 1,
-                    "mime_type": "image/jpeg",
-                    "data": base64.b64encode(buf.getvalue()).decode("ascii"),
+                    "image_ref": attach_image(buf.getvalue(), "image/jpeg"),
                 }
             )
 

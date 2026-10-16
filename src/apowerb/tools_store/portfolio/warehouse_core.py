@@ -96,17 +96,23 @@ def clamp_rows(max_rows: int | None) -> int:
 def rows_result(
     columns: list[str], rows: list[list[Any]], max_rows: int, total: int | None
 ) -> dict:
-    """Build the common success payload: rows as dicts, capped at max_rows."""
+    """Build the common success payload: rows as dicts, capped at max_rows.
+
+    ``row_count`` is omitted when ``total_rows`` equals the rows returned."""
     kept = rows[:max_rows]
     truncated = len(rows) > max_rows or (total is not None and total > len(kept))
-    return {
+    result = {
         "status": "success",
         "columns": columns,
         "rows": [dict(zip(columns, row)) for row in kept],
-        "row_count": len(kept),
         "total_rows": total,
         "truncated": truncated,
     }
+    # ``row_count`` only when total_rows does not already say it (unknown, or
+    # larger because the rows were capped).
+    if total is None or total != len(kept):
+        result["row_count"] = len(kept)
+    return result
 
 
 def error_result(exc: Exception, service: str, token_hint: str, logger) -> dict:

@@ -141,6 +141,11 @@ _NEVER_ALLOWED_OPS: tuple[str, ...] = (
 )
 
 
+_SCHEMA_HINT = (
+    " Check table and column names with tool_get_database_schema, then fix the query."
+)
+
+
 def _execute_and_format(conn, cursor, sql_stripped: str, db_type: str | None) -> dict:
     """Execute the prepared statement and return a tool-friendly dict.
 
@@ -168,25 +173,28 @@ def _execute_and_format(conn, cursor, sql_stripped: str, db_type: str | None) ->
                 "[SQL] SQL_MAX_ROWS=%r invalide, fallback sur 150", _sql_max_rows_raw
             )
             max_rows = 150
-        if len(rows) > max_rows:
+        truncated = len(rows) > max_rows
+        if truncated:
             logger.warning("[SQL] result truncated %d->%d rows", len(rows), max_rows)
             rows = rows[:max_rows]
         cursor.close()
         serialized = [_serialize_row(dict(r)) for r in rows]
-        return {
+        result = {
             "success": True,
-            "sql": sql_stripped,
             "db_type": db_type,
             "row_count": len(serialized),
             "data": serialized,
         }
+        if truncated:
+            result["truncated"] = True
+            result["row_limit"] = max_rows
+        return result
 
     affected = cursor.rowcount
     cursor.close()
     conn.commit()
     return {
         "success": True,
-        "sql": sql_stripped,
         "db_type": db_type,
         "operation": op,
         "rows_affected": affected,
@@ -268,10 +276,11 @@ def tool_run_sql(sql: str) -> dict:
     Returns:
         dict: {
             "success": bool,
-            "sql": str,
             "row_count": int,
             "data": list[dict],
-            "error": str  # only on failure
+            "truncated": bool,  # only when SQL_MAX_ROWS (default 150) cut the rows
+            "row_limit": int,   # the cap that applied, with "truncated"
+            "error": str  # only on failure (the failing "sql" is echoed back)
         }
     """
     try:
@@ -298,7 +307,7 @@ def tool_run_sql(sql: str) -> dict:
     except ValueError as e:
         return {"success": False, "sql": sql, "error": str(e)}
     except Exception as e:
-        return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}"}
+        return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}.{_SCHEMA_HINT}"}
 
 
 def tool_db(table_name: str, limit: int = 10):
@@ -454,10 +463,11 @@ def make_database_tools(
         Returns:
             dict: {
                 "success": bool,
-                "sql": str,
                 "row_count": int,
                 "data": list[dict],
-                "error": str  # only on failure
+                "truncated": bool,  # only when SQL_MAX_ROWS (default 150) cut the rows
+                "row_limit": int,   # the cap that applied, with "truncated"
+                "error": str  # only on failure (the failing "sql" is echoed back)
             }
         """
         try:
@@ -492,7 +502,7 @@ def make_database_tools(
         except ValueError as e:
             return {"success": False, "sql": sql, "error": str(e)}
         except Exception as e:
-            return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}"}
+            return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}.{_SCHEMA_HINT}"}
 
     def tool_db(table_name: str, limit: int = 10) -> dict:
         """

@@ -1,6 +1,5 @@
 """Tests for tool_convert_image_to_base64 (basic.py)."""
 
-import base64
 import io
 import os
 import tempfile
@@ -8,6 +7,7 @@ import tempfile
 import pytest
 from PIL import Image as PILImage
 
+from apowerb.core.tool_images import get_image
 from apowerb.tools_store.portfolio.basic import tool_convert_image_to_base64
 
 
@@ -27,7 +27,7 @@ def small_png(tmp_path):
 
 @pytest.fixture
 def large_png(tmp_path):
-    """Create a 3000x2000 PNG that exceeds the default 1600px limit."""
+    """Create a 3000x2000 PNG that exceeds the default 1024px limit."""
     img = PILImage.new("RGB", (3000, 2000), color="blue")
     path = tmp_path / "large.png"
     img.save(path, format="PNG")
@@ -75,14 +75,14 @@ class TestConvertSuccess:
     def test_small_png_returns_success(self, small_png):
         result = tool_convert_image_to_base64(small_png)
         assert result["status"] == "success"
-        assert result["base64_data"]
-        assert result["data_uri"].startswith("data:image/")
+        assert "base64_data" not in result and "data_uri" not in result
+        assert get_image(result["image_ref"]) is not None
         assert result["file_name"] == "small.png"
         assert result["was_resized"] is False
 
-    def test_base64_is_valid(self, small_png):
+    def test_attached_image_is_valid(self, small_png):
         result = tool_convert_image_to_base64(small_png)
-        decoded = base64.b64decode(result["base64_data"])
+        decoded, _mime = get_image(result["image_ref"])
         assert len(decoded) > 0
         # Should be a valid image
         img = PILImage.open(io.BytesIO(decoded))
@@ -98,7 +98,7 @@ class TestConvertSuccess:
         result = tool_convert_image_to_base64(rgba_png)
         assert result["status"] == "success"
         assert result["image_format"] == "PNG"
-        assert "image/png" in result["data_uri"]
+        assert get_image(result["image_ref"])[1] == "image/png"
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +115,8 @@ class TestResize:
         assert result["was_resized"] is True
         # Verify dimensions are within max_dimension
         w, h = result["final_dimensions"].split("x")
-        assert int(w) <= 1600
-        assert int(h) <= 1600
+        assert int(w) <= 1024
+        assert int(h) <= 1024
 
     def test_original_dimensions_recorded(self, large_png):
         result = tool_convert_image_to_base64(large_png)

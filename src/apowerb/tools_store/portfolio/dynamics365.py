@@ -172,9 +172,40 @@ def _entity_set(value: str | None) -> str:
     return value.strip()
 
 
+_FORMATTED_SUFFIX = "@OData.Community.Display.V1.FormattedValue"
+
+
 def _clean(row: dict) -> dict:
-    """Drop OData annotations (``@odata.etag`` and friends)."""
+    """Drop OData annotations (``@odata.etag`` and friends).
+
+    A lookup keeps its raw ``_x_value`` GUID next to its formatted value: the
+    agent needs the GUID to filter on it or to bind it in a create/update.
+    """
     return {k: v for k, v in row.items() if not k.startswith("@")}
+
+
+def _record_id(row: dict, entity_set: str = "") -> str | None:
+    """Primary key GUID of a created row (the ``<entity>id`` column).
+
+    The key is derived from the entity set ("accounts" -> "accountid",
+    "opportunities" -> "opportunityid"); otherwise a GUID column ending in
+    ``id`` is accepted only when it is the only one, so a lookup such as
+    ``parentcustomerid`` is never returned as the new row's id.
+    """
+    name = entity_set.strip().strip("/").lower()
+    if name.endswith("ies"):
+        name = name[:-3] + "y"
+    elif name.endswith("s"):
+        name = name[:-1]
+    value = row.get(f"{name}id") if name else None
+    if isinstance(value, str) and _GUID_RE.match(value):
+        return value
+    guids = [
+        v
+        for k, v in row.items()
+        if k.endswith("id") and isinstance(v, str) and _GUID_RE.match(v)
+    ]
+    return guids[0] if len(guids) == 1 else None
 
 
 def tool_dynamics365_query(
@@ -182,7 +213,7 @@ def tool_dynamics365_query(
     select: str | None = None,
     filter: str | None = None,
     orderby: str | None = None,
-    max_rows: int = 100,
+    max_rows: int = 25,
 ) -> dict:
     """Query rows of a Dynamics 365 / Dataverse table (OData).
 
@@ -194,7 +225,8 @@ def tool_dynamics365_query(
         filter (str): OData filter, e.g. "statecode eq 0 and revenue gt 10000".
             Optional.
         orderby (str): OData order, e.g. "createdon desc". Optional.
-        max_rows (int): Maximum rows to return (1–1000). Default: 100.
+        max_rows (int): Maximum rows to return (1–1000). Default: 25; the
+            response is `truncated` when more rows exist.
 
     Returns:
         dict: On success, ``status`` "success" with ``count``, ``truncated``
@@ -263,8 +295,8 @@ def tool_dynamics365_create_record(entity_set: str, fields: dict) -> dict:
             Required.
 
     Returns:
-        dict: On success, ``status`` "success" with ``record`` (the created
-        row). On failure, ``status`` "error" with ``error_message``.
+        dict: On success, ``status`` "success" with ``id`` (the new row's
+        GUID; use `tool_dynamics365_query` to read the row back). On failure, ``status`` "error" with ``error_message``.
     """
     if not isinstance(fields, dict) or not fields:
         return {
@@ -280,7 +312,7 @@ def tool_dynamics365_create_record(entity_set: str, fields: dict) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 — mapped to a structured error dict
         return _error_result(exc)
-    return {"status": "success", "record": _clean(data)}
+    return {"status": "success", "id": _record_id(data, _entity_set(entity_set))}
 
 
 def tool_dynamics365_update_record(

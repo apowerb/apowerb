@@ -291,7 +291,7 @@ class TestPortfolioAdapters:
         from apowerb.tools_store.portfolio import google_sheets as gs
 
         values = [["Mois", "Ventes", "", "Ventes"], ["jan", "10", "x"], ["fév", "12", "", "7"]]
-        with patch.object(gs, "tool_read_sheet", lambda *a, **k: {"status": "ok", "values": values}):
+        with patch.object(gs, "_read_values", lambda *a, **k: {"status": "ok", "values": values}):
             out = gs.tool_read_sheet_table("sid")
         assert out["success"] is True
         assert out["columns"] == ["Mois", "Ventes", "colonne_3", "Ventes_2"]
@@ -301,7 +301,7 @@ class TestPortfolioAdapters:
     def test_sheet_error_is_reported_as_a_failure(self):
         from apowerb.tools_store.portfolio import google_sheets as gs
 
-        with patch.object(gs, "tool_read_sheet", lambda *a, **k: {"status": "error", "message": "not connected"}):
+        with patch.object(gs, "_read_values", lambda *a, **k: {"status": "error", "message": "not connected"}):
             assert gs.tool_read_sheet_table("sid") == {"success": False, "error": "not connected"}
 
     def test_hubspot_deals_are_flattened_and_paged(self):

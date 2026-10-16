@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import datetime
@@ -768,6 +769,8 @@ def _tool_business_analyst_impl(
         parse_planner_response,
     )
 
+    max_steps = max(1, min(int(max_steps or 4), _ANALYST_MAX_STEPS))
+    max_rows = max(1, min(int(max_rows or _ANALYST_MAX_ROWS), _ANALYST_MAX_ROWS))
     try:
         logger.info("[BIZ_ANALYST][%s] %s", agent_name, question)
         schema_info = _agent_cached_schema(agent_name)
@@ -806,14 +809,12 @@ def _tool_business_analyst_impl(
 
         return {
             "success": result.ok,
-            "question": question,
-            "schema": schema_info.get("schema", "public"),
             "steps": [
                 {
                     "sub_question": st.sub_question,
                     "sql_query": st.sql,
                     "row_count": st.row_count,
-                    "data": st.rows,
+                    "data": st.rows[:_ANALYST_STEP_ROWS_SHOWN],
                     "error": st.error,
                 }
                 for st in result.steps
@@ -832,6 +833,13 @@ def _tool_business_analyst_impl(
         logger.error("[BIZ_ANALYST][%s] %s", agent_name, e)
         return {"success": False, "error": str(e)}
 
+
+# Model-facing bounds for the tool responses.
+_TEXT_TO_SQL_MAX_ROWS = 200
+_ANALYST_MAX_STEPS = 6
+_ANALYST_MAX_ROWS = 50
+_ANALYST_STEP_ROWS_SHOWN = 20
+_SCHEMA_TOOL_MAX_CHARS = 16000
 
 # ── Module-level tool implementations ────────────────────────────────────────
 
@@ -854,15 +862,23 @@ def _tool_text_to_sql_impl(
                 "sql_query": sql_query if include_sql else None,
             }
 
-        results = _agent_execute_sql(agent_name, sql_query, limit=max_rows)
+        max_rows = max(1, min(int(max_rows or 100), _TEXT_TO_SQL_MAX_ROWS))
+        # Fetch one extra row so we can tell the model the result was cut.
+        results = _agent_execute_sql(agent_name, sql_query, limit=max_rows + 1)
+        truncated = len(results) > max_rows
+        results = results[:max_rows]
         resp = {
             "success":   True,
-            "question":  question,
-            "schema":    schema_info.get("schema", "public"),
             "row_count": len(results),
             "data":      results,
             "message":   "Data retrieved successfully. Present the results clearly to the user.",
         }
+        if truncated:
+            resp["truncated"] = True
+            resp["message"] += (
+                f" Only the first {max_rows} rows are shown; more exist. "
+                "Refine the question (filter/aggregate) if the rest is needed."
+            )
         if include_sql:
             resp["sql_query"] = sql_query
         return resp
@@ -871,17 +887,72 @@ def _tool_text_to_sql_impl(
         return {"success": False, "error": str(e)}
 
 
-def _tool_get_database_schema_impl(agent_name: str, refresh: bool = False) -> dict:
+def _compact_table(info: dict) -> dict:
+    """Compact one table: ``columns`` as "name type" strings, PK, FK as "col->tbl.col"."""
+    out: dict = {
+        "columns": [
+            f"{c.get('column_name')} {c.get('data_type')}"
+            for c in info.get("columns", [])
+        ],
+    }
+    if info.get("primary_keys"):
+        out["pk"] = list(info["primary_keys"])
+    fks = [
+        f"{fk.get('column_name')}->{fk.get('foreign_table_name')}.{fk.get('foreign_column_name')}"
+        for fk in info.get("foreign_keys", [])
+    ]
+    if fks:
+        out["fk"] = fks
+    if info.get("sample_data"):
+        out["sample_data"] = info["sample_data"]
+    return out
+
+
+def _tool_get_database_schema_impl(
+    agent_name: str,
+    refresh: bool = False,
+    tables: Optional[List[str]] = None,
+) -> dict:
     try:
         s = _get_state(agent_name)
         schema_info = _agent_cached_schema(agent_name, refresh=refresh)
-        return {
+        all_tables = schema_info["tables"]
+        unknown: list = []
+        if tables:
+            wanted = {str(t).strip().lower() for t in tables if str(t).strip()}
+            selected = {n: t for n, t in all_tables.items() if n.lower() in wanted}
+            known = {n.lower() for n in all_tables}
+            unknown = sorted(w for w in wanted if w not in known)
+        else:
+            selected = all_tables
+
+        compact: dict = {}
+        omitted: list = []
+        used = 0
+        for name, info in selected.items():
+            entry = _compact_table(info)
+            size = len(json.dumps(entry, default=str)) + len(name)
+            if used + size > _SCHEMA_TOOL_MAX_CHARS and compact:
+                omitted.append(name)
+                continue
+            compact[name] = entry
+            used += size
+        resp = {
             "success":     True,
             "database":    s.db_name,
             "schema":      schema_info.get("schema", "public"),
-            "table_count": len(schema_info["tables"]),
-            "tables":      schema_info["tables"],
+            "table_count": len(all_tables),
+            "tables":      compact,
         }
+        if omitted:
+            resp["truncated"] = True
+            resp["omitted_tables"] = omitted
+            resp["message"] = (
+                "Output capped; call again with tables=[...] to get the omitted tables."
+            )
+        if unknown:
+            resp["unknown_tables"] = unknown
+        return resp
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -930,7 +1001,7 @@ def tool_text_to_sql(question: str, max_rows: int = 100, include_sql: bool = Tru
     return {"success": False, "error": "Tool not yet bound to agent. make_text_to_sql_tools() must run first."}
 
 
-def tool_get_database_schema() -> dict:
+def tool_get_database_schema(refresh: bool = False, tables: list[str] | None = None) -> dict:
     """Retrieves the database schema including tables, columns, and relationships."""
     return {"success": False, "error": "Tool not yet bound to agent. make_text_to_sql_tools() must run first."}
 
@@ -1028,15 +1099,21 @@ def make_text_to_sql_tools(
 
     # Thin wrappers — capture agent_name, delegate to module-level _impl functions
     def tool_text_to_sql(question: str, max_rows: int = 100, include_sql: bool = True) -> dict:
-        """Converts natural language to SQL and executes it against the configured database."""
+        """Converts natural language to SQL and executes it against the configured database.
+
+        max_rows is capped at 200; ``truncated`` is true when more rows exist.
+        """
         return _tool_text_to_sql_impl(agent_name, question, max_rows, include_sql)
 
-    def tool_get_database_schema(refresh: bool = False) -> dict:
+    def tool_get_database_schema(refresh: bool = False, tables: list[str] | None = None) -> dict:
         """Retrieves the database schema including tables, columns, and relationships.
 
+        Compact form per table: ``columns`` ("name type"), ``pk``, ``fk``
+        ("col->table.col"). Pass ``tables`` (list of table names) to get only
+        those tables; the output is capped and lists ``omitted_tables`` when cut.
         Pass refresh=True to bypass the cache and re-introspect the database.
         """
-        return _tool_get_database_schema_impl(agent_name, refresh=refresh)
+        return _tool_get_database_schema_impl(agent_name, refresh=refresh, tables=tables)
 
     def tool_text_to_sql_explain(question: str) -> dict:
         """Generates SQL from natural language with explanation, without executing it."""
@@ -1047,7 +1124,8 @@ def make_text_to_sql_tools(
 
         Runs several chained SELECT queries (not just one), then returns a
         narrative analysis with findings, recommendations and an optional chart
-        spec. Use this for open analytical questions ('why did X drop?', 'compare
+        spec. max_steps is capped at 6, max_rows at 50; each step returns at
+        most 20 rows (``row_count`` gives the real count). Use this for open analytical questions ('why did X drop?', 'compare
         A vs B', 'what are the trends in Y?'); use tool_text_to_sql for a single
         direct lookup.
         """

@@ -21,6 +21,8 @@ from apowerb.core.guardrails import (
     create_before_tool_callback,
     create_rag_before_model_callback,
 )
+from apowerb.core.tool_images import create_inline_tool_images_callback
+from apowerb.core.tool_declarations import slim_tool_declarations
 from apowerb.core.history_compaction import (
     create_strip_large_payloads_callback,
 )
@@ -598,8 +600,8 @@ def to_agent(agent_name: str) -> LlmAgent:
         # Auto-add create_downloadable_file so the agent can generate files for download
         bind_create_downloadable_file(agent_name, tools_funcs)
 
-        # Auto-add pdf_to_images so the agent can render uploaded PDFs to
-        # base64 PNGs for vision-LLM analysis (scanned ARs, complex layouts...)
+        # Auto-add pdf_to_images so the agent can look at uploaded PDFs
+        # (scanned ARs, complex layouts...); pages reach the model as images.
         tools_funcs = bind_pdf_to_images(agent_name, tools_funcs)
         tools_funcs = bind_pdf_first_page(agent_name, tools_funcs)
 
@@ -808,6 +810,25 @@ def to_agent(agent_name: str) -> LlmAgent:
         logger.info(
             f"[TO_AGENT] history compaction (strip large payloads) attached for {agent_name}"
         )
+
+        # After the strip: attach the images that the latest tool results
+        # reference (pdf_to_images, read_uploaded_file...), and trim the tool
+        # declarations sent on every call.
+        images_cb = create_inline_tool_images_callback(agent_name)
+        _existing_for_images = before_model_cb
+
+        def chained_with_tool_images(
+            *, callback_context, llm_request,
+            _images=images_cb, _ex=_existing_for_images
+        ):
+            response = _ex(callback_context=callback_context, llm_request=llm_request)
+            if response is not None:
+                return response
+            _images(callback_context=callback_context, llm_request=llm_request)
+            slim_tool_declarations(llm_request)
+            return None
+
+        before_model_cb = chained_with_tool_images
 
         # Build LiteLlm model — pass temperature as kwarg if configured
         model = build_litellm_model(agent_details, _temperature)

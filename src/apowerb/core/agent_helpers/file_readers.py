@@ -9,7 +9,9 @@ from apowerb.core.agent_helpers.text_utils import _truncate_content
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp"}
 _AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac", ".aac", ".wma", ".opus"}
 _ARCHIVE_EXTENSIONS = {".zip"}
-_MAX_IMAGE_BASE64_SIZE = 200 * 1024  # base64 encode images up to 200 KB
+_MAX_IMAGE_DIMENSION = 1024  # longest side of an image sent to the model
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # larger files are not decoded at all
+_MAX_PASSTHROUGH_BYTES = 2 * 1024 * 1024  # above this a small image is re-encoded
 
 
 def _is_binary_by_magic(file_path: str) -> bool:
@@ -23,31 +25,66 @@ def _is_binary_by_magic(file_path: str) -> bool:
 
 
 def _read_image(file_path: str, file_size: int, filename: str) -> dict:
-    """Return image metadata and base64 content (if small enough)."""
-    import base64
+    """Attach the image to the tool result (see ``apowerb.core.tool_images``).
 
-    result = {
+    Images larger than ``_MAX_IMAGE_DIMENSION`` on their longest side are
+    downscaled first: the providers bill images by their dimensions.
+    """
+    from apowerb.core.tool_images import attach_image
+
+    content_type = "image/" + os.path.splitext(filename)[1].lstrip(".").lower().replace(
+        "jpg", "jpeg"
+    )
+    if file_size > _MAX_IMAGE_BYTES:
+        return {
+            "status": "error",
+            "filename": filename,
+            "size": file_size,
+            "format": "image",
+            "error_message": f"The image is larger than {_MAX_IMAGE_BYTES // (1024 * 1024)} MB.",
+        }
+    with open(file_path, "rb") as f:
+        data = f.read()
+    try:
+        data, content_type = _downscale_image(data, content_type)
+    except Exception:  # noqa: BLE001 -- a provider would reject it as well
+        return {
+            "status": "error",
+            "filename": filename,
+            "size": file_size,
+            "format": "image",
+            "error_message": "The file could not be read as an image.",
+        }
+    return {
         "status": "success",
         "filename": filename,
         "size": file_size,
         "format": "image",
-        "content_type": "image/"
-        + os.path.splitext(filename)[1].lstrip(".").lower().replace("jpg", "jpeg"),
+        "image_ref": attach_image(data, content_type),
+        "message": "The image is attached to this result.",
     }
-    if file_size <= _MAX_IMAGE_BASE64_SIZE:
-        with open(file_path, "rb") as f:
-            raw = f.read()
-        b64 = base64.b64encode(raw).decode("ascii")
-        result["base64"] = b64
-        result["message"] = (
-            "Image encoded as base64. You can describe it or reference it."
-        )
-    else:
-        result["message"] = (
-            f"Image too large for inline base64 ({file_size} bytes). "
-            "File is available on disk. Describe what you know or ask the user for details."
-        )
-    return result
+
+
+def _downscale_image(data: bytes, content_type: str) -> tuple[bytes, str]:
+    import io
+
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(data))
+    if (
+        max(img.width, img.height) <= _MAX_IMAGE_DIMENSION
+        and content_type in ("image/png", "image/jpeg", "image/webp", "image/gif")
+        and len(data) <= _MAX_PASSTHROUGH_BYTES
+        and not getattr(img, "is_animated", False)  # providers reject animations
+    ):
+        return data, content_type
+    img.thumbnail((_MAX_IMAGE_DIMENSION, _MAX_IMAGE_DIMENSION))
+    buf = io.BytesIO()
+    if img.mode in ("RGBA", "LA", "P"):
+        img.save(buf, format="PNG", optimize=True)
+        return buf.getvalue(), "image/png"
+    img.convert("RGB").save(buf, format="JPEG", quality=85, optimize=True)
+    return buf.getvalue(), "image/jpeg"
 
 
 def _read_archive(file_path: str, file_size: int, filename: str) -> dict:

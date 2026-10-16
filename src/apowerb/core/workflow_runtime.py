@@ -96,10 +96,18 @@ def resolve_tool(tool_ref: str, owner_email: str):
     ref, _, wanted = tool_ref.partition(":")
     names, funcs = load_agent_tools_functions(tools=[ref], owner_id=owner_email)
     if wanted:
+        from apowerb.tools_store.tools_helpers import _LEGACY_TOOL_RENAMES
+
+        # Un graphe enregistré peut encore nommer un outil par son ancien nom.
+        accepted = {wanted} | {
+            new.split(".")[-1]
+            for old, new in _LEGACY_TOOL_RENAMES.items()
+            if wanted in (old, old.split(".")[-1])
+        }
         pairs = [
             (n, f)
             for n, f in zip(names, funcs)
-            if n.split(".")[-1] == wanted or n == wanted
+            if n.split(".")[-1] in accepted or n == wanted
         ]
     else:
         pairs = list(zip(names, funcs))

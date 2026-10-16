@@ -249,6 +249,14 @@ def tool_run_python_script(
     finally:
         _cleanup_dir(workdir)
 
+    # Model-facing caps: stdout keeps its head and tail (final results are
+    # often printed last), stderr its tail (the traceback). The file-level
+    # cap above only protects the host's RAM.
+    stdout, out_cut = _cap_middle(stdout, _MODEL_STDOUT_CHARS)
+    stderr, err_cut = _cap_tail(stderr, _MODEL_STDERR_CHARS)
+    out_truncated = out_truncated or out_cut
+    err_truncated = err_truncated or err_cut
+
     ok = (not timed_out) and return_code == 0
     result = {
         "status": "success" if ok else "error",
@@ -270,6 +278,29 @@ def tool_run_python_script(
             f"Script exited with code {return_code}. See stderr for the traceback."
         )
     return result
+
+
+_MODEL_STDOUT_CHARS = 12000
+_MODEL_STDERR_CHARS = 4000
+
+
+def _cap_middle(text: str, limit: int) -> tuple[str, bool]:
+    """Keep the first two thirds and the last third of ``limit`` characters."""
+    if len(text) <= limit:
+        return text, False
+    head = limit * 2 // 3
+    return (
+        text[:head]
+        + f"\n...[truncated, {len(text)} chars total]...\n"
+        + text[-(limit - head):]
+    ), True
+
+
+def _cap_tail(text: str, limit: int) -> tuple[str, bool]:
+    """Keep the last ``limit`` characters of ``text`` (where tracebacks end)."""
+    if len(text) <= limit:
+        return text, False
+    return f"[truncated, {len(text)} chars total]...\n" + text[-limit:], True
 
 
 def _kill_group(proc: subprocess.Popen) -> None:

@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 _JSONRPC_TIMEOUT = 20.0
 
+# Fields returned when the agent does not name any (a full Odoo record can hold
+# hundreds of fields and would flood the model context).
+_DEFAULT_FIELDS = ("id", "display_name")
+_MAX_READ_IDS = 200
+
 # Per-process creds cache, keyed by the invoker. Each value is a dict:
 #   {"url", "database", "login", "api_key", "uid"} — all plain strings/ints.
 _creds_cache: dict[str, dict] = {}
@@ -131,7 +136,7 @@ def tool_odoo_search_records(
     model: str,
     domain: Optional[list] = None,
     fields: Optional[list] = None,
-    limit: int = 50,
+    limit: int = 20,
     offset: int = 0,
     order: Optional[str] = None,
 ) -> dict:
@@ -144,8 +149,10 @@ def tool_odoo_search_records(
         domain: Odoo domain expression as a list of tuples, e.g.
                 ``[("is_company", "=", True), ("country_id.code", "=", "FR")]``.
                 Pass an empty list (or None) to match all records.
-        fields: Field names to retrieve. When None, Odoo returns a default set.
-        limit:  Max number of records to return (default 50, hard-capped at 500).
+        fields: Field names to retrieve. When None, only ``["id", "display_name"]``
+                are returned (to keep the response small): pass the fields you
+                need, e.g. ``["name", "email", "country_id"]``.
+        limit:  Max number of records to return (default 20, hard-capped at 500).
         offset: Number of records to skip (for pagination).
         order:  SQL-like ordering, e.g. "name asc" or "create_date desc".
 
@@ -155,10 +162,9 @@ def tool_odoo_search_records(
     """
     try:
         creds = _load_creds()
-        safe_limit = max(1, min(int(limit or 50), 500))
+        safe_limit = max(1, min(int(limit or 20), 500))
         kwargs: dict = {"limit": safe_limit, "offset": max(0, int(offset or 0))}
-        if fields:
-            kwargs["fields"] = list(fields)
+        kwargs["fields"] = list(fields) if fields else list(_DEFAULT_FIELDS)
         if order:
             kwargs["order"] = order
         records = _execute_kw(
@@ -221,19 +227,23 @@ def tool_odoo_read_records(
 
     Args:
         model:  Odoo model name.
-        ids:    List of record ids to read, e.g. [12, 34, 56].
-        fields: Field names to retrieve. When None, Odoo returns its default set.
+        ids:    List of record ids to read, e.g. [12, 34, 56] (at most 200 are read).
+        fields: Field names to retrieve. When None, only ``["id", "display_name"]``
+                are returned: pass the fields you need.
 
     Returns:
         {"success": True, "records": [...]} or {"success": False, "error": "..."}.
+        ``ids_truncated`` is true when more than 200 ids were passed.
     """
     try:
         creds = _load_creds()
-        kwargs: dict = {}
-        if fields:
-            kwargs["fields"] = list(fields)
-        records = _execute_kw(creds, model, "read", [list(ids or [])], kwargs)
-        return {"success": True, "records": records or []}
+        id_list = list(ids or [])
+        kwargs: dict = {"fields": list(fields) if fields else list(_DEFAULT_FIELDS)}
+        records = _execute_kw(creds, model, "read", [id_list[:_MAX_READ_IDS]], kwargs)
+        result: dict = {"success": True, "records": records or []}
+        if len(id_list) > _MAX_READ_IDS:
+            result["ids_truncated"] = True
+        return result
     except Exception as exc:
         logger.warning("[odoo] read %s failed: %s", model, exc)
         return {"success": False, "error": str(exc)}

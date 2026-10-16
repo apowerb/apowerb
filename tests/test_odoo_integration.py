@@ -231,6 +231,29 @@ class TestTools:
         finally:
             p.stop()
 
+    def test_search_defaults_to_id_and_display_name_and_limit_20(self, monkeypatch):
+        self._with_owner(monkeypatch)
+        p, mock_post = self._patch_post(resp_json={"result": []})
+        try:
+            odoo_tools.tool_odoo_search_records("res.partner")
+            kwargs = mock_post.call_args.kwargs["json"]["params"]["args"][6]
+            assert kwargs["fields"] == ["id", "display_name"]
+            assert kwargs["limit"] == 20
+        finally:
+            p.stop()
+
+    def test_read_caps_ids_and_defaults_fields(self, monkeypatch):
+        self._with_owner(monkeypatch)
+        p, mock_post = self._patch_post(resp_json={"result": []})
+        try:
+            out = odoo_tools.tool_odoo_read_records("res.partner", list(range(500)))
+            args = mock_post.call_args.kwargs["json"]["params"]["args"]
+            assert args[5] == [list(range(200))]
+            assert args[6] == {"fields": ["id", "display_name"]}
+            assert out["ids_truncated"] is True
+        finally:
+            p.stop()
+
     def test_search_error_returns_error_dict(self, monkeypatch):
         self._with_owner(monkeypatch)
         p, _ = self._patch_post(resp_json={"error": {"data": {"message": "Access denied"}}})

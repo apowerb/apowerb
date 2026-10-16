@@ -72,9 +72,9 @@ _AZURE_POLL_INTERVAL_S = 1.5
 _AZURE_POLL_TIMEOUT_S = 120
 
 # Combined-markdown cap (characters). Keeps a 1000-page scan from blowing up the
-# host / LLM context; the per-page list is still returned, each page capped too.
-_MAX_MARKDOWN_CHARS = 1_000_000
-_MAX_PAGE_MARKDOWN_CHARS = 200_000
+# host / LLM context. The text is returned once (combined); ``pages`` only
+# carries per-page metadata.
+_MAX_MARKDOWN_CHARS = 50_000
 
 # Extension → (mime, chunk type). "image_url" for raster images, "document_url"
 # for everything the provider treats as a document.
@@ -302,28 +302,21 @@ _PROVIDER_ORDER = ["mistral", "azure"]
 def _collect_pages(raw: dict, include_images: bool) -> tuple[list[dict], str, bool]:
     """Normalise a provider response into (pages, combined_markdown, truncated).
 
-    Each page is ``{"index", "markdown", "image_count"}`` (plus ``images`` when
-    requested). Both the per-page markdown and the combined string are capped.
+    Each page is ``{"index", "image_count"}``: the text lives only in the
+    combined string (capped), never duplicated per page. The image crops
+    (base64) are never returned; ``include_images`` only asks the provider for
+    them so ``image_count`` is meaningful.
     """
     pages_out: list[dict] = []
     combined_parts: list[str] = []
     truncated = False
 
     for page in raw.get("pages", []) or []:
-        md = page.get("markdown") or ""
-        if len(md) > _MAX_PAGE_MARKDOWN_CHARS:
-            md = md[:_MAX_PAGE_MARKDOWN_CHARS] + "\n...[page truncated]"
-            truncated = True
         images = page.get("images") or []
-        entry = {
-            "index": page.get("index"),
-            "markdown": md,
-            "image_count": len(images),
-        }
-        if include_images:
-            entry["images"] = images
-        pages_out.append(entry)
-        combined_parts.append(md)
+        pages_out.append(
+            {"index": page.get("index"), "image_count": len(images)}
+        )
+        combined_parts.append(page.get("markdown") or "")
 
     combined = "\n\n".join(combined_parts)
     if len(combined) > _MAX_MARKDOWN_CHARS:
@@ -340,7 +333,7 @@ def tool_ocr_document(
     """Extract text from a document or image using OCR.
 
     Reads a PDF, Office document (PPTX/DOCX) or image and returns the recognised
-    text as markdown, one entry per page plus a combined string.
+    text as markdown in a single combined string (capped at 50,000 characters).
 
     Args:
         source (str): What to OCR. Either an ``http(s)`` URL (the provider fetches
@@ -349,14 +342,15 @@ def tool_ocr_document(
             file types: PDF, PPTX, DOCX, PNG, JPG/JPEG, AVIF.
         provider (str): Which OCR provider to use. Options: "auto" (tries available
             providers in order), "mistral" or "azure". Default: "auto".
-        include_images (bool): When true, include base64-encoded image crops that
-            the provider extracted from each page. Off by default to keep the
-            response small. Default: False.
+        include_images (bool): When true, ask the provider to extract image crops
+            from each page. The base64 crops are NOT returned (too large for the
+            model context); only their count per page (``image_count``) is.
+            Default: False.
 
     Returns:
         dict: On success, ``status`` "success", ``markdown`` (combined text),
-        ``pages`` (list of ``{index, markdown, image_count}``), ``page_count``,
-        ``provider_used``, ``model``, ``output_truncated``. On failure, ``status``
+        ``pages`` (list of ``{index, image_count}``, no text), ``page_count``,
+        ``provider_used``, ``model``, ``output_truncated`` (true if the text was cut). On failure, ``status``
         "error" with ``error_message`` (and the per-provider errors tried).
     """
     import httpx

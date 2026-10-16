@@ -317,7 +317,7 @@ def propose_agent_upgrade(
         reason: Why this capability is needed for the task.
         skill_id: Optional identifier of the skill to enable.
         tool_name: Optional exact catalogue name of the tool to enable, as
-            returned by ``find_tools`` (e.g. "google_gmail.tool_list_emails").
+            returned by ``find_tools`` (e.g. "google_gmail.tool_gmail_list_emails").
             On approval the tool is added to this agent.
 
     Returns:

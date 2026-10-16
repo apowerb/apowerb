@@ -228,28 +228,23 @@ def tool_pdf_to_images(
     dpi: int = 84,
     max_dimension: int = 768,
 ) -> dict:
-    """Render each page of a PDF to a base64 PNG for vision-LLM analysis.
+    """Render the first pages of an uploaded PDF as images you can look at.
 
-    Use this when the LLM needs to "see" a document — typical for
-    scanned PDFs, supplier acknowledgements with complex tables/layouts,
-    or any document where text extraction returned little or no content.
-    Works on both text PDFs and scanned PDFs.
-
-    Defaults are tuned for cost: ``max_pages=5`` covers the large
-    majority of single-AR documents, ``dpi=120`` is enough for
-    OCR-quality vision, ``max_dimension=1024`` keeps each page below
-    ~150k input tokens on Gemini Flash. Override only when a specific
-    document genuinely needs higher fidelity.
+    Use it when you need to see a document: scans, complex tables or
+    layouts, or when reading its text returned little or nothing. For a
+    PDF with a text layer, reading the file is cheaper. Each page is
+    attached to this result as an image.
 
     Args:
         filename: Name of the PDF in the agent's uploads dir (no path).
-        max_pages: Hard cap on rendered pages (default 5) — protects context.
-        dpi: Render DPI (default 120).
-        max_dimension: Resize so longest side ≤ this many pixels (default 1024).
+        max_pages: Number of pages to render, from the first (default 2, at most 10).
+        dpi: Render DPI (default 84).
+        max_dimension: Longest side of each image in pixels (default 768).
+            Raise it only when small print is unreadable.
 
     Returns:
-        dict with status, page_count, total_pages_in_pdf, and pages: a list
-        of {"page_number", "mime_type": "image/png", "data": <base64>}.
+        dict: status, page_count, total_pages_in_pdf, truncated, pages
+        (list of {page_number, image_ref}).
     """
     # Placeholder — at runtime, to_agent() replaces it with a closure that
     # knows the correct agent folder. If called directly, returns an error.
@@ -304,22 +299,21 @@ def tool_get_webhook_backlog_status() -> dict:
     }
 
 
-def tool_convert_image_to_base64(image_path: str, max_dimension: int = 1600) -> dict:
+def tool_convert_image_to_base64(image_path: str, max_dimension: int = 1024) -> dict:
     """
-    Convert an image file to base64 encoding for LLM processing.
-    Large images are automatically resized to fit within max_dimension pixels
-    while preserving aspect ratio, ensuring efficient LLM token usage.
+    Load an image file so you can look at it: the image is attached to this
+    result. Large images are resized to fit within max_dimension pixels,
+    preserving the aspect ratio.
 
     Args:
         image_path (str): Path to the image file (supports PNG, JPG, JPEG, GIF, WEBP, BMP, TIFF)
-        max_dimension (int): Maximum width or height in pixels (default: 1600). Images larger
+        max_dimension (int): Maximum width or height in pixels (default: 1024). Images larger
                              than this are resized proportionally.
 
     Returns:
-        dict: Contains status, base64_data (data URI), image_format, original_size, final_size
-              or error_message if conversion fails.
+        dict: status, image_ref, image_format, sizes and dimensions, or
+              error_message if conversion fails.
     """
-    import base64
     import io
     from pathlib import Path
 
@@ -392,13 +386,11 @@ def tool_convert_image_to_base64(image_path: str, max_dimension: int = 1600) -> 
             original_dimensions = "unknown (Pillow not installed)"
             final_dimensions = original_dimensions
 
-        base64_data = base64.b64encode(image_data).decode("utf-8")
-        data_uri = f"data:{mime_type};base64,{base64_data}"
+        from apowerb.core.tool_images import attach_image
 
         return {
             "status": "success",
-            "base64_data": base64_data,
-            "data_uri": data_uri,
+            "image_ref": attach_image(image_data, mime_type),
             "image_format": out_format,
             "file_name": file_path.name,
             "original_size_kb": round(original_size / 1024, 1),

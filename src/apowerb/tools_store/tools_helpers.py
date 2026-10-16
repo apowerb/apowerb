@@ -409,7 +409,20 @@ def _resolve_tool_names(raw_tool_name: str | None) -> list[str]:
 _LEGACY_TOOL_RENAMES: dict[str, str] = {
     "onedrive_read.tool_read_file": "onedrive_read.tool_read_onedrive_file",
     "google_drive.tool_read_file": "google_drive.tool_read_drive_file",
+    # Python names shared across modules: dedupe_tools_by_name silently kept
+    # only one. Keys are module-qualified, so OneDrive/Outlook keep their names
+    # and only the Google/GitHub side is renamed.
+    "google_drive.tool_list_files": "google_drive.tool_gdrive_list_files",
+    "google_drive.tool_search_files": "google_drive.tool_gdrive_search_files",
+    "google_drive.tool_download_file": "google_drive.tool_gdrive_download_file",
+    "google_gmail.tool_list_emails": "google_gmail.tool_gmail_list_emails",
+    "google_gmail.tool_read_email": "google_gmail.tool_gmail_read_email",
+    "google_gmail.tool_search_emails": "google_gmail.tool_gmail_search_emails",
+    "github.tool_read_file": "github.tool_github_read_file",
 }
+# Removed tools (marketing.tool_marketing, audio.tool_generate_audio,
+# api_call.tool_api_call) need no alias: an unknown name is skipped by the
+# resolver below.
 
 
 def load_agent_tools_functions(tools: list[str], owner_id: str):
