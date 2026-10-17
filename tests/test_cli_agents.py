@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from apowerb.cli.agents import app
 from apowerb.core.agent_main import fetch_agents
 
+import json
 
 @pytest.fixture(autouse=True)
 def configured(monkeypatch):
@@ -160,3 +161,46 @@ class TestCliAgentsList:
             f"string (the owner email) or None (admin mode), never an "
             f"AgentStore instance or any other object"
         )
+
+
+class TestCliAgentsListJson:
+    def test_json_flag_prints_valid_json(self, fake_agents):
+        runner = CliRunner()
+        with patch("apowerb.cli.agents.fetch_agents", return_value=fake_agents), \
+             patch("apowerb.cli.agents.get_agent_store"):
+            result = runner.invoke(app, ["list", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert len(data) == 2
+
+    def test_json_flag_contains_correct_fields(self, fake_agents):
+        runner = CliRunner()
+        with patch("apowerb.cli.agents.fetch_agents", return_value=fake_agents), \
+             patch("apowerb.cli.agents.get_agent_store"):
+            result = runner.invoke(app, ["list", "--json"])
+        data = json.loads(result.output)
+        first = data[0]
+        assert "agent_id" in first
+        assert "agent_name" in first
+        assert "owner_id" in first
+        assert "agent_model" in first
+        assert "superagent_template_id" in first
+        assert "agent_description" in first
+
+    def test_json_flag_empty_returns_empty_list(self):
+        runner = CliRunner()
+        with patch("apowerb.cli.agents.fetch_agents", return_value=[]), \
+             patch("apowerb.cli.agents.get_agent_store"):
+            result = runner.invoke(app, ["list", "--json"])
+        assert result.exit_code == 0
+        assert result.output.strip() == "[]"
+
+    def test_without_json_flag_output_unchanged(self, fake_agents):
+        runner = CliRunner()
+        with patch("apowerb.cli.agents.fetch_agents", return_value=fake_agents), \
+             patch("apowerb.cli.agents.get_agent_store"):
+            result = runner.invoke(app, ["list"])
+        assert result.exit_code == 0
+        assert "ID:" in result.output
+        assert "[" not in result.output
