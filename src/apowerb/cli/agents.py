@@ -33,6 +33,9 @@ def list_agents(
             "every owner (admin mode — intended for CLI/ops only)."
         ),
     ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Print output as a JSON array."
+    ),
 ):
     """List registered agents.
 
@@ -41,14 +44,29 @@ def list_agents(
     Pass ``--owner user@example.com`` to scope to a single owner.
     """
     require_runtime_config()
-    # Touch the store once so the table is created if the CLI is the
-    # very first thing run against a fresh database.
     get_agent_store()
     agents = fetch_agents(user_id=owner)
 
     if not agents:
+        if output_json:
+            typer.echo("[]")
+            return
         scope = f"for owner '{owner}'" if owner else "in the store"
         typer.echo(f"No agents found {scope}.")
+        return
+
+    if output_json:
+        typer.echo(json.dumps([
+            {
+                "agent_id": a.get("agent_id"),
+                "agent_name": a.get("agent_name"),
+                "owner_id": a.get("owner_id"),
+                "agent_model": a.get("agent_model"),
+                "superagent_template_id": a.get("superagent_template_id"),
+                "agent_description": a.get("agent_description"),
+            }
+            for a in agents
+        ], indent=2))
         return
 
     header = (
