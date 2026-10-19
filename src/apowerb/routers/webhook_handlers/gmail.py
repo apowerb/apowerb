@@ -282,14 +282,14 @@ async def _process_gmail_notification(
                             await workflow_email_triggers.dispatch_email_triggers(
                                 provider="gmail",
                                 owner_id=owner_row.email,
-                                envelope={
-                                    "from": sender_str,
-                                    "to": to_header,
-                                    "subject": email_subject,
-                                    "body": _extract_body(email_data),
-                                    "received_at": email_data.get("internalDate"),
-                                    "attachments": [],
-                                },
+                                envelope=workflow_email_triggers.email_envelope(
+                                    sender=sender_str,
+                                    to=to_header,
+                                    subject=email_subject,
+                                    body=_extract_body(email_data),
+                                    received_at=email_data.get("internalDate"),
+                                    attachments=[],
+                                ),
                             )
                     except Exception:  # noqa: BLE001 -- best-effort
                         logger.warning(

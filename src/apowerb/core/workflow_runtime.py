@@ -38,9 +38,11 @@ validation), il reste donc exécuté directement par ``workflow_graph``.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import enum
 import inspect
 import json
+import logging
 import re
 import time
 import types
@@ -49,10 +51,13 @@ from typing import Any, Literal, Optional, Union, get_args, get_origin, get_type
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
 from apowerb.core.workflow_graph import (
     GraphError,
+    NodeServices,
     ResolveWorkflow,
     UpstreamArgs,
     WorkflowGraph,
 )
+
+logger = logging.getLogger(__name__)
 
 # Paramètres injectés par le runtime, jamais demandés à l'utilisateur.
 _INJECTED_PARAMS = frozenset({"tool_context"})
@@ -617,6 +622,29 @@ def tool_arg_schema(func) -> dict:
     }
 
 
+def _bind_owner_identity(owner_email: str) -> None:
+    """Un nœud outil agit au nom du propriétaire du workflow, sans agent.
+
+    Les outils lisent leur identité dans ``invocation_context`` (intégrations
+    mail via l'invoker, MCP/BI/S3/Odoo via le propriétaire). Non liée, elle
+    retombait sur ``AGENT_OWNER``/``ROOT_AGENT_ID`` du processus : un autre
+    compte. Pas d'agent racine dans un workflow : ``""``, jamais l'env.
+    """
+    from apowerb.core.invocation_context import (
+        bind_agent_identity,
+        set_current_invoker,
+    )
+
+    set_current_invoker(owner_email)
+    bind_agent_identity(
+        owner=owner_email,
+        organization_id=None,
+        project_id=None,
+        agent_id="",
+        invocation_id=f"workflow:{owner_email}:{time.monotonic_ns()}",
+    )
+
+
 def bindings_for(owner_email: str, plan: Optional[str]):
     """(run_agent, run_tool, run_rag, run_notify) pour exécuter un graphe au nom
     de ``owner_email``."""
@@ -633,6 +661,13 @@ def bindings_for(owner_email: str, plan: Optional[str]):
         )
 
     async def run_tool(tool_ref: str, args: dict) -> Any:
+        # Contexte copié : l'identité liée ici ne survit pas à l'appel.
+        return await contextvars.copy_context().run(
+            asyncio.create_task, _call_as_owner(tool_ref, args)
+        )
+
+    async def _call_as_owner(tool_ref: str, args: dict) -> Any:
+        _bind_owner_identity(owner_email)
         return await call_tool(resolve_tool(tool_ref, owner_email), args or {})
 
     async def run_rag(agent_id: str, query: str, top_k: int) -> dict:
@@ -640,6 +675,179 @@ def bindings_for(owner_email: str, plan: Optional[str]):
         return await asyncio.to_thread(_search_rag, folder, agent_id, query, top_k)
 
     return run_agent, run_tool, run_rag, _notify_for(owner_email)
+
+
+# --- Nœuds document, classifier (Jev) et db_write ---------------------------
+
+
+def _read_document(ref: str, owner_email: str) -> dict:
+    """OCR (Azure Document Intelligence) d'une pièce jointe du propriétaire.
+
+    La ref est résolue par ``workflow_attachments`` (propriétaire contrôlé,
+    chemin sous la racine) : l'outil OCR ne reçoit jamais un chemin venu du
+    graphe.
+    """
+    from apowerb.core import workflow_attachments
+    from apowerb.tools_store.portfolio import ocr
+
+    meta = workflow_attachments.resolve(ref, owner_email)
+    result = ocr.tool_ocr_document(source=meta["path"], provider="azure")
+    if result.get("status") != "success":
+        # Le détail (URL de l'endpoint, variables) reste dans les journaux.
+        logger.warning(
+            "[workflow document] OCR en échec pour %s : %s",
+            ref, result.get("error_message"),
+        )
+        raise GraphError(
+            f"lecture de {meta['name']} impossible : le service Azure Document "
+            "Intelligence a refusé ou échoué (détail dans les journaux du serveur)",
+            code="document_failed",
+            params={"name": str(meta["name"])},
+        )
+    return {
+        "name": meta["name"],
+        "text": result.get("markdown") or "",
+        "page_count": result.get("page_count"),
+    }
+
+
+def _jev_classify(labels: dict, text: str, instructions: str, min_confidence: float) -> dict:
+    from apowerb.tools_store.portfolio import jev
+
+    result = jev.tool_jev_classify(
+        labels=labels,
+        items=[text],
+        instructions=instructions,
+        min_confidence=min_confidence,
+    )
+    rows = result.get("results") or []
+    if result.get("status") != "success" or not rows or rows[0].get("error"):
+        reason = result.get("message") or (rows[0].get("error") if rows else "")
+        raise GraphError(
+            f"classification Jev impossible : {str(reason)[:300]}",
+            code="jev_failed",
+        )
+    row = rows[0]
+    return {
+        "label": row.get("label"),
+        "confidence": row.get("confidence"),
+        "uncertain": bool(row.get("uncertain")),
+        "best_guess": row.get("best_guess"),
+    }
+
+
+def _db_params(connection: str, owner_email: str) -> dict:
+    """Paramètres d'une connexion base du PROPRIÉTAIRE (jamais ``system``,
+    jamais les ``DB_*`` du processus, qui visent la base de la plateforme)."""
+    from apowerb.tools_store.tools_helpers import (
+        fetch_tool_configs,
+        normalize_db_params,
+    )
+
+    config = fetch_tool_configs(connection, owner_id=owner_email)
+    if (
+        not config
+        or config.get("status") == 404
+        or config.get("owner_id") != owner_email
+        or config.get("tool_category") != "database"
+    ):
+        raise GraphError(
+            f"connexion {connection} introuvable",
+            code="db_connection_not_found",
+            params={"connection": connection},
+        )
+    params = normalize_db_params(config.get("tool_config_params") or {})
+    allowed = {
+        op.strip().upper() for op in str(params.get("DB_ALLOWED_OPS") or "").split(",")
+    }
+    if "INSERT" not in allowed:
+        raise GraphError(
+            f"la connexion {connection} n'autorise pas l'écriture : ajoutez INSERT "
+            "à DB_ALLOWED_OPS dans sa configuration",
+            code="db_write_not_allowed",
+            params={"connection": connection},
+        )
+    if not params.get("DB_NAME") or not params.get("DB_USER"):
+        raise GraphError(
+            f"connexion {connection} incomplète (DB_NAME, DB_USER)",
+            code="db_connection_incomplete",
+            params={"connection": connection},
+        )
+    return params
+
+
+def insert_row(params: dict, table: str, row: dict) -> int:
+    """INSERT d'une ligne, identifiants cités et valeurs LIÉES (PostgreSQL)."""
+    db_type = str(params.get("DB_TYPE") or "postgresql").lower()
+    if db_type not in ("postgresql", "postgres"):
+        raise GraphError(
+            f"écriture non disponible pour {db_type} (PostgreSQL seulement)",
+            code="db_type_unsupported",
+            params={"type": db_type},
+        )
+    import psycopg2
+    from psycopg2 import sql
+
+    parts = table.split(".")
+    if len(parts) == 1 and params.get("DB_SCHEMA"):
+        parts = [str(params["DB_SCHEMA"]), parts[0]]
+    statement = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+        sql.SQL(".").join(sql.Identifier(p) for p in parts),
+        sql.SQL(", ").join(sql.Identifier(c) for c in row),
+        sql.SQL(", ").join(sql.Placeholder() for _ in row),
+    )
+    try:
+        conn = psycopg2.connect(
+            host=params.get("DB_HOST", "localhost"),
+            port=int(params.get("DB_PORT") or 5432),
+            dbname=params["DB_NAME"],
+            user=params["DB_USER"],
+            password=params.get("DB_PASSWORD"),
+            connect_timeout=10,
+        )
+    except (psycopg2.Error, ValueError) as exc:
+        logger.warning("[workflow db_write] connexion impossible : %s", exc)
+        raise GraphError(
+            "connexion à la base impossible (hôte, port ou identifiants ; "
+            "détail dans les journaux du serveur)",
+            code="db_connection_failed",
+        ) from None
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(statement, list(row.values()))
+            return cur.rowcount
+    except psycopg2.Error as exc:
+        # pgerror peut citer la ligne refusée (le contenu du mail) : journaux
+        # seulement ; l'utilisateur reçoit le code SQLSTATE.
+        logger.warning("[workflow db_write] insertion refusée dans %s : %s", table, exc)
+        raise GraphError(
+            f"écriture dans {table} refusée par la base "
+            f"(SQLSTATE {exc.pgcode or 'inconnu'})",
+            code="db_write_failed",
+            params={"table": table, "sqlstate": str(exc.pgcode or "")},
+        ) from None
+    finally:
+        conn.close()
+
+
+def services_for(owner_email: str) -> NodeServices:
+    """Services des nœuds document / classifier Jev / db_write pour
+    ``owner_email`` ; appels bloquants exécutés dans un thread."""
+
+    async def document(ref: str) -> dict:
+        return await asyncio.to_thread(_read_document, ref, owner_email)
+
+    async def jev_classify(labels, text, instructions, min_confidence) -> dict:
+        return await asyncio.to_thread(
+            _jev_classify, labels, text, instructions, min_confidence
+        )
+
+    async def db_write(connection: str, table: str, row: dict) -> dict:
+        params = await asyncio.to_thread(_db_params, connection, owner_email)
+        inserted = await asyncio.to_thread(insert_row, params, table, row)
+        return {"inserted": inserted}
+
+    return NodeServices(document=document, jev_classify=jev_classify, db_write=db_write)
 
 
 def resolve_workflow_for(owner_email: str) -> ResolveWorkflow:

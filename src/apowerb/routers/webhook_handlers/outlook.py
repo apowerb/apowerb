@@ -687,21 +687,15 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                         await workflow_email_triggers.dispatch_email_triggers(
                             provider="outlook",
                             owner_id=owner_row.email,
-                            envelope={
-                                "from": sender_str,
-                                "to": to_addrs,
-                                "subject": email_subject,
-                                "body": body_text_val or "",
-                                "received_at": email_data.get("receivedDateTime"),
-                                "attachments": [
-                                    {
-                                        "name": a.get("filename"),
-                                        "size": a.get("size"),
-                                        "content_type": a.get("content_type"),
-                                    }
-                                    for a in stored_attachments
-                                ],
-                            },
+                            envelope=workflow_email_triggers.email_envelope(
+                                sender=sender_str,
+                                to=to_addrs,
+                                subject=email_subject,
+                                body=body_text_val or "",
+                                received_at=email_data.get("receivedDateTime"),
+                                attachments=[],
+                            ),
+                            stored_attachments=stored_attachments,
                         )
                 except Exception:  # noqa: BLE001 -- best-effort, cf. commentaire ci-dessus
                     logger.warning(

@@ -247,6 +247,7 @@ async def _graph_replay_runner(
         workflow_id=workflow_id,
         cancel_event=cancel_event,
         run_notify=run_notify,
+        services=workflow_runtime.services_for(owner),
     ):
         yield chunk
 

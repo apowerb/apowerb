@@ -546,6 +546,7 @@ async def launch_triggered_run(
             workflow_id=workflow_id,
             cancel_event=cancel_event,
             run_notify=run_notify,
+            services=rt.services_for(owner_id),
         )
 
     response = _streaming_run(
