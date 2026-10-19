@@ -199,6 +199,9 @@ DASHBOARD_TEMPLATES = [
         "tabular_file_preview_rows": 20,
         # historique : gros résultats d'outils des tours précédents raccourcis
         "compact_previous_turn_results": True,
+        # truncation: the answers of turns pushed out of the 14-message
+        # window come back as text (no tool payloads), within this budget
+        "keep_truncated_turn_text_chars": 6000,
         "memory_enabled": True,
         "artifacts_enabled": True,
         "guardrails_config": None,

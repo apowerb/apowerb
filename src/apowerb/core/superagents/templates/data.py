@@ -111,6 +111,9 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
         "suppressed_auto_tools": BI_SUPPRESSED_AUTO_TOOLS,
         # historique : gros résultats d'outils des tours précédents raccourcis
         "compact_previous_turn_results": True,
+        # truncation: the answers of turns pushed out of the 14-message
+        # window come back as text (no tool payloads), within this budget
+        "keep_truncated_turn_text_chars": 6000,
         "tags": ["sql", "database", "text-to-sql", "analytics", "data"],
         "readme": (
             "# Data Analyst\n\n"
@@ -349,6 +352,9 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
         "tabular_file_preview_rows": 20,
         # historique : gros résultats d'outils des tours précédents raccourcis
         "compact_previous_turn_results": True,
+        # truncation: the answers of turns pushed out of the 14-message
+        # window come back as text (no tool payloads), within this budget
+        "keep_truncated_turn_text_chars": 6000,
         "memory_enabled": False,
         "artifacts_enabled": True,
         "guardrails_config": None,

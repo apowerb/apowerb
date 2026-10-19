@@ -578,8 +578,39 @@ def _content_has_function_response(content) -> bool:
     return any(getattr(p, "function_response", None) is not None for p in parts)
 
 
-def create_truncate_history_callback(keep_recent: int = 14):
+def _text_only(content) -> bool:
+    """True when every part of *content* is plain text (no tool call/result)."""
+    parts = getattr(content, "parts", None) or []
+    return bool(parts) and all(
+        getattr(p, "text", None)
+        and getattr(p, "function_call", None) is None
+        and getattr(p, "function_response", None) is None
+        for p in parts
+    )
+
+
+def _recent_texts(dropped: list, budget: int) -> list:
+    """The newest text-only contents of *dropped* within *budget* chars, in order."""
+    kept, used = [], 0
+    for content in reversed(dropped):
+        if not _text_only(content):
+            continue
+        size = sum(len(p.text) for p in content.parts)
+        if used + size > budget:
+            break
+        kept.append(content)
+        used += size
+    return list(reversed(kept))
+
+
+def create_truncate_history_callback(keep_recent: int = 14, keep_text_chars: int = 0):
     """Retourne un before_model_callback qui tronque l'historique ADK.
+
+    ``keep_text_chars`` > 0 : les messages texte seuls (questions, reponses du
+    modele) que la fenetre fait sortir reviennent devant elle, les plus
+    recents d'abord dans la limite de ce nombre de caracteres, sans leurs
+    appels ni resultats d'outils. La fenetre compte les messages d'outils :
+    quelques tours charges en outils en font sortir les reponses precedentes.
 
     Conserve : le 1er message user (payload webhook initial) + les
     ``keep_recent`` derniers messages, en eliminant les tool_responses
@@ -651,7 +682,13 @@ def create_truncate_history_callback(keep_recent: int = 14):
         if user_initial_idx >= total - keep_recent:
             result = window
         else:
-            result = [user_initial] + window
+            texts = []
+            if keep_text_chars > 0:
+                window_start = total - len(window)
+                texts = _recent_texts(
+                    list(contents[user_initial_idx + 1:window_start]), keep_text_chars
+                )
+            result = [user_initial] + texts + window
 
         _logger.info(
             "[TRUNCATE_HISTORY] truncated %d -> %d messages (keep_recent=%d)",

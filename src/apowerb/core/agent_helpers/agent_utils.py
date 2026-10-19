@@ -784,7 +784,12 @@ def to_agent(agent_name: str) -> LlmAgent:
         # Levier 1 : troncature historique (adapte au contexte 32k OVHcloud)
         # Chaine AVANT le strip-images : la troncature reduit le nombre de
         # messages, le strip nettoie ensuite les base64 dans les messages restants.
-        truncate_cb = create_truncate_history_callback(keep_recent=14)
+        truncate_cb = create_truncate_history_callback(
+            keep_recent=14,
+            keep_text_chars=int(
+                _template_setting(superagent_template_id, "keep_truncated_turn_text_chars", 0) or 0
+            ),
+        )
         if before_model_cb:
             _existing_for_truncate = before_model_cb
 
