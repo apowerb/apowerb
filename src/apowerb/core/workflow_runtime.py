@@ -95,11 +95,21 @@ def check_agent_owner(agent_id: str, owner_email: str) -> str:
 
 
 def resolve_tool(tool_ref: str, owner_email: str):
-    """La fonction Python d'un outil, résolue pour ``owner_email``."""
+    """La fonction Python d'un outil, résolue pour ``owner_email``.
+
+    Une configuration ``mcp_server`` du propriétaire donne un
+    ``workflow_mcp.McpNodeTool`` (appelé sans agent par ``call_tool``).
+    """
+    from apowerb.core import workflow_mcp
     from apowerb.tools_store.tools_helpers import load_agent_tools_functions
 
     ref, _, wanted = tool_ref.partition(":")
     names, funcs = load_agent_tools_functions(tools=[ref], owner_id=owner_email)
+    if not names:
+        # Une configuration mcp_server n'expose aucune fonction Python.
+        mcp_tool = workflow_mcp.resolve(tool_ref, owner_email)
+        if mcp_tool is not None:
+            return mcp_tool
     if wanted:
         from apowerb.tools_store.tools_helpers import _LEGACY_TOOL_RENAMES
 
@@ -206,6 +216,10 @@ def _search_rag(folder: str, agent_id: str, query: str, top_k: int) -> dict:
 
 
 async def call_tool(func, args: dict) -> Any:
+    from apowerb.core import workflow_mcp
+
+    if isinstance(func, workflow_mcp.McpNodeTool):
+        return await workflow_mcp.call(func, args)
     name = getattr(func, "__name__", str(func))
     signature = inspect.signature(func)
     params = signature.parameters

@@ -431,6 +431,14 @@ def _streaming_run(
     )
 
 
+# Codes de GraphError dont le statut HTTP n'est pas 404.
+_SCHEMA_ERROR_STATUS = {
+    "tool_ambiguous": status.HTTP_409_CONFLICT,
+    "mcp_transport_refused": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    "mcp_unreachable": status.HTTP_502_BAD_GATEWAY,
+}
+
+
 @router.get("/tools/schema")
 async def get_tool_schema(
     tool: str,
@@ -445,20 +453,19 @@ async def get_tool_schema(
     configurés (MCP, base de données...) fonctionnent donc aussi, pas
     seulement ceux du portfolio.
     """
+    from apowerb.core import workflow_mcp
     from apowerb.core.workflow_graph import GraphError
     from apowerb.core.workflow_runtime import resolve_tool, tool_arg_schema
 
     try:
         func = resolve_tool(tool, current_user.email)
+        if isinstance(func, workflow_mcp.McpNodeTool):
+            return {"tool": tool, **await workflow_mcp.arg_schema(func)}
     except GraphError as exc:
         # Même code, mêmes params que la résolution faite au run (resolve_tool) :
         # l'UI n'a qu'une seule forme d'erreur à traiter, qu'elle vienne
         # d'ici ou d'un run qui a échoué sur le même nœud.
-        http_status = (
-            status.HTTP_409_CONFLICT
-            if exc.code == "tool_ambiguous"
-            else status.HTTP_404_NOT_FOUND
-        )
+        http_status = _SCHEMA_ERROR_STATUS.get(exc.code, status.HTTP_404_NOT_FOUND)
         raise HTTPException(
             status_code=http_status,
             detail={"code": exc.code, "params": exc.params},
