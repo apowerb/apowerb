@@ -42,6 +42,7 @@ from logging import getLogger
 from typing import Optional
 
 from apowerb.core import workflow_file_triggers as wft
+from apowerb.core import workflow_mail_subscriptions
 from apowerb.core import workflow_triggers as wt
 
 logger = getLogger(__name__)
@@ -116,6 +117,11 @@ async def _loop() -> None:
             await tick_once()
         except Exception:  # noqa: BLE001 - la boucle doit survivre à un tick en échec
             logger.exception("[flow_scheduler] tick en échec")
+        try:
+            # Abonnements Graph des triggers email Outlook (sans agent).
+            await workflow_mail_subscriptions.reconcile_outlook_subscriptions()
+        except Exception:  # noqa: BLE001 - idem : jamais la boucle
+            logger.exception("[flow_scheduler] réconciliation des abonnements mail en échec")
         await asyncio.sleep(TICK_SECONDS)
 
 
