@@ -247,9 +247,12 @@ def _generate_sql_with_llm(question: str, schema_info: Dict[str, Any], agent_nam
     registered by make_text_to_sql_tools (DB params, schema cache) is
     neither read nor replaced, and the agent need not be built in this worker.
     """
-    model, api_base, api_key = _agent_llm_endpoint(int(agent_name.replace("agent", "")))
+    model, api_base, api_key, api_version = _agent_llm_endpoint(
+        int(agent_name.replace("agent", ""))
+    )
     s = _AgentState(
-        model=model, api_base=api_base, api_key=api_key, agent_name=agent_name,
+        model=model, api_base=api_base, api_key=api_key, api_version=api_version,
+        agent_name=agent_name,
         db_ok=False, db_type="postgresql", db_host="", db_port=5432, db_name="",
         db_user="", db_password="", db_schema="", db_include="",
         schema_samples=os.getenv("SQL_SCHEMA_SAMPLES", "0").strip().lower() in ("1", "true", "yes"),
@@ -299,6 +302,8 @@ class _AgentState:
     usage_agent_name:  str = ""
     owner_id:          Optional[str] = None
     billed_to_thaink2: bool = False
+    # Azure api_version of the agent's model params (model_api_version).
+    api_version:       Optional[str] = None
 
 
 _CACHE_TTL = int(os.getenv("SQL_SCHEMA_CACHE_TTL_S", "3600"))  # seconds
@@ -807,9 +812,7 @@ Output ONLY the SQL query without markdown."""
 
     def _ask(msgs):
         resp = litellm.completion(
-            model=s.model,
-            api_base=s.api_base,
-            api_key=s.api_key,
+            **_llm_endpoint_kwargs(s),
             messages=msgs,
             temperature=0.0,
             # A ceiling, not a target: reasoning models (Gemini 2.5, gpt-5)
@@ -853,7 +856,7 @@ def _agent_llm(agent_name: str, messages: list, max_tokens: int = 1200) -> str:
     """Single chat completion using the agent's configured model."""
     s = _get_state(agent_name)
     resp = litellm.completion(
-        model=s.model, api_base=s.api_base, api_key=s.api_key,
+        **_llm_endpoint_kwargs(s),
         messages=messages, temperature=0.0, max_tokens=max_tokens, timeout=90,
     )
     _record_llm_usage(s, resp)
@@ -1115,9 +1118,7 @@ def _tool_text_to_sql_explain_impl(agent_name: str, question: str) -> dict:
         is_safe, error_msg = _validate_sql_safety(sql_query)
 
         expl_resp = litellm.completion(
-            model=s.model,
-            api_base=s.api_base,
-            api_key=s.api_key,
+            **_llm_endpoint_kwargs(s),
             messages=[{
                 "role":    "user",
                 "content": f"Explain this SQL query in simple terms:\n\n{sql_query}",
@@ -1174,18 +1175,40 @@ def tool_business_analyst(question: str, max_steps: int = 4, max_rows: int = 100
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
+def _llm_endpoint_kwargs(s: _AgentState) -> dict:
+    """litellm model/endpoint kwargs, routed as build_litellm_model routes the agent.
+
+    With an api_base the agent calls ``openai/<model>`` at that endpoint; the
+    raw ``azure/<model>`` took litellm's Azure deployment route instead and
+    failed with ``NotFoundError - Resource not found``.
+    """
+    from apowerb.core.agent_helpers.llm_model_builder import openai_compat_model_name
+
+    kwargs = {
+        "model": openai_compat_model_name(s.model) if s.api_base else s.model,
+        "api_base": s.api_base,
+        "api_key": s.api_key,
+    }
+    if s.api_version:
+        kwargs["api_version"] = s.api_version
+    return kwargs
+
+
 def _agent_llm_endpoint(agent_id: int) -> tuple:
-    """(model, api_base, api_key) the SQL tools call litellm with for the agent."""
+    """(model, api_base, api_key, api_version) of the agent's model for the SQL tools."""
     from apowerb.core.agent_helpers import load_agent_model_params
 
     model, model_params = load_agent_model_params(agent_id)
     api_base = model_params.get("model_api_base")
-    if not api_base and model.startswith("mistral/"):
+    # OVH catalog names only, as build_litellm_model: Mistral API ids
+    # (lowercase, mistral/mistral-small) go to Mistral with the agent's key.
+    if not api_base and model.startswith("mistral/Mistral-"):
         api_base = (
             "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net"
             "/api/openai_compat/v1"
         )
-    return model, api_base, model_params.get("model_api_key")
+    api_version = model_params.get("model_api_version") or model_params.get("api_version")
+    return model, api_base, model_params.get("model_api_key"), api_version
 
 
 def make_text_to_sql_tools(
@@ -1208,7 +1231,7 @@ def make_text_to_sql_tools(
          tool_business_analyst]
     """
     agent_id = int(agent_name.replace("agent", ""))
-    agent_model_name, api_base, api_key = _agent_llm_endpoint(agent_id)
+    agent_model_name, api_base, api_key, api_version = _agent_llm_endpoint(agent_id)
     # Best-effort: a missing identity costs the usage row's labels, never
     # the tools themselves.
     try:
@@ -1246,7 +1269,7 @@ def make_text_to_sql_tools(
     # Register in persistent dict — survives across all async tasks/requests
     _state_registry[agent_name] = _AgentState(
         model=agent_model_name, api_base=api_base, api_key=api_key,
-        agent_name=agent_name,
+        api_version=api_version, agent_name=agent_name,
         db_ok=db_ok, db_type=db_type, db_host=db_host, db_port=db_port, db_name=db_name,
         db_user=db_user, db_password=db_password, db_schema=db_schema,
         db_include=db_include, schema_samples=schema_samples,
