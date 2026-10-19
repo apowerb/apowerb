@@ -22,12 +22,14 @@ import httpx
 import pytest
 
 from apowerb.artifacts import agent_uploads
+from apowerb.tools_store.portfolio import ocr
 from apowerb.tools_store.portfolio.ocr import (
     _MISTRAL_OCR_MODEL,
     _MISTRAL_OCR_URL,
     _PROVIDER_ORDER,
     _PROVIDERS,
     _build_document_chunk,
+    ocr_trusted_file,
     tool_ocr_document,
 )
 
@@ -512,3 +514,71 @@ class TestLocalPathScope:
 
         assert result["status"] == "success", result
         read.assert_not_called()
+
+
+# ── Server-vetted file (workflow attachment) ──────────────────────────────
+# The workflow `document` node resolves an attachment ref itself (owner
+# checked, path under the attachments root) and hands that one file to OCR;
+# it lives outside any agent's uploads folder and no root agent is bound.
+class TestTrustedFile:
+    PDF = b"%PDF-1.4 attachment"
+
+    @pytest.fixture
+    def azure(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        monkeypatch.delenv("ROOT_AGENT_ID", raising=False)
+        pages = [{"pageNumber": 1, "lines": [{"content": "AR"}]}]
+        with patch("httpx.post", return_value=_azure_accepted()) as post, patch(
+            "httpx.get", return_value=_azure_result("succeeded", pages)
+        ):
+            yield post
+
+    def test_vetted_file_is_read(self, azure, tmp_path):
+        f = tmp_path / "workflow_uploads" / "abc" / "AR.pdf"
+        f.parent.mkdir(parents=True)
+        f.write_bytes(self.PDF)
+
+        result = ocr_trusted_file(f, provider="azure")
+
+        assert result["status"] == "success", result
+        assert "AR" in result["markdown"]
+        azure.assert_called_once()
+
+    def test_trust_does_not_outlive_the_call(self, azure, tmp_path):
+        f = tmp_path / "AR.pdf"
+        f.write_bytes(self.PDF)
+        ocr_trusted_file(f, provider="azure")
+        azure.reset_mock()
+
+        result = tool_ocr_document(str(f), provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        azure.assert_not_called()
+
+    def test_trust_covers_only_that_file(self, azure, tmp_path, monkeypatch):
+        vetted = tmp_path / "AR.pdf"
+        vetted.write_bytes(self.PDF)
+        other = tmp_path / "other.pdf"
+        other.write_bytes(self.PDF)
+        # Inside the trusted call, the tool is asked for another file.
+        monkeypatch.setattr(ocr, "tool_ocr_document", lambda source, provider: (
+            ocr._read_supported_file(str(other))
+        ))
+
+        with pytest.raises(ValueError, match="File not found"):
+            ocr_trusted_file(vetted, provider="azure")
+
+    def test_vanished_file_is_not_looked_up_by_name(self, azure, tmp_path, monkeypatch):
+        # Agent bound by env (single-agent server) with an upload of that name.
+        monkeypatch.setenv("ROOT_AGENT_ID", "7")
+        looked_up = MagicMock(return_value=self.PDF)
+        monkeypatch.setattr(ocr, "_read_uploaded_file", looked_up)
+
+        result = ocr_trusted_file(tmp_path / "AR.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        looked_up.assert_not_called()
+        azure.assert_not_called()

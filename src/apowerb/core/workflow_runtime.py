@@ -685,13 +685,14 @@ def _read_document(ref: str, owner_email: str) -> dict:
 
     La ref est résolue par ``workflow_attachments`` (propriétaire contrôlé,
     chemin sous la racine) : l'outil OCR ne reçoit jamais un chemin venu du
-    graphe.
+    graphe. ``ocr_trusted_file`` lève, pour ce seul fichier et cet appel,
+    la restriction de l'OCR aux uploads de l'agent.
     """
     from apowerb.core import workflow_attachments
     from apowerb.tools_store.portfolio import ocr
 
     meta = workflow_attachments.resolve(ref, owner_email)
-    result = ocr.tool_ocr_document(source=meta["path"], provider="azure")
+    result = ocr.ocr_trusted_file(meta["path"], provider="azure")
     if result.get("status") != "success":
         # Le détail (URL de l'endpoint, variables) reste dans les journaux.
         logger.warning(

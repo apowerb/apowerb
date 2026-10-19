@@ -46,6 +46,7 @@ from __future__ import annotations
 import base64
 import os
 import time
+from contextvars import ContextVar
 from logging import getLogger
 from pathlib import Path
 
@@ -143,6 +144,11 @@ def _own_upload_path(source: str) -> Path | None:
     return resolved if resolved.parent == base else None
 
 
+# File already vetted by a server-side caller (``ocr_trusted_file``), never by a
+# tool argument: the one extra path ``_read_supported_file`` accepts while set.
+_trusted_file: ContextVar[Path | None] = ContextVar("ocr_trusted_file", default=None)
+
+
 def _read_supported_file(source: str) -> tuple[str, str, bytes]:
     """Read an upload of the running agent, validating it is supported.
 
@@ -167,6 +173,12 @@ def _read_supported_file(source: str) -> tuple[str, str, bytes]:
         name = source
     else:
         path = _own_upload_path(source)
+        trusted = _trusted_file.get()
+        if path is None and trusted is not None and Path(source).resolve() == trusted:
+            # Read from disk or fail: no lookup by name in an agent's uploads.
+            if not trusted.is_file():
+                raise not_found
+            path = trusted
         if path is None:
             raise not_found
         if path.is_file():
@@ -347,6 +359,21 @@ def _collect_pages(raw: dict, include_images: bool) -> tuple[list[dict], str, bo
         combined = combined[:_MAX_MARKDOWN_CHARS] + "\n...[output truncated]"
         truncated = True
     return pages_out, combined, truncated
+
+
+def ocr_trusted_file(path: str | Path, provider: str = "auto") -> dict:
+    """OCR one local file the caller has already vetted (owner, location).
+
+    For server code only, e.g. the workflow ``document`` node, which resolves an
+    attachment ref to a file outside any agent's uploads folder. The file is
+    trusted for the duration of this call only; same result shape as
+    ``tool_ocr_document``.
+    """
+    token = _trusted_file.set(Path(path).resolve())
+    try:
+        return tool_ocr_document(source=str(path), provider=provider)
+    finally:
+        _trusted_file.reset(token)
 
 
 def tool_ocr_document(
