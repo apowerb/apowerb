@@ -14,6 +14,7 @@ import psycopg2
 import pytest
 
 from apowerb.tools_store.portfolio import database
+from apowerb.tools_store.tool_env import tool_env
 
 
 class _SlottedCursor:
@@ -50,13 +51,10 @@ def slotted_connect(monkeypatch):
     monkeypatch.setattr(psycopg2, "connect", lambda **kwargs: _SlottedConnection())
 
 
-def test_env_connection_does_not_set_attributes_on_the_connection(slotted_connect, monkeypatch):
-    monkeypatch.setenv("DB_TYPE", "postgresql")
-    monkeypatch.setenv("DB_NAME", "demo")
-    monkeypatch.setenv("DB_USER", "reader")
-    monkeypatch.setenv("DB_PASSWORD", "x")
-
-    assert isinstance(database._get_connection(), _SlottedConnection)
+def test_env_connection_does_not_set_attributes_on_the_connection(slotted_connect):
+    params = {"DB_TYPE": "postgresql", "DB_NAME": "demo", "DB_USER": "reader", "DB_PASSWORD": "x"}
+    with tool_env(params):
+        assert isinstance(database._get_connection(), _SlottedConnection)
 
 
 def test_bound_tool_run_sql_reads_a_postgres_config(slotted_connect):

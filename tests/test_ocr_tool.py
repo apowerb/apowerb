@@ -55,6 +55,17 @@ def _ocr_payload(markdowns: list[str], images_per_page: int = 0) -> dict:
     }
 
 
+@pytest.fixture
+def agent_dir(monkeypatch, tmp_path):
+    """Uploads folder of the running root agent (agent42), on local storage."""
+    monkeypatch.setenv("ROOT_AGENT_ID", "42")
+    monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: False)
+    monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
+    folder = tmp_path / "agent42"
+    folder.mkdir()
+    return folder
+
+
 # ── Provider registry sanity ──────────────────────────────────────────────
 class TestProviderRegistry:
     def test_providers_registered(self):
@@ -115,15 +126,15 @@ class TestBuildChunk:
         chunk = _build_document_chunk("https://host/a.png?sig=abc")
         assert chunk["type"] == "image_url"
 
-    def test_local_file_becomes_base64_data_url(self, tmp_path):
-        f = tmp_path / "scan.pdf"
+    def test_local_file_becomes_base64_data_url(self, agent_dir):
+        f = agent_dir / "scan.pdf"
         f.write_bytes(b"%PDF-1.4 fake")
         chunk = _build_document_chunk(str(f))
         assert chunk["type"] == "document_url"
         assert chunk["document_url"].startswith("data:application/pdf;base64,")
 
-    def test_local_image_uses_image_url_data(self, tmp_path):
-        f = tmp_path / "pic.jpg"
+    def test_local_image_uses_image_url_data(self, agent_dir):
+        f = agent_dir / "pic.jpg"
         f.write_bytes(b"\xff\xd8\xff fake jpeg")
         chunk = _build_document_chunk(str(f))
         assert chunk["type"] == "image_url"
@@ -170,10 +181,10 @@ class TestHappyPath:
         }
         assert body["include_image_base64"] is False
 
-    def test_local_file_through_tool(self, monkeypatch, tmp_path):
+    def test_local_file_through_tool(self, monkeypatch, agent_dir):
         # The branch Farid hits first: an uploaded file OCR'd end-to-end.
         monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
-        f = tmp_path / "upload.pdf"
+        f = agent_dir / "upload.pdf"
         f.write_bytes(b"%PDF-1.4 fake")
         payload = _ocr_payload(["extracted text"])
         with patch("httpx.post", return_value=_fake_response(payload)) as mock_post:
@@ -271,10 +282,10 @@ class TestAzureProvider:
         # polled the Operation-Location
         assert mock_get.call_args.args[0] == "https://az/op/123"
 
-    def test_azure_local_file_uses_base64_source(self, monkeypatch, tmp_path):
+    def test_azure_local_file_uses_base64_source(self, monkeypatch, agent_dir):
         monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
         monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
-        f = tmp_path / "scan.png"
+        f = agent_dir / "scan.png"
         f.write_bytes(b"\x89PNG fake")
         pages = [{"pageNumber": 1, "lines": [{"content": "text"}]}]
         with patch("httpx.post", return_value=_azure_accepted()) as mock_post, patch(
@@ -425,3 +436,79 @@ class TestUploadedFileByName:
         assert "File not found" in result["error_message"]
         read.assert_not_called()
         azure.assert_not_called()
+
+
+# ── Local paths: only the running agent's own uploads ─────────────────────
+# A path is read only when it points into uploads/agent{root}/ of the agent
+# running the tool; anything else answers "File not found", as a missing file.
+class TestLocalPathScope:
+    PDF = b"%PDF-1.4 local"
+
+    @pytest.fixture
+    def mistral(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        with patch("httpx.post", return_value=_fake_response(_ocr_payload(["t"]))) as post:
+            yield post
+
+    def _refused(self, result, post):
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        post.assert_not_called()
+
+    def test_own_upload_by_path_is_read(self, mistral, agent_dir):
+        f = agent_dir / "own.pdf"
+        f.write_bytes(self.PDF)
+
+        result = tool_ocr_document(str(f))
+
+        assert result["status"] == "success", result
+        mistral.assert_called_once()
+
+    def test_file_outside_uploads_is_not_read(self, mistral, agent_dir, tmp_path):
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (outside / "doc.pdf").write_bytes(self.PDF)
+
+        self._refused(tool_ocr_document(str(outside / "doc.pdf")), mistral)
+
+    def test_other_agent_upload_is_not_read(self, mistral, agent_dir, tmp_path):
+        other = tmp_path / "agent7"
+        other.mkdir()
+        (other / "doc.pdf").write_bytes(self.PDF)
+
+        self._refused(tool_ocr_document(str(other / "doc.pdf")), mistral)
+        self._refused(tool_ocr_document(str(agent_dir / ".." / "agent7" / "doc.pdf")), mistral)
+
+    def test_link_leaving_uploads_is_not_followed(self, mistral, agent_dir, tmp_path):
+        target = tmp_path / "doc.pdf"
+        target.write_bytes(self.PDF)
+        (agent_dir / "link.pdf").symlink_to(target)
+
+        self._refused(tool_ocr_document(str(agent_dir / "link.pdf")), mistral)
+
+    def test_no_running_agent_reads_no_local_path(self, mistral, agent_dir, monkeypatch):
+        (agent_dir / "own.pdf").write_bytes(self.PDF)
+        monkeypatch.delenv("ROOT_AGENT_ID")
+
+        self._refused(tool_ocr_document(str(agent_dir / "own.pdf")), mistral)
+
+    def test_unsupported_type_does_not_reveal_existence(self, mistral, agent_dir, tmp_path):
+        (tmp_path / "present.xyz").write_text("x")
+
+        for name in ("present.xyz", "absent.xyz"):
+            result = tool_ocr_document(str(tmp_path / name))
+            assert "Unsupported file type" in result["error_message"]
+            assert "File not found" not in result["error_message"]
+        mistral.assert_not_called()
+
+    def test_own_upload_by_path_is_read_from_disk_with_s3_storage(
+        self, mistral, agent_dir, monkeypatch
+    ):
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
+        (agent_dir / "staged.pdf").write_bytes(self.PDF)
+
+        with patch("apowerb.artifacts.file_lookup.read_file_and_names") as read:
+            result = tool_ocr_document(str(agent_dir / "staged.pdf"))
+
+        assert result["status"] == "success", result
+        read.assert_not_called()

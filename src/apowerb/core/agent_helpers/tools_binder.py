@@ -321,7 +321,7 @@ def rebind_database(
             agent_name,
             f"DB={single['DB_NAME']!r}"
             if single
-            else "no DB configured — using env vars",
+            else "no DB configured — tool_config params only",
         )
         return tools_funcs
 

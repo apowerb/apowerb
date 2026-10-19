@@ -17,6 +17,7 @@ from logging import getLogger
 from apowerb.sqlgen.generator import extract_sql
 from apowerb.sqlgen.safety import validate_sql_safety
 from apowerb.sqlgen.readonly import read_only_transaction
+from apowerb.tools_store.tool_env import config_env
 from apowerb.sqlgen.schema_format import build_schema_prompt
 
 logger = getLogger(__name__)
@@ -105,14 +106,17 @@ def _validate_sql_safety(sql_query: str) -> tuple[bool, Optional[str]]:
 
 
 def _get_db_connection():
-    """Get a DB connection using os.getenv credentials (backward compat)."""
-    host     = os.getenv("DB_HOST", "localhost")
-    port     = int(os.getenv("DB_PORT", "5432"))
-    database = os.getenv("DB_NAME")
-    user     = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
+    """Connection for the /rag/index-db routes: DB_* of the active tool_config only."""
+    host     = config_env("DB_HOST", "localhost")
+    port     = int(config_env("DB_PORT", "5432"))
+    database = config_env("DB_NAME")
+    user     = config_env("DB_USER")
+    password = config_env("DB_PASSWORD")
     if not all([database, user, password]):
-        raise ValueError("Missing required database credentials (DB_NAME, DB_USER, DB_PASSWORD)")
+        raise ValueError(
+            "No database configured: attach a database tool_config "
+            "(DB_NAME, DB_USER, DB_PASSWORD) to this tool"
+        )
     return psycopg2.connect(host=host, port=port, database=database, user=user, password=password)
 
 

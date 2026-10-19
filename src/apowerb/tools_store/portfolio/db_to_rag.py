@@ -22,6 +22,7 @@ import psycopg2.errors
 
 from apowerb.configs.paths import uploads_dir
 from apowerb.sqlgen.readonly import read_only_transaction
+from apowerb.tools_store.tool_env import config_env
 from psycopg2.extras import RealDictCursor
 
 from apowerb.tools_store.portfolio.rag import tool_create_knowledge
@@ -48,19 +49,37 @@ def _json_safe(obj):
 
 
 def _get_connection():
-    """Open a psycopg2 connection using DB_* env vars (same pattern as database.py)."""
-    host = os.getenv("DB_HOST", "localhost")
-    port = int(os.getenv("DB_PORT", "5432"))
-    database = os.getenv("DB_NAME")
-    user = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
+    """Open a psycopg2 connection with the active tool_config's DB_* params.
+
+    The worker's own DB_* are never used (same rule as database.py).
+    """
+    host = config_env("DB_HOST", "localhost")
+    port = int(config_env("DB_PORT", "5432"))
+    database = config_env("DB_NAME")
+    user = config_env("DB_USER")
+    password = config_env("DB_PASSWORD")
 
     if not all([database, user, password]):
-        raise ValueError("Missing required database credentials (DB_NAME, DB_USER, DB_PASSWORD)")
+        raise ValueError(
+            "No database configured: attach a database tool_config "
+            "(DB_NAME, DB_USER, DB_PASSWORD) to this tool"
+        )
 
     return psycopg2.connect(
         host=host, port=port, database=database, user=user, password=password,
     )
+
+
+# Tool Box param discovery (tool_manager._GETENV_PATTERN scans these literals).
+def _tool_box_param_discovery() -> list:  # pragma: no cover - never called
+    return [
+        os.getenv("DB_HOST", "localhost"),
+        os.getenv("DB_PORT", "5432"),
+        os.getenv("DB_NAME"),
+        os.getenv("DB_USER"),
+        os.getenv("DB_PASSWORD"),
+        os.getenv("DB_SCHEMA", "public"),
+    ]
 
 
 def _validate_sql(sql: str) -> tuple[bool, str | None]:
@@ -167,7 +186,7 @@ def load_from_db_and_index(
 
     # 2. Execute the query
     try:
-        db_schema = os.getenv("DB_SCHEMA", "public")
+        db_schema = config_env("DB_SCHEMA", "public")
         safe_query = _ensure_limit(sql_query.strip(), max_rows)
 
         conn = _get_connection()

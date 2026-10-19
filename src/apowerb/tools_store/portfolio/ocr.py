@@ -125,33 +125,57 @@ def _read_uploaded_file(name: str) -> bytes | None:
     return content
 
 
-def _read_supported_file(source: str) -> tuple[str, str, bytes]:
-    """Read a local file or an upload, validating it exists and is supported.
+def _own_upload_path(source: str) -> Path | None:
+    """``source`` resolved, if it points into the running agent's uploads folder.
 
-    ``source`` is a path on disk or the bare name of a file uploaded to the
-    agent. Returns ``(mime, chunk_type, raw_bytes)``. Raises ValueError for a
-    missing or unsupported file so the caller can report it as a fatal error.
+    A path is accepted only when it resolves (links followed) directly inside
+    ``uploads/agent{root}/`` of the root agent running the tool; any other path,
+    or no agent bound, gives ``None``.
     """
+    from apowerb.configs import paths
+    from apowerb.core.invocation_context import get_root_agent_id
+
+    root = get_root_agent_id()
+    if not root.isdigit():
+        return None
+    base = (paths.uploads_dir() / f"agent{root}").resolve()
+    resolved = Path(source).resolve()
+    return resolved if resolved.parent == base else None
+
+
+def _read_supported_file(source: str) -> tuple[str, str, bytes]:
+    """Read an upload of the running agent, validating it is supported.
+
+    ``source`` is the bare name of a file uploaded to the agent, or a path into
+    that agent's own uploads folder. Other paths are never opened. Returns
+    ``(mime, chunk_type, raw_bytes)``. Raises ValueError for a missing,
+    out-of-scope or unsupported file so the caller can report it as a fatal error.
+    """
+    from apowerb.artifacts.agent_uploads import is_bare_filename
+
+    not_found = ValueError(
+        f"File not found: {source}. Provide a readable file path or an "
+        f"http(s) URL."
+    )
     ext = Path(source).suffix.lower()
     if ext not in _DOC_TYPES:
-        if not os.path.isfile(source):
-            raise ValueError(
-                f"File not found: {source}. Provide a readable file path or an "
-                f"http(s) URL."
-            )
         raise ValueError(
             f"Unsupported file type '{ext}'. Supported: {_SUPPORTED_EXTS}."
         )
     mime, chunk_type = _DOC_TYPES[ext]
-    if os.path.isfile(source):
-        with open(source, "rb") as fh:
-            return mime, chunk_type, fh.read()
-    data = _read_uploaded_file(source)
+    if is_bare_filename(source):
+        name = source
+    else:
+        path = _own_upload_path(source)
+        if path is None:
+            raise not_found
+        if path.is_file():
+            # Staged copies live on local disk even with S3 storage.
+            return mime, chunk_type, path.read_bytes()
+        name = path.name
+    data = _read_uploaded_file(name)
     if data is None:
-        raise ValueError(
-            f"File not found: {source}. Provide a readable file path or an "
-            f"http(s) URL."
-        )
+        raise not_found
     return mime, chunk_type, data
 
 
@@ -338,7 +362,7 @@ def tool_ocr_document(
     Args:
         source (str): What to OCR. Either an ``http(s)`` URL (the provider fetches
             it), the name of a file the user uploaded (e.g. "cv.pdf", exactly as
-            listed in [Uploaded files: …]), or a path to a local file. Supported
+            listed in [Uploaded files: …]), or a path to one of those uploads. Supported
             file types: PDF, PPTX, DOCX, PNG, JPG/JPEG, AVIF.
         provider (str): Which OCR provider to use. Options: "auto" (tries available
             providers in order), "mistral" or "azure". Default: "auto".
