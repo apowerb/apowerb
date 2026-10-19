@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import psycopg2
+import psycopg2.errors
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 import litellm
@@ -732,14 +733,17 @@ def _agent_execute_sql(agent_name: str, sql_query: str, limit: int = 100) -> Lis
 
 
 def _agent_generate_sql(
-    agent_name: str, question: str, schema_info: Dict[str, Any], record_usage: bool = True
+    agent_name: str, question: str, schema_info: Dict[str, Any], record_usage: bool = True,
+    rejected: Optional[tuple] = None,
 ) -> str:
-    return _state_generate_sql(_get_state(agent_name), question, schema_info, record_usage)
+    return _state_generate_sql(_get_state(agent_name), question, schema_info, record_usage, rejected)
 
 
 def _state_generate_sql(
-    s: _AgentState, question: str, schema_info: Dict[str, Any], record_usage: bool = True
+    s: _AgentState, question: str, schema_info: Dict[str, Any], record_usage: bool = True,
+    rejected: Optional[tuple] = None,
 ) -> str:
+    """``rejected`` = (sql, database error) of a previous attempt to correct."""
     agent_name = s.agent_name
     max_chars = int(os.getenv("SQL_SCHEMA_MAX_CHARS", "16000"))
     include_samples = s.schema_samples
@@ -790,6 +794,16 @@ Output ONLY the SQL query without markdown."""
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
+    if rejected:
+        bad_sql, db_error = rejected
+        messages += [
+            {"role": "assistant", "content": bad_sql},
+            {"role": "user", "content": (
+                f"The database rejected that query: {db_error}\n"
+                "Fix it using only the tables and columns of the schema above. "
+                "Output ONLY the corrected SQL query."
+            )},
+        ]
 
     def _ask(msgs):
         resp = litellm.completion(
@@ -798,16 +812,22 @@ Output ONLY the SQL query without markdown."""
             api_key=s.api_key,
             messages=msgs,
             temperature=0.0,
-            max_tokens=1000,
+            # A ceiling, not a target: reasoning models (Gemini 2.5, gpt-5)
+            # spend completion tokens thinking before the SQL; at 1000 they
+            # could stop mid-query.
+            max_tokens=4096,
             timeout=60,
         )
         if record_usage:
             _record_llm_usage(s, resp)
-        return resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        return choice.message.content or "", getattr(choice, "finish_reason", None) == "length"
 
-    raw = _ask(messages)
+    raw, cut = _ask(messages)
     sql = extract_sql(raw)
     is_safe, err = validate_sql_safety(sql) if sql else (False, "empty output")
+    if cut:
+        is_safe, err = False, "output cut off before the end of the query"
     if not is_safe:
         # One corrective retry with the failure as feedback. Local models
         # (Mistral on OVH) often wrap SQL in prose or emit a non-SELECT on
@@ -820,7 +840,7 @@ Output ONLY the SQL query without markdown."""
                 "Output ONLY the SQL query: a single SELECT statement, no prose, no markdown."
             )},
         ]
-        raw = _ask(retry_messages)
+        raw, _ = _ask(retry_messages)
         sql = extract_sql(raw)
 
     logger.info("[SQL][%s] Generated: %s", agent_name, sql)
@@ -945,19 +965,36 @@ def _tool_text_to_sql_impl(
     try:
         logger.info("[TEXT_TO_SQL][%s] %s", agent_name, question)
         schema_info = _agent_cached_schema(agent_name)
-        sql_query   = _agent_generate_sql(agent_name, question, schema_info)
-
-        is_safe, error_msg = _validate_sql_safety(sql_query)
-        if not is_safe:
-            return {
-                "success":   False,
-                "error":     f"Safety check failed: {error_msg}",
-                "sql_query": sql_query if include_sql else None,
-            }
-
         max_rows = max(1, min(int(max_rows or 100), _TEXT_TO_SQL_MAX_ROWS))
-        # Fetch one extra row so we can tell the model the result was cut.
-        results = _agent_execute_sql(agent_name, sql_query, limit=max_rows + 1)
+        rejected = None
+        for attempt in range(2):
+            sql_query = _agent_generate_sql(agent_name, question, schema_info, rejected=rejected)
+
+            is_safe, error_msg = _validate_sql_safety(sql_query)
+            if not is_safe:
+                return {
+                    "success":   False,
+                    "error":     f"Safety check failed: {error_msg}",
+                    "sql_query": sql_query if include_sql else None,
+                }
+            try:
+                # Fetch one extra row so we can tell the model the result was cut.
+                results = _agent_execute_sql(agent_name, sql_query, limit=max_rows + 1)
+                break
+            except Exception as e:
+                # A query the database rejects (wrong column, join, type) is
+                # regenerated once here with its error: far cheaper than sending
+                # the error back to the agent, whose retry loop re-sends the
+                # whole prompt and tool list on every step.
+                if attempt or not _is_query_error(e):
+                    logger.error("[TEXT_TO_SQL][%s] %s", agent_name, e)
+                    return {
+                        "success":   False,
+                        "error":     str(e),
+                        "sql_query": sql_query if include_sql else None,
+                    }
+                logger.warning("[TEXT_TO_SQL][%s] query rejected (%s); regenerating", agent_name, e)
+                rejected = (sql_query, str(e).strip())
         truncated = len(results) > max_rows
         results = results[:max_rows]
         resp = {
@@ -978,6 +1015,26 @@ def _tool_text_to_sql_impl(
     except Exception as e:
         logger.error("[TEXT_TO_SQL][%s] %s", agent_name, e)
         return {"success": False, "error": str(e)}
+
+
+# MySQL server errors caused by the query itself (bad column, table, syntax,
+# grouping), as opposed to connection, permission or timeout failures.
+_MYSQL_QUERY_ERRORS = {1052, 1054, 1055, 1064, 1066, 1140, 1146, 1248, 1305, 1582}
+
+
+def _is_query_error(exc: Exception) -> bool:
+    """True when the database rejected the query itself, so regenerating it can help."""
+    if isinstance(exc, psycopg2.errors.InsufficientPrivilege):
+        return False
+    if isinstance(exc, (psycopg2.ProgrammingError, psycopg2.DataError)):
+        return True
+    try:
+        import pymysql
+    except ImportError:  # pragma: no cover - MySQL driver optional
+        return False
+    if isinstance(exc, pymysql.err.MySQLError):
+        return bool(exc.args) and exc.args[0] in _MYSQL_QUERY_ERRORS
+    return False
 
 
 def _compact_table(info: dict) -> dict:

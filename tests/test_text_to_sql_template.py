@@ -55,3 +55,13 @@ class TestTextToSqlTemplate:
         # for a small model (Mistral-Small) — a leaner-instruction refactor is a
         # worthwhile follow-up — but this still guards against unbounded bloat.
         assert len(instr) < 5600, f"instruction trop longue: {len(instr)} chars"
+
+    def test_inline_chart_uses_the_one_call_composite(self):
+        tpl = _template()
+        # query + saved chart in one tool call: one model call less per chart
+        assert tpl["chart_from_question"] is True
+        instr = tpl["agent_instruction"]
+        assert "data not queried yet → tool_chart_from_question(question, chart_type, title)" in instr
+        # a chart of rows already fetched reuses their SQL instead of re-querying
+        assert "tool_create_chart(query=<that sql_query>" in instr
+        assert "ONLY when the user asks for a chart" in instr
