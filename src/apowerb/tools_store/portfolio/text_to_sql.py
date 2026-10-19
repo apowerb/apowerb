@@ -22,51 +22,55 @@ from apowerb.sqlgen.schema_format import build_schema_prompt
 logger = getLogger(__name__)
 
 # ── Tables to exclude from schema introspection ──
+# Keycloak/Liquibase tables are matched by exact name: a bare prefix such as
+# "client" or "component" also hid business tables (clients, components...).
+# Names come from Keycloak's Liquibase changelogs (26.8.1, incl. renamed and
+# dropped tables), limited to those the former prefixes already covered: newer
+# tables with generic names (org, user_session, workflow_state...) are left
+# visible on purpose.
 _EXCLUDED_TABLE_PREFIXES = (
-    "admin_event_entity",
-    "associated_policy",
-    "authentication_",
-    "broker_link",
-    "client",
-    "component",
-    "composite_role",
-    "credential",
     "databasechangelog",
-    "default_client_scope",
-    "event_entity",
-    "fed_",
-    "federated_",
-    "group_",
-    "identity_provider",
     "keycloak_",
-    "migration_model",
-    "offline_",
-    "policy_config",
-    "protocol_mapper",
-    "realm",
-    "redirect_uris",
-    "required_action",
-    "resource_attribute",
-    "resource_policy",
-    "resource_scope",
-    "resource_server",
-    "resource_uris",
-    "revoked_token",
-    "role_attribute",
-    "scope_mapping",
-    "scope_policy",
-    "user_attribute",
-    "user_consent",
-    "user_entity",
-    "user_federation",
-    "user_group_membership",
-    "user_required_action",
-    "user_role_mapping",
-    "username_login_failure",
-    "web_origins",
 )
 
-_EXCLUDED_TABLES_EXACT = {
+_KEYCLOAK_TABLES = frozenset({
+    "admin_event_entity", "associated_policy", "authentication_execution",
+    "authentication_flow", "broker_link", "client", "client_attributes",
+    "client_auth_flow_bindings", "client_default_roles",
+    "client_identity_prov_mapping", "client_initial_access",
+    "client_node_registrations", "client_scope", "client_scope_attributes",
+    "client_scope_client", "client_scope_role_mapping", "client_session",
+    "client_session_auth_status", "client_session_note",
+    "client_session_prot_mapper", "client_session_role", "client_template",
+    "client_template_attributes", "client_user_session_note", "component",
+    "component_config", "composite_role", "credential", "credential_attribute",
+    "default_client_scope", "event_entity", "fed_credential_attribute",
+    "fed_issued_ver_credential", "fed_providers", "fed_user_attribute",
+    "fed_user_consent", "fed_user_consent_cl_scope", "fed_user_consent_prot_mapper",
+    "fed_user_consent_role", "fed_user_credential", "fed_user_group_membership",
+    "fed_user_required_action", "fed_user_role_mapping", "fed_user_ver_credential",
+    "federated_identity", "federated_user", "group_attribute", "group_role_mapping",
+    "identity_provider", "identity_provider_config", "identity_provider_mapper",
+    "migration_model", "offline_client_session", "offline_user_session",
+    "policy_config", "protocol_mapper", "protocol_mapper_config", "realm",
+    "realm_application", "realm_attribute", "realm_client", "realm_client_template",
+    "realm_default_groups", "realm_default_roles", "realm_enabled_event_types",
+    "realm_events_listeners", "realm_localizations", "realm_required_credential",
+    "realm_smtp_config", "realm_social_config", "realm_supported_locales",
+    "redirect_uris", "required_action_config", "required_action_provider",
+    "resource_attribute", "resource_policy", "resource_scope", "resource_server",
+    "resource_server_perm_ticket", "resource_server_policy",
+    "resource_server_resource", "resource_server_scope", "resource_uris",
+    "revoked_token", "role_attribute", "scope_mapping", "scope_policy",
+    "user_attribute", "user_consent", "user_consent_client_scope",
+    "user_consent_prot_mapper", "user_consent_role", "user_entity",
+    "user_federation_config", "user_federation_mapper",
+    "user_federation_mapper_config", "user_federation_provider",
+    "user_group_membership", "user_required_action", "user_role_mapping",
+    "username_login_failure", "web_origins",
+})
+
+_EXCLUDED_TABLES_EXACT = _KEYCLOAK_TABLES | {
     "pwd_mngt",
     "th2dive_cookies_sessions",
     "th2dive_with_cookies",
@@ -76,7 +80,7 @@ _EXCLUDED_TABLES_EXACT = {
 def _is_excluded_table(table_name: str) -> bool:
     if table_name in _EXCLUDED_TABLES_EXACT:
         return True
-    return any(table_name.startswith(p) for p in _EXCLUDED_TABLE_PREFIXES)
+    return table_name.startswith(_EXCLUDED_TABLE_PREFIXES)
 
 
 
