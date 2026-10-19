@@ -34,6 +34,7 @@ from apowerb.core.agent_helpers.mcp_loader import (
     build_mcp_instruction_preamble,
     load_mcp_servers,
 )
+from apowerb.core.agent_helpers.chart_from_question_tool import bind_chart_from_question
 from apowerb.core.agent_helpers.llm_model_builder import (
     build_litellm_model,
     apply_output_schema,
@@ -110,6 +111,19 @@ def _suppressed_auto_tools(superagent_template_id) -> frozenset:
     skipped: the same tool configured in ``agent_tools`` is kept.
     """
     return frozenset(_template_setting(superagent_template_id, "suppressed_auto_tools", ()) or ())
+
+
+def _guardrails_block(agent_details: dict, tool_names) -> bool:
+    """True when the agent's guardrails ``blocked_tools`` names one of ``tool_names``."""
+    raw = agent_details.get("guardrails_config")
+    if not raw or raw in ("null", "None"):
+        return False
+    try:
+        config = json.loads(raw) if isinstance(raw, str) else raw
+        blocked = {str(t).strip().lower() for t in (config or {}).get("blocked_tools", [])}
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return any(name.lower() in blocked for name in tool_names)
 
 
 def _template_setting(superagent_template_id, key: str, default):
@@ -642,6 +656,15 @@ def to_agent(agent_name: str) -> LlmAgent:
         # rebinders, applied in registration order (persist, mail).
         for _tool_name, _rebinder in _ext_registry.tool_rebinders().items():
             tools_funcs = _rebinder(agent_name, tools_ids, tools_funcs, owner_id)
+
+        # Query + saved chart in one call, for templates that opt in. After
+        # every rebind, so it wraps the agent's final tools; never when the
+        # guardrails block one of the two (the composite would bypass them).
+        tools_funcs = bind_chart_from_question(
+            agent_name, tools_funcs,
+            _template_setting(superagent_template_id, "chart_from_question", False)
+            and not _guardrails_block(agent_details, ("tool_text_to_sql", "tool_create_chart")),
+        )
 
         # Auto-add shared runtime tools. Vertex AI / Gemini rejects duplicate
         # function declarations, so we dedup by function __name__ against any
