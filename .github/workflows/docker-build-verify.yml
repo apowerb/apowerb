@@ -123,6 +123,19 @@ jobs:
           print('OK: google-adk, litellm, sqlalchemy, cryptography, pandas, pyodbc, psycopg2 all import cleanly')
           "
 
+      # The image must ship the versions uv.lock pins, not a fresh resolve:
+      # 0.2.86 shipped google-adk 2.12.0 instead of the locked 2.9.2 and the
+      # import test above still passed.
+      - name: Smoke test — locked dependency versions
+        run: |
+          set -e
+          for pkg in google-adk litellm; do
+            want=$(python3 -c "import sys, tomllib; print(next(p['version'] for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == sys.argv[1]))" "$pkg")
+            got=$(docker run --rm apowerb:pr-verify /opt/venv/bin/python -c "import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))" "$pkg")
+            if [ "$got" != "$want" ]; then echo "FAIL: $pkg $got in the image, $want in uv.lock"; exit 1; fi
+            echo "OK: $pkg $got matches uv.lock"
+          done
+
       # The Dockerfile purges libuuid1 and ncurses (see the comment there).
       # Assert they stay gone and that nothing left in the image links one of
       # their shared objects: a consumer added later would otherwise only fail
