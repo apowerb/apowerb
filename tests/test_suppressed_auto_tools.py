@@ -34,13 +34,18 @@ def _tool_names(bench, monkeypatch, **row):
     return {t.name for t in asyncio.run(agent.canonical_tools())}
 
 
-@pytest.mark.parametrize("template_id", ["forecasting_agent", "dashboard_agent"])
+@pytest.mark.parametrize("template_id", ["forecasting_agent", "dashboard_agent", "text_to_sql_agent"])
 def test_bi_templates_suppress_the_unused_chat_tools(template_id):
     tpl = get_superagent_template(template_id)
     assert tpl["suppressed_auto_tools"] == BI_SUPPRESSED_AUTO_TOOLS
     recommended = {path.rsplit(".", 1)[-1] for path in tpl["recommended_tools"]}
     assert not recommended & set(BI_SUPPRESSED_AUTO_TOOLS)
     assert not [n for n in BI_SUPPRESSED_AUTO_TOOLS if n in tpl["agent_instruction"]]
+
+
+@pytest.mark.parametrize("template_id", ["forecasting_agent", "dashboard_agent", "text_to_sql_agent"])
+def test_bi_templates_compact_previous_turn_results(template_id):
+    assert get_superagent_template(template_id)["compact_previous_turn_results"] is True
 
 
 def test_bi_agent_is_built_without_them(bench, monkeypatch):

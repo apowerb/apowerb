@@ -107,6 +107,10 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
         # artifacts_enabled=True so the agent can export results as PDF/CSV/MD
         "artifacts_enabled": True,
         "guardrails_config": None,
+        # outils de chat inutiles à un agent SQL/BI (comme les gabarits BI)
+        "suppressed_auto_tools": BI_SUPPRESSED_AUTO_TOOLS,
+        # historique : gros résultats d'outils des tours précédents raccourcis
+        "compact_previous_turn_results": True,
         "tags": ["sql", "database", "text-to-sql", "analytics", "data"],
         "readme": (
             "# Data Analyst\n\n"
