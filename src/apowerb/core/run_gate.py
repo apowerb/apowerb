@@ -146,6 +146,7 @@ async def _core_token_cap(*, agent_name: str, owner_id: str) -> None:
     try:
         from sqlalchemy import func, select
 
+        from apowerb.core.usage_quota import counted_tokens_sum
         from apowerb.helpers.database import sessionmanager
         from apowerb.models import LlmUsage
 
@@ -161,7 +162,7 @@ async def _core_token_cap(*, agent_name: str, owner_id: str) -> None:
                 row = (
                     await db.execute(
                         select(
-                            func.coalesce(func.sum(LlmUsage.total_tokens), 0),
+                            counted_tokens_sum(),
                             func.min(LlmUsage.created_at),
                         ).where(*conditions, *extra)
                     )

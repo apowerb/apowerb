@@ -362,3 +362,30 @@ async def test_la_jauge_garde_le_debut_du_mois_sans_remise_a_zero_utile(base, ja
     await remet_a_zero(base, il_y_a_min=60 * 24 * 40)
     async with base() as db:
         assert (await default_llm_usage(db, owner_id=MOI, plan=None)).period_start == month_start()
+
+
+@pytest.mark.asyncio
+async def test_le_plafond_glissant_compte_le_cache_au_quart(base, registre_vierge, monkeypatch):
+    """1 000 jetons dont 800 en cache comptent 400 : sous un plafond de 500,
+    le run passe ; sans la ponderation il serait refuse."""
+    from apowerb.core import usage_quota as uq
+
+    monkeypatch.delenv(uq.CACHED_TOKEN_PERCENT_ENV, raising=False)
+    s = get_settings()
+    monkeypatch.setattr(s, "default_llm_user_token_cap", 500, raising=False)
+    monkeypatch.setattr(s, "default_llm_global_token_cap", 0, raising=False)
+    monkeypatch.setattr(s, "default_llm_cap_window_hours", 24, raising=False)
+    async with base() as db:
+        db.add(LlmUsage(
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=30), agent_id=1,
+            agent_name="agent", owner_id=MOI, model="gemini-2.5-flash", input_tokens=1_000,
+            output_tokens=0, thoughts_tokens=0, cached_tokens=800, total_tokens=1_000,
+            billed_to_thaink2=True,
+        ))
+        await db.commit()
+    await run_gate.apply_run_guards(agent_name="agent6", owner_id=MOI, plan=None)
+
+    monkeypatch.setenv(uq.CACHED_TOKEN_PERCENT_ENV, "100")
+    with pytest.raises(HTTPException) as leve:
+        await run_gate.apply_run_guards(agent_name="agent6", owner_id=MOI, plan=None)
+    assert leve.value.status_code == 402
