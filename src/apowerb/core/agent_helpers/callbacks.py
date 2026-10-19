@@ -579,10 +579,12 @@ def _content_has_function_response(content) -> bool:
 
 
 def _text_only(content) -> bool:
-    """True when every part of *content* is plain text (no tool call/result)."""
+    """True when every part of *content* is plain text (no tool call/result,
+    no model thought)."""
     parts = getattr(content, "parts", None) or []
     return bool(parts) and all(
         getattr(p, "text", None)
+        and not getattr(p, "thought", False)
         and getattr(p, "function_call", None) is None
         and getattr(p, "function_response", None) is None
         for p in parts

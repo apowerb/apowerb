@@ -79,3 +79,13 @@ def test_budget_keeps_the_newest_texts():
     assert "answer 3: total 3000" in texts and "question 4" in texts
     assert "question 3" not in texts and "answer 2: total 2000" not in texts
     assert texts[0] == "question 1"
+
+
+def test_model_thoughts_do_not_come_back():
+    contents = _history()
+    thought = SimpleNamespace(role="model", parts=[SimpleNamespace(
+        text="thinking about turn 2", thought=True, function_call=None, function_response=None)])
+    contents.insert(contents.index(next(c for c in contents if _texts([c]) == ["answer 2: total 2000"])), thought)
+    out = _run(contents, keep_text_chars=6000)
+    assert "thinking about turn 2" not in _texts(out)
+    assert "answer 2: total 2000" in _texts(out)
