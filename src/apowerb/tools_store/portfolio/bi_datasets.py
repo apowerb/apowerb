@@ -468,36 +468,55 @@ _NO_CONNECTION_MESSAGE = (
 def _agent_db_connection(owner: str | None = None) -> tuple[str, str] | None:
     """``(tool_config_id, owner)`` of the running agent's database tool, or None.
 
-    The tool_config is looked up for ``owner`` (default: the agent's owner),
-    which also admits ``system`` configs; a foreign tenant's config is never
-    found. Never falls back to the process ``DB_*`` variables, which point at
-    the platform's own database.
+    The agent calling the tool is looked at first, then the run's root agent,
+    then the root's sub-agents, level by level: in a multi-agent run the root
+    is often an orchestrator while the database is attached to the sub-agent
+    that runs the SQL. The tool_config is looked up for ``owner`` (default:
+    the root agent's owner), which also admits ``system`` configs; a foreign
+    tenant's config is never found. Never falls back to the process ``DB_*``
+    variables, which point at the platform's own database.
     """
-    import json
-
-    from apowerb.core.invocation_context import get_root_agent_id
-    agent_id = get_root_agent_id()
-    if not agent_id:
-        return None
     from apowerb.core.agent_helpers import get_agent_details
+    from apowerb.core.agent_main import _parse_string_list
+    from apowerb.core.invocation_context import get_current_agent_id, get_root_agent_id
     from apowerb.tools_store.tools_helpers import load_tool_config_params, normalize_db_params
 
-    details = get_agent_details(int(agent_id))
-    tools_raw = details.get("agent_tools", "[]")
-    tools = json.loads(tools_raw) if isinstance(tools_raw, str) else (tools_raw or [])
-    lookup_owner = owner or details.get("owner_id") or _agent_owner()
+    root = get_root_agent_id()
+    if not root:
+        return None
+    lookup_owner = owner or get_agent_details(int(root)).get("owner_id") or _agent_owner()
     if not lookup_owner:
         return None
-    # Same rule as the agent binding its SQL tools: the first tool_config whose
-    # params name a database, whatever tool it was saved for (text_to_sql
-    # stores DB_* keys under "text_to_sql", the BI picker lowercase keys).
-    for tool in tools:
-        if isinstance(tool, str) and tool.startswith("tool_config"):
-            _, params = load_tool_config_params(tool, owner_id=lookup_owner)
-            if params and normalize_db_params(params).get("DB_NAME"):
-                return tool, lookup_owner
-    return None
 
+    def db_config_of(details: dict) -> str | None:
+        # Same rule as the agent binding its SQL tools: the first tool_config
+        # whose params name a database, whatever tool it was saved for
+        # (text_to_sql stores DB_* keys under "text_to_sql", the BI picker
+        # lowercase keys).
+        for tool in _parse_string_list(details.get("agent_tools")):
+            if isinstance(tool, str) and tool.startswith("tool_config"):
+                _, params = load_tool_config_params(tool, owner_id=lookup_owner)
+                if params and normalize_db_params(params).get("DB_NAME"):
+                    return tool
+        return None
+
+    seen: set[str] = set()
+    queue = [get_current_agent_id(), root]
+    while queue and len(seen) < 20:
+        agent_id = str(queue.pop(0) or "").removeprefix("agent")
+        if not agent_id.isdigit() or agent_id in seen:
+            continue
+        seen.add(agent_id)
+        try:
+            details = get_agent_details(int(agent_id))
+        except Exception:  # a deleted sub-agent must not hide the others
+            logger.warning("[BI_DATASETS] agent %s not loaded for its connection", agent_id)
+            continue
+        found = db_config_of(details)
+        if found:
+            return found, lookup_owner
+        queue.extend(_parse_string_list(details.get("sub_agents")))
+    return None
 
 def _jsonable(value: Any) -> Any:
     """Database value -> JSON value, in the form the CSV path already yields."""
