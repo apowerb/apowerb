@@ -126,14 +126,31 @@ jobs:
       # The image must ship the versions uv.lock pins, not a fresh resolve:
       # 0.2.86 shipped google-adk 2.12.0 instead of the locked 2.9.2 and the
       # import test above still passed.
+      # uv.lock can hold several versions of one package, one per Python
+      # range: since google-adk 2.12 (#415), 2.11.0 below Python 3.11 and
+      # 2.12.0 from 3.11 on. Compare with the entry whose resolution markers
+      # match the image's own interpreter, evaluated inside the image, not
+      # with the first entry of the file (which made this step fail on a
+      # correct 3.13 image).
       - name: Smoke test — locked dependency versions
         run: |
           set -e
           for pkg in google-adk litellm; do
-            want=$(python3 -c "import sys, tomllib; print(next(p['version'] for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == sys.argv[1]))" "$pkg")
-            got=$(docker run --rm apowerb:pr-verify /opt/venv/bin/python -c "import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))" "$pkg")
-            if [ "$got" != "$want" ]; then echo "FAIL: $pkg $got in the image, $want in uv.lock"; exit 1; fi
-            echo "OK: $pkg $got matches uv.lock"
+            docker run --rm -v "$PWD/uv.lock:/tmp/uv.lock:ro" apowerb:pr-verify /opt/venv/bin/python -c '
+          import importlib.metadata, sys, tomllib
+          from packaging.markers import Marker
+          name = sys.argv[1]
+          entries = [p for p in tomllib.load(open("/tmp/uv.lock", "rb"))["package"] if p["name"] == name]
+          want = [
+              p["version"] for p in entries
+              if not p.get("resolution-markers")
+              or any(Marker(m).evaluate() for m in p["resolution-markers"])
+          ]
+          got = importlib.metadata.version(name)
+          if want != [got]:
+              sys.exit(f"FAIL: {name} {got} in the image, {want} in uv.lock for this interpreter")
+          print(f"OK: {name} {got} matches uv.lock")
+          ' "$pkg"
           done
 
       # The Dockerfile purges libuuid1 and ncurses (see the comment there).
