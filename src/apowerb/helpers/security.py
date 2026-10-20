@@ -12,23 +12,23 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_secret_key() -> str:
-    """Clé de signature des JWT, résolue à l'usage et jamais vide.
+    """JWT signing key, resolved at call time and never empty.
 
-    Auparavant une constante de module (``SECRET_KEY = settings.encrypt_key``).
-    Depuis que ``encrypt_key`` a une valeur par défaut — nécessaire pour que le
-    paquet soit importable sans configuration — cette constante valait
-    silencieusement la chaîne vide quand ``ENCRYPT_KEY`` n'était pas renseignée,
-    et des JWT pouvaient être signés avec.
+    Previously a module constant (``SECRET_KEY = settings.encrypt_key``).
+    Since ``encrypt_key`` gained a default value — necessary for the package
+    to be importable without configuration — that constant silently held an
+    empty string when ``ENCRYPT_KEY`` was not set, and JWTs could be signed
+    with it.
 
-    Le serveur refuse de démarrer sans la clé, donc la production ne l'a jamais
-    été. Mais un secret vide ne doit jamais être une valeur *utilisable* : on
-    refuse ici, au moment de s'en servir, plutôt que d'échouer à l'import.
+    The server refuses to start without the key, so production was never
+    affected. But an empty secret must never be a *usable* value: we refuse
+    here, at the point of use, rather than failing at import time.
     """
     key = get_settings().encrypt_key
     if not key:
         raise RuntimeError(
-            "ENCRYPT_KEY n'est pas configurée — refus de signer ou de vérifier "
-            "un jeton avec une clé vide."
+            "ENCRYPT_KEY is not configured — refusing to sign or verify "
+            "a token with an empty key."
         )
     return key
 
@@ -37,44 +37,43 @@ _ALGORITHMES_ACCEPTÉS = frozenset({"HS256", "HS384", "HS512"})
 
 
 def get_algorithm() -> str:
-    """Algorithme de signature des JWT — **seul** lecteur de ``settings.algorithm``.
+    """JWT signing algorithm — the **sole** reader of ``settings.algorithm``.
 
-    Il y avait deux sources de vérité : la constante ``ALGORITHM = "HS256"`` de
-    ce module servait à *signer*, pendant que ``main.py``, ``auth/dependencies``,
-    ``auth/service`` et ``routers/audio_stream`` *vérifiaient* avec
-    ``settings.algorithm``. Les deux valent HS256 aujourd'hui, donc rien ne
-    casse ; le jour où l'une des deux bouge, les jetons sont signés avec un
-    algorithme et vérifiés avec un autre — tout le monde est déconnecté sans
-    qu'aucun test ne l'annonce, parce que chaque moitié reste cohérente avec
-    elle-même.
+    There used to be two sources of truth: the module constant ``ALGORITHM =
+    "HS256"`` was used to *sign*, while ``main.py``, ``auth/dependencies``,
+    ``auth/service`` and ``routers/audio_stream`` *verified* with
+    ``settings.algorithm``. Both happened to be HS256, so nothing broke; the
+    day either one changes, tokens are signed with one algorithm and verified
+    with another — everyone is logged out with no test announcing it, because
+    each half stays internally consistent.
 
-    On restreint à la famille HMAC : la clé est un secret symétrique
-    (``ENCRYPT_KEY``). Accepter ``RS*`` reviendrait à passer ce secret comme
-    clé publique, et ``none`` à ne plus rien vérifier du tout.
+    Restricted to the HMAC family: the key is a symmetric secret
+    (``ENCRYPT_KEY``). Accepting ``RS*`` would pass that secret as a public
+    key, and ``none`` would skip verification entirely.
     """
     algorithme = get_settings().algorithm
     if algorithme not in _ALGORITHMES_ACCEPTÉS:
         raise RuntimeError(
-            f"ALGORITHM={algorithme!r} n'est pas supporté — la clé de signature "
-            f"est un secret symétrique, seuls {sorted(_ALGORITHMES_ACCEPTÉS)} "
-            "sont acceptés."
+            f"ALGORITHM={algorithme!r} is not supported — the signing key "
+            f"is a symmetric secret; only {sorted(_ALGORITHMES_ACCEPTÉS)} "
+            "are accepted."
         )
     return algorithme
 
 
 def __getattr__(name: str):
-    # Filet : quiconque importe encore l'ancienne constante reçoit la raison du
-    # changement, pas un AttributeError sec.
+    # Safety net: anyone still importing the old constant gets a reason for the
+    # change, not a bare AttributeError.
     if name == "SECRET_KEY":
         raise AttributeError(
-            "SECRET_KEY a ete remplacee par get_secret_key(). Une constante de "
-            "module figeait la cle a l'import et pouvait valoir la chaine vide."
-        )
+            "SECRET_KEY has been replaced by get_secret_key(). A module "
+            "constant froze the key at import time and could hold an empty string."
+            )
     if name == "ALGORITHM":
         raise AttributeError(
-            "ALGORITHM a ete remplacee par get_algorithm(). La constante etait "
-            "une seconde source de verite face a settings.algorithm : on signait "
-            "avec l'une et on verifiait avec l'autre."
+            "ALGORITHM has been replaced by get_algorithm(). The constant was "
+            "a second source of truth alongside settings.algorithm: signing used "
+            "one and verification used the other."
         )
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
