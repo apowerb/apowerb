@@ -12,6 +12,7 @@ internally via ``_run_async``.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import contextlib
 import json
 import threading
@@ -117,7 +118,9 @@ def _run_async(coro):
             except Exception as e:
                 exception = e
 
-        t = threading.Thread(target=_run)
+        # A new thread starts with an empty context: run in a copy of ours so
+        # the coroutine sees the invocation's agent identity (ContextVars).
+        t = threading.Thread(target=contextvars.copy_context().run, args=(_run,))
         t.start()
         t.join(timeout=30)
         if t.is_alive():
