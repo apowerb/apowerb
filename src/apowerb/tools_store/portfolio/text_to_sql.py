@@ -1182,7 +1182,7 @@ def _llm_endpoint_kwargs(s: _AgentState) -> dict:
     raw ``azure/<model>`` took litellm's Azure deployment route instead and
     failed with ``NotFoundError - Resource not found``.
     """
-    from apowerb.core.agent_helpers.llm_model_builder import openai_compat_model_name
+    from apowerb.helpers.model_names import openai_compat_model_name
 
     kwargs = {
         "model": openai_compat_model_name(s.model) if s.api_base else s.model,

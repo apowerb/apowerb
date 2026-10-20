@@ -31,6 +31,7 @@ import litellm
 from pydantic import BaseModel, ValidationError
 
 from apowerb.helpers.litellm_config import configure_litellm_for_ovhcloud
+from apowerb.helpers.model_names import openai_compat_model_name
 
 _logger = logging.getLogger(__name__)
 # Lazy module-level imports for pmi_match_gate (top-level so they are patchable in tests)
@@ -257,10 +258,6 @@ async def _attempt_json_repair(
             "api_key": repair_api_key,
         }
         if repair_api_base:
-            # OpenAI-compat endpoint: force the openai/ provider prefix so
-            # litellm uses the OpenAI tool-calling path (cf build_litellm_model).
-            from apowerb.core.agent_helpers.llm_model_builder import openai_compat_model_name
-
             call_kwargs["model"] = openai_compat_model_name(repair_model)
             call_kwargs["api_base"] = repair_api_base
         else:
