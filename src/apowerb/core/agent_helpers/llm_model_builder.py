@@ -184,6 +184,15 @@ def validate_agent_model(agent_model: str, agent_model_params=None, agent_type: 
     if isinstance(params, dict) and params.get("model_api_base"):
         return  # endpoint custom OpenAI-compat -> valide par construction
     model = (agent_model or "").strip()
+    # Azure AI Foundry : chaque projet a son endpoint, il n'y a pas d'URL par
+    # defaut. litellm reconnait le provider, l'agent serait donc accepte puis
+    # en echec a chaque tour faute d'endpoint.
+    if model.startswith("azure_ai/") and not os.environ.get("AZURE_AI_API_BASE"):
+        raise ValueError(
+            "Azure AI Foundry demande l'URL du projet (model_api_base), ex "
+            "'https://<ressource>.services.ai.azure.com/models'. Le modele est "
+            "le nom du deploiement : 'azure_ai/<deploiement>'."
+        )
     try:
         from litellm import get_llm_provider
 

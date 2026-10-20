@@ -25,7 +25,7 @@ def test_ids_are_unique_and_prefixed_by_their_provider():
 def test_first_model_of_each_provider_is_the_recommended_one():
     groups = _catalog()
     assert {g["provider"] for g in groups} == {
-        "anthropic", "openai", "mistral", "gemini", "deepseek", "groq", "edenai",
+        "anthropic", "openai", "mistral", "gemini", "deepseek", "groq", "edenai", "azure_ai",
     }
     for group in groups:
         tags = [m["tag"] for m in group["models"]]
@@ -52,3 +52,31 @@ def test_edenai_models_route_to_eden_without_a_configured_endpoint():
         upstream = m["id"][len("edenai/"):]
         assert default_api_base(m["id"]) == EDENAI_API_BASE, m["id"]
         assert openai_compat_model_name(m["id"]) == f"openai/{upstream}", m["id"]
+
+
+def test_azure_ai_models_keep_their_native_prefix():
+    # Azure AI Foundry a son implementation litellm : avec l'URL du projet,
+    # le nom part tel quel, sans repasser par le chemin OpenAI.
+    from apowerb.helpers.model_names import openai_compat_model_name
+
+    azure = next(g for g in _catalog() if g["provider"] == "azure_ai")
+    for m in azure["models"]:
+        assert openai_compat_model_name(m["id"]) == m["id"], m["id"]
+
+
+def test_azure_ai_agent_needs_its_project_url(monkeypatch):
+    # Pas d'URL par defaut : chaque client a son projet Foundry. Sans URL
+    # l'agent serait cree puis muet a chaque tour.
+    import pytest
+
+    from apowerb.core.agent_helpers.llm_model_builder import validate_agent_model
+
+    monkeypatch.delenv("AZURE_AI_API_BASE", raising=False)
+    with pytest.raises(ValueError, match="Azure AI Foundry"):
+        validate_agent_model("azure_ai/gpt-6.1-sol", {})
+    validate_agent_model(
+        "azure_ai/gpt-6.1-sol",
+        {"model_api_base": "https://mon-projet.services.ai.azure.com/models"},
+    )
+    monkeypatch.setenv("AZURE_AI_API_BASE", "https://serveur.services.ai.azure.com/models")
+    validate_agent_model("azure_ai/gpt-6.1-sol", {})

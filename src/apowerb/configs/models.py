@@ -13,6 +13,9 @@
 # Eden AI (ajouté le 2026-10-20) : passerelle, l'id est `edenai/<provider>/<modèle>`
 # tel que listé par GET https://api.edenai.run/v3/models ; l'URL Eden est
 # ajoutée par défaut (helpers.model_names.default_api_base).
+# Azure AI Foundry (ajouté le 2026-10-20) : l'id est `azure_ai/<déploiement>`
+# et l'URL du projet est obligatoire (pas d'endpoint par défaut). Les noms
+# ci-dessous sont ceux qu'Azure donne par défaut au déploiement d'un modèle.
 MODELS = [
     {
         "id": "anthropic/claude-opus-5-5",
@@ -154,6 +157,18 @@ MODELS = [
         "id": "edenai/google/gemini-3.8-flash",
         "name": "Gemini 3.8 Flash",
         "provider": "edenai",
+        "tag": "Fast",
+    },
+    {
+        "id": "azure_ai/gpt-6.1-sol",
+        "name": "GPT-6.1 Sol",
+        "provider": "azure_ai",
+        "tag": "Recommended",
+    },
+    {
+        "id": "azure_ai/gpt-6-luna",
+        "name": "GPT-6 Luna",
+        "provider": "azure_ai",
         "tag": "Fast",
     },
 ]
