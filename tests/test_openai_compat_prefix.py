@@ -104,3 +104,20 @@ async def test_json_repair_keeps_the_azure_ai_prefix(monkeypatch):
     )
 
     assert captured.get("model") == AZURE
+
+
+def test_one_definition_of_the_rule(monkeypatch):
+    """La regle vit dans ``helpers.model_names`` seulement : le builder et les
+    outils SQL appellent cette fonction, pas une copie locale."""
+    from apowerb.core.agent_helpers import llm_model_builder as builder
+    from apowerb.helpers import model_names
+    from apowerb.tools_store.portfolio import text_to_sql
+
+    assert builder.openai_compat_model_name is model_names.openai_compat_model_name
+
+    monkeypatch.setattr(model_names, "openai_compat_model_name", lambda m: "sentinel")
+    state = type(
+        "S", (), {"model": AZURE, "api_base": BASE, "api_key": "k", "api_version": None}
+    )()
+
+    assert text_to_sql._llm_endpoint_kwargs(state)["model"] == "sentinel"
