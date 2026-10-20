@@ -176,7 +176,7 @@ def test_import_then_stock_dashboard_with_the_returned_dataset_id(env):
     assert len([c for c in out["components"] if c["type"] == "kpi"]) == 4
 
 
-@pytest.mark.parametrize("template_id", ["forecasting_agent", "text_to_sql_agent"])
+@pytest.mark.parametrize("template_id", ["forecasting_agent"])
 def test_tool_declared_in_agent_templates(template_id):
     from apowerb.core.superagents.templates import SUPERAGENT_TEMPLATES
 

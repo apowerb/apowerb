@@ -591,7 +591,9 @@ def _read_generated_file(path: str) -> tuple[str, bytes]:
     filename = os.path.basename(rel)
     from apowerb.configs.settings import get_settings
 
-    if get_settings().storage_mode == "local":
+    from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+
+    if not is_s3_artifact_storage_configured(get_settings()):
         disk = str(uploads_dir().joinpath(*rel.split("/")))
         if not os.path.isfile(disk):
             raise _AttachmentError(

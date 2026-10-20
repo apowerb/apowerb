@@ -31,6 +31,7 @@ import litellm
 from pydantic import BaseModel, ValidationError
 
 from apowerb.helpers.litellm_config import configure_litellm_for_ovhcloud
+from apowerb.helpers.model_names import openai_compat_model_name
 
 _logger = logging.getLogger(__name__)
 # Lazy module-level imports for pmi_match_gate (top-level so they are patchable in tests)
@@ -215,6 +216,7 @@ async def _attempt_json_repair(
     repair_api_key: str | None = None,
     repair_api_base: str | None = None,
     source_text: str | None = None,
+    repair_api_version: str | None = None,
 ) -> BaseModel | None:
     """One best-effort litellm round-trip to coerce ``raw`` into a valid
     ``schema_class`` instance. Returns the validated model on success, or
@@ -256,15 +258,12 @@ async def _attempt_json_repair(
             "api_key": repair_api_key,
         }
         if repair_api_base:
-            # OpenAI-compat endpoint: force the openai/ provider prefix so
-            # litellm uses the OpenAI tool-calling path (cf build_litellm_model).
-            _model_name = repair_model
-            if not _model_name.startswith("openai/"):
-                _model_name = "openai/" + _model_name.split("/", 1)[-1]
-            call_kwargs["model"] = _model_name
+            call_kwargs["model"] = openai_compat_model_name(repair_model)
             call_kwargs["api_base"] = repair_api_base
         else:
             call_kwargs["model"] = repair_model
+        if repair_api_version:
+            call_kwargs["api_version"] = repair_api_version
         response = await litellm.acompletion(**call_kwargs)
         repaired_text = response.choices[0].message.content
         data = extract_json(str(repaired_text))
@@ -286,6 +285,7 @@ def build_validating_state_writer(
     repair_model: str | None = None,
     repair_api_key: str | None = None,
     repair_api_base: str | None = None,
+    repair_api_version: str | None = None,
 ) -> Callable:
     """Return an ADK ``after_agent_callback`` that validates the agent's
     output against ``schema_class`` and normalizes ``state[state_key]``
@@ -310,6 +310,7 @@ def build_validating_state_writer(
                 repair_api_key=repair_api_key,
                 repair_api_base=repair_api_base,
                 source_text=source_text,
+                repair_api_version=repair_api_version,
             )
             if repaired is not None:
                 _logger.info(
@@ -578,8 +579,41 @@ def _content_has_function_response(content) -> bool:
     return any(getattr(p, "function_response", None) is not None for p in parts)
 
 
-def create_truncate_history_callback(keep_recent: int = 14):
+def _text_only(content) -> bool:
+    """True when every part of *content* is plain text (no tool call/result,
+    no model thought)."""
+    parts = getattr(content, "parts", None) or []
+    return bool(parts) and all(
+        getattr(p, "text", None)
+        and not getattr(p, "thought", False)
+        and getattr(p, "function_call", None) is None
+        and getattr(p, "function_response", None) is None
+        for p in parts
+    )
+
+
+def _recent_texts(dropped: list, budget: int) -> list:
+    """The newest text-only contents of *dropped* within *budget* chars, in order."""
+    kept, used = [], 0
+    for content in reversed(dropped):
+        if not _text_only(content):
+            continue
+        size = sum(len(p.text) for p in content.parts)
+        if used + size > budget:
+            break
+        kept.append(content)
+        used += size
+    return list(reversed(kept))
+
+
+def create_truncate_history_callback(keep_recent: int = 14, keep_text_chars: int = 0):
     """Retourne un before_model_callback qui tronque l'historique ADK.
+
+    ``keep_text_chars`` > 0 : les messages texte seuls (questions, reponses du
+    modele) que la fenetre fait sortir reviennent devant elle, les plus
+    recents d'abord dans la limite de ce nombre de caracteres, sans leurs
+    appels ni resultats d'outils. La fenetre compte les messages d'outils :
+    quelques tours charges en outils en font sortir les reponses precedentes.
 
     Conserve : le 1er message user (payload webhook initial) + les
     ``keep_recent`` derniers messages, en eliminant les tool_responses
@@ -651,7 +685,13 @@ def create_truncate_history_callback(keep_recent: int = 14):
         if user_initial_idx >= total - keep_recent:
             result = window
         else:
-            result = [user_initial] + window
+            texts = []
+            if keep_text_chars > 0:
+                window_start = total - len(window)
+                texts = _recent_texts(
+                    list(contents[user_initial_idx + 1:window_start]), keep_text_chars
+                )
+            result = [user_initial] + texts + window
 
         _logger.info(
             "[TRUNCATE_HISTORY] truncated %d -> %d messages (keep_recent=%d)",

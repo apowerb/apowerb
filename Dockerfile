@@ -23,7 +23,14 @@ COPY pyproject.toml uv.lock ./
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && /root/.local/bin/uv venv /opt/venv \
-    && VIRTUAL_ENV=/opt/venv /root/.local/bin/uv sync --no-dev --no-install-project \
+    # Dependencies come from uv.lock, never from a fresh resolve. `uv sync`
+    # ignores VIRTUAL_ENV (it warns that it does not match `.venv` and builds
+    # .venv instead); UV_PROJECT_ENVIRONMENT is what points it at /opt/venv.
+    # Without it the install below resolved everything anew: the published
+    # 0.2.86 image shipped google-adk 2.12.0 / litellm 1.105.1 instead of the
+    # locked 2.9.2 / 1.95.0 (CI run 38904092522), and ADK 2.12 streams partial
+    # function-call events the front end counted twice.
+    && UV_PROJECT_ENVIRONMENT=/opt/venv /root/.local/bin/uv sync --locked --no-dev --no-install-project --extra otel \
     # `[otel]` pulls th2pulse, which is what bridges application log records to
     # the collector. Without it apowerb.configs.observability finds no th2pulse,
     # logs a warning naming the missing extra, and the Logging screen stays empty
@@ -35,11 +42,17 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     # pre-existing fsspec conflict between `pins` and `s3fs` that makes plain
     # `pip install apowerb` unresolvable, with or without this extra. uv resolves
     # it. Do not swap this line for pip.
+    #
+    # The extra is installed by `--extra otel` above; `--no-deps` keeps the
+    # package itself from re-resolving what the lock already pinned.
     && if [ -z "${APPOWERB_VERSION}" ]; then \
-        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir "apowerb[otel]"; \
+        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir --no-deps "apowerb"; \
     else \
-        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir "apowerb[otel]==${APPOWERB_VERSION}"; \
-    fi
+        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir --no-deps "apowerb==${APPOWERB_VERSION}"; \
+    fi \
+    # With --no-deps, a requirement of the published wheel that the lock does
+    # not satisfy would install silently and fail at import in production.
+    && VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip check
 
 FROM python:3.13-slim AS runtime
 

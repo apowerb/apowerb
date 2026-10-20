@@ -160,6 +160,7 @@ class TestCreateSubscriptionHappyPath:
         saved_sub.resource = "me/mailFolders('Inbox')/messages"
         saved_sub.change_type = "created"
         saved_sub.agent_id = 1
+        saved_sub.consumer = "agent"
         saved_sub.agent_message_template = None
         saved_sub.status = "active"
         saved_sub.expiration_datetime = datetime.now(timezone.utc)

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import psycopg2
+import psycopg2.errors
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 import litellm
@@ -17,56 +18,61 @@ from logging import getLogger
 from apowerb.sqlgen.generator import extract_sql
 from apowerb.sqlgen.safety import validate_sql_safety
 from apowerb.sqlgen.readonly import read_only_transaction
+from apowerb.tools_store.tool_env import config_env
 from apowerb.sqlgen.schema_format import build_schema_prompt
 
 logger = getLogger(__name__)
 
 # ── Tables to exclude from schema introspection ──
+# Keycloak/Liquibase tables are matched by exact name: a bare prefix such as
+# "client" or "component" also hid business tables (clients, components...).
+# Names come from Keycloak's Liquibase changelogs (26.8.1, incl. renamed and
+# dropped tables), limited to those the former prefixes already covered: newer
+# tables with generic names (org, user_session, workflow_state...) are left
+# visible on purpose.
 _EXCLUDED_TABLE_PREFIXES = (
-    "admin_event_entity",
-    "associated_policy",
-    "authentication_",
-    "broker_link",
-    "client",
-    "component",
-    "composite_role",
-    "credential",
     "databasechangelog",
-    "default_client_scope",
-    "event_entity",
-    "fed_",
-    "federated_",
-    "group_",
-    "identity_provider",
     "keycloak_",
-    "migration_model",
-    "offline_",
-    "policy_config",
-    "protocol_mapper",
-    "realm",
-    "redirect_uris",
-    "required_action",
-    "resource_attribute",
-    "resource_policy",
-    "resource_scope",
-    "resource_server",
-    "resource_uris",
-    "revoked_token",
-    "role_attribute",
-    "scope_mapping",
-    "scope_policy",
-    "user_attribute",
-    "user_consent",
-    "user_entity",
-    "user_federation",
-    "user_group_membership",
-    "user_required_action",
-    "user_role_mapping",
-    "username_login_failure",
-    "web_origins",
 )
 
-_EXCLUDED_TABLES_EXACT = {
+_KEYCLOAK_TABLES = frozenset({
+    "admin_event_entity", "associated_policy", "authentication_execution",
+    "authentication_flow", "broker_link", "client", "client_attributes",
+    "client_auth_flow_bindings", "client_default_roles",
+    "client_identity_prov_mapping", "client_initial_access",
+    "client_node_registrations", "client_scope", "client_scope_attributes",
+    "client_scope_client", "client_scope_role_mapping", "client_session",
+    "client_session_auth_status", "client_session_note",
+    "client_session_prot_mapper", "client_session_role", "client_template",
+    "client_template_attributes", "client_user_session_note", "component",
+    "component_config", "composite_role", "credential", "credential_attribute",
+    "default_client_scope", "event_entity", "fed_credential_attribute",
+    "fed_issued_ver_credential", "fed_providers", "fed_user_attribute",
+    "fed_user_consent", "fed_user_consent_cl_scope", "fed_user_consent_prot_mapper",
+    "fed_user_consent_role", "fed_user_credential", "fed_user_group_membership",
+    "fed_user_required_action", "fed_user_role_mapping", "fed_user_ver_credential",
+    "federated_identity", "federated_user", "group_attribute", "group_role_mapping",
+    "identity_provider", "identity_provider_config", "identity_provider_mapper",
+    "migration_model", "offline_client_session", "offline_user_session",
+    "policy_config", "protocol_mapper", "protocol_mapper_config", "realm",
+    "realm_application", "realm_attribute", "realm_client", "realm_client_template",
+    "realm_default_groups", "realm_default_roles", "realm_enabled_event_types",
+    "realm_events_listeners", "realm_localizations", "realm_required_credential",
+    "realm_smtp_config", "realm_social_config", "realm_supported_locales",
+    "redirect_uris", "required_action_config", "required_action_provider",
+    "resource_attribute", "resource_policy", "resource_scope", "resource_server",
+    "resource_server_perm_ticket", "resource_server_policy",
+    "resource_server_resource", "resource_server_scope", "resource_uris",
+    "revoked_token", "role_attribute", "scope_mapping", "scope_policy",
+    "user_attribute", "user_consent", "user_consent_client_scope",
+    "user_consent_prot_mapper", "user_consent_role", "user_entity",
+    "user_federation_config", "user_federation_mapper",
+    "user_federation_mapper_config", "user_federation_provider",
+    "user_group_membership", "user_required_action", "user_role_mapping",
+    "username_login_failure", "web_origins",
+})
+
+_EXCLUDED_TABLES_EXACT = _KEYCLOAK_TABLES | {
     "pwd_mngt",
     "th2dive_cookies_sessions",
     "th2dive_with_cookies",
@@ -76,7 +82,7 @@ _EXCLUDED_TABLES_EXACT = {
 def _is_excluded_table(table_name: str) -> bool:
     if table_name in _EXCLUDED_TABLES_EXACT:
         return True
-    return any(table_name.startswith(p) for p in _EXCLUDED_TABLE_PREFIXES)
+    return table_name.startswith(_EXCLUDED_TABLE_PREFIXES)
 
 
 
@@ -105,14 +111,17 @@ def _validate_sql_safety(sql_query: str) -> tuple[bool, Optional[str]]:
 
 
 def _get_db_connection():
-    """Get a DB connection using os.getenv credentials (backward compat)."""
-    host     = os.getenv("DB_HOST", "localhost")
-    port     = int(os.getenv("DB_PORT", "5432"))
-    database = os.getenv("DB_NAME")
-    user     = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
+    """Connection for the /rag/index-db routes: DB_* of the active tool_config only."""
+    host     = config_env("DB_HOST", "localhost")
+    port     = int(config_env("DB_PORT", "5432"))
+    database = config_env("DB_NAME")
+    user     = config_env("DB_USER")
+    password = config_env("DB_PASSWORD")
     if not all([database, user, password]):
-        raise ValueError("Missing required database credentials (DB_NAME, DB_USER, DB_PASSWORD)")
+        raise ValueError(
+            "No database configured: attach a database tool_config "
+            "(DB_NAME, DB_USER, DB_PASSWORD) to this tool"
+        )
     return psycopg2.connect(host=host, port=port, database=database, user=user, password=password)
 
 
@@ -238,9 +247,12 @@ def _generate_sql_with_llm(question: str, schema_info: Dict[str, Any], agent_nam
     registered by make_text_to_sql_tools (DB params, schema cache) is
     neither read nor replaced, and the agent need not be built in this worker.
     """
-    model, api_base, api_key = _agent_llm_endpoint(int(agent_name.replace("agent", "")))
+    model, api_base, api_key, api_version = _agent_llm_endpoint(
+        int(agent_name.replace("agent", ""))
+    )
     s = _AgentState(
-        model=model, api_base=api_base, api_key=api_key, agent_name=agent_name,
+        model=model, api_base=api_base, api_key=api_key, api_version=api_version,
+        agent_name=agent_name,
         db_ok=False, db_type="postgresql", db_host="", db_port=5432, db_name="",
         db_user="", db_password="", db_schema="", db_include="",
         schema_samples=os.getenv("SQL_SCHEMA_SAMPLES", "0").strip().lower() in ("1", "true", "yes"),
@@ -290,6 +302,8 @@ class _AgentState:
     usage_agent_name:  str = ""
     owner_id:          Optional[str] = None
     billed_to_thaink2: bool = False
+    # Azure api_version of the agent's model params (model_api_version).
+    api_version:       Optional[str] = None
 
 
 _CACHE_TTL = int(os.getenv("SQL_SCHEMA_CACHE_TTL_S", "3600"))  # seconds
@@ -724,14 +738,17 @@ def _agent_execute_sql(agent_name: str, sql_query: str, limit: int = 100) -> Lis
 
 
 def _agent_generate_sql(
-    agent_name: str, question: str, schema_info: Dict[str, Any], record_usage: bool = True
+    agent_name: str, question: str, schema_info: Dict[str, Any], record_usage: bool = True,
+    rejected: Optional[tuple] = None,
 ) -> str:
-    return _state_generate_sql(_get_state(agent_name), question, schema_info, record_usage)
+    return _state_generate_sql(_get_state(agent_name), question, schema_info, record_usage, rejected)
 
 
 def _state_generate_sql(
-    s: _AgentState, question: str, schema_info: Dict[str, Any], record_usage: bool = True
+    s: _AgentState, question: str, schema_info: Dict[str, Any], record_usage: bool = True,
+    rejected: Optional[tuple] = None,
 ) -> str:
+    """``rejected`` = (sql, database error) of a previous attempt to correct."""
     agent_name = s.agent_name
     max_chars = int(os.getenv("SQL_SCHEMA_MAX_CHARS", "16000"))
     include_samples = s.schema_samples
@@ -782,24 +799,38 @@ Output ONLY the SQL query without markdown."""
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
+    if rejected:
+        bad_sql, db_error = rejected
+        messages += [
+            {"role": "assistant", "content": bad_sql},
+            {"role": "user", "content": (
+                f"The database rejected that query: {db_error}\n"
+                "Fix it using only the tables and columns of the schema above. "
+                "Output ONLY the corrected SQL query."
+            )},
+        ]
 
     def _ask(msgs):
         resp = litellm.completion(
-            model=s.model,
-            api_base=s.api_base,
-            api_key=s.api_key,
+            **_llm_endpoint_kwargs(s),
             messages=msgs,
             temperature=0.0,
-            max_tokens=1000,
+            # A ceiling, not a target: reasoning models (Gemini 2.5, gpt-5)
+            # spend completion tokens thinking before the SQL; at 1000 they
+            # could stop mid-query.
+            max_tokens=4096,
             timeout=60,
         )
         if record_usage:
             _record_llm_usage(s, resp)
-        return resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        return choice.message.content or "", getattr(choice, "finish_reason", None) == "length"
 
-    raw = _ask(messages)
+    raw, cut = _ask(messages)
     sql = extract_sql(raw)
     is_safe, err = validate_sql_safety(sql) if sql else (False, "empty output")
+    if cut:
+        is_safe, err = False, "output cut off before the end of the query"
     if not is_safe:
         # One corrective retry with the failure as feedback. Local models
         # (Mistral on OVH) often wrap SQL in prose or emit a non-SELECT on
@@ -812,7 +843,7 @@ Output ONLY the SQL query without markdown."""
                 "Output ONLY the SQL query: a single SELECT statement, no prose, no markdown."
             )},
         ]
-        raw = _ask(retry_messages)
+        raw, _ = _ask(retry_messages)
         sql = extract_sql(raw)
 
     logger.info("[SQL][%s] Generated: %s", agent_name, sql)
@@ -825,7 +856,7 @@ def _agent_llm(agent_name: str, messages: list, max_tokens: int = 1200) -> str:
     """Single chat completion using the agent's configured model."""
     s = _get_state(agent_name)
     resp = litellm.completion(
-        model=s.model, api_base=s.api_base, api_key=s.api_key,
+        **_llm_endpoint_kwargs(s),
         messages=messages, temperature=0.0, max_tokens=max_tokens, timeout=90,
     )
     _record_llm_usage(s, resp)
@@ -937,19 +968,36 @@ def _tool_text_to_sql_impl(
     try:
         logger.info("[TEXT_TO_SQL][%s] %s", agent_name, question)
         schema_info = _agent_cached_schema(agent_name)
-        sql_query   = _agent_generate_sql(agent_name, question, schema_info)
-
-        is_safe, error_msg = _validate_sql_safety(sql_query)
-        if not is_safe:
-            return {
-                "success":   False,
-                "error":     f"Safety check failed: {error_msg}",
-                "sql_query": sql_query if include_sql else None,
-            }
-
         max_rows = max(1, min(int(max_rows or 100), _TEXT_TO_SQL_MAX_ROWS))
-        # Fetch one extra row so we can tell the model the result was cut.
-        results = _agent_execute_sql(agent_name, sql_query, limit=max_rows + 1)
+        rejected = None
+        for attempt in range(2):
+            sql_query = _agent_generate_sql(agent_name, question, schema_info, rejected=rejected)
+
+            is_safe, error_msg = _validate_sql_safety(sql_query)
+            if not is_safe:
+                return {
+                    "success":   False,
+                    "error":     f"Safety check failed: {error_msg}",
+                    "sql_query": sql_query if include_sql else None,
+                }
+            try:
+                # Fetch one extra row so we can tell the model the result was cut.
+                results = _agent_execute_sql(agent_name, sql_query, limit=max_rows + 1)
+                break
+            except Exception as e:
+                # A query the database rejects (wrong column, join, type) is
+                # regenerated once here with its error: far cheaper than sending
+                # the error back to the agent, whose retry loop re-sends the
+                # whole prompt and tool list on every step.
+                if attempt or not _is_query_error(e):
+                    logger.error("[TEXT_TO_SQL][%s] %s", agent_name, e)
+                    return {
+                        "success":   False,
+                        "error":     str(e),
+                        "sql_query": sql_query if include_sql else None,
+                    }
+                logger.warning("[TEXT_TO_SQL][%s] query rejected (%s); regenerating", agent_name, e)
+                rejected = (sql_query, str(e).strip())
         truncated = len(results) > max_rows
         results = results[:max_rows]
         resp = {
@@ -970,6 +1018,26 @@ def _tool_text_to_sql_impl(
     except Exception as e:
         logger.error("[TEXT_TO_SQL][%s] %s", agent_name, e)
         return {"success": False, "error": str(e)}
+
+
+# MySQL server errors caused by the query itself (bad column, table, syntax,
+# grouping), as opposed to connection, permission or timeout failures.
+_MYSQL_QUERY_ERRORS = {1052, 1054, 1055, 1064, 1066, 1140, 1146, 1248, 1305, 1582}
+
+
+def _is_query_error(exc: Exception) -> bool:
+    """True when the database rejected the query itself, so regenerating it can help."""
+    if isinstance(exc, psycopg2.errors.InsufficientPrivilege):
+        return False
+    if isinstance(exc, (psycopg2.ProgrammingError, psycopg2.DataError)):
+        return True
+    try:
+        import pymysql
+    except ImportError:  # pragma: no cover - MySQL driver optional
+        return False
+    if isinstance(exc, pymysql.err.MySQLError):
+        return bool(exc.args) and exc.args[0] in _MYSQL_QUERY_ERRORS
+    return False
 
 
 def _compact_table(info: dict) -> dict:
@@ -1050,9 +1118,7 @@ def _tool_text_to_sql_explain_impl(agent_name: str, question: str) -> dict:
         is_safe, error_msg = _validate_sql_safety(sql_query)
 
         expl_resp = litellm.completion(
-            model=s.model,
-            api_base=s.api_base,
-            api_key=s.api_key,
+            **_llm_endpoint_kwargs(s),
             messages=[{
                 "role":    "user",
                 "content": f"Explain this SQL query in simple terms:\n\n{sql_query}",
@@ -1109,18 +1175,40 @@ def tool_business_analyst(question: str, max_steps: int = 4, max_rows: int = 100
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
+def _llm_endpoint_kwargs(s: _AgentState) -> dict:
+    """litellm model/endpoint kwargs, routed as build_litellm_model routes the agent.
+
+    With an api_base the agent calls ``openai/<model>`` at that endpoint; the
+    raw ``azure/<model>`` took litellm's Azure deployment route instead and
+    failed with ``NotFoundError - Resource not found``.
+    """
+    from apowerb.helpers.model_names import openai_compat_model_name
+
+    kwargs = {
+        "model": openai_compat_model_name(s.model) if s.api_base else s.model,
+        "api_base": s.api_base,
+        "api_key": s.api_key,
+    }
+    if s.api_version:
+        kwargs["api_version"] = s.api_version
+    return kwargs
+
+
 def _agent_llm_endpoint(agent_id: int) -> tuple:
-    """(model, api_base, api_key) the SQL tools call litellm with for the agent."""
+    """(model, api_base, api_key, api_version) of the agent's model for the SQL tools."""
     from apowerb.core.agent_helpers import load_agent_model_params
 
     model, model_params = load_agent_model_params(agent_id)
     api_base = model_params.get("model_api_base")
-    if not api_base and model.startswith("mistral/"):
+    # OVH catalog names only, as build_litellm_model: Mistral API ids
+    # (lowercase, mistral/mistral-small) go to Mistral with the agent's key.
+    if not api_base and model.startswith("mistral/Mistral-"):
         api_base = (
             "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net"
             "/api/openai_compat/v1"
         )
-    return model, api_base, model_params.get("model_api_key")
+    api_version = model_params.get("model_api_version") or model_params.get("api_version")
+    return model, api_base, model_params.get("model_api_key"), api_version
 
 
 def make_text_to_sql_tools(
@@ -1143,7 +1231,7 @@ def make_text_to_sql_tools(
          tool_business_analyst]
     """
     agent_id = int(agent_name.replace("agent", ""))
-    agent_model_name, api_base, api_key = _agent_llm_endpoint(agent_id)
+    agent_model_name, api_base, api_key, api_version = _agent_llm_endpoint(agent_id)
     # Best-effort: a missing identity costs the usage row's labels, never
     # the tools themselves.
     try:
@@ -1181,7 +1269,7 @@ def make_text_to_sql_tools(
     # Register in persistent dict — survives across all async tasks/requests
     _state_registry[agent_name] = _AgentState(
         model=agent_model_name, api_base=api_base, api_key=api_key,
-        agent_name=agent_name,
+        api_version=api_version, agent_name=agent_name,
         db_ok=db_ok, db_type=db_type, db_host=db_host, db_port=db_port, db_name=db_name,
         db_user=db_user, db_password=db_password, db_schema=db_schema,
         db_include=db_include, schema_samples=schema_samples,

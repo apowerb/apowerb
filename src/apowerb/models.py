@@ -226,6 +226,21 @@ class Integration(Base):
         return f"<Integration(user_id={self.user_id}, provider={self.provider}, username={self.provider_username})>"
 
 
+# Who handles a mail received on a webhook subscription — read from this
+# column, never inferred from an empty ``agent_id``:
+#   agent    -> the subscription's agent runs (``agent_id`` set)
+#   workflow -> the owner's ``email`` workflow triggers run, no agent
+#               (``agent_id`` NULL, core/workflow_mail_subscriptions.py)
+# A new kind is a new value here, in the CHECK below and in the worker.
+WEBHOOK_CONSUMER_AGENT = "agent"
+WEBHOOK_CONSUMER_WORKFLOW = "workflow"
+WEBHOOK_CONSUMERS = (WEBHOOK_CONSUMER_AGENT, WEBHOOK_CONSUMER_WORKFLOW)
+WEBHOOK_CONSUMER_CHECK = (
+    "(consumer = 'agent' AND agent_id IS NOT NULL)"
+    " OR (consumer = 'workflow' AND agent_id IS NULL)"
+)
+
+
 class WebhookSubscription(Base):
     """Stores Microsoft Graph (and future provider) webhook subscriptions.
 
@@ -271,8 +286,15 @@ class WebhookSubscription(Base):
     # Microsoft Graph mail subscriptions expire after at most 3 days; must be renewed
     expiration_datetime = Column(DateTime(timezone=True), nullable=True)
 
-    # Agent to invoke when a matching notification arrives
-    agent_id = Column(Integer, nullable=False)
+    # Who handles the mail: see WEBHOOK_CONSUMERS above.
+    consumer = Column(
+        String(20), nullable=False, default=WEBHOOK_CONSUMER_AGENT,
+        server_default=WEBHOOK_CONSUMER_AGENT,
+    )
+
+    # Agent to invoke when a matching notification arrives. Set if and only
+    # if consumer == "agent" (CHECK ck_webhook_subscriptions_consumer).
+    agent_id = Column(Integer, nullable=True)
 
     # Jinja-style template rendered into the agent's input message, e.g.:
     # "New email from {sender}: {subject}\n\n{body_preview}"
@@ -303,6 +325,17 @@ class WebhookSubscription(Base):
         # Fast lookup when filtering a user's subscriptions by provider and status
         # (the most common query pattern when dispatching incoming notifications)
         Index("ix_webhook_subscriptions_user_provider_status", "user_id", "provider", "status"),
+        # At most ONE workflow subscription per owner and provider: two on the
+        # same mailbox would deliver every mail twice, so every workflow would
+        # run twice. Also the guard when several workers reconcile at once.
+        Index(
+            "ux_webhook_subscriptions_workflow_owner",
+            "user_id", "provider",
+            unique=True,
+            postgresql_where=text("consumer = 'workflow'"),
+            sqlite_where=text("consumer = 'workflow'"),
+        ),
+        CheckConstraint(WEBHOOK_CONSUMER_CHECK, name="ck_webhook_subscriptions_consumer"),
     )
 
     def __repr__(self):
@@ -362,7 +395,13 @@ class WebhookLog(Base):
         ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"),
         nullable=False,
     )
-    agent_id = Column(Integer, nullable=False)
+    # Copied from the subscription at reception: who handled this mail.
+    consumer = Column(
+        String(20), nullable=False, default=WEBHOOK_CONSUMER_AGENT,
+        server_default=WEBHOOK_CONSUMER_AGENT,
+    )
+    # Set if and only if consumer == "agent" (CHECK ck_webhook_logs_consumer).
+    agent_id = Column(Integer, nullable=True)
     trigger_event = Column(String(50), nullable=False)  # "created", "updated", etc.
     # Microsoft Graph message resource id (or equivalent for other providers).
     # Used both for idempotent dedup and for the worker to re-fetch the
@@ -404,6 +443,7 @@ class WebhookLog(Base):
 
     __table_args__ = (
         Index("ix_webhook_logs_user_sub", "user_id", "subscription_id"),
+        CheckConstraint(WEBHOOK_CONSUMER_CHECK, name="ck_webhook_logs_consumer"),
         # Worker pick scan: find the next pending/retrying row whose
         # next_attempt_at has elapsed. The (status, next_attempt_at, id)
         # composite keeps the oldest-first FIFO ordering cheap.

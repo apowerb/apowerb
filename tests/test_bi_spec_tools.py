@@ -354,10 +354,10 @@ def test_tools_are_discovered_and_registered():
     assert {f"bi_dashboard_tools.{n}" for n in names} <= tools
 
     from apowerb.core.superagents.templates.dashboard import DASHBOARD_TEMPLATES
-    from apowerb.core.superagents.templates.data import DATA_TEMPLATES
 
-    for tpl in (DASHBOARD_TEMPLATES[0], DATA_TEMPLATES[0]):
-        assert {f"bi_dashboard_tools.{n}" for n in names} <= set(tpl["recommended_tools"])
+    # Data Analyst keeps the chart-based dashboard family only
+    # (test_text_to_sql_template.test_one_dashboard_family_only).
+    assert {f"bi_dashboard_tools.{n}" for n in names} <= set(DASHBOARD_TEMPLATES[0]["recommended_tools"])
 
 
 def test_list_dashboard_templates_shows_otif_and_quality_with_their_columns():

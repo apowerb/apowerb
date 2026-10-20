@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 from email.utils import parseaddr
 from logging import getLogger
+from typing import Optional
 
 from apowerb.core import workflow_triggers as wt
 
@@ -67,8 +68,74 @@ def matches_email_trigger(cfg: dict, *, from_addr: str, subject: str) -> bool:
     return True
 
 
+def email_envelope(
+    *,
+    sender: str,
+    to: str,
+    subject: str,
+    body: str,
+    received_at: Optional[str],
+    attachments: list[dict],
+) -> dict:
+    """Le payload d'un run déclenché par un mail — UNE seule forme, partagée
+    par les handlers Outlook/Gmail et la simulation (``POST
+    /workflows/defs/{id}/simulate-email``).
+
+    ``attachments`` : ``[{name, size, content_type, ref}]`` — jamais le
+    contenu ni un chemin ; ``ref`` (``workflow_attachments``) est ce que lit
+    le nœud ``document``, pour le propriétaire du run seulement.
+    """
+    return {
+        "from": sender,
+        "to": to,
+        "subject": subject,
+        "body": body,
+        "received_at": received_at,
+        "attachments": [
+            {
+                "name": a.get("name"),
+                "size": a.get("size"),
+                "content_type": a.get("content_type"),
+                "ref": a.get("ref"),
+            }
+            for a in attachments
+        ],
+    }
+
+
+def attachment_entries(owner: str, stored_attachments: list[dict]) -> list[dict]:
+    """Entrées d'enveloppe des PJ déjà stockées par le handler (``path`` sous
+    ``TH2_ATTACHMENT_ROOT``) : une ``ref`` par PJ, le chemin ne sort pas.
+    Une PJ qu'on ne peut pas référencer garde ses métadonnées, ``ref: None``
+    (le nœud ``document`` la refusera explicitement)."""
+    from apowerb.core import workflow_attachments
+
+    entries = []
+    for a in stored_attachments or []:
+        try:
+            ref = workflow_attachments.register(
+                owner, a["path"], a.get("filename"), a.get("content_type"), a.get("size")
+            )
+        except (workflow_attachments.AttachmentError, KeyError, OSError):
+            logger.warning("[email_triggers] PJ %r non référencée", a.get("filename"))
+            ref = None
+        entries.append(
+            {
+                "name": a.get("filename"),
+                "size": a.get("size"),
+                "content_type": a.get("content_type"),
+                "ref": ref,
+            }
+        )
+    return entries
+
+
 async def dispatch_email_triggers(
-    *, provider: str, owner_id: str, envelope: dict
+    *,
+    provider: str,
+    owner_id: str,
+    envelope: dict,
+    stored_attachments: Optional[list[dict]] = None,
 ) -> list[str]:
     """Lance un run pour chaque trigger ``email`` actif de ``owner_id`` dont
     le ``provider`` et les filtres correspondent. Renvoie les ``run_id``
@@ -89,6 +156,13 @@ async def dispatch_email_triggers(
         ):
             continue
         workflow_id = row["workflow_id"]
+        if stored_attachments and not envelope.get("attachments"):
+            # Refs créées au premier trigger qui correspond seulement : un
+            # mail sans workflow en écoute ne laisse aucune trace de plus.
+            envelope = {
+                **envelope,
+                "attachments": attachment_entries(owner_id, stored_attachments),
+            }
         try:
             run_id, _task = await wt.launch_triggered_run(
                 workflow_id=workflow_id,

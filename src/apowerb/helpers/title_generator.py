@@ -19,10 +19,6 @@ logger = logging.getLogger(__name__)
 # Endpoint OVH du Mistral-Small (litellm route sinon ``mistral/`` vers
 # api.mistral.ai — mauvais hôte pour une clé OVH). Même valeur que le draft
 # de prospection.
-_OVH_MISTRAL_BASE = (
-    "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net"
-    "/api/openai_compat/v1"
-)
 
 _TITLE_SYSTEM = (
     "Tu génères un titre court pour une conversation, à partir du tout premier "
@@ -67,20 +63,19 @@ def clean_title(raw: str | None) -> str:
     return t[:_MAX_TITLE_CHARS].strip()
 
 
-def _resolve_model_creds(agent_id) -> tuple[str | None, str | None, str | None]:
-    """(model, api_key, api_base) de l'agent, ou (None, None, None) si indispo."""
+def _resolve_model_creds(agent_id) -> tuple[str | None, dict]:
+    """(model, params) de l'agent, ou (None, {}) si indispo."""
     if agent_id is None:
-        return None, None, None
+        return None, {}
     try:
         num = int(str(agent_id).replace("agent", "").strip())
     except (TypeError, ValueError):
-        return None, None, None
+        return None, {}
     try:
-        model, params = load_agent_model_params(num)
-        return model, params.get("model_api_key"), params.get("model_api_base")
+        return load_agent_model_params(num)
     except Exception as e:  # noqa: BLE001
         logger.warning("[title] creds agent %s indisponibles: %s", agent_id, e)
-        return None, None, None
+        return None, {}
 
 
 async def generate_session_title(message: str, agent_id=None) -> str:
@@ -90,14 +85,17 @@ async def generate_session_title(message: str, agent_id=None) -> str:
         return "Nouvelle conversation"
     msg = msg[:600]
 
-    model, key, base = _resolve_model_creds(agent_id)
+    model, params = _resolve_model_creds(agent_id)
     if not model:
         return _fallback_title(msg)
 
     import litellm
 
+    from apowerb.core.agent_helpers.llm_model_builder import litellm_call_kwargs
+
+    # Same route as the agent itself (endpoint, key, api_version).
     kwargs: dict = {
-        "model": model,
+        **litellm_call_kwargs(model, params),
         "messages": [
             {"role": "system", "content": _TITLE_SYSTEM},
             {"role": "user", "content": msg},
@@ -108,19 +106,7 @@ async def generate_session_title(message: str, agent_id=None) -> str:
         "num_retries": 1,
         "drop_params": True,
     }
-
-    # Routage provider (aligné sur prospection_draft).
-    if base:
-        kwargs["model"] = model if model.startswith("openai/") else "openai/" + model.split("/", 1)[-1]
-        kwargs["api_base"] = base
-        if key:
-            kwargs["api_key"] = key
-    elif model.startswith("mistral/"):
-        kwargs["model"] = "openai/" + model.split("/", 1)[1]
-        kwargs["api_base"] = _OVH_MISTRAL_BASE
-        if key:
-            kwargs["api_key"] = key
-    elif model.startswith("gemini/"):
+    if kwargs["model"].startswith("gemini/"):
         kwargs["reasoning_effort"] = "disable"
         kwargs["thinking"] = {"type": "disabled"}
 

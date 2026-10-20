@@ -18,9 +18,37 @@ from apowerb.core.agent_helpers.default_llm import (
 )
 from apowerb.core.agent_helpers.reasoning_strip import CleaningLiteLLMClient
 from apowerb.helpers.encryptor import decrypt_value_in_dict
+from apowerb.helpers.model_names import openai_compat_model_name
 
 
 logger = setup_logging(__name__)
+
+
+OVH_MISTRAL_API_BASE = (
+    "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1"
+)
+
+
+def litellm_call_kwargs(model: str, params: dict) -> dict:
+    """model / api_base / api_key / api_version to call litellm with for an agent.
+
+    The route build_litellm_model gives the agent, for direct litellm calls
+    (session title, JSON repair): ``params`` are the agent's resolved model
+    params (key decrypted, thaink2 default model already substituted).
+    """
+    api_base = params.get("model_api_base")
+    # OVH catalog names only: Mistral API ids (lowercase) go to Mistral.
+    if not api_base and model.startswith("mistral/Mistral-"):
+        api_base = OVH_MISTRAL_API_BASE
+    kwargs: dict = {"model": openai_compat_model_name(model) if api_base else model}
+    if api_base:
+        kwargs["api_base"] = api_base
+    if params.get("model_api_key"):
+        kwargs["api_key"] = params["model_api_key"]
+    api_version = params.get("model_api_version") or params.get("api_version")
+    if api_version:
+        kwargs["api_version"] = api_version
+    return kwargs
 
 
 def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteLlm:
@@ -68,18 +96,13 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
     # agent's key: routing them to OVH sent every Mistral model to OVH's
     # Mistral Small (found 2026-10-08).
     if not model_api_base and agent_details["agent_model"].startswith("mistral/Mistral-"):
-        model_api_base = "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1"
+        model_api_base = OVH_MISTRAL_API_BASE
         logger.info(
             f"[TO_AGENT] Using default OVH Mistral endpoint: {model_api_base}"
         )
 
     if model_api_base:
-        _model_name = agent_details["agent_model"]
-        # When using a custom OpenAI-compat api_base, force the openai/ provider prefix
-        # so litellm uses the OpenAI tool-calling path instead of the Mistral SDK path.
-        # Azure AI Foundry has its own LiteLLM provider and must keep its prefix.
-        if not _model_name.startswith(("openai/", "azure_ai/")):
-            _model_name = "openai/" + _model_name.split("/", 1)[-1]
+        _model_name = openai_compat_model_name(agent_details["agent_model"])
         _endpoint_kwargs = {
             "api_base": model_api_base,
             "api_key": model_api_key,

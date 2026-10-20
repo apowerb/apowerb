@@ -87,7 +87,9 @@ def _make_create_downloadable_file(folder_name: str):
             safe_name += ".md"
 
         ### if we want to use it locally
-        if settings.storage_mode=="local":
+        from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+
+        if not is_s3_artifact_storage_configured(settings):
             import re
 
             # Sanitize filename

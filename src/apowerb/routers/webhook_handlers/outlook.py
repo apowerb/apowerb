@@ -30,9 +30,15 @@ from apowerb.storage.webhook_attachments import (
     resolve_attachment_path,
     store_webhook_attachment,
 )
-from apowerb.core import workflow_email_triggers
+from apowerb.core import workflow_email_triggers, workflow_mail_subscriptions
 from apowerb.integrations.outlook_webhook import OutlookWebhookService
-from apowerb.models import User, WebhookLog, WebhookSubscription
+from apowerb.models import (
+    WEBHOOK_CONSUMER_AGENT,
+    WEBHOOK_CONSUMER_WORKFLOW,
+    User,
+    WebhookLog,
+    WebhookSubscription,
+)
 from apowerb.schema.webhook_schema import MicrosoftGraphNotificationPayload
 
 from ._common import (
@@ -496,6 +502,155 @@ async def _split_into_children(
     return child_ids
 
 
+def _email_body(email_data: dict) -> tuple[str | None, str]:
+    """(html, texte) du corps Graph — html ``None`` pour un corps texte."""
+    body_obj = (email_data or {}).get("body") or {}
+    content = body_obj.get("content") or ""
+    if (body_obj.get("contentType") or "").lower() == "html":
+        return content, _strip_html(content)
+    return None, content
+
+
+async def _capture_attachments(
+    access_token: str, resource: str, log_id: int, email_data: dict,
+) -> list[dict]:
+    """Stocke les PJ sous la racine des pièces jointes, tant que le mail
+    existe ; une PJ illisible est journalisée et sautée."""
+    stored_attachments: list[dict] = []
+    if not email_data.get("hasAttachments"):
+        return stored_attachments
+    try:
+        graph_attachments = await OutlookWebhookService.fetch_attachments(
+            access_token, resource,
+        )
+    except Exception as exc:  # noqa: BLE001 -- log and continue
+        logger.warning(
+            "[OUTLOOK WEBHOOK BG] log_id=%s fetch_attachments failed: %s",
+            log_id, exc,
+        )
+        graph_attachments = []
+    for att in graph_attachments:
+        try:
+            stored = store_webhook_attachment(
+                log_id=log_id,
+                filename=att["name"],
+                content=att["content"],
+                content_type=att.get("contentType"),
+            )
+        except Exception as exc:  # noqa: BLE001 -- log and continue
+            logger.warning(
+                "[OUTLOOK WEBHOOK BG] log_id=%s store_attachment failed for %r: %s",
+                log_id, att.get("name"), exc,
+            )
+            continue
+        stored_attachments.append(stored.to_jsonable())
+    return stored_attachments
+
+
+async def _dispatch_workflows(
+    db, user_id: int, email_data: dict, sender: str, subject: str,
+    body_text: str | None, stored_attachments: list[dict],
+) -> list[str]:
+    """Lance les triggers ``email`` (Outlook) du propriétaire pour ce mail."""
+    owner_row = await db.get(User, user_id)
+    if not (owner_row and owner_row.email):
+        return []
+    to_addrs = ", ".join(
+        r.get("emailAddress", {}).get("address", "")
+        for r in (email_data.get("toRecipients") or [])
+        if r.get("emailAddress", {}).get("address")
+    )
+    return await workflow_email_triggers.dispatch_email_triggers(
+        provider="outlook",
+        owner_id=owner_row.email,
+        envelope=workflow_email_triggers.email_envelope(
+            sender=sender,
+            to=to_addrs,
+            subject=subject,
+            body=body_text or "",
+            received_at=email_data.get("receivedDateTime"),
+            attachments=[],
+        ),
+        stored_attachments=stored_attachments,
+    )
+
+
+async def _replay_workflow_mail(db, log_id: int, user_id: int) -> str:
+    """Relance les workflows depuis la copie du mail gardée dans le journal."""
+    log_row = await db.get(WebhookLog, log_id)
+    stored = (log_row.attachments if log_row else None) or []
+    if isinstance(stored, str):
+        stored = json.loads(stored) if stored else []
+    if log_row is None or not (log_row.email_subject or log_row.email_body_text or stored):
+        logger.info(
+            "[OUTLOOK WEBHOOK BG] log_id=%s workflow mail gone, no stored copy -- skipped",
+            log_id,
+        )
+        return f"[SKIP] log_id={log_id}: email no longer in the mailbox"
+    received = log_row.created_at
+    started = await _dispatch_workflows(
+        db, user_id,
+        {"receivedDateTime": received.isoformat() if received else None},
+        log_row.email_sender or "", log_row.email_subject or "",
+        log_row.email_body_text, stored,
+    )
+    logger.info(
+        "[OUTLOOK WEBHOOK BG] log_id=%s workflow mail REPLAY from stored copy -- runs=%s",
+        log_id, started,
+    )
+    return f"[WORKFLOW REPLAY] log_id={log_id} runs={started}"
+
+
+async def _process_workflow_mail(
+    log_id: int, user_id: int, sub_db_id: int, resource: str,
+) -> str:
+    """Notification sur l'abonnement workflow : récupère le mail, garde sa
+    copie dans le journal (comme pour un agent), lance les workflows.
+
+    Mail déjà parti de la boîte (Graph 404) : rejoué depuis la copie
+    capturée au premier passage (cas du retrigger) ; sans copie, sauté. Toute
+    autre erreur Graph remonte pour que le worker retente. Une erreur de
+    lancement remonte aussi : c'est la seule tâche de cette ligne. Limite : un
+    échec après le lancement d'une partie des triggers les relance au retry.
+    """
+    async with sessionmanager.session() as db:
+        access_token = await OutlookWebhookService.get_access_token_for_user(db, user_id)
+        try:
+            email_data = await OutlookWebhookService.fetch_email(access_token, resource)
+        except Exception as exc:  # noqa: BLE001
+            _m = str(exc)
+            if "404" not in _m and "ErrorItemNotFound" not in _m:
+                raise
+            return await _replay_workflow_mail(db, log_id, user_id)
+
+        sender = _extract_email_sender(email_data)
+        subject = email_data.get("subject", "") or ""
+        body_html, body_text = _email_body(email_data)
+        stored_attachments = await _capture_attachments(
+            access_token, resource, log_id, email_data,
+        )
+        log_row = await db.get(WebhookLog, log_id)
+        if log_row:
+            log_row.email_subject = subject[:500] or None
+            log_row.email_sender = sender[:500] or None
+            log_row.email_body_html = body_html or None
+            log_row.email_body_text = body_text or None
+            log_row.attachments = stored_attachments or None
+        sub_row = await db.get(WebhookSubscription, sub_db_id)
+        if sub_row:
+            sub_row.last_notification_at = datetime.now(timezone.utc)
+        await db.commit()
+
+        started = await _dispatch_workflows(
+            db, user_id, email_data, sender, subject, body_text, stored_attachments,
+        )
+    logger.info(
+        "[OUTLOOK WEBHOOK BG] log_id=%s workflow mail dispatched -- runs=%s",
+        log_id, started,
+    )
+    return f"[WORKFLOW] log_id={log_id} runs={started}"
+
+
 async def process_webhook_log_row(log_id: int) -> str | None:
     """Worker callback: fetch the Outlook email and run the agent.
 
@@ -517,6 +672,7 @@ async def process_webhook_log_row(log_id: int) -> str | None:
         sub_db_id = _claimed.subscription_id
         user_id = _claimed.user_id
         agent_id = _claimed.agent_id
+        consumer = _claimed.consumer
         notification_resource = _claimed.resource_id or ""
         # Email reception time (PR #273 / the overlay's reception date). Capture the
         # scalar WHILE _claimed is attached; the overlay maps it to
@@ -529,6 +685,14 @@ async def process_webhook_log_row(log_id: int) -> str | None:
         "[OUTLOOK WEBHOOK BG] Processing log_id=%s sub_db_id=%s resource=%s is_child=%s",
         log_id, sub_db_id, notification_resource, _is_child,
     )
+
+    if consumer == WEBHOOK_CONSUMER_WORKFLOW:
+        # Notification reçue sur l'abonnement workflow : aucun agent.
+        return await _process_workflow_mail(log_id, user_id, sub_db_id, notification_resource)
+    if consumer != WEBHOOK_CONSUMER_AGENT:
+        raise RuntimeError(
+            f"log_id={log_id}: unknown webhook consumer {consumer!r} -- not processed"
+        )
 
     # Values needed for initial_state, which is built AFTER the session below
     # closes. Capture them as plain locals WHILE the ORM instance is attached
@@ -589,43 +753,10 @@ async def process_webhook_log_row(log_id: int) -> str | None:
             email_subject = email_data.get("subject", "") or ""
 
             # 3a. Capture body + attachments now, while the email still exists.
-            body_obj = (email_data or {}).get("body") or {}
-            body_content = body_obj.get("content") or ""
-            body_type = (body_obj.get("contentType") or "").lower()
-            if body_type == "html":
-                body_html_val = body_content
-                body_text_val = _strip_html(body_content)
-            else:
-                body_html_val = None
-                body_text_val = body_content
-
-            stored_attachments: list[dict] = []
-            if email_data.get("hasAttachments"):
-                try:
-                    graph_attachments = await OutlookWebhookService.fetch_attachments(
-                        access_token, notification_resource,
-                    )
-                except Exception as exc:  # noqa: BLE001 -- log and continue
-                    logger.warning(
-                        "[OUTLOOK WEBHOOK BG] log_id=%s fetch_attachments failed: %s",
-                        log_id, exc,
-                    )
-                    graph_attachments = []
-                for att in graph_attachments:
-                    try:
-                        stored = store_webhook_attachment(
-                            log_id=log_id,
-                            filename=att["name"],
-                            content=att["content"],
-                            content_type=att.get("contentType"),
-                        )
-                    except Exception as exc:  # noqa: BLE001 -- log and continue
-                        logger.warning(
-                            "[OUTLOOK WEBHOOK BG] log_id=%s store_attachment failed for %r: %s",
-                            log_id, att.get("name"), exc,
-                        )
-                        continue
-                    stored_attachments.append(stored.to_jsonable())
+            body_html_val, body_text_val = _email_body(email_data)
+            stored_attachments = await _capture_attachments(
+                access_token, notification_resource, log_id, email_data,
+            )
 
             # Stamp the log with email metadata + agent_message + captured
             # body+PJ before the agent run -- observability and recovery.
@@ -672,36 +803,21 @@ async def process_webhook_log_row(log_id: int) -> str | None:
                 # sur la branche LIVE FETCH uniquement (pas le rejeu, ~L.860
                 # plus bas) : un replay retraite un événement déjà survenu, le
                 # refaire déclencherait deux fois les workflows en écoute.
+                # Quand le propriétaire a son abonnement workflow
+                # (core/workflow_mail_subscriptions.py), c'est LUI qui lance
+                # les workflows : Graph livre ce mail sur les deux abonnements,
+                # le lancer aussi ici les ferait partir deux fois.
                 # NON EXERCÉ par la suite : la réception réelle d'une
                 # notification Microsoft Graph (nécessite un abonnement live) —
-                # voir tests/test_workflow_triggers_t2_email.py pour ce qui
-                # EST couvert (filtrage, déclenchement).
+                # voir tests/test_workflow_mail_subscription.py et
+                # tests/test_workflow_triggers_t2_email.py pour ce qui EST couvert.
                 try:
-                    owner_row = await db.get(User, user_id)
-                    if owner_row and owner_row.email:
-                        to_addrs = ", ".join(
-                            r.get("emailAddress", {}).get("address", "")
-                            for r in (email_data.get("toRecipients") or [])
-                            if r.get("emailAddress", {}).get("address")
-                        )
-                        await workflow_email_triggers.dispatch_email_triggers(
-                            provider="outlook",
-                            owner_id=owner_row.email,
-                            envelope={
-                                "from": sender_str,
-                                "to": to_addrs,
-                                "subject": email_subject,
-                                "body": body_text_val or "",
-                                "received_at": email_data.get("receivedDateTime"),
-                                "attachments": [
-                                    {
-                                        "name": a.get("filename"),
-                                        "size": a.get("size"),
-                                        "content_type": a.get("content_type"),
-                                    }
-                                    for a in stored_attachments
-                                ],
-                            },
+                    if not await workflow_mail_subscriptions.has_active_workflow_subscription(
+                        db, user_id, received_at=_email_received_at
+                    ):
+                        await _dispatch_workflows(
+                            db, user_id, email_data, sender_str, email_subject,
+                            body_text_val, stored_attachments,
                         )
                 except Exception:  # noqa: BLE001 -- best-effort, cf. commentaire ci-dessus
                     logger.warning(
@@ -1030,11 +1146,13 @@ async def handle_outlook_notification(
             sub_db_id = subscription.id
             sub_user_id = subscription.user_id
             sub_agent_id = subscription.agent_id
+            sub_consumer = subscription.consumer
             resource = notification.resource
 
             log = WebhookLog(
                 user_id=sub_user_id,
                 subscription_id=sub_db_id,
+                consumer=sub_consumer,
                 agent_id=sub_agent_id,
                 trigger_event=notification.changeType or "created",
                 resource_id=resource,

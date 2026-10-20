@@ -44,7 +44,13 @@ from apowerb.helpers.database import get_db
 from apowerb.helpers.emails import get_domain_from_email
 from apowerb.integrations.gmail_webhook import GmailWebhookService
 from apowerb.integrations.outlook_webhook import OutlookWebhookService
-from apowerb.models import Integration, User, WebhookLog, WebhookSubscription
+from apowerb.models import (
+    WEBHOOK_CONSUMER_AGENT,
+    Integration,
+    User,
+    WebhookLog,
+    WebhookSubscription,
+)
 from apowerb.routers.webhook_handlers import NOTIFICATION_HANDLERS
 from apowerb.schema.webhook_schema import (
     WebhookSubscriptionCreate,
@@ -72,6 +78,7 @@ def _subscription_to_response(sub: WebhookSubscription) -> WebhookSubscriptionRe
         subscription_id=sub.subscription_id,
         resource=sub.resource,
         change_type=sub.change_type,
+        consumer=sub.consumer,
         agent_id=sub.agent_id,
         agent_message_template=sub.agent_message_template,
         status=sub.status,
@@ -356,10 +363,15 @@ async def list_subscriptions(
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
 ) -> WebhookSubscriptionList:
-    """Return all webhook subscriptions owned by the current user."""
+    """Return the agent webhook subscriptions owned by the current user.
+
+    The owner's workflow subscription (``consumer = 'workflow'``) is managed by the
+    system (``core/workflow_mail_subscriptions.py``) and is not listed here.
+    """
     result = await db.execute(
         select(WebhookSubscription).where(
             WebhookSubscription.user_id == current_user.user_id,
+            WebhookSubscription.consumer == WEBHOOK_CONSUMER_AGENT,
         )
     )
     subscriptions = result.scalars().all()
@@ -387,6 +399,8 @@ async def delete_subscription(
     result = await db.execute(
         select(WebhookSubscription).where(
             WebhookSubscription.id == subscription_db_id,
+            # The workflow subscription is system-managed (see list_subscriptions).
+            WebhookSubscription.consumer == WEBHOOK_CONSUMER_AGENT,
         )
     )
     subscription = result.scalar_one_or_none()
@@ -478,11 +492,15 @@ async def update_subscription(
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
 ) -> WebhookSubscriptionResponse:
-    """Update a webhook subscription (agent, template, change_type)."""
+    """Update an agent webhook subscription (agent, template, change_type).
+
+    The workflow subscription is system-managed: not found here, like in the list.
+    """
     result = await db.execute(
         select(WebhookSubscription).where(
             WebhookSubscription.id == subscription_db_id,
             WebhookSubscription.user_id == current_user.user_id,
+            WebhookSubscription.consumer == WEBHOOK_CONSUMER_AGENT,
         )
     )
     subscription = result.scalar_one_or_none()
@@ -966,6 +984,7 @@ async def list_webhook_logs(
             {
                 "id": log.id,
                 "subscription_id": log.subscription_id,
+                "consumer": log.consumer,
                 "agent_id": log.agent_id,
                 "trigger_event": log.trigger_event,
                 "email_subject": log.email_subject,
@@ -1047,6 +1066,7 @@ async def get_webhook_log_by_id(
         "log": {
             "id": log.id,
             "subscription_id": log.subscription_id,
+            "consumer": log.consumer,
             "agent_id": log.agent_id,
             "trigger_event": log.trigger_event,
             "email_subject": log.email_subject,

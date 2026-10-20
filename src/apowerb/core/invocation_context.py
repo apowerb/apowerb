@@ -97,6 +97,11 @@ _root_agent_id_var: ContextVar[Optional[str]] = ContextVar(
 _root_invocation_var: ContextVar[Optional[str]] = ContextVar(
     "th2agent_root_invocation", default=None
 )
+# Id of the agent running right now (root or sub-agent): set by every agent,
+# so a tool can tell which agent of a multi-agent run is calling it.
+_current_agent_id_var: ContextVar[Optional[str]] = ContextVar(
+    "th2agent_current_agent_id", default=None
+)
 
 
 def bind_agent_identity(
@@ -120,6 +125,8 @@ def bind_agent_identity(
         _agent_org_var.set(organization_id)
     if project_id is not None:
         _agent_project_var.set(project_id)
+    if agent_id is not None:
+        _current_agent_id_var.set(str(agent_id))
     if agent_id is not None and _root_invocation_var.get() != invocation_id:
         _root_agent_id_var.set(str(agent_id))
         _root_invocation_var.set(invocation_id)
@@ -147,6 +154,12 @@ def get_agent_project_id(default: str = "thaink2") -> str:
     if val is not None:
         return val
     return os.getenv("AGENT_PROJECT_ID", default)
+
+
+def get_current_agent_id(default: str = "") -> str:
+    """Id of the agent running now (a sub-agent in a multi-agent run)."""
+    val = _current_agent_id_var.get()
+    return val if val is not None else default
 
 
 def get_root_agent_id(default: str = "") -> str:
