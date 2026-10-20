@@ -480,7 +480,7 @@ def _agent_db_connection(owner: str | None = None) -> tuple[str, str] | None:
     if not agent_id:
         return None
     from apowerb.core.agent_helpers import get_agent_details
-    from apowerb.tools_store.tools_helpers import load_tool_config_params
+    from apowerb.tools_store.tools_helpers import load_tool_config_params, normalize_db_params
 
     details = get_agent_details(int(agent_id))
     tools_raw = details.get("agent_tools", "[]")
@@ -488,10 +488,13 @@ def _agent_db_connection(owner: str | None = None) -> tuple[str, str] | None:
     lookup_owner = owner or details.get("owner_id") or _agent_owner()
     if not lookup_owner:
         return None
+    # Same rule as the agent binding its SQL tools: the first tool_config whose
+    # params name a database, whatever tool it was saved for (text_to_sql
+    # stores DB_* keys under "text_to_sql", the BI picker lowercase keys).
     for tool in tools:
         if isinstance(tool, str) and tool.startswith("tool_config"):
-            tool_name, _ = load_tool_config_params(tool, owner_id=lookup_owner)
-            if tool_name and "database" in str(tool_name).lower():
+            _, params = load_tool_config_params(tool, owner_id=lookup_owner)
+            if params and normalize_db_params(params).get("DB_NAME"):
                 return tool, lookup_owner
     return None
 
