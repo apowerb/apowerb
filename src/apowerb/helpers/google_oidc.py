@@ -1,12 +1,12 @@
-"""Vérification des JWT OIDC émis par Google (Pub/Sub push, etc.).
+"""Verification of OIDC JWTs issued by Google (Pub/Sub push, etc.).
 
-Google Cloud Pub/Sub signe ses notifications push avec un JWT OIDC
-placé dans l'en-tête ``Authorization: Bearer <token>``. Ce module
-encapsule la vérification de cryptographique + des claims standards
-(``iss``, ``aud``, ``iat``, ``exp``) pour les endpoints webhook.
+Google Cloud Pub/Sub signs its push notifications with an OIDC JWT
+placed in the ``Authorization: Bearer <token>`` header. This module
+encapsulates the cryptographic verification and standard claims
+(``iss``, ``aud``, ``iat``, ``exp``) for webhook endpoints.
 
-Lève ``HTTPException`` directement afin que les handlers FastAPI
-puissent simplement laisser l'exception remonter.
+Raises ``HTTPException`` directly so FastAPI handlers can simply
+let the exception propagate.
 """
 
 from __future__ import annotations
