@@ -512,7 +512,8 @@ def tool_download_file(
         # Also upload to S3 so read_uploaded_file can find it in S3 mode
         try:
             from apowerb.configs.settings import get_settings as _get_settings
-            if _get_settings().storage_mode != "local":
+            from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+            if is_s3_artifact_storage_configured(_get_settings()):
                 s3_key = f"uploads/{agent_folder}/{file_name}"
                 from apowerb.tools_store.portfolio.onedrive_core import upload_bytes_to_s3
                 upload_bytes_to_s3(content, s3_key)

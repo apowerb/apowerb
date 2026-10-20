@@ -41,7 +41,9 @@ def _make_ingest_file(folder_name: str):
             tool_index_documents,
             tool_list_corpora,
         )
-        if settings.storage_mode=="local":
+        from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+
+        if not is_s3_artifact_storage_configured(settings):
 
             file_path = str(uploads_dir() / folder_name / filename)
             if not os.path.exists(file_path):

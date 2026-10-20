@@ -250,6 +250,10 @@ def test_read_uploaded_file_lists_once_for_a_missing_file(monkeypatch):
     from apowerb.core.agent_helpers.read_file_tool import _make_read_uploaded_file
 
     monkeypatch.setattr(get_settings(), "storage_mode", "S3", raising=False)
+    # S3 is used only when selected AND fully configured.
+    for field in ("s3_bucket_name", "s3_access_key", "s3_access_key_secret",
+                  "s3_endpoint", "s3_region"):
+        monkeypatch.setattr(get_settings(), field, "x", raising=False)
     fake = _paged_bucket(monkeypatch, page_size=100)
 
     result = _make_read_uploaded_file(AGENT)("absent.csv")
