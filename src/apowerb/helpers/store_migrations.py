@@ -1,14 +1,14 @@
-"""Création des tables des stores (agents, tools, skills, hub, api keys).
+"""Store table creation (agents, tools, skills, hub, api keys).
 
-Ces ``create_table()`` étaient appelés en colonne 1 dans les modules des
-stores : importer ``apowerb.core.agent_main`` ou
-``apowerb.tools_store.tools_helpers`` ouvrait une connexion et exécutait du
-DDL sur la base — l'effet de bord le plus violent du paquet, et un obstacle
-net à son usage comme library.
+These ``create_table()`` calls used to live at module level in the store
+modules: importing ``apowerb.core.agent_main`` or
+``apowerb.tools_store.tools_helpers`` would open a connection and execute DDL
+against the database — the most disruptive side-effect in the package, and a
+clear obstacle to using it as a library.
 
-Ils sont regroupés ici et appelés depuis ``main.bootstrap()``, au même titre
-que les autres ``ensure_*``. Comportement inchangé pour le serveur : les
-tables sont toujours garanties avant de servir la première requête.
+They are grouped here and called from ``main.bootstrap()``, alongside the
+other ``ensure_*`` functions. Server behaviour is unchanged: tables are still
+guaranteed to exist before the first request is served.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ _logger = setup_logging(__name__)
 
 
 def ensure_store_tables() -> None:
-    """Crée les tables des stores manquantes (no-op si elles existent)."""
+    """Create any missing store tables (no-op if they already exist)."""
     from apowerb.core.agent_main import agent_store
     from apowerb.core.api_key_main import api_key_store
     from apowerb.core.hub_main import hub_store
@@ -43,9 +43,9 @@ def ensure_store_tables() -> None:
     ):
         try:
             store.create_table()
-        except Exception as exc:  # pragma: no cover - dépend de la base
+        except Exception as exc:  # pragma: no cover - depends on the database
             _logger.error(
-                "création de table impossible pour %s: %s",
+                "failed to create table for %s: %s",
                 type(store).__name__,
                 exc,
             )
