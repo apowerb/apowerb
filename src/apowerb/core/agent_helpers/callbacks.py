@@ -215,6 +215,7 @@ async def _attempt_json_repair(
     repair_api_key: str | None = None,
     repair_api_base: str | None = None,
     source_text: str | None = None,
+    repair_api_version: str | None = None,
 ) -> BaseModel | None:
     """One best-effort litellm round-trip to coerce ``raw`` into a valid
     ``schema_class`` instance. Returns the validated model on success, or
@@ -258,13 +259,14 @@ async def _attempt_json_repair(
         if repair_api_base:
             # OpenAI-compat endpoint: force the openai/ provider prefix so
             # litellm uses the OpenAI tool-calling path (cf build_litellm_model).
-            _model_name = repair_model
-            if not _model_name.startswith("openai/"):
-                _model_name = "openai/" + _model_name.split("/", 1)[-1]
-            call_kwargs["model"] = _model_name
+            from apowerb.core.agent_helpers.llm_model_builder import openai_compat_model_name
+
+            call_kwargs["model"] = openai_compat_model_name(repair_model)
             call_kwargs["api_base"] = repair_api_base
         else:
             call_kwargs["model"] = repair_model
+        if repair_api_version:
+            call_kwargs["api_version"] = repair_api_version
         response = await litellm.acompletion(**call_kwargs)
         repaired_text = response.choices[0].message.content
         data = extract_json(str(repaired_text))
@@ -286,6 +288,7 @@ def build_validating_state_writer(
     repair_model: str | None = None,
     repair_api_key: str | None = None,
     repair_api_base: str | None = None,
+    repair_api_version: str | None = None,
 ) -> Callable:
     """Return an ADK ``after_agent_callback`` that validates the agent's
     output against ``schema_class`` and normalizes ``state[state_key]``
@@ -310,6 +313,7 @@ def build_validating_state_writer(
                 repair_api_key=repair_api_key,
                 repair_api_base=repair_api_base,
                 source_text=source_text,
+                repair_api_version=repair_api_version,
             )
             if repaired is not None:
                 _logger.info(

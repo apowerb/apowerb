@@ -999,6 +999,7 @@ def to_agent(agent_name: str) -> LlmAgent:
                 _repair_model = agent_details.get("agent_model")
                 _repair_api_key = None
                 _repair_api_base = None
+                _repair_api_version = None
                 _repair_params = agent_details.get("agent_model_params") or {}
                 if isinstance(_repair_params, str):
                     try:
@@ -1009,8 +1010,15 @@ def to_agent(agent_name: str) -> LlmAgent:
                     _repair_params = decrypt_value_in_dict(
                         _repair_params, values_to_decrypt=["model_api_key"]
                     )
+                    # thaink2/default: the server's credentials, as for the agent.
+                    _repair_model, _repair_params = resolve_model_credentials(
+                        _repair_model, _repair_params
+                    )
                     _repair_api_key = _repair_params.get("model_api_key")
                     _repair_api_base = _repair_params.get("model_api_base")
+                    _repair_api_version = _repair_params.get(
+                        "model_api_version"
+                    ) or _repair_params.get("api_version")
                 agent_kwargs["after_agent_callback"] = (
                     build_validating_state_writer(
                         schema_class,
@@ -1018,6 +1026,7 @@ def to_agent(agent_name: str) -> LlmAgent:
                         repair_model=_repair_model,
                         repair_api_key=_repair_api_key,
                         repair_api_base=_repair_api_base,
+                        repair_api_version=_repair_api_version,
                     )
                 )
                 logger.info(
