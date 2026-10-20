@@ -1,3 +1,5 @@
+"""ADK agent execution router — run, stream and manage agent sessions under ``/api/adk``."""
+
 import asyncio
 import os
 

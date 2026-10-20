@@ -1,3 +1,5 @@
+"""Hub router — publish, browse and clone shared agents under ``/api/hub``."""
+
 from fastapi import APIRouter, Depends, HTTPException
 from apowerb.core.hub_main import (
     publish_agent,
