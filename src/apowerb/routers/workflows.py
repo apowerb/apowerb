@@ -25,6 +25,10 @@ runs a workflow with an attached file:
   of one tool (types, required, defaults, per-arg description), so the
   studio's node inspector can build its form without hardcoding it per tool.
 
+* ``POST /api/workflows/render-preview`` — a template rendered by the engine's
+  own ``render`` with the outputs of the studio's last test run, so the
+  inspector previews a node's input exactly as a run would; nothing executes.
+
 Two pieces of state, deliberately: the **run record** is persisted in
 ``agent_runs`` (it must survive a restart, a crash and the end of the stream),
 while the in-memory dict keeps only what cannot be serialised — the
@@ -62,6 +66,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from nanoid import generate as nanoid_generate
+from pydantic import BaseModel, Field
 
 from apowerb.auth.dependencies import get_current_user
 from apowerb.core import run_main
@@ -473,6 +478,95 @@ async def get_tool_schema(
             detail={"code": exc.code, "params": exc.params},
         )
     return {"tool": tool, **tool_arg_schema(func)}
+
+
+# Corps d'un aperçu : gabarit + sorties gardées par l'UI ; au-delà, refusé
+# avant tout rendu (les sorties d'un run peuvent être volumineuses).
+RENDER_PREVIEW_MAX_BYTES = 1_000_000
+# Résultat rendu : un petit corps peut référencer mille fois la même grande
+# sortie. Borne supérieure calculée avant le rendu (voir _rendered_size_bound).
+RENDER_PREVIEW_MAX_RENDERED_BYTES = 1_000_000
+
+
+class RenderPreviewBody(BaseModel):
+    template: Any = None
+    outputs: Dict[str, Any] = Field(default_factory=dict)
+    # Nœud dont la configuration est rendue : nommé dans template_ref_invalid.
+    node_id: Optional[str] = None
+
+
+def _rendered_size_bound(template: Any, outputs: Dict[str, Any]) -> int:
+    """Majorant de la taille rendue, sans rien rendre.
+
+    Chaque ``{{ref...}}`` produit au plus la sortie entière de ``ref`` en JSON
+    (un sous-chemin, ou une chaîne rendue telle quelle, est plus court) ; le
+    texte autour reste. Gabarits imbriqués (dict, liste) compris.
+    """
+    from apowerb.core.workflow_graph import _TEMPLATE
+
+    sizes: Dict[str, int] = {}
+
+    def _size(ref: str) -> int:
+        if ref not in sizes:
+            sizes[ref] = (
+                len(json.dumps(outputs[ref], ensure_ascii=False, default=str).encode())
+                if ref in outputs
+                else 0
+            )
+        return sizes[ref]
+
+    def _walk(value: Any) -> int:
+        if isinstance(value, dict):
+            return sum(_walk(v) for v in value.values())
+        if isinstance(value, list):
+            return sum(_walk(v) for v in value)
+        if isinstance(value, str):
+            return len(value.encode()) + sum(
+                _size(m.group(1)) for m in _TEMPLATE.finditer(value)
+            )
+        return len(json.dumps(value, default=str).encode())
+
+    return _walk(template)
+
+
+def _too_large(max_bytes: int) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+        detail={"code": "render_preview_too_large", "params": {"max": str(max_bytes)}},
+    )
+
+
+@router.post("/render-preview")
+async def render_preview(
+    body: RenderPreviewBody,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Gabarit rendu avec les sorties du dernier run de test du Studio.
+
+    Même ``render`` que le moteur, pour que l'aperçu ne diverge jamais d'un
+    vrai run ; aucun nœud n'est exécuté. ``template_ref_invalid`` revient tel
+    que le run le lèverait (422, ``detail={code, params, message}``).
+    """
+    from apowerb.core.workflow_graph import GraphError, render
+
+    size = len(json.dumps(body.model_dump(), ensure_ascii=False, default=str).encode())
+    if size > RENDER_PREVIEW_MAX_BYTES:
+        raise _too_large(RENDER_PREVIEW_MAX_BYTES)
+    if (
+        _rendered_size_bound(body.template, body.outputs)
+        > RENDER_PREVIEW_MAX_RENDERED_BYTES
+    ):
+        raise _too_large(RENDER_PREVIEW_MAX_RENDERED_BYTES)
+    try:
+        rendered = render(body.template, body.outputs, body.node_id)
+    except GraphError as exc:
+        if exc.code == "render_too_large":
+            raise _too_large(RENDER_PREVIEW_MAX_RENDERED_BYTES)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "params": exc.params, "message": str(exc)},
+        )
+    return {"rendered": rendered}
 
 
 @router.get("/runs")
