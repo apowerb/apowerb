@@ -1,19 +1,18 @@
-"""Table des signalements de bug, créée au démarrage.
+"""Bug report table, created at startup.
 
-Même forme que ses voisines (`notification_migration`, `webhook_migration`) :
-idempotente, appelée par `bootstrap()`, sans effet sur un déploiement où
-la table existe déjà.
+Same pattern as its neighbours (`notification_migration`, `webhook_migration`):
+idempotent, called by `bootstrap()`, no-op when the table already exists.
 
-Deux choix de schéma valent d'être dits :
+Two schema choices worth noting:
 
-- ``user_id`` est ``ON DELETE SET NULL``, pas ``CASCADE``. Un compte
-  supprimé ne doit pas emporter les bugs qu'il a signalés : le défaut,
-  lui, est toujours là. ``reporter_email`` est recopié pour la même
-  raison — savoir *qui* pouvait le reproduire survit au compte.
-- ``duplicate_of`` plutôt qu'un simple compteur : chaque signalement
-  garde ses propres logs et sa propre capture. Le deuxième témoin d'un
-  défaut apporte souvent l'information qui manquait au premier, et un
-  compteur seul l'aurait jetée.
+- ``user_id`` is ``ON DELETE SET NULL``, not ``CASCADE``. A deleted account
+  must not take its bug reports with it: the defect is still there.
+  ``reporter_email`` is copied for the same reason — knowing *who* could
+  reproduce it survives the account.
+- ``duplicate_of`` rather than a simple counter: every report keeps its own
+  logs and its own screenshot. A second witness to a defect often brings the
+  information the first one lacked, and a counter alone would have thrown
+  that away.
 """
 
 from apowerb.configs.th2logger import setup_logging
@@ -27,7 +26,7 @@ settings = get_settings()
 
 
 def ensure_bug_reports_table() -> None:
-    """Crée la table `bug_reports` si elle n'existe pas. Sûr à répéter."""
+    """Create the `bug_reports` table if it does not exist. Safe to repeat."""
     try:
         async_url = DBConfig().get_db_url()
         sync_url = async_url.replace("postgresql+asyncpg://", "postgresql://")
@@ -77,9 +76,9 @@ def ensure_bug_reports_table() -> None:
                     );
                 """)
                 )
-                # L'écran de triage lit « les non traités, du plus récent au
-                # plus ancien » et la déduplication cherche par empreinte.
-                # Ce sont les deux seules requêtes chaudes.
+                # The triage screen reads "unprocessed, newest first" and
+                # deduplication searches by fingerprint.
+                # These are the only two hot queries.
                 conn.execute(
                     text(f"""
                     CREATE INDEX IF NOT EXISTS ix_bug_reports_status_created
@@ -95,9 +94,9 @@ def ensure_bug_reports_table() -> None:
                 conn.commit()
                 logger.info("'bug_reports' table created successfully.")
             else:
-                # Colonne arrivée après la première version de la table.
-                # ADD COLUMN IF NOT EXISTS : gratuit quand elle est là,
-                # et évite une seconde fonction de migration pour un champ.
+                # Column added after the first version of the table.
+                # ADD COLUMN IF NOT EXISTS: free when it is already there,
+                # and avoids a second migration function for a single field.
                 conn.execute(
                     text(f"""
                     ALTER TABLE {settings.db_schema}.bug_reports
@@ -108,11 +107,11 @@ def ensure_bug_reports_table() -> None:
                 conn.commit()
                 logger.debug("'bug_reports' table already exists -- columns ensured.")
 
-            # Le journal de chaque signalement. Créé à part de `bug_reports`
-            # et hors de la branche « table absente » : un déploiement qui a
-            # déjà la table des signalements doit recevoir le journal aussi.
-            # CASCADE : supprimer un signalement emporte son histoire, qui
-            # n'a pas de sens sans lui.
+            # The event log for each report. Created separately from `bug_reports`
+            # and outside the "table absent" branch: a deployment that already has
+            # the reports table must also receive the event log.
+            # CASCADE: deleting a report takes its history with it, which has
+            # no meaning without it.
             conn.execute(
                 text(f"""
                 CREATE TABLE IF NOT EXISTS {settings.db_schema}.bug_report_events (
@@ -131,8 +130,8 @@ def ensure_bug_reports_table() -> None:
                 );
             """)
             )
-            # La frise d'un signalement, et la dernière alerte envoyée : les
-            # deux lectures de ce journal passent par ce couple.
+            # The timeline of a report, and the last alert sent: the two
+            # reads on this log go through this pair of columns.
             conn.execute(
                 text(f"""
                 CREATE INDEX IF NOT EXISTS ix_bug_report_events_report_created
@@ -143,8 +142,8 @@ def ensure_bug_reports_table() -> None:
 
         engine.dispose()
     except Exception as exc:
-        # Comme ses voisines : une migration qui lève au boot rendrait le
-        # serveur inutilisable pour une fonctionnalité annexe.
+        # Like its neighbours: a migration that raises at boot would make the
+        # server unusable for a secondary feature.
         logger.error("Failed to ensure 'bug_reports' table: %s", exc)
 
 
