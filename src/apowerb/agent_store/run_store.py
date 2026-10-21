@@ -82,7 +82,7 @@ class RunStore(BaseModel):
             Column("config", String),
             Column("input_file_name", String),
             Column("input_file_path", String),
-            # "running" | "success" | "error" | "cancelled"
+            # "running" | "success" | "error" | "cancelled" | "awaiting"
             Column("status", String, nullable=False, index=True),
             Column("attempts", Integer, default=1),
             Column("error_message", String),
@@ -95,6 +95,12 @@ class RunStore(BaseModel):
             # dire « inconnu », pas « aucun » : c'est ce qui décide si un
             # échec peut être rejoué sans refaire un effet de bord.
             Column("tools_executed", String),
+            # Run arrêté sur une décision humaine (statut "awaiting") : son
+            # instantané en JSON (graphe, payload, sorties, routes, question),
+            # relu par la reprise, et la personne à qui la décision revient
+            # en plus du propriétaire.
+            Column("paused_state", String),
+            Column("assignee", String, index=True),
         )
 
     def create_table(self):
@@ -126,7 +132,11 @@ class RunStore(BaseModel):
                 self.table_name, schema=self.db_schema or None
             )
         }
-        added_later: dict[str, str] = {"tools_executed": "VARCHAR"}
+        added_later: dict[str, str] = {
+            "tools_executed": "VARCHAR",
+            "paused_state": "VARCHAR",
+            "assignee": "VARCHAR",
+        }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         with self.engine.begin() as conn:
             for col, typ in added_later.items():

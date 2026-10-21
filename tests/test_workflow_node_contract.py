@@ -262,16 +262,18 @@ def test_tool_error_in_continue_mode_is_marked():
 # --- Validation humaine (approval) -------------------------------------------
 
 
-def test_approval_is_refused_with_a_code_the_studio_can_explain():
+def test_an_incomplete_approval_is_refused_with_a_code_the_studio_can_explain():
+    # La décision humaine s'exécute (voir test_workflow_human_decision) ; une
+    # décision sans question est refusée avec un code traduisible.
     graph = _one({"id": "h", "type": "approval", "config": {}})
     with pytest.raises(wg.GraphError) as exc:
         wg.validate_graph(graph)
-    assert exc.value.code == "node_not_runnable"
-    assert exc.value.params == {"node": "h", "type": "approval"}
+    assert exc.value.code == "approval_question_missing"
+    assert exc.value.params == {"node": "h"}
     (err,) = _run(graph)
     assert err["code"] == "invalid_graph"
-    assert err["cause"] == "node_not_runnable"
-    assert err["params"] == {"node": "h", "type": "approval"}
+    assert err["cause"] == "approval_question_missing"
+    assert err["params"] == {"node": "h"}
 
 
 # --- Le nœud fautif est nommé ------------------------------------------------

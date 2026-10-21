@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 # elle, le banc #86 voyait 101 propositions sur 132 appels écartées faute de
 # canal, de règles, de champs ou de requête.
 #
-# Exclus : trigger (un seul par workflow), approval (pas encore exécutable),
+# Exclus : trigger (un seul par workflow), approval (une pause humaine se
+# décide, elle ne se suggère pas),
 # tool/http (le modèle inventerait un outil ou une URL), loop/try/subworkflow/
 # merge (des structures, pas une étape).
 SELECTED = "SELECTED"

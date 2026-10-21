@@ -29,8 +29,15 @@ Types de nœuds :
   un callback résolu côté routeur (mêmes droits que pour le lancer), profondeur
   3 maximum, cycle détecté à l'exécution via la pile des ``workflow_id``.
 
-``approval`` est reconnu mais refusé à la validation : la validation humaine
-arrive avec l'exécution durable.
+* ``approval`` — décision humaine : le run s'arrête sur ``awaiting_input``
+  (question en gabarit, ``mode`` ``choices``/``text``/``both``) et reprend
+  quand quelqu'un répond. Chaque choix est une route ; en mode ``both`` une
+  réponse libre suit la route réservée ``text``. Sa sortie est
+  ``{choice, text, answered_by, answered_at}``. Le moteur ne sait pas
+  suspendre une tâche ADK : l'arrêt confie l'instantané du run (sorties et
+  routes déjà prises) à ``on_await``, et ``run_graph(resume=...)`` rejoue les
+  nœuds faits sans les réexécuter (``replayed``). Refusé dans le corps d'un
+  ``loop``/``try`` et dans un sous-workflow (``approval_nested``).
 
 Le déclencheur du corps d'une boucle reçoit ``{item, index, previous}`` —
 ``previous`` est la sortie de l'itération précédente, ou l'entrée de la
@@ -119,7 +126,10 @@ _FALSE = {"false", "no", "non", "0", "faux"}
 _ROUTED = {"router", "classifier", "condition", "try"}
 _CSV_DELIMITERS = ",;\t"
 _DATE_FORMATS = ("%d/%m/%Y",)
-_NOT_YET = {"approval"}
+_NOT_YET: set[str] = set()
+# Route réservée d'une décision en mode ``both`` : la réponse libre.
+_TEXT_ROUTE = "text"
+_DECISION_MODES = ("choices", "text", "both")
 _MAX_LOOP = 100
 _MAX_RETRIES = 3
 _MAX_RETRY_DELAY_MS = 5000
@@ -502,10 +512,65 @@ def _declared_routes(node: Node) -> set[str]:
         return {"ok", "error"}
     if node.type == "condition":
         return {"true", "false"}
+    if node.type == "approval":
+        routes = {c.get("route") for c in _decision_choices(node)}
+        if node.config.get("mode", "choices") == "both":
+            routes.add(_TEXT_ROUTE)
+        return routes
     routes = {r.get("route") for r in cfg.get("routes") or [] if r.get("route")}
     if node.type == "classifier" and cfg.get("engine") == "jev":
         routes.add(_UNCERTAIN)
     return routes
+
+
+def _decision_choices(node: Node) -> list[dict]:
+    return [c for c in node.config.get("choices") or [] if isinstance(c, dict)]
+
+
+def _is_routed(node: Node) -> bool:
+    """Les arêtes sortantes portent-elles une route ? Une décision en mode
+    ``text`` n'a qu'une sortie ; ses autres modes routent par choix."""
+    if node.type == "approval":
+        return node.config.get("mode", "choices") != "text"
+    return node.type in _ROUTED
+
+
+def _refuse_nested_decision(node: Node, body: "WorkflowGraph") -> None:
+    """Une décision ne peut pas suspendre un corps de loop/try ni un
+    sous-workflow : la reprise ne sait pas restaurer une itération en cours."""
+    nested = [n.id for n in body.nodes if n.type == "approval"]
+    if nested:
+        raise GraphError(
+            f"{node.id} : décision humaine {nested[0]} impossible ici "
+            "(corps de loop/try ou sous-workflow)",
+            code="approval_nested",
+            params={"node": node.id, "decision": nested[0]},
+        )
+
+
+def check_decision_answer(
+    prompt: dict, choice: Optional[str], text: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """La réponse est-elle permise par la décision ? Renvoie ``(choice, text)``.
+
+    ``choices`` : un choix déclaré ; ``text`` : un texte non vide ; ``both`` :
+    l'un ou l'autre (un choix garde le texte en commentaire).
+    """
+    mode = prompt.get("mode", "choices")
+    routes = {c.get("route") for c in prompt.get("choices") or []}
+    text = text.strip() if isinstance(text, str) and text.strip() else None
+    ok = (
+        (mode == "choices" and choice in routes and text is None)
+        or (mode == "text" and choice is None and text is not None)
+        or (mode == "both" and (choice in routes or (choice is None and text)))
+    )
+    if not ok:
+        raise GraphError(
+            "réponse non permise par cette décision",
+            code="decision_invalid_answer",
+            params={"mode": mode},
+        )
+    return choice, text
 
 
 def _body_graph(
@@ -527,6 +592,7 @@ def _body_graph(
         raise GraphError(f"{node.id} (corps) : {exc}") from exc
     except ValueError as exc:
         raise GraphError(f"{node.id} (corps) : graphe mal formé") from exc
+    _refuse_nested_decision(node, body)
     if [n.type for n in body.nodes].count("trigger") != 1:
         raise GraphError(f"{node.id} (corps) : il faut exactement un déclencheur")
     return body
@@ -1040,6 +1106,7 @@ _FIXED_OUTPUT_KEYS = {
     "notification": {"channel", "sent"},
     "document": {"documents", "text", "count"},
     "db_write": {"table", "inserted"},
+    "approval": {"choice", "text", "answered_by", "answered_at"},
 }
 
 
@@ -1365,6 +1432,8 @@ def validate_node(
             code="node_not_runnable",
             params={"node": n.id, "type": n.type},
         )
+    if n.type == "approval":
+        _validate_approval(n)
     if (
         n.type in ("agent", "tool")
         and cfg.get("output_type", "any") not in _OUTPUT_TYPES
@@ -1542,6 +1611,46 @@ def validate_node(
 
 
 
+def _validate_approval(n: Node) -> None:
+    cfg = n.config
+    question = cfg.get("question")
+    if not isinstance(question, str) or not question.strip():
+        raise GraphError(
+            f"{n.id} : question manquante",
+            code="approval_question_missing",
+            params={"node": n.id},
+        )
+    mode = cfg.get("mode", "choices")
+    if mode not in _DECISION_MODES:
+        raise GraphError(
+            f"{n.id} : mode de réponse inconnu {mode!r} (choices, text ou both)",
+            code="approval_mode_unknown",
+            params={"node": n.id, "mode": str(mode)},
+        )
+    if mode == "text":
+        return
+    routes = [c.get("route") for c in _decision_choices(n)]
+    if not routes or not all(isinstance(r, str) and r.strip() for r in routes):
+        raise GraphError(
+            f"{n.id} : il faut au moins un choix, chacun avec sa route",
+            code="approval_choices_missing",
+            params={"node": n.id},
+        )
+    if _TEXT_ROUTE in routes:
+        raise GraphError(
+            f"{n.id} : la route {_TEXT_ROUTE!r} est réservée à la réponse libre",
+            code="approval_choice_reserved",
+            params={"node": n.id, "route": _TEXT_ROUTE},
+        )
+    dupes = sorted({r for r in routes if routes.count(r) > 1})
+    if dupes:
+        raise GraphError(
+            f"{n.id} : choix en double : {', '.join(dupes)}",
+            code="approval_choice_duplicate",
+            params={"node": n.id, "route": dupes[0]},
+        )
+
+
 def _validate_classifier(n: Node) -> None:
     cfg = n.config
     engine = cfg.get("engine", "agent")
@@ -1676,7 +1785,7 @@ def validate_graph(
             raise GraphError(
                 f"arête {e.source} -> {e.target} : un nœud output termine le flux"
             )
-        if src.type in _ROUTED:
+        if _is_routed(src):
             if e.route not in _declared_routes(src):
                 raise GraphError(
                     f"arête {e.source} -> {e.target} : route {e.route!r} non déclarée par {e.source}"
@@ -1687,6 +1796,16 @@ def validate_graph(
             )
 
     for n in graph.nodes:
+        if (
+            n.type == "approval"
+            and n.config.get("mode", "choices") == "both"
+            and not any(e.source == n.id and e.route == _TEXT_ROUTE for e in graph.edges)
+        ):
+            raise GraphError(
+                f"{n.id} : branchez la route {_TEXT_ROUTE!r} (réponse libre)",
+                code="approval_text_route_missing",
+                params={"node": n.id},
+            )
         if n.type in ("try", "condition"):
             used = [e.route for e in graph.edges if e.source == n.id]
             dupes = sorted({r for r in used if r and used.count(r) > 1})
@@ -1746,6 +1865,26 @@ def validate_graph(
 
 
 # --- Compilation ------------------------------------------------------------
+
+
+class _AwaitingDecision(Exception):
+    """Levée par un nœud ``approval`` sans réponse : le run s'arrête là."""
+
+    def __init__(self, node_id: str, prompt: dict):
+        super().__init__(f"{node_id} : décision humaine attendue")
+        self.node_id = node_id
+        self.prompt = prompt
+
+
+def _awaiting_in(exc: Optional[BaseException]) -> Optional[_AwaitingDecision]:
+    # ADK réemballe l'exception d'un nœud quand le workflow échoue.
+    seen: list[BaseException] = []
+    while exc is not None and exc not in seen:
+        if isinstance(exc, _AwaitingDecision):
+            return exc
+        seen.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    return None
 
 
 def _adk_name(node_id: str) -> str:
@@ -1856,8 +1995,19 @@ class _Compiler:
         workflow_stack: tuple[str, ...] = (),
         depth: int = 1,
         services: Optional[NodeServices] = None,
+        resume: Optional[dict] = None,
+        nested: bool = False,
     ):
         self.services = services or NodeServices()
+        # Reprise après une décision : sorties et routes des nœuds déjà
+        # faits (rejoués sans être réexécutés) et la réponse attendue.
+        resume = resume or {}
+        self._replay_outputs: dict[str, Any] = dict(resume.get("outputs") or {})
+        self._replay_routes: dict[str, str] = dict(resume.get("routes") or {})
+        self.answer: Optional[dict] = resume.get("answer")
+        # Corps de loop/try ou sous-workflow : une décision n'y peut pas
+        # suspendre le run.
+        self.nested = nested
         self.g = graph
         self.payload = payload
         self._run_agent_raw = run_agent
@@ -1875,6 +2025,8 @@ class _Compiler:
         self.workflow_stack = workflow_stack
         self.depth = depth
         self.outputs: dict[str, Any] = {}
+        # Route prise par chaque nœud routé : une reprise doit refaire la même.
+        self.routes: dict[str, str] = {}
         # Ce que le nœud a reçu et les outils appelés par son agent, joints à
         # son node_complete ou node_error (voir _note_input).
         self._trace: dict[str, dict] = {}
@@ -1883,7 +2035,7 @@ class _Compiler:
         self._artifacts: dict[str, list[dict]] = {}
         # Tous les graphiques, tableaux de bord… créés pendant le run, avec
         # leur nœud : ``done`` les rend, pour qui ne lit pas chaque nœud.
-        self.run_artifacts: list[dict] = []
+        self.run_artifacts: list[dict] = list(resume.get("artifacts") or [])
 
     def _note_input(self, node: Node, value: Any) -> None:
         """Montre au panneau Test ce que ``node`` va recevoir, dès maintenant.
@@ -2046,6 +2198,8 @@ class _Compiler:
                 raise WorkflowCancelled()
             if isinstance(node_input, types.Content):
                 node_input = None
+            if node.id in self._replay_outputs:
+                return self._replay(node)
             self.emit({"event": "node_start", "node_id": node.id, "type": node.type})
             t0 = time.monotonic()
             self._trace.pop(node.id, None)
@@ -2053,6 +2207,8 @@ class _Compiler:
                 result, route = await body(node_input)
                 if node.type in ("agent", "tool"):
                     self._check_contract(node, result)
+            except _AwaitingDecision:
+                raise
             except Exception as exc:
                 self.emit(
                     {
@@ -2082,6 +2238,8 @@ class _Compiler:
                 )
                 raise exc
             self.outputs[node.id] = result
+            if route is not None:
+                self.routes[node.id] = route
             complete = {
                 "event": "node_complete",
                 "node_id": node.id,
@@ -2095,16 +2253,33 @@ class _Compiler:
             self.emit(complete)
             if route is not None:
                 self.emit({"event": "route", "node_id": node.id, "route": route})
-            if node.id in self._terminal_ids:
-                # Feuille du graphe : sa valeur est déjà dans self.outputs,
-                # d'où _final_output compose la sortie du run. La remonter à
-                # ADK ferait échouer tout run qui atteint plusieurs feuilles
-                # (« multiple terminal nodes produced output », ADK 2.9) :
-                # un fan-out sans merge, ou plusieurs nœuds output.
-                return None
-            return result if route is None else Event(output=result, route=route)
+            return self._hand_over(node, result, route)
 
         return FunctionNode(func=_fn, name=_adk_name(node.id))
+
+    def _replay(self, node: Node) -> Any:
+        """Un nœud fait avant la pause : ses événements, pas son exécution."""
+        result = self._replay_outputs[node.id]
+        route = self._replay_routes.get(node.id)
+        base = {"node_id": node.id, "replayed": True}
+        self.emit({"event": "node_start", "type": node.type, **base})
+        self.outputs[node.id] = result
+        self.emit({"event": "node_complete", "output": result, "duration_ms": 0, **base})
+        if route is not None:
+            self.routes[node.id] = route
+            self.emit({"event": "route", "route": route, **base})
+        return self._hand_over(node, result, route)
+
+    def _hand_over(self, node: Node, result: Any, route: Optional[str]) -> Any:
+        """Ce que le nœud rend à ADK."""
+        if node.id in self._terminal_ids:
+            # Feuille du graphe : sa valeur est déjà dans self.outputs,
+            # d'où _final_output compose la sortie du run. La remonter à
+            # ADK ferait échouer tout run qui atteint plusieurs feuilles
+            # (« multiple terminal nodes produced output », ADK 2.9) :
+            # un fan-out sans merge, ou plusieurs nœuds output.
+            return None
+        return result if route is None else Event(output=result, route=route)
 
     def _body(self, node: Node):
         cfg = node.config
@@ -2379,6 +2554,44 @@ class _Compiler:
 
             async def body(node_input):
                 return await self._subworkflow(node, cfg, node_input), None
+        elif node.type == "approval":
+
+            async def body(node_input):
+                if self.nested:
+                    raise GraphError(
+                        f"{node.id} : décision humaine impossible ici "
+                        "(corps de loop/try ou sous-workflow)",
+                        code="approval_nested",
+                        params={"node": node.id, "decision": node.id},
+                    )
+                answer = self.answer
+                if answer is not None and answer.get("node_id") == node.id:
+                    output = {
+                        k: answer.get(k)
+                        for k in ("choice", "text", "answered_by", "answered_at")
+                    }
+                    if answer.get("choice") is not None:
+                        route = answer["choice"]
+                    elif cfg.get("mode", "choices") == "both":
+                        route = _TEXT_ROUTE
+                    else:
+                        route = None
+                    return output, route
+                question = render(cfg["question"], self.outputs, node.id)
+                if not isinstance(question, str):
+                    question = json.dumps(question, ensure_ascii=False, default=str)
+                raise _AwaitingDecision(
+                    node.id,
+                    {
+                        "question": question,
+                        "mode": cfg.get("mode", "choices"),
+                        "choices": [
+                            {"route": c["route"], "label": c.get("label") or c["route"]}
+                            for c in _decision_choices(node)
+                        ],
+                        "assignee": cfg.get("assignee") or None,
+                    },
+                )
         else:  # pragma: no cover - refusé par validate_graph
             raise GraphError(f"type non pris en charge : {node.type}")
         return body
@@ -2488,6 +2701,7 @@ class _Compiler:
             if workflow_stack is None
             else workflow_stack,
             depth=self.depth if depth is None else depth,
+            nested=True,
         )
         async for item in drive_workflow(inner.build(), queue, root_name=_ROOT):
             if isinstance(item, _Finished):
@@ -2573,6 +2787,7 @@ class _Compiler:
             validate_graph(body, workflow_id=target)
         except GraphError as exc:
             raise GraphError(f"{node.id} (sous-workflow {target}) : {exc}") from exc
+        _refuse_nested_decision(node, body)
         payload = (
             render(cfg["input"], self.outputs, node.id)
             if cfg.get("input") is not None
@@ -2605,17 +2820,23 @@ class _Compiler:
                 edges.append(("START", entry[n.id]))
             if n.type == "merge":
                 edges.append((entry[n.id], exit_[n.id]))
+        # ADK refuse deux arêtes entre les mêmes nœuds : plusieurs routes
+        # vers une même cible (« non » et la réponse libre d'une décision)
+        # deviennent une arête à liste de routes.
+        routed: dict[tuple[str, str], list[str]] = {}
         for e in self.g.edges:
             if e.route is None:
                 edges.append((exit_[e.source], entry[e.target]))
             else:
-                edges.append(
-                    AdkEdge(
-                        from_node=exit_[e.source],
-                        to_node=entry[e.target],
-                        route=e.route,
-                    )
+                routed.setdefault((e.source, e.target), []).append(e.route)
+        for (source, target), routes in routed.items():
+            edges.append(
+                AdkEdge(
+                    from_node=exit_[source],
+                    to_node=entry[target],
+                    route=routes[0] if len(routes) == 1 else routes,
                 )
+            )
         return Workflow(name=_ROOT, edges=edges, max_concurrency=1)
 
 
@@ -2675,8 +2896,22 @@ async def run_graph(
     run_notify: Optional[RunNotify] = None,
     services: Optional[NodeServices] = None,
     until: Optional[str] = None,
+    on_await: Optional[Callable[[dict], Any]] = None,
+    resume: Optional[dict] = None,
+    run_id: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
+
+    Décision humaine : un nœud ``approval`` sans réponse arrête le run.
+    L'instantané (graphe, payload, ``outputs``, ``routes``, ``artifacts``,
+    ``node_id``, ``prompt``) est confié à ``on_await`` — qui le persiste —
+    puis le terminal ``awaiting_input`` (``run_id``, ``node_id``,
+    ``question`` rendue, ``mode``, ``choices``, ``assignee``) est émis. Sans
+    ``on_await``, ou s'il échoue, le run finit en ``error``
+    (``decision_unavailable`` / ``decision_not_saved``). ``resume`` est cet
+    instantané plus ``answer`` (``node_id``, ``choice``, ``text``,
+    ``answered_by``, ``answered_at``) : les nœuds déjà faits sont réémis avec
+    ``replayed: true`` sans être réexécutés.
 
     Événements : ``node_start`` / ``node_input`` (``input``, nœuds agent et
     tool, dès que l'entrée est rendue) / ``node_complete`` (``output``,
@@ -2732,6 +2967,7 @@ async def run_graph(
         services=services,
         run_subworkflow=run_subworkflow,
         workflow_stack=(workflow_id,) if workflow_id else (),
+        resume=resume,
     )
     workflow = compiler.build()
     exc: Optional[BaseException] = None
@@ -2740,8 +2976,21 @@ async def run_graph(
             exc = item.exc
             break
         yield _sse(item)
+    awaiting = _awaiting_in(exc)
     if cancel_event.is_set() or isinstance(exc, WorkflowCancelled):
         yield _sse({"event": "cancelled"})
+    elif awaiting is not None:
+        yield _sse(
+            await _pause(
+                graph,
+                payload,
+                compiler,
+                awaiting,
+                on_await=on_await,
+                run_id=run_id,
+                until=until,
+            )
+        )
     elif exc is not None:
         yield _sse({"event": "error", **error_fields(exc)})
     elif until is not None and until not in compiler.outputs:
@@ -2768,3 +3017,52 @@ async def run_graph(
             # d'un nœud.
             done["artifacts"] = compiler.run_artifacts[:_MAX_RUN_ARTIFACTS]
         yield _sse(done)
+
+
+async def _pause(
+    graph: WorkflowGraph,
+    payload: Any,
+    compiler: _Compiler,
+    awaiting: _AwaitingDecision,
+    *,
+    on_await: Optional[Callable[[dict], Any]],
+    run_id: Optional[str],
+    until: Optional[str] = None,
+) -> dict:
+    """Confie l'instantané du run à ``on_await`` ; l'événement terminal."""
+    if on_await is None:
+        exc = GraphError(
+            f"{awaiting.node_id} : ce run ne peut pas attendre une décision humaine",
+            code="decision_unavailable",
+            params={"node": awaiting.node_id},
+        )
+        return {"event": "error", **error_fields(exc)}
+    snapshot = {
+        "node_id": awaiting.node_id,
+        "prompt": awaiting.prompt,
+        "graph": graph.model_dump(mode="json"),
+        "payload": payload,
+        "outputs": compiler.outputs,
+        "routes": compiler.routes,
+        "artifacts": compiler.run_artifacts,
+        # Un « Tester jusqu'ici » repris s'arrête au même nœud.
+        "until": until,
+    }
+    try:
+        saved = on_await(snapshot)
+        if asyncio.iscoroutine(saved):
+            await saved
+    except Exception as cause:  # noqa: BLE001 - sans trace, la reprise est perdue
+        exc = GraphError(
+            f"{awaiting.node_id} : la décision en attente n'a pas pu être enregistrée",
+            code="decision_not_saved",
+            params={"node": awaiting.node_id},
+        )
+        exc.__cause__ = cause
+        return {"event": "error", **error_fields(exc)}
+    return {
+        "event": "awaiting_input",
+        "run_id": run_id,
+        "node_id": awaiting.node_id,
+        **awaiting.prompt,
+    }

@@ -363,7 +363,7 @@ def test_loop_body_with_two_leaves_collects_both():
             [],
             "nope",
         ),
-        ([{"id": "l", "type": "approval", "config": {}}], [], "approval"),
+        ([{"id": "l", "type": "approval", "config": {}}], [], "question manquante"),
         ([], [], "vide"),
         # Deux déclencheurs : un seul serait armé (trigger_spec prend le
         # premier) mais chacun émettrait le payload à l'exécution.
