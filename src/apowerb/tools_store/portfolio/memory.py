@@ -133,6 +133,19 @@ def _make_save_memory(folder_name: str = ""):
     return tool_save_memory
 
 
+_MAX_SEARCH_RESULTS = 10
+_MAX_FIELD_CHARS = 500
+
+
+def _clip(value: Any) -> Any:
+    """Cut a long text field for the model; short or non-text values pass through."""
+    if isinstance(value, str) and len(value) > _MAX_FIELD_CHARS:
+        marker = f" ...[truncated, {len(value)} chars total]"
+        # The marker fits in the bound the old "..." suffix had.
+        return value[: _MAX_FIELD_CHARS + 3 - len(marker)] + marker
+    return value
+
+
 def _make_search_memory(folder_name: str = ""):
     """Factory: returns tool_search_memory bound to an agent folder."""
 
@@ -148,6 +161,12 @@ def _make_search_memory(folder_name: str = ""):
         Use this at the start of a conversation or when you need to recall
         past learnings, business rules, or user preferences. Results are
         ranked by simple keyword relevance.
+
+        Args:
+            query: Keywords to look for.
+            tag: Optional tag to filter on.
+            max_results: Number of items to return (1-10, default 10). Each
+                item's content is cut at 500 characters.
 
         Returns:
             dict with matching memory items sorted by relevance.
@@ -174,13 +193,13 @@ def _make_search_memory(folder_name: str = ""):
         scored = [(s, m) for s, m in scored if s > 0]
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        results = [m for _, m in scored[:max_results]]
+        limit = max(1, min(int(max_results or _MAX_SEARCH_RESULTS), _MAX_SEARCH_RESULTS))
+        results = [{**m, "content": _clip(m.get("content"))} for _, m in scored[:limit]]
 
         logger.info(f"[MEMORY] Search query={query!r} tag={tag!r} folder={folder!r} → {len(results)} results")
         return {
             "success": True,
             "query": query,
-            "folder": folder,
             "result_count": len(results),
             "total_memories": len(candidates),
             "results": results,
@@ -252,6 +271,12 @@ def _make_search_tool_usages(folder_name: str = ""):
         Retrieves previously saved (question → tool args) patterns that are
         similar to the current question.
 
+        Args:
+            question: The current question.
+            tool_name: Optional tool name to filter on.
+            max_results: Number of patterns to return (1-10, default 5). Long
+                question/result_summary texts are cut at 500 characters.
+
         Returns:
             dict with matching patterns including tool_name and tool_args.
         """
@@ -277,7 +302,11 @@ def _make_search_tool_usages(folder_name: str = ""):
         scored = [(s, u) for s, u in scored if s > 0]
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        results = [u for _, u in scored[:max_results]]
+        limit = max(1, min(int(max_results or 5), _MAX_SEARCH_RESULTS))
+        results = [
+            {**u, "question": _clip(u.get("question")), "result_summary": _clip(u.get("result_summary"))}
+            for _, u in scored[:limit]
+        ]
 
         logger.info(
             f"[MEMORY] Tool usage search: {question[:60]!r} folder={folder!r} → {len(results)} patterns found"
@@ -285,7 +314,6 @@ def _make_search_tool_usages(folder_name: str = ""):
         return {
             "success": True,
             "query": question,
-            "folder": folder,
             "result_count": len(results),
             "results": results,
         }

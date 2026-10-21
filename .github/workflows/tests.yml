@@ -21,11 +21,19 @@ jobs:
     permissions:
       contents: read
 
+    # The models qualify their tables with settings.db_schema. Empty, they are
+    # unqualified; "public" is the default a developer gets without DB_SCHEMA,
+    # and what production runs. The tests attach that schema in SQLite
+    # (tests/conftest.py, sqlite_engine). Running only the empty leg once hid
+    # tests that failed on every laptop and passed here.
+    strategy:
+      fail-fast: false
+      matrix:
+        db_schema: ["", "public"]
+    name: unit (DB_SCHEMA=${{ matrix.db_schema || 'empty' }})
+
     env:
-      # The models qualify their tables with settings.db_schema. SQLite has no
-      # schemas, so an unqualified name is what lets these tests run without a
-      # Postgres at all.
-      DB_SCHEMA: ""
+      DB_SCHEMA: ${{ matrix.db_schema }}
 
     steps:
       - name: Checkout repository
@@ -63,7 +71,7 @@ jobs:
       #     `th2customers`, the SCEI client overlay, which is not in this
       #     repository and never will be. Structural, not debt.
       #
-      #  2. The thirteen files listed below — 62 failures that predate this
+      #  2. The twelve files listed below — 60 failures that predate this
       #     workflow. Most want a real Postgres (CHECK constraints, ORM
       #     listeners) or compare against templates that have drifted. They are
       #     declared debt: this list is meant to SHRINK, and every removal from
@@ -85,12 +93,12 @@ jobs:
             --ignore=tests/test_webhook_gmail_signature.py \
             --ignore=tests/test_microsoft_token_refresh.py \
             --ignore=tests/test_audio_streaming.py \
-            --ignore=tests/test_pdf_first_page.py \
             --ignore=tests/test_chat_action_tools.py
 
       # Runs the excluded thirteen anyway, without blocking, so the debt stays
       # in plain sight instead of quietly rotting behind an --ignore flag.
       - name: The excluded files, for visibility only
+        if: matrix.db_schema == ''
         continue-on-error: true
         run: |
           uv run pytest -q -m "not integration" \
@@ -105,5 +113,4 @@ jobs:
             tests/test_webhook_gmail_signature.py \
             tests/test_microsoft_token_refresh.py \
             tests/test_audio_streaming.py \
-            tests/test_pdf_first_page.py \
             tests/test_chat_action_tools.py

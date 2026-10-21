@@ -1062,7 +1062,7 @@ apowerb calls models through [LiteLLM](https://docs.litellm.ai/docs/providers), 
 provider LiteLLM supports works: Anthropic, OpenAI, Mistral, Google Gemini, Azure AI
 Foundry, OVHcloud, and more. A model is named with its LiteLLM provider prefix, for
 example `anthropic/<model>`, `openai/<model>`, `mistral/<model>`, `gemini/<model>`,
-`azure_ai/<deployment>` or `ovhcloud/<model>`.
+`azure_ai/<deployment>`, `ovhcloud/<model>` or `edenai/<provider>/<model>`.
 
 ### Azure AI Foundry
 
@@ -1085,6 +1085,27 @@ For Microsoft Entra ID, resolve a bearer token with `DefaultAzureCredential`
 in the deployment environment and provide that token as `model_api_key`; LiteLLM
 passes it through the same `api_key` argument. Tool schemas and tool calls remain
 enabled through the normal ADK `LiteLlm` path.
+
+### Eden AI
+
+[Eden AI](https://www.edenai.co) is a gateway, so its ids already name the
+downstream provider, as in `anthropic/claude-haiku-5-5` or
+`mistral/ministral-14b-latest`. The `edenai/` prefix keeps that id whole and
+points the call at Eden AI, so no endpoint is needed:
+
+```json
+{
+  "agent_model": "edenai/anthropic/claude-haiku-5-5",
+  "agent_model_params": {
+    "model_api_key": "<eden-ai-api-key>"
+  }
+}
+```
+
+The default endpoint is `https://api.edenai.run/v3`. Set `model_api_base` to
+point somewhere else, for instance `https://api.eu.edenai.run/v3` for the EU
+region. The catalogue is served by `GET https://api.edenai.run/v3/models`, so no
+model list is pinned here.
 
 ---
 

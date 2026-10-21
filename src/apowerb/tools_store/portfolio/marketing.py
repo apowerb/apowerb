@@ -5,22 +5,25 @@ import requests
 import os
 
 
+# HubSpot properties already mapped to named fields of each lead.
+_FIXED_PROPERTIES = frozenset({
+    "firstname", "lastname", "email", "phone", "company", "lifecyclestage",
+    "hs_lead_status", "createdate", "hs_analytics_num_visits",
+})
+
+
 def tool_hubspot_get_sales_leads(
-    limit: int = 100,
-    after_date: Optional[str] = None,
+    limit: int = 25,
     properties: Optional[List[str]] = None,
     api_key: Optional[str] = None,
-    filters: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Retrieve sales leads from HubSpot.
 
     Args:
-            limit: Maximum number of leads to return (1-100, default 100)
-            after_date: ISO 8601 date string to filter leads modified after this date
+            limit: Maximum number of leads to return (1-100, default 25)
             properties: List of HubSpot property names to retrieve (e.g., ['firstname', 'email', 'lifecyclestage'])
             api_key: HubSpot API key (defaults to HUBSPOT_API_KEY env var)
-            filters: Optional filter criteria as dict (e.g., {'lifecyclestage': 'subscriber'})
 
     Returns:
             {status: 'success', leads: [...], count: N, total: N} or error dict
@@ -79,7 +82,8 @@ def tool_hubspot_get_sales_leads(
                     "lead_status": lead_data.get("hs_lead_status", ""),
                     "created_date": lead_data.get("createdate", ""),
                     "num_visits": lead_data.get("hs_analytics_num_visits", 0),
-                    "raw": lead_data,
+                    # Properties the caller asked for beyond the fixed ones.
+                    **{k: lead_data.get(k) for k in properties if k not in _FIXED_PROPERTIES},
                 }
             )
 
@@ -92,8 +96,3 @@ def tool_hubspot_get_sales_leads(
 
     except requests.exceptions.RequestException as e:
         return {"status": "error", "error_message": f"HubSpot API error: {str(e)}"}
-
-
-def tool_marketing():
-    """Placeholder function for marketing tool."""
-    pass

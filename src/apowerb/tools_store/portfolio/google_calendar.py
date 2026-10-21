@@ -17,7 +17,7 @@ from logging import getLogger
 import httpx
 
 from apowerb.tools_store.portfolio.google_auth import google_auth_headers
-from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
+from apowerb.tools_store.portfolio.http_errors import google_error_result
 
 logger = getLogger(__name__)
 
@@ -25,15 +25,25 @@ _BASE = "https://www.googleapis.com/calendar/v3"
 _SERVICE = "GOOGLE_CALENDAR"
 
 
+_MAX_RESULTS = 50
+_MAX_DESCRIPTION_CHARS = 300
+
+
+def _clamp_results(max_results: int) -> int:
+    return max(1, min(int(max_results or 10), _MAX_RESULTS))
+
+
 def _format_event(ev: dict) -> dict:
+    description = ev.get("description")
+    if isinstance(description, str) and len(description) > _MAX_DESCRIPTION_CHARS:
+        description = description[:_MAX_DESCRIPTION_CHARS] + "..."
     return {
         "id": ev.get("id"),
         "summary": ev.get("summary"),
         "start": ev.get("start"),
         "end": ev.get("end"),
         "location": ev.get("location"),
-        "description": ev.get("description"),
-        "htmlLink": ev.get("htmlLink"),
+        "description": description,
     }
 
 
@@ -46,14 +56,15 @@ def tool_list_events(
     """List upcoming events from a Google Calendar.
 
     Args:
-        max_results: Maximum number of events to return (default 10).
+        max_results: Maximum number of events to return (1-50, default 10).
         time_min: Start of time range in ISO 8601 format (e.g. '2026-03-01T00:00:00Z').
             Defaults to now.
         time_max: End of time range in ISO 8601 format. Optional.
         calendar_id: Calendar identifier (default 'primary').
 
     Returns:
-        A dict with status, events list, and total count.
+        A dict with status, events list (id, summary, start, end, location,
+        description cut at 300 characters), and total count.
     """
     try:
         headers = google_auth_headers(_SERVICE)
@@ -61,7 +72,7 @@ def tool_list_events(
             time_min = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         params: dict = {
-            "maxResults": max_results,
+            "maxResults": _clamp_results(max_results),
             "singleEvents": "true",
             "orderBy": "startTime",
             "timeMin": time_min,
@@ -79,11 +90,8 @@ def tool_list_events(
         data = resp.json()
         events = [_format_event(e) for e in data.get("items", [])]
         return {"status": "ok", "events": events, "total": len(events)}
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_list_events failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Calendar")
 
 
 def tool_create_event(
@@ -138,11 +146,8 @@ def tool_create_event(
             "event_id": data.get("id"),
             "htmlLink": data.get("htmlLink"),
         }
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_create_event failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Calendar")
 
 
 def tool_search_events(
@@ -154,7 +159,7 @@ def tool_search_events(
 
     Args:
         query: Free-text search term (matches summary, description, location, etc.).
-        max_results: Maximum number of events to return (default 10).
+        max_results: Maximum number of events to return (1-50, default 10).
         calendar_id: Calendar identifier (default 'primary').
 
     Returns:
@@ -169,7 +174,7 @@ def tool_search_events(
             headers=headers,
             params={
                 "q": query,
-                "maxResults": max_results,
+                "maxResults": _clamp_results(max_results),
                 "singleEvents": "true",
                 "orderBy": "startTime",
                 "timeMin": time_min,
@@ -180,8 +185,5 @@ def tool_search_events(
         data = resp.json()
         events = [_format_event(e) for e in data.get("items", [])]
         return {"status": "ok", "events": events, "total": len(events)}
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_search_events failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Calendar")

@@ -76,7 +76,6 @@ def _make_create_downloadable_file(folder_name: str):
             A dict with the download path or an error message.
         """
         settings=get_settings()
-        import os
         import re
         safe_name = os.path.basename(filename)
         safe_name = re.sub(r'[<>:"/\\|?*]', "_", safe_name)
@@ -88,8 +87,9 @@ def _make_create_downloadable_file(folder_name: str):
             safe_name += ".md"
 
         ### if we want to use it locally
-        if settings.storage_mode=="local":
-            import os
+        from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+
+        if not is_s3_artifact_storage_configured(settings):
             import re
 
             # Sanitize filename
@@ -218,17 +218,14 @@ def _make_upload_file(folder_name: str):
         Returns:
             dict with keys: status, id, name, size_bytes, webUrl, parentPath.
         """
-        import os
-        from apowerb.tools_store.portfolio.onedrive import tool_upload_file as _upload
+        from apowerb.artifacts.agent_uploads import agent_upload_path
+        from apowerb.tools_store.portfolio.onedrive_write import tool_upload_file as _upload
 
-        local_path = str(uploads_dir() / folder_name / filename)
-        if not os.path.exists(local_path):
-            agent_dir = str(uploads_dir() / folder_name)
-            available = [f for f in os.listdir(agent_dir) if os.path.isfile(os.path.join(agent_dir, f))] if os.path.exists(agent_dir) else []
-            return {"status": "error", "message": f"File '{filename}' not found.", "available_files": available, "retry": False}
-
-        return _upload(local_file_path=local_path, destination_path=destination_path,
-                       destination_folder_id=destination_folder_id, conflict_behavior=conflict_behavior)
+        with agent_upload_path(folder_name, filename) as (local_path, available):
+            if local_path is None:
+                return {"status": "error", "message": f"File '{filename}' not found.", "available_files": available, "retry": False}
+            return _upload(local_file_path=local_path, destination_path=destination_path,
+                           destination_folder_id=destination_folder_id, conflict_behavior=conflict_behavior)
 
     return tool_upload_file
 

@@ -13,6 +13,41 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Safety a besoin de SAFETY_API_KEY, que GitHub ne transmet pas aux PR venant
+  # d'un fork. Il tourne donc la ou le secret existe : push sur main et PR
+  # ouvertes depuis ce depot. Les PR de fork sont couvertes par
+  # dependency-review ci-dessous, qui n'a besoin d'aucun secret.
+  safety:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Safety CLI to check for vulnerabilities
+        uses: pyupio/safety-action@v1
+        with:
+          api-key: ${{ secrets.SAFETY_API_KEY }}
+
+  # Toutes les PR, forks compris : refuse une dependance ajoutee ou mise a jour
+  # qui porte une faille connue de gravite haute ou critique (uv.lock et
+  # pyproject.toml, lus par le graphe de dependances de GitHub).
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
   build-and-verify:
     runs-on: ubuntu-latest
     permissions:
@@ -28,11 +63,6 @@ jobs:
 
       - name: Install uv
         run: pip install uv
-
-      - name: Run Safety CLI to check for vulnerabilities
-        uses: pyupio/safety-action@v1
-        with:
-          api-key: ${{ secrets.SAFETY_API_KEY }}
 
       - name: Build wheel and sdist
         run: uv build

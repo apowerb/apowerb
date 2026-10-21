@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from apowerb.helpers.database_connection import DBConfig
 from apowerb.configs.settings import get_settings
+from apowerb.helpers.webhook_migration import ensure_consumer_column
 
 logger = setup_logging(__name__)
 settings = get_settings()
@@ -36,7 +37,8 @@ def ensure_webhook_logs_table() -> None:
                         subscription_id     INTEGER NOT NULL
                                                 REFERENCES {settings.db_schema}.webhook_subscriptions(id)
                                                 ON DELETE CASCADE,
-                        agent_id            INTEGER NOT NULL,
+                        consumer            VARCHAR(20) NOT NULL DEFAULT 'agent',
+                        agent_id            INTEGER,
                         trigger_event       VARCHAR(50) NOT NULL,
                         email_subject       VARCHAR(500),
                         email_sender        VARCHAR(500),
@@ -120,12 +122,11 @@ def ensure_webhook_logs_columns() -> None:
                 engine.dispose()
                 return
 
-            existing_columns = {
-                col["name"]
-                for col in inspector.get_columns(
-                    "webhook_logs", schema=settings.db_schema
-                )
-            }
+            columns = inspector.get_columns("webhook_logs", schema=settings.db_schema)
+            existing_columns = {col["name"] for col in columns}
+
+            # Explicit consumer (agent | workflow), whatever else is missing.
+            ensure_consumer_column(conn, inspector, "webhook_logs", columns)
 
             manquantes = [
                 (nom, ddl)

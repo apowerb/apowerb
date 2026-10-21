@@ -116,8 +116,13 @@ async def _renew_expiring_subscriptions() -> None:
                         )
                     )
                     await db.commit()
-                except Exception:
-                    pass
+                except Exception as del_exc:
+                    logger.warning(
+                        "[WEBHOOK CRON] Failed to delete missing Outlook subscription sub_db_id=%s: %s",
+                        sub_db_id,
+                        del_exc,
+                        exc_info=True,
+                    )
 
             except Exception as exc:
                 logger.error(
@@ -141,8 +146,13 @@ async def _renew_expiring_subscriptions() -> None:
                         .values(status="expired")
                     )
                     await db.commit()
-                except Exception:
-                    pass
+                except Exception as mark_exc:
+                    logger.warning(
+                        "[WEBHOOK CRON] Failed to mark Outlook subscription as expired sub_db_id=%s: %s",
+                        sub_db_id,
+                        mark_exc,
+                        exc_info=True,
+                    )
 
         # ── 2. Renew Gmail watches (7-day expiry) ────────────────────
         gmail_result = await db.execute(
@@ -222,8 +232,13 @@ async def _renew_expiring_subscriptions() -> None:
                         .values(status="expired")
                     )
                     await db.commit()
-                except Exception:
-                    pass
+                except Exception as mark_exc:
+                    logger.warning(
+                        "[WEBHOOK CRON] Failed to mark Gmail watch as expired sub_db_id=%s: %s",
+                        sub_db_id,
+                        mark_exc,
+                        exc_info=True,
+                    )
 
     # Also mark any past-due subscriptions as expired (both providers)
     async with sessionmanager.session() as db:

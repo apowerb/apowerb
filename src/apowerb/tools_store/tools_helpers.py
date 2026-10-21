@@ -12,6 +12,7 @@ from apowerb.helpers.encryptor import (
     decrypt_value_in_dict,
     dict_to_envvar,
 )
+from apowerb.tools_store.tool_env import call_with_tool_config, with_tool_config
 from apowerb.schema.tool_config_schema import ToolConfigCreateSchema
 from google.adk.tools.mcp_tool import McpToolset
 from apowerb.tools_store.tool_manager import ToolsStore
@@ -409,7 +410,20 @@ def _resolve_tool_names(raw_tool_name: str | None) -> list[str]:
 _LEGACY_TOOL_RENAMES: dict[str, str] = {
     "onedrive_read.tool_read_file": "onedrive_read.tool_read_onedrive_file",
     "google_drive.tool_read_file": "google_drive.tool_read_drive_file",
+    # Python names shared across modules: dedupe_tools_by_name silently kept
+    # only one. Keys are module-qualified, so OneDrive/Outlook keep their names
+    # and only the Google/GitHub side is renamed.
+    "google_drive.tool_list_files": "google_drive.tool_gdrive_list_files",
+    "google_drive.tool_search_files": "google_drive.tool_gdrive_search_files",
+    "google_drive.tool_download_file": "google_drive.tool_gdrive_download_file",
+    "google_gmail.tool_list_emails": "google_gmail.tool_gmail_list_emails",
+    "google_gmail.tool_read_email": "google_gmail.tool_gmail_read_email",
+    "google_gmail.tool_search_emails": "google_gmail.tool_gmail_search_emails",
+    "github.tool_read_file": "github.tool_github_read_file",
 }
+# Removed tools (marketing.tool_marketing, audio.tool_generate_audio,
+# api_call.tool_api_call) need no alias: an unknown name is skipped by the
+# resolver below.
 
 
 def load_agent_tools_functions(tools: list[str], owner_id: str):
@@ -449,10 +463,8 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
         else:
             continue
 
-        # Set env vars once for all tools sharing the same config
-        if tool_params:
-            dict_to_envvar(tool_params)
-
+        # The config's params reach its tools at call time only (tool_env):
+        # writing them to os.environ here would outlive this build.
         for current_tool_name in resolved_names:
             if current_tool_name in _LEGACY_TOOL_RENAMES:
                 new_name = _LEGACY_TOOL_RENAMES[current_tool_name]
@@ -488,7 +500,7 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
                 _tool_attr = _ovl.get(current_tool_name) or _ovl.get(current_tool_name.split(".")[-1])
                 if _tool_attr is None:
                     continue
-                tool_funcs.append(_tool_attr)
+                tool_funcs.append(with_tool_config(_tool_attr, tool_params, current_tool_name))
                 tools_names.append(current_tool_name)
                 continue
 
@@ -504,7 +516,9 @@ def load_agent_tools_functions(tools: list[str], owner_id: str):
             if callable(tool_attr) and not isinstance(tool_attr, McpToolset):
                 # For MCP factories, call to get fresh instance
                 if tool_func.startswith("mcp_tool_set_"):
-                    tool_attr = tool_attr()
+                    tool_attr = call_with_tool_config(tool_attr, tool_params, current_tool_name)
+                else:
+                    tool_attr = with_tool_config(tool_attr, tool_params, current_tool_name)
             tool_funcs.append(tool_attr)
             tools_names.append(current_tool_name)
 

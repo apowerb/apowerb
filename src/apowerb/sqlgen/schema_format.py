@@ -61,10 +61,11 @@ def build_schema_prompt(
 ) -> str:
     """Render a compact schema description, capped at ``max_chars``.
 
-    Tables are ordered by relevance to ``question`` then added greedily until
-    the budget is hit; the rest are listed by name only so the model can ask
-    for their columns via tool_get_database_schema. The single most relevant
-    table is always included even if it alone exceeds the budget.
+    Tables are ranked by relevance to ``question`` then added greedily until
+    the budget is hit, and written in name order; the rest are listed by name
+    only so the model can ask for their columns via tool_get_database_schema.
+    The single most relevant table is always included even if it alone
+    exceeds the budget.
     """
     tables = schema_info.get("tables", {})
     db_schema = schema_info.get("schema", "public")
@@ -85,8 +86,14 @@ def build_schema_prompt(
             selected.append(name)
             used += cost
 
+    # Selection follows relevance; the rendering does not. Written in name
+    # order, the schema is the same text for every question that selects the
+    # same tables -- all of them, when the budget fits the database -- so the
+    # system prompt + schema prefix of the request is identical from one
+    # question to the next and provider prompt caches (OpenAI/Azure automatic
+    # prefix cache, Gemini implicit cache) can reuse it.
     lines = [header]
-    for name in selected:
+    for name in sorted(selected):
         lines.append(_render_table(name, tables[name], include_samples, sample_rows))
     if omitted:
         lines.append("")

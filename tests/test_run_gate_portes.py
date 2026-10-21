@@ -7,20 +7,12 @@ n'a pas lieu -- l'agent n'est jamais atteint.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
-
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apowerb.core import run_gate
 from apowerb.core.extensions.registry import registry
-from apowerb.helpers.database import Base
 from apowerb.models import User
 from apowerb.routers.webhook_handlers import _common
 
@@ -97,15 +89,8 @@ class TestPortier:
 
 
 @pytest.fixture
-async def sqlite_avec_utilisateur(monkeypatch):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    for table in Base.metadata.tables.values():
-        table.schema = None
-    Base.metadata.schema = None
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+async def sqlite_avec_utilisateur(sqlite_engine, bind_sessionmanager):
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
     async with factory() as db:
         db.add(
             User(
@@ -120,17 +105,8 @@ async def sqlite_avec_utilisateur(monkeypatch):
         )
         await db.commit()
 
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        session = factory()
-        try:
-            yield session
-        finally:
-            await session.close()
-
-    monkeypatch.setattr(_common.sessionmanager, "session", _session, raising=False)
+    bind_sessionmanager(factory)
     yield factory
-    await engine.dispose()
 
 
 class TestPorteWebhook:

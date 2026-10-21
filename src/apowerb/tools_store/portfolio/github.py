@@ -62,6 +62,7 @@ _MAX_FILE_CHARS = 60_000
 _MAX_PATCH_CHARS = 4_000
 _MAX_DIFF_FILES = 50
 _MAX_BODY_CHARS = 8_000
+_MAX_DIR_ENTRIES = 200
 
 # Repository documentation indexed into RAG: prose, not code, and never the
 # dependencies vendored next to it.
@@ -275,7 +276,7 @@ def tool_list_repositories(query: str = "", max_results: int = 30) -> dict:
     return _run(_action)
 
 
-def tool_read_file(repository: str, path: str = "", ref: str = "") -> dict:
+def tool_github_read_file(repository: str, path: str = "", ref: str = "") -> dict:
     """Read a file, or list a folder, in a GitHub repository.
 
     Args:
@@ -287,7 +288,8 @@ def tool_read_file(repository: str, path: str = "", ref: str = "") -> dict:
     Returns:
         For a file: status, type "file", path, content, truncated, size, url.
         A binary file is described (binary: true) but not returned.
-        For a folder: status, type "directory", entries (name, path, type, size).
+        For a folder: status, type "directory", entries (name, path, type, size;
+        at most 200) and truncated.
     """
     invalid = _check_repository(repository)
     if invalid:
@@ -304,9 +306,15 @@ def tool_read_file(repository: str, path: str = "", ref: str = "") -> dict:
         if isinstance(data, list):
             entries = [
                 {"name": e.get("name"), "path": e.get("path"), "type": e.get("type"), "size": e.get("size")}
-                for e in data
+                for e in data[:_MAX_DIR_ENTRIES]
             ]
-            return {"status": "success", "type": "directory", "path": path or "/", "entries": entries}
+            return {
+                "status": "success",
+                "type": "directory",
+                "path": path or "/",
+                "entries": entries,
+                "truncated": len(data) > _MAX_DIR_ENTRIES,
+            }
 
         if data.get("type") != "file":
             return _error(f"'{path}' is a {data.get('type')}, not a file or folder. Do not retry.")
@@ -439,7 +447,7 @@ def tool_list_pull_requests(repository: str, state: str = "open", max_results: i
     return _run(_action)
 
 
-def tool_get_pull_request(repository: str, number: int, include_diff: bool = True) -> dict:
+def tool_get_pull_request(repository: str, number: int, include_diff: bool = False) -> dict:
     """Read one pull request: description, figures and, optionally, its diff.
 
     Use this to summarise or review a pull request.
@@ -448,7 +456,8 @@ def tool_get_pull_request(repository: str, number: int, include_diff: bool = Tru
         repository: The repository as ``owner/name``.
         number: The pull request number, e.g. 12.
         include_diff: Whether to include the changed files and their patches
-            (bounded in size). Defaults to True.
+            (bounded in size). Defaults to False: ask for it only when the
+            code changes themselves are needed.
 
     Returns:
         dict with keys: status, pull_request (number, title, body, state, merged,

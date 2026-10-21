@@ -1,0 +1,14 @@
+{
+ "description": "Tableau de bord créé depuis un CSV joint (gabarit ecommerce)",
+ "source": "DEV 14/10, enregistré",
+ "turns": [
+  {
+   "recorded": "creation",
+   "facts": [
+    "/bi/e3ca56c3-3fc2-4e86-93ba-f51b5b8dd33d",
+    "template_id: ecommerce",
+    "order_amount"
+   ]
+  }
+ ]
+}

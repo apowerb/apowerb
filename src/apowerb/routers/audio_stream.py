@@ -22,6 +22,8 @@ if _ENV_PATH.exists():
 
 from apowerb.configs.settings import get_settings
 from apowerb.configs.paths import uploads_dir
+from apowerb.core.invocation_context import set_current_invoker
+from apowerb.helpers.ownership import validate_agent_ownership_by_email
 from apowerb.helpers.security import get_algorithm, get_secret_key
 from apowerb.core.audio_streaming import (
     FallbackSTT,
@@ -128,6 +130,7 @@ def _resolve_agent_tools(agent_name: str | None) -> list:
         return []
     try:
         from apowerb.core.agent_helpers import get_agent_details
+        from apowerb.core.invocation_context import bind_agent_identity
         from apowerb.tools_store.tools_helpers import load_agent_tools_functions
 
         agent_id = int(agent_name.replace("agent", ""))
@@ -152,9 +155,15 @@ def _resolve_agent_tools(agent_name: str | None) -> list:
                     break
 
         agent_owner = details.get("owner_id") or ""
-        os.environ.setdefault("AGENT_OWNER", agent_owner)
-        os.environ.setdefault("ROOT_AGENT_ID", agent_name)
-        os.environ.setdefault("AGENT_ID", agent_name)
+        # Bound for this websocket's task (the Gemini session that runs the
+        # tools is started from it), never through the process environment.
+        bind_agent_identity(
+            owner=agent_owner,
+            organization_id=details.get("organization_id"),
+            project_id=details.get("project_id"),
+            agent_id=agent_id,
+            invocation_id=f"voice-{agent_name}",
+        )
 
         _names, funcs = load_agent_tools_functions(
             tools=tools_ids, owner_id=agent_owner
@@ -280,6 +289,9 @@ async def audio_websocket(websocket: WebSocket, session_id: str) -> None:
     if not email:
         await websocket.close(code=4003, reason="Invalid token")
         return
+    # User-personal tools (Outlook, Gmail, ...) resolve their integration
+    # against the user talking, as on the chat path.
+    set_current_invoker(email)
 
     mode = websocket.query_params.get("mode", "conversation")
     if mode not in _VALID_MODES:
@@ -309,12 +321,12 @@ async def audio_websocket(websocket: WebSocket, session_id: str) -> None:
         return
 
     if _use_gemini():
-        await _handle_gemini_mode(websocket, session_id)
+        await _handle_gemini_mode(websocket, session_id, email)
     else:
         await _handle_fallback_mode(websocket, session_id)
 
 
-async def _handle_gemini_mode(websocket: WebSocket, session_id: str) -> None:
+async def _handle_gemini_mode(websocket: WebSocket, session_id: str, email: str) -> None:
     """Gemini Live: single session handles both STT and TTS."""
     session: GeminiLiveSession | None = None
 
@@ -389,6 +401,17 @@ async def _handle_gemini_mode(websocket: WebSocket, session_id: str) -> None:
                         language = message.get("language", "auto")
                         agent_name = message.get("agent_name")
                         agent_display_name = message.get("agent_display_name")
+                        # The agent's persona, knowledge and tools are its
+                        # owner's: only the owner may open a voice session on it.
+                        if agent_name:
+                            try:
+                                await validate_agent_ownership_by_email(agent_name, email)
+                            except HTTPException:
+                                await websocket.send_json(
+                                    {"type": "error", "message": "Agent not available"}
+                                )
+                                await websocket.close(code=4003, reason="Agent not available")
+                                return
                         system_instruction = _build_agent_system_instruction(
                             agent_name, agent_display_name, session_id
                         )

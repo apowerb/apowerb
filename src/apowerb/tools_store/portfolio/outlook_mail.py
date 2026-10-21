@@ -26,6 +26,7 @@ from logging import getLogger
 import httpx
 
 from apowerb.configs.paths import uploads_dir
+from apowerb.helpers.email_text import cap_body, html_to_text
 from apowerb.tools_store.portfolio.microsoft_auth import microsoft_auth_headers
 from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
 from apowerb.storage.filename import sanitize_filename
@@ -243,8 +244,8 @@ def tool_read_email(message_id: str, mailbox: str = "") -> dict:
         mailbox: If provided, read from this shared mailbox email address.
 
     Returns:
-        dict with keys: status, id, subject, from, to, cc, date, body,
-        isRead, hasAttachments, attachments (list of metadata).
+        dict with keys: status, id, subject, from, to, cc, date, body (at most
+        15000 characters), body_truncated, isRead, hasAttachments, attachments (list of metadata).
     """
     try:
         headers = _graph_headers()
@@ -289,9 +290,8 @@ def tool_read_email(message_id: str, mailbox: str = "") -> dict:
         body_obj = msg.get("body", {})
         body_text = body_obj.get("content", "")
         if body_obj.get("contentType") == "html":
-            # Strip HTML for readability -- basic approach
-            body_text = re.sub(r"<[^>]+>", "", body_text)
-            body_text = body_text.strip()
+            body_text = html_to_text(body_text)
+        body_text, body_truncated = cap_body(body_text)
 
         to_list = [
             r.get("emailAddress", {}).get("address")
@@ -331,6 +331,7 @@ def tool_read_email(message_id: str, mailbox: str = "") -> dict:
             "cc": cc_list,
             "date": msg.get("receivedDateTime"),
             "body": body_text,
+            "body_truncated": body_truncated,
             "isRead": msg.get("isRead"),
             "hasAttachments": msg.get("hasAttachments"),
             "attachments": attachments_meta,
@@ -590,7 +591,9 @@ def _read_generated_file(path: str) -> tuple[str, bytes]:
     filename = os.path.basename(rel)
     from apowerb.configs.settings import get_settings
 
-    if get_settings().storage_mode == "local":
+    from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+
+    if not is_s3_artifact_storage_configured(get_settings()):
         disk = str(uploads_dir().joinpath(*rel.split("/")))
         if not os.path.isfile(disk):
             raise _AttachmentError(

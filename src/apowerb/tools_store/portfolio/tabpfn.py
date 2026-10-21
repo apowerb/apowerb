@@ -44,6 +44,7 @@ _VALID_TASKS = ("classification", "regression")
 _MAX_TRAIN_ROWS = 10_000
 _MAX_TEST_ROWS = 10_000
 _MAX_FEATURES = 500
+_MAX_ROWS_RETURNED = 200  # predictions sent back to the model; the rest is summarised
 
 
 def _make_estimator(task: str, token: str) -> Any:
@@ -101,7 +102,10 @@ def tool_tabpfn_predict(
     Returns:
         dict: On success, ``status`` "success" with ``predictions`` (one per test
         row), ``task``, ``n_train``/``n_test``, and, for classification
-        probabilities, ``classes`` + ``probabilities``. On failure, ``status``
+        probabilities, ``classes`` + ``probabilities``. Beyond 200 test rows only
+        the first 200 predictions (or probability rows) are returned, with
+        ``predictions_truncated`` true and a ``summary`` of all rows (class
+        counts, or min/max/mean/median for regression). On failure, ``status``
         "error" with ``error_message``.
     """
     if task not in _VALID_TASKS:
@@ -166,30 +170,67 @@ def tool_tabpfn_predict(
 
         if task == "classification" and output_type == "probabilities":
             proba = estimator.predict_proba(x_test)
-            classes = getattr(estimator, "classes_", None)
-            return {
+            classes = _to_list(getattr(estimator, "classes_", None))
+            probabilities = _to_list(proba)
+            result = {
                 "status": "success",
                 "task": task,
                 "n_train": len(x_train),
                 "n_test": len(x_test),
-                "classes": _to_list(classes),
-                "probabilities": _to_list(proba),
+                "classes": classes,
+                "probabilities": probabilities[:_MAX_ROWS_RETURNED],
             }
+            if len(probabilities) > _MAX_ROWS_RETURNED:
+                result["predictions_truncated"] = True
+                result["summary"] = _summarise_probabilities(probabilities, classes)
+            return result
 
-        predictions = estimator.predict(x_test)
-        return {
+        predictions = _to_list(estimator.predict(x_test))
+        result = {
             "status": "success",
             "task": task,
             "n_train": len(x_train),
             "n_test": len(x_test),
-            "predictions": _to_list(predictions),
+            "predictions": predictions[:_MAX_ROWS_RETURNED],
         }
+        if len(predictions) > _MAX_ROWS_RETURNED:
+            result["predictions_truncated"] = True
+            result["summary"] = _summarise_predictions(predictions, task)
+        return result
     except Exception as exc:  # noqa: BLE001 — mapped to a structured error dict
         logger.warning("[TABPFN] prediction failed: %s", exc)
         msg = str(exc)
         if "token" in msg.lower() or "auth" in msg.lower() or "401" in msg:
             msg = f"Authentication failed (check TABPFN_TOKEN). {msg}"
         return {"status": "error", "error_message": f"TabPFN request failed: {msg}"}
+
+
+def _summarise_predictions(predictions: list, task: str) -> dict:
+    """Summary of ALL predictions: class counts, or regression statistics."""
+    if task == "regression":
+        vals = sorted(float(v) for v in predictions)
+        n = len(vals)
+        return {
+            "count": n,
+            "min": vals[0],
+            "max": vals[-1],
+            "mean": sum(vals) / n,
+            "median": vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2,
+        }
+    counts: dict[str, int] = {}
+    for v in predictions:
+        counts[str(v)] = counts.get(str(v), 0) + 1
+    return {"count": len(predictions), "class_counts": counts}
+
+
+def _summarise_probabilities(probabilities: list, classes: Any) -> dict:
+    """Predicted-class counts (argmax) over ALL rows."""
+    counts: dict[str, int] = {}
+    for row in probabilities:
+        best = max(range(len(row)), key=row.__getitem__)
+        label = classes[best] if classes else best
+        counts[str(label)] = counts.get(str(label), 0) + 1
+    return {"count": len(probabilities), "predicted_class_counts": counts}
 
 
 def _to_list(value: object) -> Any:

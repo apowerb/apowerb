@@ -36,6 +36,7 @@ from apowerb.core.workflow_graph import (
     _outer_refs,
     validate_node,
 )
+from apowerb.helpers.model_names import openai_compat_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -413,10 +414,7 @@ def _completion_kwargs(
     }
     api_base = (settings.default_llm_api_base or "").strip()
     if api_base:
-        # Même règle que build_litellm_model : un endpoint OpenAI-compatible
-        # impose le préfixe openai/ (Azure AI Foundry garde le sien).
-        if not model.startswith(("openai/", "azure_ai/")):
-            kwargs["model"] = "openai/" + model.split("/", 1)[-1]
+        kwargs["model"] = openai_compat_model_name(model)
         kwargs["api_base"] = api_base
     elif model.startswith("gemini/"):
         kwargs["reasoning_effort"] = "disable"

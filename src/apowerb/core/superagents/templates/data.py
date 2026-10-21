@@ -1,5 +1,7 @@
 """Data-oriented SuperAgent templates (SQL, analyst, forecasting)."""
 
+from apowerb.core.superagents.templates.dashboard import BI_SUPPRESSED_AUTO_TOOLS
+
 DATA_TEMPLATES = [
     {
         "template_id": "text_to_sql_agent",
@@ -24,26 +26,26 @@ DATA_TEMPLATES = [
 - tool_run_sql — only when the user supplies raw SQL.
 - tool_get_database_schema — to explore tables/columns, or to get correct names before retrying a failed query.
 - tool_text_to_sql_explain — when asked to "explain" a query.
-- tool_create_chart(query=<sql_query>, chart_type, name, title) — persist a chart; `title` DESCRIBES THE CONTENT (e.g. "Colis par département"); returns chart_id (UUID).
+- tool_chart_from_question(question, chart_type, title) — for a chart of data NOT queried yet: runs the query AND saves the chart in one call; `title` DESCRIBES THE CONTENT (e.g. "Colis par département"); returns chart_id (UUID) and the plotted rows.
+- tool_create_chart(query=<sql_query>, chart_type, name, title) — persist a chart from a `sql_query` a tool already returned; returns chart_id (UUID).
 - embed_chart(chart_id) — render a chart INLINE. Does NOT add it to any dashboard.
 - tool_visualize_data(query=<sql_query>, chart_type, filename) — a DOWNLOADABLE chart FILE; returns a link. Use for "in HTML / downloadable / export the chart". `query` MUST be the `sql_query` a tool returned, never hand-typed SQL.
 - tool_create_dashboard(title) → dashboard_id. tool_list_dashboards() → existing boards (id+title). tool_add_chart_to_dashboard(dashboard_id, chart_id). tool_add_kpi_to_dashboard(dashboard_id, label, value, unit). tool_send_chart_to_dashboard(chart_id) — quick path to the default chat dashboard.
 - tool_update_chart(chart_id, title, chart_type, query) — modify an existing chart's title/type/query. tool_remove_chart_from_dashboard(chart_id, dashboard_id) — take a chart OFF a dashboard (detaches the widget, KEEPS the chart). In a dashboard's own chat, dashboard_id defaults to that dashboard.
-- tool_bi_list_dashboard_templates / tool_bi_create_dashboard_from_template — ready-made dashboards (delivery OTIF, production quality...) on a dataset: list the templates, map their columns, create in one call. Pass language ("fr" or "en") in the language of the conversation, also to tool_bi_create_stock_dashboard.
-- tool_bi_create_dashboard / tool_bi_create_stock_dashboard — build a dashboard with global filters and KPIs with thresholds on a DATASET (find it with tool_list_datasets / tool_describe_dataset; for a file attached to the chat, call tool_bi_import_attachment(filename) first and pass the dataset_id it returns). To modify it: tool_bi_describe_dashboard then tool_bi_patch_dashboard; to read its numbers: tool_bi_query_dashboard.
+- Dashboards with global filters, ready-made BI templates (OTIF, stock...) or built from an attached file are the BI Assistant agent's job: say so and suggest it.
 - create_downloadable_file — export DATA (e.g. CSV). Never use it to hand-write HTML or fake a chart.
 - tool_send_outlook_email(to, subject, body, attachments=<exact /api/files path>) — Outlook only.
 
 ## Workflows
 - Data question: tool_text_to_sql → markdown table + plain-language summary. Show the SQL only if explicitly asked.
-- Inline chart (default for "make a chart"): tool_text_to_sql → tool_create_chart(query=<sql_query>, …) → embed_chart(<that exact chart_id>) → describe it in words. Do all three every time, even if a similar chart exists — never reply it was "already created".
+- Inline chart (ONLY when the user asks for a chart): data not queried yet → tool_chart_from_question(question, chart_type, title); data you just got from tool_text_to_sql → tool_create_chart(query=<that sql_query>, …). Then embed_chart(<that exact chart_id>) → describe it in words. Do it every time, even if a similar chart exists — never reply it was "already created".
 - Send a chart/KPI to a dashboard (ONLY when asked): let the user choose NEW or EXISTING; if unspecified, ASK. NEW → tool_create_dashboard(title) then add; if the title exists, say so and ask for another. EXISTING → tool_list_dashboards(), use the EXACT id the user picks (never invent one). KPI → get the number with tool_text_to_sql, resolve the board the SAME way (NEW via tool_create_dashboard or EXISTING via tool_list_dashboards with the exact id), then tool_add_kpi_to_dashboard(dashboard_id, label, value, unit). Confirm with the board's name. If the user just says "add to dashboard" without naming one, use tool_send_chart_to_dashboard. Never add to a dashboard on your own.
 - Modify or remove a chart (ONLY when asked): change a chart's title/type/query with tool_update_chart; take a chart off a dashboard with tool_remove_chart_from_dashboard — this detaches the widget, it does NOT delete the chart. In a dashboard's own chat both default to that dashboard.
 - Downloadable chart: tool_visualize_data → give the returned link. Never invent the link. CSV: tool_text_to_sql → create_downloadable_file.
 - Email (ONLY when explicitly asked — never on your own, and never to round off a task you weren't asked to): make the file (tool_visualize_data / create_downloadable_file), then tool_send_outlook_email with attachments=<exact /api/files path>. If Outlook isn't connected the tool returns a connect prompt — relay it, don't retry.
 
 ## Errors
-tool_text_to_sql fails → show the exact error, call tool_get_database_schema, retry; after 2 retries show the real error (never "try again later" alone). Chart/tool fails → report the exact error. Empty result → "No data found for this query."
+tool_text_to_sql / tool_chart_from_question already repair a query the database rejects once on their own; if one still fails, call tool_get_database_schema and retry once with the right names, then show the real error (never "try again later" alone). Chart/tool fails → report the exact error. Empty result → "No data found for this query."
 
 ## Hard rules
 - Never fabricate data, charts, files, links, dashboard ids, or rows — return only what tools produce.
@@ -80,17 +82,9 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             # chart off a dashboard (detach the widget; the chart is kept).
             "business_intelligence.tool_update_chart",
             "business_intelligence.tool_remove_chart_from_dashboard",
-            # spec dashboards (filters, KPIs with thresholds) built on a dataset.
-            "bi_datasets.tool_list_datasets",
-            "bi_datasets.tool_describe_dataset",
-            "bi_dashboard_tools.tool_bi_import_attachment",
-            "bi_dashboard_tools.tool_bi_create_dashboard",
-            "bi_dashboard_tools.tool_bi_create_stock_dashboard",
-            "bi_dashboard_tools.tool_bi_list_dashboard_templates",
-            "bi_dashboard_tools.tool_bi_create_dashboard_from_template",
-            "bi_dashboard_tools.tool_bi_patch_dashboard",
-            "bi_dashboard_tools.tool_bi_query_dashboard",
-            "bi_dashboard_tools.tool_bi_describe_dashboard",
+            # one dashboard family only: the chart-based tools above. The spec
+            # dashboards (tool_bi_*, datasets) live in the BI templates; here
+            # they cost 4,239 tokens on every model call (Data Analyst bench).
             # visualization: produces a DOWNLOADABLE Plotly HTML chart file
             # (for "chart in HTML / downloadable" requests; NOT inline).
             "visualization.tool_visualize_data",
@@ -105,6 +99,15 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
         # artifacts_enabled=True so the agent can export results as PDF/CSV/MD
         "artifacts_enabled": True,
         "guardrails_config": None,
+        # outils de chat inutiles à un agent SQL/BI (comme les gabarits BI)
+        "suppressed_auto_tools": BI_SUPPRESSED_AUTO_TOOLS,
+        # historique : gros résultats d'outils des tours précédents raccourcis
+        "compact_previous_turn_results": True,
+        # requête + graphique enregistré en un seul appel d'outil
+        "chart_from_question": True,
+        # truncation: the answers of turns pushed out of the 14-message
+        # window come back as text (no tool payloads), within this budget
+        "keep_truncated_turn_text_chars": 6000,
         "tags": ["sql", "database", "text-to-sql", "analytics", "data"],
         "readme": (
             "# Data Analyst\n\n"
@@ -338,6 +341,14 @@ tool_text_to_sql fails → show the exact error, call tool_get_database_schema, 
             "bi_dashboard_tools.tool_bi_describe_dashboard",
         ],
         "agent_skills": ["forecasting", "data-visualization"],
+        "suppressed_auto_tools": BI_SUPPRESSED_AUTO_TOOLS,
+        # read_uploaded_file : en-tête + 20 lignes + nombre de lignes d'un gros CSV
+        "tabular_file_preview_rows": 20,
+        # historique : gros résultats d'outils des tours précédents raccourcis
+        "compact_previous_turn_results": True,
+        # truncation: the answers of turns pushed out of the 14-message
+        # window come back as text (no tool payloads), within this budget
+        "keep_truncated_turn_text_chars": 6000,
         "memory_enabled": False,
         "artifacts_enabled": True,
         "guardrails_config": None,

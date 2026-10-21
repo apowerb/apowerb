@@ -6,24 +6,19 @@ dependances (``get_current_user`` decode un vrai JWT, ``require_admin``,
 ``_assert_may_act_on`` lit les vraies tables d'organisation) : une garde qui
 ne tiendrait que parce qu'un test l'a neutralisee serait invisible autrement.
 
-SQLite en memoire, schema des modeles attache s'il y en a un : les tables gardent leur
-vrai schema, comme en PostgreSQL. Retirer le schema des tables ne suffit pas :
-un test precedent (``test_default_superadmin``) peut avoir fige dans le cache
-SQLAlchemy des colonnes de ``user`` qualifiees ``public``.
+SQLite en memoire (fixture ``sqlite_engine`` de la conftest), schema des modeles
+attache s'il y en a un : les tables gardent leur vrai schema, comme en PostgreSQL.
 """
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apowerb.admin import router as admin_router
 from apowerb.configs.settings import get_settings
@@ -31,7 +26,7 @@ from apowerb.core import run_gate
 from apowerb.core.agent_helpers.default_llm_usage import used_tokens_this_month
 from apowerb.core.extensions.registry import registry
 from apowerb.core.usage_quota import get_quota_status
-from apowerb.helpers.database import Base, sessionmanager
+from apowerb.helpers.database import Base
 from apowerb.helpers.security import create_access_token
 from apowerb.models import LlmUsage, User, UserRole
 
@@ -42,22 +37,18 @@ ETRANGER = "etranger@exemple.fr"  # hors de cette organisation
 SIMPLE = "simple@exemple.fr"  # role USER
 
 
-# Le schema des modeles, fige a l'import (`settings.db_schema`). Vide (la CI),
-# les tables vivent dans `main`, le schema par defaut de SQLite.
+# Le schema des modeles (`settings.db_schema`), que la fixture `sqlite_engine`
+# attache tel quel. Vide (la CI), les tables vivent dans `main`, le schema par
+# defaut de SQLite. Aucun test ne le reecrit : la conftest l'interdit.
 SCHEMA = Base.metadata.schema or "main"
 
 
 @pytest.fixture
-async def factory(monkeypatch):
-    # Une seule connexion : la base attachee vit avec elle.
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
+async def factory(sqlite_engine, bind_sessionmanager, monkeypatch):
     # Le SQL brut des gardes et de la route cible `{db_schema}.table`.
     monkeypatch.setattr(get_settings(), "db_schema", SCHEMA)
     monkeypatch.setattr(admin_router, "_schema", lambda: SCHEMA)
-    async with engine.begin() as conn:
-        if SCHEMA != "main":
-            await conn.exec_driver_sql(f"ATTACH DATABASE ':memory:' AS \"{SCHEMA}\"")
-        await conn.run_sync(Base.metadata.create_all)
+    async with sqlite_engine.begin() as conn:
         await conn.execute(text(f"CREATE TABLE {SCHEMA}.admin_organization (org_id INTEGER PRIMARY KEY)"))
         await conn.execute(
             text(f"CREATE TABLE {SCHEMA}.admin_org_member (user_id INTEGER PRIMARY KEY, org_id INTEGER NOT NULL)")
@@ -73,17 +64,8 @@ async def factory(monkeypatch):
             )
         )
 
-    sessions = async_sessionmaker(engine, expire_on_commit=False)
-
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        session = sessions()
-        try:
-            yield session
-        finally:
-            await session.close()
-
-    monkeypatch.setattr(sessionmanager, "session", _session, raising=False)
+    sessions = async_sessionmaker(sqlite_engine, expire_on_commit=False)
+    bind_sessionmanager(sessions)
 
     async with sessions() as db:
         for uid, mail, role in (
@@ -101,7 +83,6 @@ async def factory(monkeypatch):
         await db.execute(text(f"INSERT INTO {SCHEMA}.admin_superadmin (user_id) VALUES (1)"))
         await db.commit()
     yield sessions
-    await engine.dispose()
 
 
 @pytest.fixture

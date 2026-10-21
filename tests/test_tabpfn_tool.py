@@ -180,6 +180,36 @@ class TestPredict:
         assert result["predictions"] == [1.5, 2.5]
         mk.assert_called_once_with("regression", "tok")
 
+    def test_large_regression_is_summarised(self):
+        n = 300
+        est = _fake_estimator(predict=[float(i) for i in range(n)])
+        with patch(_PATCH, return_value=est):
+            result = tool_tabpfn_predict(
+                task="regression",
+                train_features=X_TRAIN,
+                train_labels=[1.0, 2.0, 3.0],
+                test_features=[[0.1, 0.9]] * n,
+            )
+        assert result["n_test"] == n
+        assert len(result["predictions"]) == 200
+        assert result["predictions_truncated"] is True
+        assert result["summary"]["count"] == n
+        assert result["summary"]["max"] == 299.0
+
+    def test_large_probabilities_are_summarised(self):
+        n = 250
+        est = _fake_estimator(proba=[[0.2, 0.8]] * n, classes=["a", "b"])
+        with patch(_PATCH, return_value=est):
+            result = tool_tabpfn_predict(
+                train_features=X_TRAIN,
+                train_labels=Y_TRAIN,
+                test_features=[[0.1, 0.9]] * n,
+                output_type="probabilities",
+            )
+        assert len(result["probabilities"]) == 200
+        assert result["predictions_truncated"] is True
+        assert result["summary"]["predicted_class_counts"] == {"b": n}
+
     def test_sdk_error_mapped(self):
         with patch(_PATCH, side_effect=RuntimeError("401 invalid token")):
             result = tool_tabpfn_predict(

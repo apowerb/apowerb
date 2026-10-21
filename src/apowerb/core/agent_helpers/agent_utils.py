@@ -14,6 +14,7 @@ from apowerb.core.agent_helpers.default_llm import (
     resolve_model_credentials,
 )
 from apowerb.helpers.encryptor import decrypt_value_in_dict, dict_to_envvar
+from apowerb.helpers.model_names import default_api_base
 from apowerb.tools_store.tools_helpers import load_agent_tools_functions
 from apowerb.core.guardrails import (
     create_before_model_callback,
@@ -21,6 +22,8 @@ from apowerb.core.guardrails import (
     create_before_tool_callback,
     create_rag_before_model_callback,
 )
+from apowerb.core.tool_images import create_inline_tool_images_callback
+from apowerb.core.tool_declarations import slim_tool_declarations
 from apowerb.core.history_compaction import (
     create_strip_large_payloads_callback,
 )
@@ -32,6 +35,7 @@ from apowerb.core.agent_helpers.mcp_loader import (
     build_mcp_instruction_preamble,
     load_mcp_servers,
 )
+from apowerb.core.agent_helpers.chart_from_question_tool import bind_chart_from_question
 from apowerb.core.agent_helpers.llm_model_builder import (
     build_litellm_model,
     apply_output_schema,
@@ -55,6 +59,7 @@ from apowerb.core.agent_helpers.extras_loader import (
     inject_bi_dashboard_tools,
 )
 from apowerb.core.agent_helpers.chat_action_tools import (
+    DASHBOARD_CONTEXT_INSTRUCTION,
     INTERACTIVE_UI_INSTRUCTION,
     confirm_destructive,
     embed_chart,
@@ -97,6 +102,38 @@ def _should_inject_chat_action_tools(agent_details: dict) -> bool:
     Chat agents (``output_schema_name`` None or absent) keep all tools.
     """
     return not bool(agent_details.get("output_schema_name"))
+
+
+def _suppressed_auto_tools(superagent_template_id) -> frozenset:
+    """Auto-added tools the agent's SuperAgent template opts out of.
+
+    Read from the template's ``suppressed_auto_tools`` (BI templates list the
+    chat tools a BI agent never calls). Only the automatic addition is
+    skipped: the same tool configured in ``agent_tools`` is kept.
+    """
+    return frozenset(_template_setting(superagent_template_id, "suppressed_auto_tools", ()) or ())
+
+
+def _guardrails_block(agent_details: dict, tool_names) -> bool:
+    """True when the agent's guardrails ``blocked_tools`` names one of ``tool_names``."""
+    raw = agent_details.get("guardrails_config")
+    if not raw or raw in ("null", "None"):
+        return False
+    try:
+        config = json.loads(raw) if isinstance(raw, str) else raw
+        blocked = {str(t).strip().lower() for t in (config or {}).get("blocked_tools", [])}
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return any(name.lower() in blocked for name in tool_names)
+
+
+def _template_setting(superagent_template_id, key: str, default):
+    """A runtime setting of the agent's SuperAgent template, ``default`` without one."""
+    if not superagent_template_id:
+        return default
+    from apowerb.core.superagents import get_superagent_template
+
+    return (get_superagent_template(superagent_template_id) or {}).get(key, default)
 
 
 def _should_inject_dashboard_tool() -> bool:
@@ -397,21 +434,12 @@ def to_agent(agent_name: str) -> LlmAgent:
     logger.info(f"[TO_AGENT] Fetching agent details for ID: {agent_id}")
     agent_details = get_agent_details(agent_id=agent_id)
 
-    os.environ["ROOT_AGENT_ID"] = str(agent_id)  # Set AGENT_ID for tools that need it
     owner_id = agent_details.get("owner_id") or "unknown_user"
-    os.environ["AGENT_OWNER"] = owner_id  # Set AGENT_OWNER for tools that need it
-    os.environ["AGENT_ORGANIZATION_ID"] = agent_details.get(
-        "organization_id", "default"
-    )  # Set AGENT_ORGANIZATION_ID for BI tools
-    os.environ["AGENT_PROJECT_ID"] = agent_details.get(
-        "project_id", "thaink2"
-    )  # Set AGENT_PROJECT_ID for BI tools
 
-    # Per-invocation identity (async-safe). The env vars above stay as a
-    # fallback for background paths, but at RUN time owner-scoped tools read
-    # these ContextVars, bound below by a before_agent_callback, so two cached
-    # agents of two customers in the same worker no longer cross identities
-    # (measured 2026-09-29). See apowerb.core.invocation_context.
+    # Per-invocation identity (async-safe). Owner-scoped tools read these
+    # ContextVars, bound by a before_agent_callback at RUN time. Nothing is
+    # written to os.environ: a cached agent would otherwise leave its identity
+    # to any tool run without a binding. See apowerb.core.invocation_context.
     from apowerb.core.invocation_context import (
         make_identity_before_agent_callback,
     )
@@ -458,17 +486,8 @@ def to_agent(agent_name: str) -> LlmAgent:
     # load sub agents
     # Save parent env vars before recursive to_agent() calls overwrite them.
     # Sub-agent loading calls to_agent() recursively which overwrites global
-    # os.environ with the sub-agent's owner credentials.
+    # os.environ with the sub-agent's model and tool credentials.
     _ENVVARS_TO_SAVE = [
-        "ROOT_AGENT_ID",
-        "AGENT_OWNER",
-        "AGENT_ORGANIZATION_ID",
-        "AGENT_PROJECT_ID",
-        # Model API keys (overwritten by set_model_params_as_envvar in recursion)
-        "ANTHROPIC_API_KEY",
-        "OVHCLOUD_API_KEY",
-        "MISTRAL_API_KEY",
-        "MISTRAL_API_BASE",
         # Outlook/Microsoft token (overwritten by SuperAgent dict_to_envvar)
         "OUTLOOK_REFRESH_TOKEN",
         # DB vars — prevent sub-agent loading from corrupting parent's DB config
@@ -492,11 +511,11 @@ def to_agent(agent_name: str) -> LlmAgent:
             os.environ[_key] = _val
         else:
             os.environ.pop(_key, None)
-    logger.info(f"[TO_AGENT] Restored env vars for parent agent {agent_name} (owner={_saved_env.get('AGENT_OWNER')})")
+    logger.info(f"[TO_AGENT] Restored env vars for parent agent {agent_name} (owner={owner_id})")
 
-    # load and set agent parameters as env variables
-    logger.info(f"[TO_AGENT] Setting model params as env vars for {agent_name}")
-    set_model_params_as_envvar(agent_name=agent_name)
+    # The model key and endpoint go to the model as explicit api_key/api_base
+    # (build_litellm_model). Not to os.environ: litellm falls back to it for
+    # any call without them, whichever agent wrote it last.
 
     # Extract temperature from agent_model_params (if configured)
     _temperature = None
@@ -593,14 +612,22 @@ def to_agent(agent_name: str) -> LlmAgent:
 
         # Auto-add file reading tool — skip for RAG agents (they use the RAG API pipeline)
         _is_rag_template = is_rag_template(superagent_template_id)
-        tools_funcs = bind_read_uploaded_file(agent_name, tools_funcs, _is_rag_template)
+        tools_funcs = bind_read_uploaded_file(
+            agent_name, tools_funcs, _is_rag_template,
+            tabular_preview_rows=_template_setting(superagent_template_id, "tabular_file_preview_rows", 0),
+        )
 
         # Auto-add create_downloadable_file so the agent can generate files for download
         bind_create_downloadable_file(agent_name, tools_funcs)
 
-        # Auto-add pdf_to_images so the agent can render uploaded PDFs to
-        # base64 PNGs for vision-LLM analysis (scanned ARs, complex layouts...)
-        tools_funcs = bind_pdf_to_images(agent_name, tools_funcs)
+        # Auto-add pdf_to_images so the agent can look at uploaded PDFs
+        # (scanned ARs, complex layouts...); pages reach the model as images.
+        # A template may opt out of auto-added tools it never uses (BI agents):
+        # each declaration is re-sent with every model call.
+        _suppressed = _suppressed_auto_tools(superagent_template_id)
+        tools_funcs = bind_pdf_to_images(
+            agent_name, tools_funcs, add="tool_pdf_to_images" not in _suppressed
+        )
         tools_funcs = bind_pdf_first_page(agent_name, tools_funcs)
 
         # Bind tool_get_webhook_backlog_status to the integer agent id so
@@ -631,6 +658,15 @@ def to_agent(agent_name: str) -> LlmAgent:
         for _tool_name, _rebinder in _ext_registry.tool_rebinders().items():
             tools_funcs = _rebinder(agent_name, tools_ids, tools_funcs, owner_id)
 
+        # Query + saved chart in one call, for templates that opt in. After
+        # every rebind, so it wraps the agent's final tools; never when the
+        # guardrails block one of the two (the composite would bypass them).
+        tools_funcs = bind_chart_from_question(
+            agent_name, tools_funcs,
+            _template_setting(superagent_template_id, "chart_from_question", False)
+            and not _guardrails_block(agent_details, ("tool_text_to_sql", "tool_create_chart")),
+        )
+
         # Auto-add shared runtime tools. Vertex AI / Gemini rejects duplicate
         # function declarations, so we dedup by function __name__ against any
         # tool that was already loaded from the agent's own config.
@@ -644,6 +680,8 @@ def to_agent(agent_name: str) -> LlmAgent:
 
         def _add_auto_tool(fn):
             name = getattr(fn, "__name__", "")
+            if name in _suppressed:
+                return
             if name and name in _existing_names:
                 logger.debug(
                     f"[TO_AGENT] skipping auto-add of {name!r} for {agent_name} "
@@ -770,7 +808,12 @@ def to_agent(agent_name: str) -> LlmAgent:
         # Levier 1 : troncature historique (adapte au contexte 32k OVHcloud)
         # Chaine AVANT le strip-images : la troncature reduit le nombre de
         # messages, le strip nettoie ensuite les base64 dans les messages restants.
-        truncate_cb = create_truncate_history_callback(keep_recent=14)
+        truncate_cb = create_truncate_history_callback(
+            keep_recent=14,
+            keep_text_chars=int(
+                _template_setting(superagent_template_id, "keep_truncated_turn_text_chars", 0) or 0
+            ),
+        )
         if before_model_cb:
             _existing_for_truncate = before_model_cb
 
@@ -778,7 +821,9 @@ def to_agent(agent_name: str) -> LlmAgent:
                 *, callback_context, llm_request,
                 _trunc=truncate_cb, _ex=_existing_for_truncate
             ):
-                _trunc(callback_context=callback_context, llm_request=llm_request)
+                result = _trunc(callback_context=callback_context, llm_request=llm_request)
+                if result is not None:
+                    return result
                 return _ex(callback_context=callback_context, llm_request=llm_request)
 
             before_model_cb = chained_with_truncate
@@ -787,7 +832,12 @@ def to_agent(agent_name: str) -> LlmAgent:
                 return _trunc(callback_context=callback_context, llm_request=llm_request)
             before_model_cb = _truncate_only
 
-        strip_cb = create_strip_large_payloads_callback(agent_name)
+        strip_cb = create_strip_large_payloads_callback(
+            agent_name,
+            compact_previous_turns=bool(
+                _template_setting(superagent_template_id, "compact_previous_turn_results", False)
+            ),
+        )
         if before_model_cb:
             existing_cb2 = before_model_cb
 
@@ -797,10 +847,11 @@ def to_agent(agent_name: str) -> LlmAgent:
             ):
                 # Truncate EN PREMIER (levier principal) : reduit l'historique.
                 # Strip ensuite : nettoie les base64 dans les messages restants.
-                # Aucun des deux ne court-circuite l'autre (les deux retournent None).
-                _existing(callback_context=callback_context, llm_request=llm_request)
-                _strip(callback_context=callback_context, llm_request=llm_request)
-                return None
+                # Un LlmResponse rendu plus haut (garde-fou, RAG) court-circuite le modele.
+                result = _existing(callback_context=callback_context, llm_request=llm_request)
+                if result is not None:
+                    return result
+                return _strip(callback_context=callback_context, llm_request=llm_request)
 
             before_model_cb = chained_with_strip
         else:
@@ -808,6 +859,25 @@ def to_agent(agent_name: str) -> LlmAgent:
         logger.info(
             f"[TO_AGENT] history compaction (strip large payloads) attached for {agent_name}"
         )
+
+        # After the strip: attach the images that the latest tool results
+        # reference (pdf_to_images, read_uploaded_file...), and trim the tool
+        # declarations sent on every call.
+        images_cb = create_inline_tool_images_callback(agent_name)
+        _existing_for_images = before_model_cb
+
+        def chained_with_tool_images(
+            *, callback_context, llm_request,
+            _images=images_cb, _ex=_existing_for_images
+        ):
+            response = _ex(callback_context=callback_context, llm_request=llm_request)
+            if response is not None:
+                return response
+            _images(callback_context=callback_context, llm_request=llm_request)
+            slim_tool_declarations(llm_request)
+            return None
+
+        before_model_cb = chained_with_tool_images
 
         # Build LiteLlm model — pass temperature as kwarg if configured
         model = build_litellm_model(agent_details, _temperature)
@@ -827,6 +897,8 @@ def to_agent(agent_name: str) -> LlmAgent:
         # to call request_user_input instead of emitting the structured output.
         if _should_inject_chat_action_tools(agent_details):
             instruction = (instruction or "") + INTERACTIVE_UI_INSTRUCTION
+            if _should_inject_dashboard_tool():
+                instruction += DASHBOARD_CONTEXT_INSTRUCTION
 
         # Feature: Output Schema - inject output format instruction
         instruction = apply_output_schema(
@@ -928,6 +1000,7 @@ def to_agent(agent_name: str) -> LlmAgent:
                 _repair_model = agent_details.get("agent_model")
                 _repair_api_key = None
                 _repair_api_base = None
+                _repair_api_version = None
                 _repair_params = agent_details.get("agent_model_params") or {}
                 if isinstance(_repair_params, str):
                     try:
@@ -938,8 +1011,17 @@ def to_agent(agent_name: str) -> LlmAgent:
                     _repair_params = decrypt_value_in_dict(
                         _repair_params, values_to_decrypt=["model_api_key"]
                     )
+                    # thaink2/default: the server's credentials, as for the agent.
+                    _repair_model, _repair_params = resolve_model_credentials(
+                        _repair_model, _repair_params
+                    )
                     _repair_api_key = _repair_params.get("model_api_key")
-                    _repair_api_base = _repair_params.get("model_api_base")
+                    _repair_api_base = _repair_params.get(
+                        "model_api_base"
+                    ) or default_api_base(_repair_model or "")
+                    _repair_api_version = _repair_params.get(
+                        "model_api_version"
+                    ) or _repair_params.get("api_version")
                 agent_kwargs["after_agent_callback"] = (
                     build_validating_state_writer(
                         schema_class,
@@ -947,6 +1029,7 @@ def to_agent(agent_name: str) -> LlmAgent:
                         repair_model=_repair_model,
                         repair_api_key=_repair_api_key,
                         repair_api_base=_repair_api_base,
+                        repair_api_version=_repair_api_version,
                     )
                 )
                 logger.info(

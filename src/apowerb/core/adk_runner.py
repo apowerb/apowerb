@@ -384,6 +384,7 @@ async def stream_adk_agent(
     base_url: str = None,
     streaming: bool = True,
     token: str = None,
+    state_delta: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream SSE events from ADK agent in real-time, with automatic retry on
@@ -419,6 +420,8 @@ async def stream_adk_agent(
         "newMessage": new_message,
         "streaming": streaming,
     }
+    if state_delta:
+        payload["stateDelta"] = state_delta
 
     logger.info(f"[STREAM] Starting SSE stream to {url} for agent {agent_name}")
 
@@ -558,6 +561,7 @@ async def run_adk_agent(
     run_mode: str = "run",  # sse
     streaming=False,
     token: str = None,
+    state_delta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Run an ADK agent by making a POST request to the ADK endpoint.
@@ -592,6 +596,8 @@ async def run_adk_agent(
     }
     if run_mode == "run_sse":
         payload["streaming"] = streaming
+    if state_delta:
+        payload["stateDelta"] = state_delta
 
     # Added timeout to prevent hangs on heavy Mistral runs.
     # sock_read=900 matches the streaming path — heavy tool chains can take several minutes.

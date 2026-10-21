@@ -19,6 +19,10 @@ Input handling
   worker), so only the provider's own fetcher sees it.
 * a local file path — read from disk and sent inline as a base64 ``data:`` URL.
   This mirrors how ``audio.tool_speech_to_text`` accepts an uploaded file path.
+* the bare name of a file the user uploaded to the agent (``cv.pdf``, as shown
+  in ``[Uploaded files: …]``). The agent never knows where uploads live, so the
+  name is looked up in the root agent's upload store — S3 input artifacts or
+  ``uploads/agent{id}/`` on disk — the same places ``read_uploaded_file`` reads.
 
 Output is bounded: a huge scan can return megabytes of markdown (and, with
 ``include_images=True``, base64 image crops). The combined markdown is capped
@@ -42,6 +46,7 @@ from __future__ import annotations
 import base64
 import os
 import time
+from contextvars import ContextVar
 from logging import getLogger
 from pathlib import Path
 
@@ -68,9 +73,9 @@ _AZURE_POLL_INTERVAL_S = 1.5
 _AZURE_POLL_TIMEOUT_S = 120
 
 # Combined-markdown cap (characters). Keeps a 1000-page scan from blowing up the
-# host / LLM context; the per-page list is still returned, each page capped too.
-_MAX_MARKDOWN_CHARS = 1_000_000
-_MAX_PAGE_MARKDOWN_CHARS = 200_000
+# host / LLM context. The text is returned once (combined); ``pages`` only
+# carries per-page metadata.
+_MAX_MARKDOWN_CHARS = 50_000
 
 # Extension → (mime, chunk type). "image_url" for raster images, "document_url"
 # for everything the provider treats as a document.
@@ -98,25 +103,92 @@ def _is_remote(source: str) -> bool:
     return source.strip().lower().startswith(("http://", "https://"))
 
 
-def _read_supported_file(source: str) -> tuple[str, str, bytes]:
-    """Read a local file, validating it exists and is a supported type.
+def _read_uploaded_file(name: str) -> bytes | None:
+    """Bytes of the file ``name`` uploaded to the current root agent.
 
-    Returns ``(mime, chunk_type, raw_bytes)``. Raises ValueError for a
-    missing or unsupported file so the caller can report it as a fatal error.
+    Returns ``None`` when ``name`` is not a bare filename or no agent is bound
+    to the invocation, so the caller keeps its plain "File not found". Raises
+    ValueError when the agent has no such upload, listing what it does have so
+    the model can retry with the right name.
     """
-    if not os.path.isfile(source):
-        raise ValueError(
-            f"File not found: {source}. Provide a readable file path or an "
-            f"http(s) URL."
-        )
+    from apowerb.artifacts.agent_uploads import is_bare_filename, read_agent_upload
+    from apowerb.core.invocation_context import get_root_agent_id
+
+    root = get_root_agent_id()
+    if not is_bare_filename(name) or not root.isdigit():
+        return None
+
+    folder = f"agent{root}"
+    content, available = read_agent_upload(folder, name)
+    if content is None:
+        listing = f" Uploaded files: {', '.join(available)}." if available else ""
+        raise ValueError(f"File not found: {name} in {folder}.{listing}")
+    return content
+
+
+def _own_upload_path(source: str) -> Path | None:
+    """``source`` resolved, if it points into the running agent's uploads folder.
+
+    A path is accepted only when it resolves (links followed) directly inside
+    ``uploads/agent{root}/`` of the root agent running the tool; any other path,
+    or no agent bound, gives ``None``.
+    """
+    from apowerb.configs import paths
+    from apowerb.core.invocation_context import get_root_agent_id
+
+    root = get_root_agent_id()
+    if not root.isdigit():
+        return None
+    base = (paths.uploads_dir() / f"agent{root}").resolve()
+    resolved = Path(source).resolve()
+    return resolved if resolved.parent == base else None
+
+
+# File already vetted by a server-side caller (``ocr_trusted_file``), never by a
+# tool argument: the one extra path ``_read_supported_file`` accepts while set.
+_trusted_file: ContextVar[Path | None] = ContextVar("ocr_trusted_file", default=None)
+
+
+def _read_supported_file(source: str) -> tuple[str, str, bytes]:
+    """Read an upload of the running agent, validating it is supported.
+
+    ``source`` is the bare name of a file uploaded to the agent, or a path into
+    that agent's own uploads folder. Other paths are never opened. Returns
+    ``(mime, chunk_type, raw_bytes)``. Raises ValueError for a missing,
+    out-of-scope or unsupported file so the caller can report it as a fatal error.
+    """
+    from apowerb.artifacts.agent_uploads import is_bare_filename
+
+    not_found = ValueError(
+        f"File not found: {source}. Provide a readable file path or an "
+        f"http(s) URL."
+    )
     ext = Path(source).suffix.lower()
     if ext not in _DOC_TYPES:
         raise ValueError(
             f"Unsupported file type '{ext}'. Supported: {_SUPPORTED_EXTS}."
         )
     mime, chunk_type = _DOC_TYPES[ext]
-    with open(source, "rb") as fh:
-        return mime, chunk_type, fh.read()
+    if is_bare_filename(source):
+        name = source
+    else:
+        path = _own_upload_path(source)
+        trusted = _trusted_file.get()
+        if path is None and trusted is not None and Path(source).resolve() == trusted:
+            # Read from disk or fail: no lookup by name in an agent's uploads.
+            if not trusted.is_file():
+                raise not_found
+            path = trusted
+        if path is None:
+            raise not_found
+        if path.is_file():
+            # Staged copies live on local disk even with S3 storage.
+            return mime, chunk_type, path.read_bytes()
+        name = path.name
+    data = _read_uploaded_file(name)
+    if data is None:
+        raise not_found
+    return mime, chunk_type, data
 
 
 def _build_document_chunk(source: str) -> dict:
@@ -266,34 +338,42 @@ _PROVIDER_ORDER = ["mistral", "azure"]
 def _collect_pages(raw: dict, include_images: bool) -> tuple[list[dict], str, bool]:
     """Normalise a provider response into (pages, combined_markdown, truncated).
 
-    Each page is ``{"index", "markdown", "image_count"}`` (plus ``images`` when
-    requested). Both the per-page markdown and the combined string are capped.
+    Each page is ``{"index", "image_count"}``: the text lives only in the
+    combined string (capped), never duplicated per page. The image crops
+    (base64) are never returned; ``include_images`` only asks the provider for
+    them so ``image_count`` is meaningful.
     """
     pages_out: list[dict] = []
     combined_parts: list[str] = []
     truncated = False
 
     for page in raw.get("pages", []) or []:
-        md = page.get("markdown") or ""
-        if len(md) > _MAX_PAGE_MARKDOWN_CHARS:
-            md = md[:_MAX_PAGE_MARKDOWN_CHARS] + "\n...[page truncated]"
-            truncated = True
         images = page.get("images") or []
-        entry = {
-            "index": page.get("index"),
-            "markdown": md,
-            "image_count": len(images),
-        }
-        if include_images:
-            entry["images"] = images
-        pages_out.append(entry)
-        combined_parts.append(md)
+        pages_out.append(
+            {"index": page.get("index"), "image_count": len(images)}
+        )
+        combined_parts.append(page.get("markdown") or "")
 
     combined = "\n\n".join(combined_parts)
     if len(combined) > _MAX_MARKDOWN_CHARS:
         combined = combined[:_MAX_MARKDOWN_CHARS] + "\n...[output truncated]"
         truncated = True
     return pages_out, combined, truncated
+
+
+def ocr_trusted_file(path: str | Path, provider: str = "auto") -> dict:
+    """OCR one local file the caller has already vetted (owner, location).
+
+    For server code only, e.g. the workflow ``document`` node, which resolves an
+    attachment ref to a file outside any agent's uploads folder. The file is
+    trusted for the duration of this call only; same result shape as
+    ``tool_ocr_document``.
+    """
+    token = _trusted_file.set(Path(path).resolve())
+    try:
+        return tool_ocr_document(source=str(path), provider=provider)
+    finally:
+        _trusted_file.reset(token)
 
 
 def tool_ocr_document(
@@ -304,22 +384,24 @@ def tool_ocr_document(
     """Extract text from a document or image using OCR.
 
     Reads a PDF, Office document (PPTX/DOCX) or image and returns the recognised
-    text as markdown, one entry per page plus a combined string.
+    text as markdown in a single combined string (capped at 50,000 characters).
 
     Args:
         source (str): What to OCR. Either an ``http(s)`` URL (the provider fetches
-            it) or a path to a local file. Supported file types: PDF, PPTX, DOCX,
-            PNG, JPG/JPEG, AVIF.
+            it), the name of a file the user uploaded (e.g. "cv.pdf", exactly as
+            listed in [Uploaded files: …]), or a path to one of those uploads. Supported
+            file types: PDF, PPTX, DOCX, PNG, JPG/JPEG, AVIF.
         provider (str): Which OCR provider to use. Options: "auto" (tries available
             providers in order), "mistral" or "azure". Default: "auto".
-        include_images (bool): When true, include base64-encoded image crops that
-            the provider extracted from each page. Off by default to keep the
-            response small. Default: False.
+        include_images (bool): When true, ask the provider to extract image crops
+            from each page. The base64 crops are NOT returned (too large for the
+            model context); only their count per page (``image_count``) is.
+            Default: False.
 
     Returns:
         dict: On success, ``status`` "success", ``markdown`` (combined text),
-        ``pages`` (list of ``{index, markdown, image_count}``), ``page_count``,
-        ``provider_used``, ``model``, ``output_truncated``. On failure, ``status``
+        ``pages`` (list of ``{index, image_count}``, no text), ``page_count``,
+        ``provider_used``, ``model``, ``output_truncated`` (true if the text was cut). On failure, ``status``
         "error" with ``error_message`` (and the per-provider errors tried).
     """
     import httpx

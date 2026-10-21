@@ -18,9 +18,33 @@ from apowerb.core.agent_helpers.default_llm import (
 )
 from apowerb.core.agent_helpers.reasoning_strip import CleaningLiteLLMClient
 from apowerb.helpers.encryptor import decrypt_value_in_dict
+from apowerb.helpers.model_names import (
+    default_api_base,
+    is_edenai_model,
+    openai_compat_model_name,
+)
 
 
 logger = setup_logging(__name__)
+
+
+def litellm_call_kwargs(model: str, params: dict) -> dict:
+    """model / api_base / api_key / api_version to call litellm with for an agent.
+
+    The route build_litellm_model gives the agent, for direct litellm calls
+    (session title, JSON repair): ``params`` are the agent's resolved model
+    params (key decrypted, thaink2 default model already substituted).
+    """
+    api_base = params.get("model_api_base") or default_api_base(model)
+    kwargs: dict = {"model": openai_compat_model_name(model) if api_base else model}
+    if api_base:
+        kwargs["api_base"] = api_base
+    if params.get("model_api_key"):
+        kwargs["api_key"] = params["model_api_key"]
+    api_version = params.get("model_api_version") or params.get("api_version")
+    if api_version:
+        kwargs["api_version"] = api_version
+    return kwargs
 
 
 def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteLlm:
@@ -62,24 +86,16 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
         f"[TO_AGENT] model_api_base={'set' if model_api_base else 'not set'}, model_api_key={'set' if model_api_key else 'not set'}"
     )
 
-    # Default OVH Mistral endpoint, only for OVH catalog names
-    # (`mistral/Mistral-Small-3.2-24B-Instruct-2506`). Mistral API ids are
-    # lowercase (`mistral/mistral-large-latest`) and go to Mistral with the
-    # agent's key: routing them to OVH sent every Mistral model to OVH's
-    # Mistral Small (found 2026-10-08).
-    if not model_api_base and agent_details["agent_model"].startswith("mistral/Mistral-"):
-        model_api_base = "https://mistral-small-3-2-24b-instruct-2506.endpoints.kepler.ai.cloud.ovh.net/api/openai_compat/v1"
-        logger.info(
-            f"[TO_AGENT] Using default OVH Mistral endpoint: {model_api_base}"
-        )
+    # Endpoint que le prefixe du modele implique (catalogue OVH Mistral,
+    # passerelle Eden AI). Un `model_api_base` pose sur l'agent reste
+    # prioritaire, pour qu'un compte sur une autre region pointe le sien.
+    if not model_api_base:
+        model_api_base = default_api_base(agent_details["agent_model"])
+        if model_api_base:
+            logger.info(f"[TO_AGENT] Using default endpoint: {model_api_base}")
 
     if model_api_base:
-        _model_name = agent_details["agent_model"]
-        # When using a custom OpenAI-compat api_base, force the openai/ provider prefix
-        # so litellm uses the OpenAI tool-calling path instead of the Mistral SDK path.
-        # Azure AI Foundry has its own LiteLLM provider and must keep its prefix.
-        if not _model_name.startswith(("openai/", "azure_ai/")):
-            _model_name = "openai/" + _model_name.split("/", 1)[-1]
+        _model_name = openai_compat_model_name(agent_details["agent_model"])
         _endpoint_kwargs = {
             "api_base": model_api_base,
             "api_key": model_api_key,
@@ -154,6 +170,11 @@ def validate_agent_model(agent_model: str, agent_model_params=None, agent_type: 
                 "configures. Choisir un modele et fournir une cle API."
             )
         return
+    # Passerelle Eden AI : litellm ne connait pas le provider `edenai`, c'est
+    # une sentinelle que le builder resout en posant l'endpoint Eden AI. Sans
+    # cette ligne un agent edenai/ sans URL serait refuse a la creation.
+    if is_edenai_model(agent_model or ""):
+        return
     params = agent_model_params or {}
     if isinstance(params, str):
         try:
@@ -163,6 +184,15 @@ def validate_agent_model(agent_model: str, agent_model_params=None, agent_type: 
     if isinstance(params, dict) and params.get("model_api_base"):
         return  # endpoint custom OpenAI-compat -> valide par construction
     model = (agent_model or "").strip()
+    # Azure AI Foundry : chaque projet a son endpoint, il n'y a pas d'URL par
+    # defaut. litellm reconnait le provider, l'agent serait donc accepte puis
+    # en echec a chaque tour faute d'endpoint.
+    if model.startswith("azure_ai/") and not os.environ.get("AZURE_AI_API_BASE"):
+        raise ValueError(
+            "Azure AI Foundry demande l'URL du projet (model_api_base), ex "
+            "'https://<ressource>.services.ai.azure.com/models'. Le modele est "
+            "le nom du deploiement : 'azure_ai/<deploiement>'."
+        )
     try:
         from litellm import get_llm_provider
 

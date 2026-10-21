@@ -41,8 +41,9 @@ def _sql_executes(conn):
 
 
 def test_ajoute_les_colonnes_manquantes():
-    toutes = [n for n, _ in mod._COLONNES_AJOUTEES]
+    toutes = [n for n, _ in mod._COLONNES_AJOUTEES] + ["consumer"]
     engine, conn, inspector = _faux_moteur(["id", "user_id"])  # aucune des gerees
+    inspector.get_check_constraints.return_value = []
     with patch.object(mod, "create_engine", return_value=engine), \
          patch.object(mod, "inspect", return_value=inspector):
         mod.ensure_webhook_logs_columns()
@@ -50,12 +51,15 @@ def test_ajoute_les_colonnes_manquantes():
     sql = " ".join(_sql_executes(conn))
     for nom in toutes:
         assert f"ADD COLUMN IF NOT EXISTS {nom}" in sql, f"{nom} n'a pas ete ajoutee"
-    conn.commit.assert_called_once()
+    assert "ADD CONSTRAINT ck_webhook_logs_consumer" in sql
+    # consumer + sa contrainte (ensure_consumer_column), puis les autres colonnes.
+    assert conn.commit.call_count == 2
 
 
 def test_ne_touche_a_rien_quand_tout_est_la():
-    presentes = ["id", "user_id"] + [n for n, _ in mod._COLONNES_AJOUTEES]
+    presentes = ["id", "user_id", "consumer"] + [n for n, _ in mod._COLONNES_AJOUTEES]
     engine, conn, inspector = _faux_moteur(presentes)
+    inspector.get_check_constraints.return_value = [{"name": "ck_webhook_logs_consumer"}]
     with patch.object(mod, "create_engine", return_value=engine), \
          patch.object(mod, "inspect", return_value=inspector):
         mod.ensure_webhook_logs_columns()

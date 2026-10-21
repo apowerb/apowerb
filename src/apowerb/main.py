@@ -770,6 +770,14 @@ from apowerb.configs.observability import (  # noqa: E402
     flush_observability,
 )
 
+# Same moment, same reason: Langfuse attaches to the tracer provider ADK
+# installs at server startup. Earlier, it would install its own and ADK's
+# would be refused.
+from apowerb.configs.langfuse_tracing import (  # noqa: E402
+    enable_langfuse_tracing,
+    flush_langfuse_tracing,
+)
+
 _inner_lifespan = getattr(app.router, "lifespan_context", None)
 
 
@@ -805,6 +813,7 @@ async def _wrapped_lifespan(scope_app):
         try:
             async with _inner_lifespan(scope_app):
                 bridge_logs_to_collector()
+                enable_langfuse_tracing()
                 await _start_webhook_renewal()
                 yield
         except TypeError:
@@ -813,15 +822,18 @@ async def _wrapped_lifespan(scope_app):
             # before giving up.
             async with _inner_lifespan():
                 bridge_logs_to_collector()
+                enable_langfuse_tracing()
                 await _start_webhook_renewal()
                 yield
     else:
         bridge_logs_to_collector()
+        enable_langfuse_tracing()
         await _start_webhook_renewal()
         yield
     # Records are batched: without this the last window is lost, and that is
     # exactly the window explaining why the process is going away.
     flush_observability()
+    flush_langfuse_tracing()
     print("[STARTUP HOOK via lifespan wrapper] exited", flush=True)
 
 

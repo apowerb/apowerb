@@ -36,7 +36,8 @@ class WebhookSubscriptionResponse(BaseModel):
     subscription_id: str | None
     resource: str
     change_type: str
-    agent_id: int
+    consumer: str = "agent"  # who handles the mail: "agent" | "workflow"
+    agent_id: int | None  # set iff consumer == "agent"
     agent_message_template: str | None
     status: str
     expiration_datetime: str | None

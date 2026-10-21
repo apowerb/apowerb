@@ -7,9 +7,20 @@ par ``POST /api/workflows/{run_id}/cancel`` comme un run de canvas.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from nanoid import generate as nanoid_generate
 from pydantic import BaseModel
 
@@ -22,6 +33,8 @@ from apowerb.routers.workflows import _streaming_run, logger
 from apowerb.users import schemas as user_schemas
 
 router = APIRouter(prefix="/workflows/defs", tags=["workflows"])
+
+_MAX_SIMULATED_FILES = 10
 
 
 class WorkflowCreate(BaseModel):
@@ -216,10 +229,73 @@ async def run_workflow(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Exécute la version courante côté serveur et diffuse ses événements (SSE)."""
+    return await _run_current_version(
+        workflow_id, body.payload, current_user.email, trigger="workflow"
+    )
+
+
+@router.post("/{workflow_id}/simulate-email")
+async def simulate_email(
+    workflow_id: str,
+    sender: str = Form(..., alias="from"),
+    subject: str = Form(""),
+    body: str = Form(""),
+    to: str = Form(""),
+    files: list[UploadFile] = File(default=[]),
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Lance le workflow comme si ce mail venait d'arriver (SSE).
+
+    Même enveloppe que le trigger ``email`` (``workflow_email_triggers.
+    email_envelope``) : les pièces jointes sont enregistrées pour le
+    demandeur et n'apparaissent que sous forme de ``ref`` opaque. Sert à
+    tester un workflow mail sans boîte branchée ; la version courante
+    (brouillon compris) s'exécute, comme ``POST /run``.
+    """
+    from apowerb.core import workflow_attachments
+    from apowerb.core.workflow_email_triggers import email_envelope
+
+    owner = current_user.email
+    if workflow_main.get_workflow(workflow_id, owner_id=owner) is None:
+        raise _not_found(workflow_id)
+    if len(files) > _MAX_SIMULATED_FILES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"{_MAX_SIMULATED_FILES} pièces jointes au plus",
+        )
+    attachments = []
+    for upload in files:
+        data = await upload.read(workflow_attachments.MAX_ATTACHMENT_BYTES + 1)
+        try:
+            attachments.append(
+                workflow_attachments.store(
+                    owner, upload.filename or "", upload.content_type or "", data
+                )
+            )
+        except workflow_attachments.AttachmentError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"code": exc.code, "message": str(exc)},
+            ) from exc
+    payload = email_envelope(
+        sender=sender,
+        to=to,
+        subject=subject,
+        body=body,
+        received_at=datetime.now(timezone.utc).isoformat(),
+        attachments=attachments,
+    )
+    return await _run_current_version(
+        workflow_id, payload, owner, trigger="workflow_simulated_email"
+    )
+
+
+async def _run_current_version(
+    workflow_id: str, payload: Any, owner: str, *, trigger: str
+):
     from apowerb.core import workflow_runtime
     from apowerb.core.run_gate import resolve_owner_plan
 
-    owner = current_user.email
     wf = workflow_main.get_workflow(workflow_id, owner_id=owner)
     if wf is None:
         raise _not_found(workflow_id)
@@ -246,13 +322,13 @@ async def run_workflow(
     run_id = nanoid_generate(size=21)
     try:
         run_id = run_main.start_run(
-            trigger="workflow",
+            trigger=trigger,
             owner_id=owner,
             run_id=run_id,
             config={
                 "workflow_id": workflow_id,
                 "version": wf["version"],
-                "payload": body.payload,
+                "payload": payload,
             },
         )
     except Exception:  # noqa: BLE001 - même politique que /run-sse
@@ -263,7 +339,7 @@ async def run_workflow(
     def _runner(cancel_event):
         return run_graph(
             graph,
-            payload=body.payload,
+            payload=payload,
             run_agent=run_agent,
             run_tool=run_tool,
             run_rag=run_rag,
@@ -271,6 +347,7 @@ async def run_workflow(
             workflow_id=workflow_id,
             cancel_event=cancel_event,
             run_notify=run_notify,
+            services=workflow_runtime.services_for(owner),
         )
 
     return _streaming_run(

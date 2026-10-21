@@ -4,6 +4,8 @@ from decimal import Decimal
 from datetime import datetime, date
 from logging import getLogger
 
+from apowerb.tools_store.tool_env import config_env
+
 logger = getLogger(__name__)
 
 
@@ -66,24 +68,47 @@ def _serialize_row(row: dict) -> dict:
     return result
 
 
+# ── Tool Box param discovery (scan-time only, never at query time) ────────────
+# The connection reads its settings with config_env; these literals let the
+# Tool Box scanner (tool_manager._GETENV_PATTERN) still list them.
+def _tool_box_param_discovery() -> list:  # pragma: no cover - never called
+    return [
+        os.getenv("DB_TYPE", "postgresql"),
+        os.getenv("DB_HOST", "localhost"),
+        os.getenv("DB_PORT", "3306"),
+        os.getenv("DB_NAME"),
+        os.getenv("DB_USER"),
+        os.getenv("DB_PASSWORD"),
+        os.getenv("DB_ODBC_DRIVER", "ODBC Driver 18 for SQL Server"),
+        os.getenv("DB_ENCRYPT", "no"),
+        os.getenv("DB_TRUST_SERVER_CERTIFICATE", "yes"),
+        os.getenv("DB_ALLOWED_OPS"),
+        os.getenv("DB_SCHEMA", "public"),
+    ]
+
+
 def _get_db_type() -> str:
-    return os.getenv("DB_TYPE", "postgresql").lower()
+    return config_env("DB_TYPE", "postgresql").lower()
 
 
 def _get_connection():
-    host = os.getenv("DB_HOST", "localhost")
-    database = os.getenv("DB_NAME")
-    user = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
+    """Connect with the active tool_config's DB_* params, never the worker's own."""
+    host = config_env("DB_HOST", "localhost")
+    database = config_env("DB_NAME")
+    user = config_env("DB_USER")
+    password = config_env("DB_PASSWORD")
 
     if not all([database, user, password]):
-        raise ValueError("Missing required database credentials (DB_NAME, DB_USER, DB_PASSWORD)")
+        raise ValueError(
+            "No database configured: attach a database tool_config "
+            "(DB_NAME, DB_USER, DB_PASSWORD) to this tool"
+        )
 
     db_type = _get_db_type()
 
     if db_type == "mysql":
         import pymysql
-        port = int(os.getenv("DB_PORT", "3306"))
+        port = int(config_env("DB_PORT", "3306"))
         return pymysql.connect(
             host=host, port=port, database=database,
             user=user, password=password,
@@ -91,10 +116,10 @@ def _get_connection():
         )
     elif db_type in ("mssql", "sqlserver"):
         import pyodbc
-        port = int(os.getenv("DB_PORT", "1433"))
-        driver = os.getenv("DB_ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
-        encrypt = os.getenv("DB_ENCRYPT", "no")  # LAN/VPN by default
-        trust = os.getenv("DB_TRUST_SERVER_CERTIFICATE", "yes")
+        port = int(config_env("DB_PORT", "1433"))
+        driver = config_env("DB_ODBC_DRIVER", "ODBC Driver 18 for SQL Server")
+        encrypt = config_env("DB_ENCRYPT", "no")  # LAN/VPN by default
+        trust = config_env("DB_TRUST_SERVER_CERTIFICATE", "yes")
         conn_str = (
             f"DRIVER={{{driver}}};"
             f"SERVER={host},{port};DATABASE={database};"
@@ -105,7 +130,7 @@ def _get_connection():
     else:
         # Default: PostgreSQL
         import psycopg2
-        port = int(os.getenv("DB_PORT", "5432"))
+        port = int(config_env("DB_PORT", "5432"))
         # The dict cursor is chosen per cursor (_get_cursor): psycopg2's
         # connection type has no __dict__, so it cannot carry extra attributes.
         return psycopg2.connect(
@@ -141,6 +166,11 @@ _NEVER_ALLOWED_OPS: tuple[str, ...] = (
 )
 
 
+_SCHEMA_HINT = (
+    " Check table and column names with tool_get_database_schema, then fix the query."
+)
+
+
 def _execute_and_format(conn, cursor, sql_stripped: str, db_type: str | None) -> dict:
     """Execute the prepared statement and return a tool-friendly dict.
 
@@ -168,25 +198,28 @@ def _execute_and_format(conn, cursor, sql_stripped: str, db_type: str | None) ->
                 "[SQL] SQL_MAX_ROWS=%r invalide, fallback sur 150", _sql_max_rows_raw
             )
             max_rows = 150
-        if len(rows) > max_rows:
+        truncated = len(rows) > max_rows
+        if truncated:
             logger.warning("[SQL] result truncated %d->%d rows", len(rows), max_rows)
             rows = rows[:max_rows]
         cursor.close()
         serialized = [_serialize_row(dict(r)) for r in rows]
-        return {
+        result = {
             "success": True,
-            "sql": sql_stripped,
             "db_type": db_type,
             "row_count": len(serialized),
             "data": serialized,
         }
+        if truncated:
+            result["truncated"] = True
+            result["row_limit"] = max_rows
+        return result
 
     affected = cursor.rowcount
     cursor.close()
     conn.commit()
     return {
         "success": True,
-        "sql": sql_stripped,
         "db_type": db_type,
         "operation": op,
         "rows_affected": affected,
@@ -268,17 +301,18 @@ def tool_run_sql(sql: str) -> dict:
     Returns:
         dict: {
             "success": bool,
-            "sql": str,
             "row_count": int,
             "data": list[dict],
-            "error": str  # only on failure
+            "truncated": bool,  # only when SQL_MAX_ROWS (default 150) cut the rows
+            "row_limit": int,   # the cap that applied, with "truncated"
+            "error": str  # only on failure (the failing "sql" is echoed back)
         }
     """
     try:
         sql_stripped = sql.strip()
         db_type = _get_db_type()
 
-        allowed_ops = _parse_allowed_ops(os.getenv("DB_ALLOWED_OPS"))
+        allowed_ops = _parse_allowed_ops(config_env("DB_ALLOWED_OPS"))
         err = _validate_sql_against_whitelist(sql_stripped, allowed_ops)
         if err is not None:
             return err
@@ -288,7 +322,7 @@ def tool_run_sql(sql: str) -> dict:
             cursor = _get_cursor(conn)
 
             if db_type == "postgresql":
-                db_schema = os.getenv("DB_SCHEMA", "public")
+                db_schema = config_env("DB_SCHEMA", "public")
                 cursor.execute(f'SET search_path TO "{db_schema}", public')
 
             return _execute_and_format(conn, cursor, sql_stripped, db_type)
@@ -298,7 +332,7 @@ def tool_run_sql(sql: str) -> dict:
     except ValueError as e:
         return {"success": False, "sql": sql, "error": str(e)}
     except Exception as e:
-        return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}"}
+        return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}.{_SCHEMA_HINT}"}
 
 
 def tool_db(table_name: str, limit: int = 10):
@@ -359,7 +393,8 @@ def make_database_tools(
     """Return tool_run_sql and tool_db bound to specific DB credentials.
 
     If db_params is provided, the tools use those credentials directly
-    (no os.environ dependency). If db_params is None, falls back to os.environ.
+    (no os.environ dependency). If db_params is None, they connect only with
+    the DB_* params of an active tool_config (see ``_get_connection``).
 
     When ``name_suffix`` is non-empty, the returned closures are renamed to
     ``tool_run_sql_<suffix>`` / ``tool_db_<suffix>``. This is required when an
@@ -426,8 +461,8 @@ def make_database_tools(
         _bound_get_cursor = _get_cursor
         bound_db_type = None
         bound_db_schema = None
-        bound_allowed_ops = _parse_allowed_ops(os.getenv("DB_ALLOWED_OPS"))
-        db_status = "no DB configured — using env vars"
+        bound_allowed_ops = _parse_allowed_ops(config_env("DB_ALLOWED_OPS"))
+        db_status = "no DB configured — tool_config params only"
 
     logger.info(
         "[DATABASE] make_database_tools agent=%s %s allowed_ops=%s",
@@ -454,10 +489,11 @@ def make_database_tools(
         Returns:
             dict: {
                 "success": bool,
-                "sql": str,
                 "row_count": int,
                 "data": list[dict],
-                "error": str  # only on failure
+                "truncated": bool,  # only when SQL_MAX_ROWS (default 150) cut the rows
+                "row_limit": int,   # the cap that applied, with "truncated"
+                "error": str  # only on failure (the failing "sql" is echoed back)
             }
         """
         try:
@@ -482,7 +518,7 @@ def make_database_tools(
                 cursor = _bound_get_cursor(conn)
 
                 if db_type == "postgresql":
-                    db_schema = bound_db_schema or os.getenv("DB_SCHEMA", "public")
+                    db_schema = bound_db_schema or config_env("DB_SCHEMA", "public")
                     cursor.execute(f'SET search_path TO "{db_schema}", public')
 
                 return _execute_and_format(conn, cursor, sql_stripped, db_type)
@@ -492,7 +528,7 @@ def make_database_tools(
         except ValueError as e:
             return {"success": False, "sql": sql, "error": str(e)}
         except Exception as e:
-            return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}"}
+            return {"success": False, "sql": sql, "error": f"Unexpected error: {str(e)}.{_SCHEMA_HINT}"}
 
     def tool_db(table_name: str, limit: int = 10) -> dict:
         """

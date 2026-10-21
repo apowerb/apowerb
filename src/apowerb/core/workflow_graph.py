@@ -106,6 +106,8 @@ NodeType = Literal[
     "rag",
     "http",
     "notification",
+    "document",
+    "db_write",
 ]
 CONVERT_TARGETS = ("text", "json", "number", "boolean", "list", "csv", "date")
 EXTRACT_FIELD_TYPES = ("string", "number", "boolean", "list", "object")
@@ -211,6 +213,27 @@ RunRag = Callable[[str, str, int], Awaitable[dict]]
 # Résolu côté routeur (mêmes droits que pour lancer ce workflow directement) ;
 # ``None`` si l'appelant ne trouve pas — ou ne peut pas voir — ce workflow_id.
 ResolveWorkflow = Callable[[str], Awaitable[Optional["WorkflowGraph"]]]
+
+
+class NodeServices(BaseModel):
+    """Services des nœuds ``document``, ``classifier`` (moteur Jev) et
+    ``db_write``, construits pour UN propriétaire par
+    ``workflow_runtime.services_for`` — ce module ne sait ni lire une pièce
+    jointe, ni joindre Jev, ni ouvrir une connexion.
+
+    * ``document(ref)`` -> ``{"name", "text", "page_count"}`` : ref opaque
+      d'une pièce jointe (``workflow_attachments``), propriétaire contrôlé ;
+    * ``jev_classify(labels, text, instructions, min_confidence)`` ->
+      ``{"label", "confidence", "uncertain", "best_guess"}`` ;
+    * ``db_write(connection, table, row)`` -> ``{"inserted"}`` : valeurs
+      liées, jamais concaténées dans le SQL.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    document: Optional[Callable[[str], Awaitable[dict]]] = None
+    jev_classify: Optional[Callable[[dict, str, str, float], Awaitable[dict]]] = None
+    db_write: Optional[Callable[[str, str, dict], Awaitable[dict]]] = None
 
 
 class UpstreamArgs(dict):
@@ -379,6 +402,35 @@ def _rule_subject(rule: dict, scope: dict, node_id: str, default: Any) -> Any:
     return render(field, scope, node_id)
 
 
+_ON_ERROR = ("fail", "continue")
+_CLASSIFIER_ENGINES = ("agent", "jev")
+_UNCERTAIN = "uncertain"
+_DEFAULT_MIN_CONFIDENCE = 0.7
+MAX_DOCUMENT_FILES = 10
+MAX_DB_WRITE_COLUMNS = 50
+_SQL_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+_TOOL_CONFIG_REF = re.compile(r"^tool_config\d+$")
+_MAX_REPORTED_ERROR = 500
+
+
+def tool_reported_error(result: Any) -> Optional[str]:
+    """Le message d'erreur qu'un outil renvoie DANS son résultat, sinon ``None``.
+
+    Les outils du portfolio ne lèvent presque jamais : ils renvoient
+    ``{"status": "error", ...}`` ou ``{"success": False, ...}``. Seules ces deux
+    formes exactes comptent ; tout autre résultat est un succès.
+    """
+    if not isinstance(result, dict):
+        return None
+    if result.get("status") != "error" and result.get("success") is not False:
+        return None
+    for key in ("error_message", "message", "error"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:_MAX_REPORTED_ERROR]
+    return "erreur sans message"
+
+
 def evaluate_rule(rule: dict, value: Any) -> bool:
     op, expected = rule.get("op", "eq"), rule.get("value")
     if op == "exists":
@@ -413,7 +465,10 @@ def _declared_routes(node: Node) -> set[str]:
         return {"ok", "error"}
     if node.type == "condition":
         return {"true", "false"}
-    return {r.get("route") for r in cfg.get("routes") or [] if r.get("route")}
+    routes = {r.get("route") for r in cfg.get("routes") or [] if r.get("route")}
+    if node.type == "classifier" and cfg.get("engine") == "jev":
+        routes.add(_UNCERTAIN)
+    return routes
 
 
 def _body_graph(
@@ -946,6 +1001,8 @@ _FIXED_OUTPUT_KEYS = {
     "rag": {"query", "passages"},
     "http": {"status", "headers", "body"},
     "notification": {"channel", "sent"},
+    "document": {"documents", "text", "count"},
+    "db_write": {"table", "inserted"},
 }
 
 
@@ -1267,12 +1324,30 @@ def validate_node(
     cfg = n.config
     if n.type in _NOT_YET:
         raise GraphError(f"{n.id} : le type {n.type} n'est pas encore exécutable")
-    if n.type in ("agent", "classifier", "extract", "rag") and not cfg.get(
-        "agent_id"
+    if n.type == "classifier":
+        _validate_classifier(n)
+    jev_classifier = n.type == "classifier" and cfg.get("engine") == "jev"
+    if (
+        n.type in ("agent", "classifier", "extract", "rag")
+        and not jev_classifier
+        and not cfg.get("agent_id")
     ):
         raise GraphError(f"{n.id} : agent_id manquant")
+    if n.type == "document":
+        files = cfg.get("files")
+        if not isinstance(files, str) or not files.strip():
+            raise GraphError(
+                f"{n.id} : files manquant (ex. {{{{trigger.attachments}}}})"
+            )
+    if n.type == "db_write":
+        _validate_db_write(n)
     if n.type == "tool" and not cfg.get("tool"):
         raise GraphError(f"{n.id} : outil manquant")
+    if n.type == "tool" and cfg.get("on_error", "fail") not in _ON_ERROR:
+        raise GraphError(
+            f"{n.id} : on_error inconnu {cfg.get('on_error')!r} "
+            f"(attendu : {', '.join(_ON_ERROR)})"
+        )
     if n.type == "router" and not cfg.get("rules"):
         raise GraphError(f"{n.id} : aucune règle de routage")
     if n.type == "classifier" and len(_declared_routes(n)) < 2:
@@ -1407,6 +1482,95 @@ def validate_node(
             if not cfg.get("subject"):
                 raise GraphError(f"{n.id} : subject manquant")
 
+
+
+def _validate_classifier(n: Node) -> None:
+    cfg = n.config
+    engine = cfg.get("engine", "agent")
+    if engine not in _CLASSIFIER_ENGINES:
+        raise GraphError(
+            f"{n.id} : engine inconnu {engine!r} "
+            f"(attendu : {', '.join(_CLASSIFIER_ENGINES)})"
+        )
+    if engine != "jev":
+        return
+    routes = cfg.get("routes") or []
+    for r in routes:
+        if r.get("route") == _UNCERTAIN:
+            raise GraphError(
+                f"{n.id} : la route {_UNCERTAIN!r} est réservée (cas incertain de Jev)"
+            )
+        desc = r.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            raise GraphError(
+                f"{n.id} : route {r.get('route')!r} sans description "
+                "(Jev classe d'après les descriptions)"
+            )
+    mc = cfg.get("min_confidence", _DEFAULT_MIN_CONFIDENCE)
+    if isinstance(mc, bool) or not isinstance(mc, (int, float)) or not 0 < mc <= 1:
+        raise GraphError(f"{n.id} : min_confidence doit être un nombre dans ]0, 1]")
+
+
+def _validate_db_write(n: Node) -> None:
+    cfg = n.config
+    conn = cfg.get("connection")
+    if not isinstance(conn, str) or not _TOOL_CONFIG_REF.match(conn):
+        raise GraphError(
+            f"{n.id} : connection doit désigner une connexion base enregistrée "
+            "(tool_config<id>), jamais une URL ou des identifiants"
+        )
+    table = cfg.get("table")
+    parts = table.split(".") if isinstance(table, str) else []
+    if not 1 <= len(parts) <= 2 or not all(_SQL_IDENT.match(p) for p in parts):
+        raise GraphError(
+            f"{n.id} : table invalide {table!r} (nom ou schema.nom, lettres, "
+            "chiffres et _)"
+        )
+    values = cfg.get("values")
+    if not isinstance(values, dict) or not 1 <= len(values) <= MAX_DB_WRITE_COLUMNS:
+        raise GraphError(
+            f"{n.id} : values doit associer de 1 à {MAX_DB_WRITE_COLUMNS} "
+            "colonnes à leur valeur"
+        )
+    for col in values:
+        if not isinstance(col, str) or not _SQL_IDENT.match(col):
+            raise GraphError(f"{n.id} : nom de colonne invalide {col!r}")
+
+
+def _document_refs(node_id: str, files: Any) -> list[str]:
+    """Les refs de pièces jointes désignées par ``files`` une fois rendu :
+    une ref, un objet ``{"ref": …}`` ou une liste de l'un ou l'autre."""
+    items = files if isinstance(files, list) else [files]
+    items = [i for i in items if i not in (None, "")]
+    if not items:
+        raise GraphError(
+            f"{node_id} : aucune pièce jointe à lire",
+            code="document_no_file",
+            params={"node": node_id},
+        )
+    if len(items) > MAX_DOCUMENT_FILES:
+        raise GraphError(
+            f"{node_id} : {len(items)} pièces jointes, max {MAX_DOCUMENT_FILES}",
+            code="document_too_many",
+            params={"node": node_id, "max": str(MAX_DOCUMENT_FILES)},
+        )
+    refs = []
+    for item in items:
+        ref = item.get("ref") if isinstance(item, dict) else item
+        if not isinstance(ref, str) or not ref.strip():
+            raise GraphError(
+                f"{node_id} : élément sans référence de pièce jointe ({str(item)[:80]!r})",
+                code="document_bad_ref",
+                params={"node": node_id},
+            )
+        refs.append(ref.strip())
+    return refs
+
+
+def _db_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def validate_graph(
@@ -1633,7 +1797,9 @@ class _Compiler:
         run_subworkflow: Optional["ResolveWorkflow"] = None,
         workflow_stack: tuple[str, ...] = (),
         depth: int = 1,
+        services: Optional[NodeServices] = None,
     ):
+        self.services = services or NodeServices()
         self.g = graph
         self.payload = payload
         self.run_agent = run_agent
@@ -1651,6 +1817,86 @@ class _Compiler:
         self.workflow_stack = workflow_stack
         self.depth = depth
         self.outputs: dict[str, Any] = {}
+
+    def _service(self, node: Node, name: str):
+        fn = getattr(self.services, name)
+        if fn is None:
+            raise GraphError(
+                f"{node.id} : service {name} indisponible sur ce serveur",
+                code="service_unavailable",
+                params={"node": node.id, "service": name},
+            )
+        return fn
+
+    async def _read_documents(self, node: Node) -> dict:
+        read = self._service(node, "document")
+        refs = _document_refs(node.id, render(node.config["files"], self.outputs, node.id))
+        documents = []
+        for ref in refs:
+            doc = await read(ref)
+            documents.append(
+                {
+                    "name": doc.get("name"),
+                    "ref": ref,
+                    "text": doc.get("text") or "",
+                    "page_count": doc.get("page_count"),
+                }
+            )
+        return {
+            "documents": documents,
+            "text": "\n\n".join(d["text"] for d in documents),
+            "count": len(documents),
+        }
+
+    async def _classify_jev(self, node: Node, node_input: Any) -> tuple[Any, str]:
+        cfg = node.config
+        classify = self._service(node, "jev_classify")
+        if cfg.get("text") is not None:
+            text = render(cfg["text"], self.outputs, node.id)
+            text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False, default=str)
+        else:
+            text = leaf_message(node_input)
+        if not text or not text.strip():
+            raise GraphError(
+                f"{node.id} : rien à classer (texte d'entrée vide)",
+                code="classifier_empty_input",
+                params={"node": node.id},
+            )
+        routes = cfg["routes"]
+        result = await classify(
+            {r["route"]: r["description"] for r in routes},
+            text,
+            cfg.get("instructions") or "",
+            float(cfg.get("min_confidence", _DEFAULT_MIN_CONFIDENCE)),
+        )
+        if result.get("uncertain"):
+            if any(e.source == node.id and e.route == _UNCERTAIN for e in self.g.edges):
+                return node_input, _UNCERTAIN
+            raise GraphError(
+                f"{node.id} : Jev hésite (meilleure route {result.get('best_guess')!r}, "
+                f"confiance {result.get('confidence')}) et aucune route "
+                f"{_UNCERTAIN!r} n'est branchée",
+                code="classifier_uncertain",
+                params={"node": node.id, "best_guess": str(result.get("best_guess"))},
+            )
+        label = result.get("label")
+        if label not in {r["route"] for r in routes}:
+            raise GraphError(
+                f"{node.id} : réponse du classifieur hors routes : {str(label)[:80]!r}",
+                code="classifier_no_route",
+                params={"node": node.id, "routes": ", ".join(r["route"] for r in routes)},
+            )
+        return node_input, label
+
+    async def _db_write(self, node: Node) -> dict:
+        cfg = node.config
+        write = self._service(node, "db_write")
+        row = {
+            col: _db_value(render(tpl, self.outputs, node.id))
+            for col, tpl in cfg["values"].items()
+        }
+        result = await write(cfg["connection"], cfg["table"], row)
+        return {"table": cfg["table"], "inserted": result.get("inserted", 0)}
 
     def _wrap(self, node: Node, body):
         async def _fn(node_input: Any) -> Any:
@@ -1734,7 +1980,20 @@ class _Compiler:
                     args = UpstreamArgs(
                         node_input if isinstance(node_input, dict) else {}
                     )
-                return await self.run_tool(cfg["tool"], args), None
+                result = await self.run_tool(cfg["tool"], args)
+                if cfg.get("on_error", "fail") == "fail":
+                    reported = tool_reported_error(result)
+                    if reported is not None:
+                        raise GraphError(
+                            f"{node.id} : l'outil a signalé une erreur : {reported}",
+                            code="tool_reported_error",
+                            params={
+                                "node": node.id,
+                                "tool": cfg["tool"],
+                                "message": reported,
+                            },
+                        )
+                return result, None
         elif node.type == "router":
 
             async def body(node_input):
@@ -1750,6 +2009,18 @@ class _Compiler:
                     code="no_route",
                     params={"node": node.id},
                 )
+        elif node.type == "classifier" and cfg.get("engine") == "jev":
+
+            async def body(node_input):
+                return await self._classify_jev(node, node_input)
+        elif node.type == "document":
+
+            async def body(node_input):
+                return await self._read_documents(node), None
+        elif node.type == "db_write":
+
+            async def body(node_input):
+                return await self._db_write(node), None
         elif node.type == "classifier":
 
             async def body(node_input):
@@ -2024,6 +2295,7 @@ class _Compiler:
             self.cancel,
             run_rag=self.run_rag,
             run_notify=self.run_notify,
+            services=self.services,
             run_subworkflow=self.run_subworkflow,
             workflow_stack=self.workflow_stack
             if workflow_stack is None
@@ -2185,6 +2457,7 @@ async def run_graph(
     run_subworkflow: Optional[ResolveWorkflow] = None,
     workflow_id: Optional[str] = None,
     run_notify: Optional[RunNotify] = None,
+    services: Optional[NodeServices] = None,
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
 
@@ -2220,6 +2493,7 @@ async def run_graph(
         cancel_event,
         run_rag=run_rag,
         run_notify=run_notify,
+        services=services,
         run_subworkflow=run_subworkflow,
         workflow_stack=(workflow_id,) if workflow_id else (),
     )

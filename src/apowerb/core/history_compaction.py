@@ -13,6 +13,7 @@ the source of truth.
 
 from __future__ import annotations
 
+import json
 from logging import getLogger
 from typing import Optional
 
@@ -47,13 +48,86 @@ def _strip_payload(obj) -> int:
     return dropped
 
 
-def create_strip_large_payloads_callback(agent_name: str):
+# Résultats d'outils des tours précédents (compact_previous_turns).
+_PREVIOUS_TURN_MAX_CHARS = 1500
+_KEPT_VALUE_MAX_CHARS = 400
+_COMPACTED_NOTE = (
+    "Result of an earlier turn, shortened to save tokens. Your answer from that "
+    "turn holds what you used; call the tool again if you need its data."
+)
+
+
+def _size(value) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _compact_result(response: dict) -> dict:
+    """Small top-level fields (ids, url, title, status, message) kept; lists and
+    big objects replaced by their size."""
+    out = {}
+    for key, value in response.items():
+        if _size(value) <= _KEPT_VALUE_MAX_CHARS:
+            out[key] = value
+        elif isinstance(value, (list, dict)):
+            out[key] = f"<{len(value)} {'items' if isinstance(value, list) else 'keys'} omitted>"
+        else:
+            out[key] = f"<{_size(value)} chars omitted>"
+    out["_compacted"] = _COMPACTED_NOTE
+    return out
+
+
+def _current_turn_start(contents) -> int:
+    """Index of the last user message that is not a tool result."""
+    for i in range(len(contents) - 1, -1, -1):
+        content = contents[i]
+        parts = getattr(content, "parts", None) or []
+        if getattr(content, "role", None) == "user" and any(
+            getattr(p, "text", None) and not getattr(p, "function_response", None) for p in parts
+        ):
+            return i
+    return 0
+
+
+def _compact_previous_turns(contents: list) -> int:
+    """Shorten the big tool results of the turns before the current one.
+
+    Within the current turn the model is still working on its tool results;
+    from an earlier turn it has already answered, and that answer stays in
+    the history. Touched contents are deep-copied first so the session events
+    themselves are left intact. Returns the number of characters dropped.
+    """
+    dropped = 0
+    for i in range(_current_turn_start(contents)):
+        content = contents[i]
+        parts = getattr(content, "parts", None) or []
+        big = [
+            j for j, p in enumerate(parts)
+            if getattr(p, "function_response", None) is not None
+            and isinstance(p.function_response.response, dict)
+            and "_compacted" not in p.function_response.response
+            and _size(p.function_response.response) > _PREVIOUS_TURN_MAX_CHARS
+        ]
+        if not big:
+            continue
+        content = contents[i] = content.model_copy(deep=True)
+        for j in big:
+            fr = content.parts[j].function_response
+            before = _size(fr.response)
+            fr.response = _compact_result(fr.response)
+            dropped += before - _size(fr.response)
+    return dropped
+
+
+def create_strip_large_payloads_callback(agent_name: str, compact_previous_turns: bool = False):
     """Strip large base64 payloads from older history Content blocks.
 
     The latest Content is preserved verbatim — that's where the LLM is
     "looking" right now. Everything before it gets its base64 blobs
     replaced with a short placeholder so the LLM sees that the tool ran
     and what it produced, minus the raw bytes.
+
+    With ``compact_previous_turns`` (BI templates), the big tool results of
+    the turns before the current user message are also shortened.
     """
     _logger = getLogger(f"apowerb.strip_history.{agent_name}")
 
@@ -74,6 +148,11 @@ def create_strip_large_payloads_callback(agent_name: str):
                 if response is None:
                     continue
                 total_dropped += _strip_payload(response)
+
+        if compact_previous_turns:
+            compacted = _compact_previous_turns(contents)
+            if compacted:
+                _logger.info("[STRIP_HISTORY] compacted %d chars of earlier-turn tool results", compacted)
 
         if total_dropped:
             _logger.info(

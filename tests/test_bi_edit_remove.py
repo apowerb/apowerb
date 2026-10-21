@@ -11,6 +11,7 @@ import pytest
 
 import apowerb.bi.db_stores as db_stores
 import apowerb.tools_store.portfolio.business_intelligence as bi
+from apowerb.core import invocation_context
 from apowerb.bi.charts.core import ChartType
 from apowerb.bi.data.service import ChartDataService
 from apowerb.bi.charts.schemas import (
@@ -228,7 +229,8 @@ class TestToolWrappers:
         monkeypatch.setattr(db_stores, "DatabaseDashboardStore", lambda db, owner=None: dash_store)
         monkeypatch.setattr(bi, "_resolve_chart_ref", _passthrough_resolve)
         monkeypatch.setenv("AGENT_OWNER", OWNER)
-        monkeypatch.setenv("AGENT_DASHBOARD_ID", dashboard.id)
+        # The dashboard linked to the conversation, as bound per invocation.
+        monkeypatch.setattr(invocation_context, "get_dashboard_id", lambda: dashboard.id)
 
         res = bi.tool_remove_chart_from_dashboard(chart_id=chart.id)
         assert res["success"] is True
@@ -251,7 +253,8 @@ class TestToolWrappers:
         monkeypatch.setattr(db_stores, "DatabaseDashboardStore", lambda db, owner=None: dash_store)
         monkeypatch.setattr(bi, "_resolve_chart_ref", _passthrough_resolve)
         monkeypatch.setenv("AGENT_OWNER", OWNER)
-        monkeypatch.setenv("AGENT_DASHBOARD_ID", dashboard.id)
+        # The dashboard linked to the conversation, as bound per invocation.
+        monkeypatch.setattr(invocation_context, "get_dashboard_id", lambda: dashboard.id)
 
         res = bi.tool_remove_chart_from_dashboard(chart_id="ghost")
         assert res["success"] is False

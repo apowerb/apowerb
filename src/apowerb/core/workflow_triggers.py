@@ -126,6 +126,48 @@ def integration_present(owner_id: str, provider: Optional[str]) -> bool:
     return row is not None
 
 
+_webhook_subscription_table = Table(
+    "webhook_subscriptions",
+    _ext_metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer),
+    Column("provider", String),
+    Column("status", String),
+)
+
+
+def mail_subscription_active(owner_id: str, provider: str) -> bool:
+    """``True`` si un abonnement ``provider`` actif écoute la boîte de
+    ``owner_id`` — celui des workflows, ou à défaut celui d'un agent, qui lance
+    aussi les workflows tant que le premier n'existe pas."""
+    s = _webhook_subscription_table
+    with workflow_trigger_store.engine.begin() as conn:
+        row = conn.execute(
+            select(s.c.id)
+            .select_from(s.join(_user_table, _user_table.c.user_id == s.c.user_id))
+            .where(
+                _user_table.c.email == owner_id,
+                s.c.provider == provider,
+                s.c.status == "active",
+            )
+        ).fetchone()
+    return row is not None
+
+
+def subscription_reason(cfg: dict, *, owner_id: str) -> Optional[str]:
+    """``"subscription_pending"`` quand un trigger email Outlook armé n'a
+    encore aucun abonnement Graph actif pour l'entendre (création en cours,
+    ou en échec : ``core/workflow_mail_subscriptions.py`` retente). Statut
+    seulement : jamais utilisé pour ``active`` en base, que la réconciliation
+    lit pour savoir quoi créer."""
+    if cfg.get("kind") != "email" or cfg.get("provider") != "outlook":
+        return None
+    provider = EMAIL_INTEGRATION_PROVIDER["outlook"]
+    if not mail_subscription_active(owner_id, provider):
+        return "subscription_pending"
+    return None
+
+
 class TriggerNotActive(LookupError):
     """Le workflow visé n'a pas (ou plus) de trigger armé pour l'exécuter."""
 
@@ -395,6 +437,10 @@ def get_trigger_status(
     kind = d.get("kind", "manual")
     cfg = json.loads(d["config"]) if d.get("config") else {"kind": kind}
     active, reason = compute_active(cfg, workflow_status, owner_id=owner_id)
+    if active:
+        pending = subscription_reason(cfg, owner_id=owner_id)
+        if pending:
+            active, reason = False, pending
 
     webhook_url = form_url = None
     if kind == "webhook" and d.get("token_encrypted"):
@@ -546,6 +592,7 @@ async def launch_triggered_run(
             workflow_id=workflow_id,
             cancel_event=cancel_event,
             run_notify=run_notify,
+            services=rt.services_for(owner_id),
         )
 
     response = _streaming_run(

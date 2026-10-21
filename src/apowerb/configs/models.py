@@ -10,6 +10,12 @@
 # 2026-07-24), Llama 4, Qwen 3 32B et Llama 3.3 70B (arrêtés chez Groq).
 # Gemini : gemini-3-pro, gemini-2.0-flash et gemini-2.0-pro avaient déjà été
 # retirés le 2026-09-25 après des 404 sur agent-dev.
+# Eden AI (ajouté le 2026-10-20) : passerelle, l'id est `edenai/<provider>/<modèle>`
+# tel que listé par GET https://api.edenai.run/v3/models ; l'URL Eden est
+# ajoutée par défaut (helpers.model_names.default_api_base).
+# Azure AI Foundry (ajouté le 2026-10-20) : l'id est `azure_ai/<déploiement>`
+# et l'URL du projet est obligatoire (pas d'endpoint par défaut). Les noms
+# ci-dessous sont ceux qu'Azure donne par défaut au déploiement d'un modèle.
 MODELS = [
     {
         "id": "anthropic/claude-opus-5-5",
@@ -128,5 +134,41 @@ MODELS = [
         "name": "Llama 3.1 8B",
         "provider": "groq",
         "tag": "Fastest",
+    },
+    {
+        "id": "edenai/openai/gpt-6.1-sol",
+        "name": "GPT-6.1 Sol",
+        "provider": "edenai",
+        "tag": "Recommended",
+    },
+    {
+        "id": "edenai/anthropic/claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5",
+        "provider": "edenai",
+        "tag": "Balanced",
+    },
+    {
+        "id": "edenai/mistral/mistral-large-latest",
+        "name": "Mistral Large",
+        "provider": "edenai",
+        "tag": "Powerful",
+    },
+    {
+        "id": "edenai/google/gemini-3.8-flash",
+        "name": "Gemini 3.8 Flash",
+        "provider": "edenai",
+        "tag": "Fast",
+    },
+    {
+        "id": "azure_ai/gpt-6.1-sol",
+        "name": "GPT-6.1 Sol",
+        "provider": "azure_ai",
+        "tag": "Recommended",
+    },
+    {
+        "id": "azure_ai/gpt-6-luna",
+        "name": "GPT-6 Luna",
+        "provider": "azure_ai",
+        "tag": "Fast",
     },
 ]

@@ -78,7 +78,9 @@ def is_rag_template(superagent_template_id) -> bool:
     return bool(_tpl_check and "rag" in _tpl_check.get("tags", []))
 
 
-def bind_read_uploaded_file(agent_name: str, tools_funcs: list, is_rag: bool) -> list:
+def bind_read_uploaded_file(
+    agent_name: str, tools_funcs: list, is_rag: bool, tabular_preview_rows: int = 0
+) -> list:
     """Attach or replace ``tool_read_uploaded_file`` for the given agent.
 
     RAG agents get the placeholder stripped instead (they use the RAG API).
@@ -105,11 +107,11 @@ def bind_read_uploaded_file(agent_name: str, tools_funcs: list, is_rag: bool) ->
             fn is _placeholder
             or getattr(fn, "__name__", "") == "tool_read_uploaded_file"
         ):
-            tools_funcs[i] = _make_read_uploaded_file(agent_name)
+            tools_funcs[i] = _make_read_uploaded_file(agent_name, tabular_preview_rows)
             replaced = True
             break
     if not replaced:
-        tools_funcs.append(_make_read_uploaded_file(agent_name))
+        tools_funcs.append(_make_read_uploaded_file(agent_name, tabular_preview_rows))
     logger.info(f"[TO_AGENT] read_uploaded_file bound to folder {agent_name}")
     return tools_funcs
 
@@ -143,7 +145,7 @@ def bind_pdf_first_page(agent_name: str, tools_funcs: list) -> list:
     return tools_funcs
 
 
-def bind_pdf_to_images(agent_name: str, tools_funcs: list) -> list:
+def bind_pdf_to_images(agent_name: str, tools_funcs: list, add: bool = True) -> list:
     """Attach or replace ``tool_pdf_to_images`` for the given agent.
 
     Mirrors the pattern used by ``bind_read_uploaded_file``: the placeholder
@@ -164,6 +166,8 @@ def bind_pdf_to_images(agent_name: str, tools_funcs: list) -> list:
             replaced = True
             break
     if not replaced:
+        if not add:  # le gabarit ne veut pas de l'ajout automatique
+            return tools_funcs
         tools_funcs.append(_make_pdf_to_images(agent_name))
     logger.info(f"[TO_AGENT] pdf_to_images bound to folder {agent_name}")
     return tools_funcs
@@ -317,7 +321,7 @@ def rebind_database(
             agent_name,
             f"DB={single['DB_NAME']!r}"
             if single
-            else "no DB configured — using env vars",
+            else "no DB configured — tool_config params only",
         )
         return tools_funcs
 

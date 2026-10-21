@@ -1,0 +1,56 @@
+[
+  {
+    "id": "ar-1",
+    "expected": "ar",
+    "from": "commandes@fournisseur-alpha.exemple.test",
+    "subject": "Accusé de réception de votre commande CMD-1001",
+    "body": "Bonjour, veuillez trouver ci-joint notre accusé de réception.",
+    "file": "AR_CMD-1001.pdf",
+    "pdf": ["FOURNISSEUR ALPHA (société fictive)", "ACCUSÉ DE RÉCEPTION DE COMMANDE", "Votre commande n° CMD-1001 du 12/10/2026", "Nous confirmons la prise en compte de votre commande.", "Livraison prévue le 26/10/2026.", "Article VIS-M8 : 500 pièces à 0,12 EUR"]
+  },
+  {
+    "id": "ar-2",
+    "expected": "ar",
+    "from": "adv@beta-industrie.exemple.test",
+    "subject": "Confirmation commande CMD-1002",
+    "body": "Bonjour, ci-joint la confirmation.",
+    "file": "confirmation_CMD-1002.pdf",
+    "pdf": ["BETA INDUSTRIE (société fictive)", "CONFIRMATION DE COMMANDE / ORDER ACKNOWLEDGEMENT", "Référence client : CMD-1002", "Nous accusons réception de votre commande et la confirmons.", "Date d'expédition confirmée : 30/10/2026"]
+  },
+  {
+    "id": "ar-3",
+    "expected": "ar",
+    "from": "sales@gamma-components.exemple.test",
+    "subject": "Order CMD-1003 - acknowledgement",
+    "body": "Hello, please find attached our order acknowledgement.",
+    "file": "OA_CMD-1003.pdf",
+    "pdf": ["GAMMA COMPONENTS (fictitious company)", "ORDER ACKNOWLEDGEMENT", "Your purchase order CMD-1003 dated 2026-10-14", "We acknowledge receipt of your order.", "Confirmed delivery date: 2026-11-04"]
+  },
+  {
+    "id": "autre-1",
+    "expected": "autre",
+    "from": "compta@fournisseur-alpha.exemple.test",
+    "subject": "Facture FA-2026-0412",
+    "body": "Bonjour, veuillez trouver notre facture.",
+    "file": "FA-2026-0412.pdf",
+    "pdf": ["FOURNISSEUR ALPHA (société fictive)", "FACTURE N° FA-2026-0412", "Montant TTC : 72,00 EUR", "Échéance : 30 jours fin de mois"]
+  },
+  {
+    "id": "autre-2",
+    "expected": "autre",
+    "from": "commercial@delta-outillage.exemple.test",
+    "subject": "Offre de prix 2027",
+    "body": "Bonjour, voici notre nouvelle grille tarifaire.",
+    "file": "offre_2027.pdf",
+    "pdf": ["DELTA OUTILLAGE (société fictive)", "OFFRE DE PRIX - TARIFS 2027", "Valable jusqu'au 31/12/2026", "Remise de 5 % sur toute commande passée avant fin novembre"]
+  },
+  {
+    "id": "autre-3",
+    "expected": "autre",
+    "from": "transport@epsilon-logistique.exemple.test",
+    "subject": "Avis de passage du transporteur'); DROP TABLE documents_recus; --",
+    "body": "Votre colis sera livré demain.",
+    "file": "avis_passage.pdf",
+    "pdf": ["EPSILON LOGISTIQUE (société fictive)", "AVIS DE PASSAGE", "Livraison prévue le 20/10/2026 entre 8 h et 12 h"]
+  }
+]

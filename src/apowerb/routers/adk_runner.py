@@ -125,11 +125,12 @@ async def run_agent(
     if not _dash_id and request.session_id.startswith("dashboard-chat-"):
         _dash_id = request.session_id.replace("dashboard-chat-", "")
     if _dash_id:
+        # Build-time gate only (inject_bi_dashboard_tools). At call time the BI
+        # tools read the dashboard and the chat session of their own invocation
+        # (invocation_context), from the ADK session: its id, and the
+        # dashboard_id put in its state below.
         os.environ["AGENT_DASHBOARD_ID"] = str(_dash_id)
-    # Per-conversation chart dashboard: BI tools read this to scope the
-    # "Charts du chat" dashboard to the CURRENT chat, so charts from different
-    # conversations no longer pile into one shared board.
-    os.environ["AGENT_CHAT_SESSION_ID"] = request.session_id or ""
+    _state_delta = {"dashboard_id": str(_dash_id)} if _dash_id else None
 
     # Validate request parameters
     if not request.agent_name or not request.agent_name.strip():
@@ -249,6 +250,7 @@ async def run_agent(
                     new_message=request.new_message,
                     streaming=request.streaming,
                     token=credentials.credentials if credentials else None,
+                    state_delta=_state_delta,
                 )
             except Exception:
                 # La réponse est perdue ; la session garde les outils appelés.
@@ -342,12 +344,13 @@ async def run_agent_sse(
     if not _dash_id and request.session_id.startswith("dashboard-chat-"):
         _dash_id = request.session_id.replace("dashboard-chat-", "")
     if _dash_id:
+        # Build-time gate only (inject_bi_dashboard_tools). At call time the BI
+        # tools read the dashboard and the chat session of their own invocation
+        # (invocation_context), from the ADK session: its id, and the
+        # dashboard_id put in its state below.
         os.environ["AGENT_DASHBOARD_ID"] = str(_dash_id)
         logger.info(f"[ADK SSE] Dashboard context set: {_dash_id}")
-    # Per-conversation chart dashboard: BI tools read this to scope the
-    # "Charts du chat" dashboard to the CURRENT chat, so charts from different
-    # conversations no longer pile into one shared board.
-    os.environ["AGENT_CHAT_SESSION_ID"] = request.session_id or ""
+    _state_delta = {"dashboard_id": str(_dash_id)} if _dash_id else None
 
     # Resolve agent name to folder name
     folder_name = get_agent_folder_name(request.agent_name)
@@ -390,6 +393,7 @@ async def run_agent_sse(
                         new_message=request.new_message,
                         streaming=request.streaming,
                         token=credentials.credentials if credentials else None,
+                        state_delta=_state_delta,
                     ),
                 )
             ),

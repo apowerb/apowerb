@@ -25,25 +25,18 @@ new expiration and ``status='active'`` (and on failure, must persist
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from apowerb.helpers.database import Base
 from apowerb.models import User, WebhookSubscription
 from apowerb.scheduler import webhook_renewal
 
 
 @pytest.fixture
-async def sqlite_session_factory(monkeypatch):
+async def sqlite_session_factory(sqlite_engine, bind_sessionmanager):
     """Build a sqlite in-memory async engine wired into
     ``webhook_renewal.sessionmanager`` for the duration of the test.
 
@@ -52,37 +45,15 @@ async def sqlite_session_factory(monkeypatch):
     triggers the greenlet crash on SCEI_PROD. Don't lower the bar to
     ``False`` here — that would mask the bug we're guarding against.
     """
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    # Strip the Postgres schema from every table — sqlite has no
-    # cross-schema CREATE TABLE syntax and would choke on
-    # CREATE TABLE th2agent_dev.user. We restore the schema after
-    # create_all so production behaviour stays untouched.
-    for t in Base.metadata.tables.values():
-        t.schema = None
-    Base.metadata.schema = None
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     # async_sessionmaker mirrors the prod ``sessionmaker(class_=AsyncSession)``
     # config, while explicit ``expire_on_commit=True`` keeps the bug
     # reproducible — flipping it to False would mask the exact lazy-load
     # crash this test is here to guard.
-    factory = async_sessionmaker(engine, expire_on_commit=True)
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=True)
 
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        session = factory()
-        try:
-            yield session
-        finally:
-            await session.close()
-
-    monkeypatch.setattr(
-        webhook_renewal.sessionmanager, "session", _session, raising=False
-    )
+    bind_sessionmanager(factory)
 
     yield factory
-    await engine.dispose()
 
 
 async def _seed_expiring_outlook_sub(factory) -> int:
@@ -268,3 +239,12 @@ class TestRenewalLoopSurvivesFailures:
             "otherwise a single failure ends the renewal background task "
             "and subscriptions silently expire"
         )
+
+    def test_no_silent_exception_swallowing_in_renewal(self):
+        """Verify webhook_renewal does not swallow errors with silent pass."""
+        import inspect
+
+        src = inspect.getsource(webhook_renewal)
+        assert "except Exception:\n                    pass" not in src
+        assert "except Exception:\n                pass" not in src
+

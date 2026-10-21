@@ -67,3 +67,23 @@ class TestGenerateRetry:
         retry_msgs = comp.call_args_list[1].kwargs["messages"]
         assert retry_msgs[-1]["role"] == "user"
         assert "ONLY the SQL" in retry_msgs[-1]["content"]
+
+
+def _cut(content):
+    r = _resp(content)
+    r.choices[0].finish_reason = "length"
+    return r
+
+
+class TestTruncatedOutput:
+    def test_cut_off_sql_is_not_used(self):
+        # A reasoning model can spend the completion budget thinking and stop
+        # mid-query ("... GROUP"): that SQL must never reach the database.
+        responses = [_cut("SELECT id FROM orders GROUP"), _resp("SELECT id FROM orders")]
+        with patch.object(t2s, "_get_state", return_value=_fake_state()), patch.object(
+            t2s.litellm, "completion", side_effect=responses,
+        ) as comp:
+            sql = t2s._agent_generate_sql("agent1", "list orders", _SCHEMA)
+        assert sql == "SELECT id FROM orders"
+        assert comp.call_count == 2
+        assert comp.call_args_list[0].kwargs["max_tokens"] >= 4096

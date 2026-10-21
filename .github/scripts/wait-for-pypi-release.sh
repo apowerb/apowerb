@@ -56,7 +56,7 @@ for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
   # --break-system-packages only matters if the target interpreter is
   # PEP 668 externally-managed; harmless here since --dry-run never writes
   # anything regardless.
-  if uv pip install --system --break-system-packages --dry-run "${extra_uv_args[@]}" "$requirement"; then
+  if uv pip install --system --break-system-packages --dry-run ${extra_uv_args[@]+"${extra_uv_args[@]}"} "$requirement"; then
     echo "${requirement} resolves (attempt ${attempt}/${MAX_ATTEMPTS})."
     exit 0
   fi

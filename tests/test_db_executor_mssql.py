@@ -14,10 +14,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pyodbc
 import pytest
 
 from apowerb.bi.data.db_executor import DatabaseQueryExecutor
+
+# pyodbc imports only when the unixODBC library is installed: a Mac without
+# `brew install unixodbc` raises ImportError at import time.
+pyodbc = pytest.importorskip("pyodbc", exc_type=ImportError)
 
 
 @pytest.fixture
