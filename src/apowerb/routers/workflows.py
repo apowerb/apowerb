@@ -311,17 +311,26 @@ async def _decision_resume_runner(
 
     Le graphe est celui de l'instantané (la version qui tournait), pas la
     version courante du workflow : une édition entre-temps ne change pas un
-    run déjà à moitié fait. ``claimed["decided"]`` passe à vrai quand le nœud
-    de décision a rendu la réponse : avant, un arrêt remet le run en attente
-    (voir ``_streaming_run``). L'assigné reçoit le flux sans les données du
+    run déjà à moitié fait. ``claimed["decided"]`` passe à vrai quand le
+    moteur prend la réponse (``on_answered``) : avant, un arrêt remet le run
+    en attente (voir ``_streaming_run``). L'assigné reçoit le flux sans les données du
     propriétaire.
     """
     answer = claimed["answer"]
     redact = answer["answered_by"] != claimed["run"]["owner_id"]
     async for chunk in _decision_resume_stream(run_id, claimed, cancel_event):
-        if f'"node_id": "{answer["node_id"]}"' in chunk and '"node_complete"' in chunk:
-            claimed["decided"] = True
         yield _for_assignee(chunk, answer["answered_by"]) if redact else chunk
+
+
+def _decision_taken(run_id: str, claimed: dict[str, Any]) -> Callable[[str], None]:
+    """``on_answered`` de la reprise : posé par le moteur lui-même, pas lu
+    dans le flux SSE, et consigné en base avant tout nœud en aval."""
+
+    def _taken(_node_id: str) -> None:
+        claimed["decided"] = True
+        run_main.mark_decided(run_id)
+
+    return _taken
 
 
 async def _decision_resume_stream(
@@ -357,6 +366,7 @@ async def _decision_resume_stream(
         on_await=pause_saver(run_id),
         resume={**state, "answer": claimed["answer"]},
         run_id=run_id,
+        on_answered=_decision_taken(run_id, claimed),
         until=state.get("until"),
     ):
         yield chunk

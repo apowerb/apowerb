@@ -395,6 +395,23 @@ def _reconcile_if_orphaned(conn, row):
         return row
     if age < RUN_STALE_AFTER:
         return row
+    if data.get("paused_state"):
+        # Repris puis arrêté avant que la réponse soit prise (l'instantané
+        # n'est effacé qu'à ce moment, voir ``mark_decided``) : rien n'a été
+        # fait après la pause, le run attend toujours sa décision.
+        conn.execute(
+            run_store.run_table.update()
+            .where(
+                run_store.run_table.c.run_id == data["run_id"],
+                run_store.run_table.c.status == STATUS_RUNNING,
+            )
+            .values(status=STATUS_AWAITING, resumed_at=None)
+        )
+        return conn.execute(
+            run_store.run_table.select().where(
+                run_store.run_table.c.run_id == data["run_id"]
+            )
+        ).fetchone()
     hours = int(RUN_STALE_AFTER.total_seconds() // 3600)
     message = (
         "Run settled by reconciliation: no completion was recorded within "
@@ -729,6 +746,21 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
     }
     data["config"] = json.loads(data.get("config") or "{}")
     return {"run": data, "state": state, "answer": answer}
+
+
+def mark_decided(run_id: str) -> None:
+    """La réponse est prise par le moteur : l'instantané ne sert plus.
+
+    Sans instantané, ni ``release_paused_run`` ni la réconciliation ne
+    remettent le run en attente : la suite a pu agir.
+    """
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        conn.execute(
+            t.update()
+            .where(t.c.run_id == run_id, t.c.status == STATUS_RUNNING)
+            .values(paused_state=None, decision=None, assignee=None)
+        )
 
 
 def release_paused_run(run_id: str) -> None:

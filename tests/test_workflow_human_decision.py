@@ -396,3 +396,35 @@ def test_two_routes_to_the_same_target_run_without_a_decision():
     for n in (0, 5):
         events = _run(_graph(nodes, edges), _Env(), payload={"n": n})
         assert events[-1] == {"event": "done", "output": f"pris:{n}"}
+
+
+def test_the_engine_says_when_the_answer_is_taken_before_anything_runs_after():
+    env, saved = _Env(), []
+    nodes = NODES[:3] + [
+        {"id": "yes", "type": "agent", "config": {"agent_id": "after"}},
+        {"id": "no", "type": "output", "config": {"value": "ko"}},
+    ]
+    _run(_graph(nodes, EDGES), env, saved=saved)
+    order = []
+
+    async def _agent(agent_id, message):
+        order.append(agent_id)
+        return "x"
+
+    env.run_agent = _agent
+
+    async def _go():
+        async for _ in wg.run_graph(
+            _graph(nodes, EDGES),
+            payload=None,
+            run_agent=env.run_agent,
+            run_tool=env.run_tool,
+            cancel_event=asyncio.Event(),
+            on_await=lambda s: None,
+            on_answered=lambda node_id: order.append(f"answered:{node_id}"),
+            resume=_resume(saved[0], choice="oui"),
+        ):
+            pass
+
+    asyncio.run(_go())
+    assert order == ["answered:d", "after"]

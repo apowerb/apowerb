@@ -375,3 +375,73 @@ async def test_a_partial_test_up_to_the_decision_resumes_as_partial(api):
     assert resumed[-1]["partial"] is True and resumed[-1]["until"] == "d"
     assert resumed[-1]["output"]["choice"] == "oui"
     assert not [e for e in resumed if e.get("node_id") in ("yes", "no")]
+
+
+# --- Suivi : la décision prise est consignée par le moteur ------------------
+
+
+def _graph_with_agent_after():
+    graph = _graph()
+    graph["nodes"][2] = {"id": "yes", "type": "agent", "config": {"agent_id": "agent1"}}
+    return graph
+
+
+@pytest.mark.asyncio
+async def test_the_decision_is_recorded_as_taken_before_the_next_step_runs(api, monkeypatch):
+    from apowerb.core import workflow_runtime
+
+    seen = []
+
+    async def _agent(agent_id, message):
+        t = run_main.run_store.run_table
+        with run_main.run_store.engine.begin() as conn:
+            row = conn.execute(t.select().where(t.c.status == "running")).fetchone()
+        seen.append((row.status, row.paused_state))
+        return "fait"
+
+    async def _tool(tool, args):
+        return {}
+
+    monkeypatch.setattr(
+        workflow_runtime, "bindings_for", lambda owner, plan: (_agent, _tool, None, None)
+    )
+    wf = workflow_main.create_workflow(owner_id=OWNER, name="Devis", graph=_graph_with_agent_after())
+    events = await _drain(
+        await api.defs.run_workflow(wf["workflow_id"], api.defs.RunBody(payload={"x": 1}), current_user=_user())
+    )
+    run_id = events[0]["wid"]
+    resumed = await _drain(await _resume(api, run_id, choice="oui"))
+    assert resumed[-1]["event"] == "done"
+    # Pendant l'étape suivante, la base sait déjà que la décision est prise :
+    # une coupure à ce moment ne doit plus remettre le run en attente.
+    assert seen == [("running", None)]
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_died_before_the_decision_goes_back_to_waiting(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        # Le processus est mort juste après la prise : ligne running, état gardé.
+        conn.execute(
+            t.update().where(t.c.run_id == run_id).values(status="running", resumed_at="2026-01-01 00:00:00.000000")
+        )
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "awaiting"
+    assert [i["run_id"] for i in await api.runs.list_awaiting_runs(current_user=_user())] == [run_id]
+    resumed = await _drain(await _resume(api, run_id, choice="oui"))
+    assert resumed[-1] == {"event": "done", "output": "ok:oui"}
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_died_after_the_decision_is_settled_as_an_error(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        conn.execute(
+            t.update()
+            .where(t.c.run_id == run_id)
+            .values(status="running", paused_state=None, resumed_at="2026-01-01 00:00:00.000000")
+        )
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "error"

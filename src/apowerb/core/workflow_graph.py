@@ -2050,6 +2050,7 @@ class _Compiler:
         services: Optional[NodeServices] = None,
         resume: Optional[dict] = None,
         nested: bool = False,
+        on_answered: Optional[Callable[[str], Any]] = None,
     ):
         self.services = services or NodeServices()
         # Reprise après une décision : sorties et routes des nœuds déjà
@@ -2058,6 +2059,9 @@ class _Compiler:
         self._replay_outputs: dict[str, Any] = dict(resume.get("outputs") or {})
         self._replay_routes: dict[str, str] = dict(resume.get("routes") or {})
         self.answer: Optional[dict] = resume.get("answer")
+        # Prévenu quand la réponse est prise, avant tout nœud en aval : à
+        # partir de là, une coupure ne doit plus remettre le run en attente.
+        self.on_answered = on_answered
         # Corps de loop/try ou sous-workflow : une décision n'y peut pas
         # suspendre le run.
         self.nested = nested
@@ -2619,6 +2623,10 @@ class _Compiler:
                     )
                 answer = self.answer
                 if answer is not None and answer.get("node_id") == node.id:
+                    if self.on_answered is not None:
+                        taken = self.on_answered(node.id)
+                        if asyncio.iscoroutine(taken):
+                            await taken
                     output = {
                         k: answer.get(k)
                         for k in ("choice", "text", "answered_by", "answered_at")
@@ -2952,6 +2960,7 @@ async def run_graph(
     on_await: Optional[Callable[[dict], Any]] = None,
     resume: Optional[dict] = None,
     run_id: Optional[str] = None,
+    on_answered: Optional[Callable[[str], Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
 
@@ -2964,7 +2973,8 @@ async def run_graph(
     (``decision_unavailable`` / ``decision_not_saved``). ``resume`` est cet
     instantané plus ``answer`` (``node_id``, ``choice``, ``text``,
     ``answered_by``, ``answered_at``) : les nœuds déjà faits sont réémis avec
-    ``replayed: true`` sans être réexécutés.
+    ``replayed: true`` sans être réexécutés. ``on_answered(node_id)`` est
+    appelé quand la réponse est prise, avant tout nœud en aval.
 
     Événements : ``node_start`` / ``node_input`` (``input``, nœuds agent et
     tool, dès que l'entrée est rendue) / ``node_complete`` (``output``,
@@ -3021,6 +3031,7 @@ async def run_graph(
         run_subworkflow=run_subworkflow,
         workflow_stack=(workflow_id,) if workflow_id else (),
         resume=resume,
+        on_answered=on_answered,
     )
     workflow = compiler.build()
     exc: Optional[BaseException] = None
