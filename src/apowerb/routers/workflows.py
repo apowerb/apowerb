@@ -69,7 +69,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from nanoid import generate as nanoid_generate
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from apowerb.auth.dependencies import get_current_user
 from apowerb.core import run_main
@@ -272,6 +272,34 @@ async def _graph_replay_runner(
         yield chunk
 
 
+# Ce que l'assigné d'une décision ne reçoit pas du run d'un autre : les
+# données du propriétaire (sorties, entrées, appels d'outils, graphiques).
+_OWNER_ONLY_FIELDS = (
+    "output",
+    "input",
+    "input_truncated",
+    "input_length",
+    "tool_calls",
+    "artifacts",
+    "reported_error",
+)
+
+
+def _for_assignee(chunk: str, user: str) -> str:
+    try:
+        event = json.loads(chunk[len("data: "):])
+    except ValueError:
+        return chunk
+    for field in _OWNER_ONLY_FIELDS:
+        event.pop(field, None)
+    if event.get("event") == "awaiting_input" and (event.get("assignee") or "").lower() != user.lower():
+        # Une décision suivante qui ne lui revient pas : il sait seulement
+        # que le run attend.
+        for field in ("question", "choices"):
+            event.pop(field, None)
+    return "data: " + json.dumps(event, ensure_ascii=False, default=str) + "\n\n"
+
+
 async def _decision_resume_runner(
     run_id: str, claimed: dict[str, Any], cancel_event: asyncio.Event
 ) -> AsyncGenerator[str, None]:
@@ -279,8 +307,22 @@ async def _decision_resume_runner(
 
     Le graphe est celui de l'instantané (la version qui tournait), pas la
     version courante du workflow : une édition entre-temps ne change pas un
-    run déjà à moitié fait.
+    run déjà à moitié fait. ``claimed["decided"]`` passe à vrai quand le nœud
+    de décision a rendu la réponse : avant, un arrêt remet le run en attente
+    (voir ``_streaming_run``). L'assigné reçoit le flux sans les données du
+    propriétaire.
     """
+    answer = claimed["answer"]
+    redact = answer["answered_by"] != claimed["run"]["owner_id"]
+    async for chunk in _decision_resume_stream(run_id, claimed, cancel_event):
+        if f'"node_id": "{answer["node_id"]}"' in chunk and '"node_complete"' in chunk:
+            claimed["decided"] = True
+        yield _for_assignee(chunk, answer["answered_by"]) if redact else chunk
+
+
+async def _decision_resume_stream(
+    run_id: str, claimed: dict[str, Any], cancel_event: asyncio.Event
+) -> AsyncGenerator[str, None]:
     from apowerb.core import workflow_graph, workflow_runtime
     from apowerb.core.run_gate import resolve_owner_plan
 
@@ -390,6 +432,7 @@ def _streaming_run(
     file_bytes: Optional[bytes],
     owner: str,
     runner: Optional[Callable[[asyncio.Event], AsyncGenerator[str, None]]] = None,
+    resume_guard: Optional[dict] = None,
 ) -> StreamingResponse:
     """Drive one run and stream it, recording how it ends.
 
@@ -403,7 +446,7 @@ def _streaming_run(
     mémoire, qui oubliait le run à la fin du flux.
     """
     cancel_event = asyncio.Event()
-    _runs[run_id] = {
+    entry = _runs[run_id] = {
         "cancel_event": cancel_event,
         "owner": owner,
         "task": None,
@@ -424,7 +467,8 @@ def _streaming_run(
                 else _workflow_runner(run_id, cancel_event, agent_ids, file_bytes)
             )
             async for chunk in stream:
-                yield chunk.encode() if isinstance(chunk, str) else chunk
+                # L'issue est lue AVANT de céder le morceau : un client qui
+                # part pendant ce ``yield`` ne doit pas la faire mentir.
                 terminal = _terminal_event(chunk)
                 if terminal is not None and terminal["event"] == "error":
                     outcome = run_main.STATUS_ERROR
@@ -438,17 +482,19 @@ def _streaming_run(
                     is_done, done_output = _done_output(chunk)
                     if is_done:
                         final_output = done_output
+                yield chunk.encode() if isinstance(chunk, str) else chunk
                 if cancel_event.is_set():
                     # Drain one more iteration if the runner hasn't noticed.
                     continue
-            if cancel_event.is_set():
+            if cancel_event.is_set() and outcome != run_main.STATUS_AWAITING:
                 outcome = run_main.STATUS_CANCELLED
         except asyncio.CancelledError:
             # Le client s'est deconnecte : signaler l'annulation aux travaux
             # que le graphe a pu lancer hors de l'arbre de la task de drive
             # (sous-workflows, attentes de retry) et qui lisent cancel_event.
             cancel_event.set()
-            outcome = run_main.STATUS_CANCELLED
+            if outcome != run_main.STATUS_AWAITING:
+                outcome = run_main.STATUS_CANCELLED
             yield f"data: {json.dumps({'event': 'cancelled'})}\n\n".encode()
             raise
         except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
@@ -461,7 +507,21 @@ def _streaming_run(
                 + "\n\n"
             ).encode()
         finally:
-            _runs.pop(run_id, None)
+            # Une reprise du même run a pu déjà se réinscrire sous ce run_id.
+            if _runs.get(run_id) is entry:
+                _runs.pop(run_id, None)
+            if resume_guard is not None and not resume_guard.get("decided"):
+                if outcome != run_main.STATUS_AWAITING:
+                    # La reprise n'a pas atteint la décision (client parti,
+                    # panne au démarrage) : rien n'a été fait, le run attend
+                    # toujours sa réponse.
+                    try:
+                        run_main.release_paused_run(run_id)
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "[workflows] run_id=%s non remis en attente", run_id
+                        )
+                return
             if outcome == run_main.STATUS_AWAITING:
                 # Une pause n'est pas une fin : ni ``finished_at``, ni
                 # notification ``workflow_done``. La reprise finira le run.
@@ -589,8 +649,8 @@ async def list_awaiting_runs(
 
 
 class DecisionAnswer(BaseModel):
-    choice: Optional[str] = None
-    text: Optional[str] = None
+    choice: Optional[str] = Field(None, max_length=200)
+    text: Optional[str] = Field(None, max_length=10_000)
 
 
 @router.post("/runs/{run_id}/resume")
@@ -615,6 +675,7 @@ async def resume_run(
         file_bytes=None,
         owner=claimed["run"]["owner_id"],
         runner=lambda cancel: _decision_resume_runner(run_id, claimed, cancel),
+        resume_guard=claimed,
     )
 
 

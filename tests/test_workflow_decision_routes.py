@@ -189,8 +189,7 @@ async def test_the_assignee_sees_and_answers_and_the_run_stays_the_owners(api):
     [item] = await api.runs.list_awaiting_runs(current_user=_user(ASSIGNEE))
     assert item["run_id"] == run_id and item["owner_id"] == OWNER
     resumed = await _drain(await _resume(api, run_id, user=ASSIGNEE, choice="non"))
-    decided = next(e for e in resumed if e["event"] == "node_complete" and e["node_id"] == "d")
-    assert decided["output"]["answered_by"] == ASSIGNEE
+    assert resumed[-1]["event"] == "done"
     assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "success"
 
 
@@ -252,3 +251,110 @@ async def test_a_triggered_run_pauses_too_and_waits_in_the_list(api):
     assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "awaiting"
     [item] = await api.runs.list_awaiting_runs(current_user=_user())
     assert item["run_id"] == run_id and item["question"] == "Valider devis ?"
+
+
+# --- Robustesse de la reprise (revue du 21/10) --------------------------------
+
+
+def _age(run_id, hours):
+    from datetime import datetime, timedelta
+
+    old = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S.%f")
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        conn.execute(t.update().where(t.c.run_id == run_id).values(created_at=old))
+
+
+@pytest.mark.asyncio
+async def test_a_decision_answered_after_hours_is_not_settled_as_an_orphan(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    _age(run_id, 7)
+    response = await _resume(api, run_id, choice="oui")
+    # Pendant la reprise, un lecteur du statut ne doit pas la clore en error.
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "running"
+    resumed = await _drain(response)
+    assert resumed[-1] == {"event": "done", "output": "ok:oui"}
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_a_client_gone_before_the_decision_leaves_it_waiting(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    response = await _resume(api, run_id, choice="oui")
+    stream = response.body_iterator
+    await stream.__anext__()  # run_started, puis le client part
+    await stream.aclose()
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "awaiting"
+    resumed = await _drain(await _resume(api, run_id, choice="non"))
+    assert resumed[-1] == {"event": "done", "output": "non:"}
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_cannot_start_leaves_the_decision_waiting(api, monkeypatch):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+
+    async def _down(owner):
+        raise RuntimeError("plans indisponibles")
+
+    monkeypatch.setattr(run_gate, "resolve_owner_plan", _down)
+    resumed = await _drain(await _resume(api, run_id, choice="oui"))
+    assert resumed[-1]["event"] == "error"
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "awaiting"
+    assert [i["run_id"] for i in await api.runs.list_awaiting_runs(current_user=_user())] == [run_id]
+
+
+@pytest.mark.asyncio
+async def test_finishing_never_overwrites_a_pause(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    run_main.finish_run(run_id, status="success")
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "awaiting"
+
+
+@pytest.mark.asyncio
+async def test_a_paused_run_is_not_replayed_even_forced(api):
+    _, events = await _paused(api)
+    with pytest.raises(HTTPException) as exc:
+        await api.runs.replay_run(events[0]["wid"], force=True, current_user=_user())
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_the_assignee_does_not_receive_the_owners_data(api):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    resumed = await _drain(await _resume(api, events[0]["wid"], user=ASSIGNEE, choice="oui"))
+    assert resumed[-1]["event"] == "done"
+    assert not [e for e in resumed if "output" in e or "input" in e]
+    assert {"event": "node_complete", "node_id": "d"} in [
+        {k: e[k] for k in ("event", "node_id")} for e in resumed if e.get("node_id")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_only_the_owner_can_abandon(api):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    with pytest.raises(HTTPException) as exc:
+        await api.runs.abandon_run(run_id, current_user=_user(ASSIGNEE))
+    assert exc.value.status_code == 403
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "awaiting"
+
+
+@pytest.mark.asyncio
+async def test_an_agent_tool_call_reports_a_waiting_run_not_a_failure(monkeypatch):
+    import asyncio
+
+    async def _launch(**kwargs):
+        async def _terminal():
+            return {"event": "awaiting_input", "run_id": "r9", "node_id": "d", "question": "Q"}
+
+        return "r9", asyncio.ensure_future(_terminal())
+
+    monkeypatch.setattr(wt, "launch_triggered_run", _launch)
+    out = await wt.call_agent_tool(
+        workflow_id="w1", owner_id=OWNER, tool_name="devis", arguments={}, prior_chain=[]
+    )
+    assert out == {"status": "awaiting_decision", "run_id": "r9", "question": "Q"}

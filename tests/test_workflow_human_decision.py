@@ -373,3 +373,26 @@ def test_a_decision_reached_inside_a_subworkflow_fails_explicitly():
     events = asyncio.run(_go())
     assert events[-1]["event"] == "error"
     assert "approval_nested" in json.dumps(events[-1])
+
+
+def test_two_routes_to_the_same_target_run_without_a_decision():
+    nodes = [
+        {"id": "t", "type": "trigger", "config": {"kind": "manual"}},
+        {
+            "id": "r",
+            "type": "router",
+            "config": {
+                "rules": [{"route": "a", "field": "{{t.n}}", "op": "gt", "value": 1}],
+                "default_route": "b",
+            },
+        },
+        {"id": "o", "type": "output", "config": {"value": "pris:{{t.n}}"}},
+    ]
+    edges = [
+        {"source": "t", "target": "r"},
+        {"source": "r", "target": "o", "route": "a"},
+        {"source": "r", "target": "o", "route": "b"},
+    ]
+    for n in (0, 5):
+        events = _run(_graph(nodes, edges), _Env(), payload={"n": n})
+        assert events[-1] == {"event": "done", "output": f"pris:{n}"}

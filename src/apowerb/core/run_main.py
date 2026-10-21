@@ -238,14 +238,20 @@ def finish_run(run_id: str, status: str, error_message: str | None = None) -> No
     Ne filtre pas par propriétaire : l'appelant est le code qui a lancé le run,
     pas une requête utilisateur.
     """
+    t = run_store.run_table
     with run_store.engine.begin() as conn:
         conn.execute(
-            run_store.run_table.update()
-            .where(run_store.run_table.c.run_id == run_id)
+            t.update()
+            # Une pause consignée (``pause_run``) n'est jamais une fin : seule
+            # la reprise ou l'abandon la font sortir de ``awaiting``.
+            .where(t.c.run_id == run_id, t.c.status != STATUS_AWAITING)
             .values(
                 status=status,
                 error_message=error_message,
                 finished_at=_now(),
+                paused_state=None,
+                assignee=None,
+                decision=None,
             )
         )
 
@@ -378,7 +384,9 @@ def _reconcile_if_orphaned(conn, row):
     data = row._asdict()
     if data.get("status") != STATUS_RUNNING:
         return row
-    created = data.get("created_at")
+    # Un run repris après une décision a pu attendre des jours : son âge
+    # compte depuis la reprise.
+    created = data.get("resumed_at") or data.get("created_at")
     if not created:
         return row
     try:
@@ -411,10 +419,12 @@ def _row_to_dict(row) -> dict:
     run = row._asdict()
     # L'instantané d'une pause peut peser plusieurs Mio et ne regarde que la
     # reprise : on n'expose que la question en attente.
-    paused = run.pop("paused_state", None)
+    run.pop("paused_state", None)
     run.pop("assignee", None)
-    if run.get("status") == STATUS_AWAITING and paused:
-        run["decision"] = _decision_of(json.loads(paused))
+    run.pop("resumed_at", None)
+    decision = run.pop("decision", None)
+    if run.get("status") == STATUS_AWAITING and decision:
+        run["decision"] = json.loads(decision)
     run["agent_ids"] = json.loads(run.get("agent_ids") or "[]")
     tools = run.get("tools_executed")
     run["tools_executed"] = json.loads(tools) if tools else None
@@ -517,6 +527,12 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
 
     original = row._asdict()
     status = original.get("status")
+    if status == STATUS_AWAITING:
+        # Rejouer referait tout ce que la reprise rejouera sans l'exécuter.
+        raise HTTPException(
+            status_code=409,
+            detail="This run is waiting for a human decision — answer or abandon it.",
+        )
     if status not in _REPLAYABLE and not force:
         if status == STATUS_RUNNING:
             raise HTTPException(
@@ -601,6 +617,7 @@ def pause_run(run_id: str, snapshot: dict) -> None:
     """Consigne un run arrêté sur une décision humaine, avec son instantané."""
     assignee = (snapshot.get("prompt") or {}).get("assignee")
     snapshot = {**snapshot, "paused_at": _now()}
+    decision = {**_decision_of(snapshot), "paused_at": snapshot["paused_at"]}
     with run_store.engine.begin() as conn:
         result = conn.execute(
             run_store.run_table.update()
@@ -608,8 +625,10 @@ def pause_run(run_id: str, snapshot: dict) -> None:
             .values(
                 status=STATUS_AWAITING,
                 paused_state=json.dumps(snapshot, ensure_ascii=False, default=str),
+                decision=json.dumps(decision, ensure_ascii=False, default=str),
                 assignee=assignee.strip().lower() if isinstance(assignee, str) else None,
                 finished_at=None,
+                resumed_at=None,
             )
         )
     if result.rowcount != 1:
@@ -642,8 +661,10 @@ def list_awaiting(user: str) -> list[dict]:
     """Les runs en attente d'une décision de ``user`` (propriétaire ou assigné)."""
     t = run_store.run_table
     with run_store.engine.begin() as conn:
+        # Jamais ``paused_state`` ici : l'instantané peut peser des Mio.
         rows = conn.execute(
             t.select()
+            .with_only_columns(t.c.run_id, t.c.owner_id, t.c.config, t.c.decision)
             .where(
                 t.c.status == STATUS_AWAITING,
                 (t.c.owner_id == user) | (t.c.assignee == user.lower()),
@@ -653,15 +674,13 @@ def list_awaiting(user: str) -> list[dict]:
     out = []
     for row in rows:
         data = row._asdict()
-        state = json.loads(data.get("paused_state") or "{}")
         config = json.loads(data.get("config") or "{}")
         out.append(
             {
                 "run_id": data["run_id"],
                 "owner_id": data["owner_id"],
                 "workflow_id": config.get("workflow_id"),
-                "paused_at": state.get("paused_at") or data.get("created_at"),
-                **_decision_of(state),
+                **json.loads(data.get("decision") or "{}"),
             }
         )
     return out
@@ -689,10 +708,13 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
             raise HTTPException(
                 status_code=422, detail={"code": exc.code, "params": exc.params}
             ) from exc
+        # L'instantané reste en place : si la reprise n'atteint pas la
+        # décision (client parti, panne au démarrage), ``release_paused_run``
+        # remet le run en attente. ``finish_run`` l'efface à la vraie fin.
         claimed = conn.execute(
             t.update()
             .where(t.c.run_id == run_id, t.c.status == STATUS_AWAITING)
-            .values(status=STATUS_RUNNING, paused_state=None, assignee=None)
+            .values(status=STATUS_RUNNING, resumed_at=_now())
         )
         if claimed.rowcount != 1:
             raise HTTPException(
@@ -709,11 +731,34 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
     return {"run": data, "state": state, "answer": answer}
 
 
-def abandon_paused_run(run_id: str, user: str) -> None:
-    """Clôt un run en attente sans y répondre (``cancelled``)."""
+def release_paused_run(run_id: str) -> None:
+    """Remet en attente un run repris qui n'a pas atteint sa décision."""
     t = run_store.run_table
     with run_store.engine.begin() as conn:
-        _awaiting_row(conn, run_id, user)
+        conn.execute(
+            t.update()
+            .where(
+                t.c.run_id == run_id,
+                t.c.status == STATUS_RUNNING,
+                t.c.paused_state.isnot(None),
+            )
+            .values(status=STATUS_AWAITING, resumed_at=None)
+        )
+
+
+def abandon_paused_run(run_id: str, user: str) -> None:
+    """Clôt un run en attente sans y répondre (``cancelled``).
+
+    Réservé au propriétaire : l'assigné répond, il n'annule pas le run d'un
+    autre.
+    """
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        data = _awaiting_row(conn, run_id, user)
+        if data["owner_id"] != user:
+            raise HTTPException(
+                status_code=403, detail="Only the run's owner can abandon it"
+            )
         done = conn.execute(
             t.update()
             .where(t.c.run_id == run_id, t.c.status == STATUS_AWAITING)
@@ -721,6 +766,7 @@ def abandon_paused_run(run_id: str, user: str) -> None:
                 status=STATUS_CANCELLED,
                 paused_state=None,
                 assignee=None,
+                decision=None,
                 error_message="Décision humaine abandonnée",
                 finished_at=_now(),
             )

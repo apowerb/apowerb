@@ -101,6 +101,11 @@ class RunStore(BaseModel):
             # en plus du propriétaire.
             Column("paused_state", String),
             Column("assignee", String, index=True),
+            # La question en attente seule (petite, lue par les listes sans
+            # charger l'instantané) et l'heure de la reprise, qui remplace
+            # ``created_at`` pour juger un run ``running`` orphelin.
+            Column("decision", String),
+            Column("resumed_at", String),
         )
 
     def create_table(self):
@@ -136,15 +141,31 @@ class RunStore(BaseModel):
             "tools_executed": "VARCHAR",
             "paused_state": "VARCHAR",
             "assignee": "VARCHAR",
+            "decision": "VARCHAR",
+            "resumed_at": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
+        # Deux réplicas qui démarrent ensemble : sur Postgres, le second
+        # ALTER ne doit pas échouer sur la colonne que le premier vient
+        # d'ajouter.
+        if_not_exists = (
+            "IF NOT EXISTS " if self.engine.dialect.name == "postgresql" else ""
+        )
         with self.engine.begin() as conn:
             for col, typ in added_later.items():
                 if col not in existing:
                     conn.execute(
                         text(
                             f'ALTER TABLE {schema_prefix}"{self.table_name}" '
-                            f'ADD COLUMN "{col}" {typ}'
+                            f'ADD COLUMN {if_not_exists}"{col}" {typ}'
                         )
                     )
                     logger.info("Run store: colonne %s ajoutée.", col)
+            if if_not_exists:
+                # ``index=True`` ne vaut que pour une table neuve.
+                conn.execute(
+                    text(
+                        f'CREATE INDEX IF NOT EXISTS "ix_{self.table_name}_assignee" '
+                        f'ON {schema_prefix}"{self.table_name}" ("assignee")'
+                    )
+                )

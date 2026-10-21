@@ -1098,4 +1098,11 @@ async def call_agent_tool(
         return {"run_id": run_id, "output": terminal.get("output")}
     if event == "cancelled":
         return {"error": "cancelled", "run_id": run_id}
+    if event == "awaiting_input":
+        # Le run attend une décision humaine : il reprendra plus tard.
+        return {
+            "status": "awaiting_decision",
+            "run_id": run_id,
+            "question": terminal.get("question"),
+        }
     return {"error": "run_failed", "run_id": run_id, "detail": terminal.get("detail")}
