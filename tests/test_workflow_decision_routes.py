@@ -358,3 +358,20 @@ async def test_an_agent_tool_call_reports_a_waiting_run_not_a_failure(monkeypatc
         workflow_id="w1", owner_id=OWNER, tool_name="devis", arguments={}, prior_chain=[]
     )
     assert out == {"status": "awaiting_decision", "run_id": "r9", "question": "Q"}
+
+
+@pytest.mark.asyncio
+async def test_a_partial_test_up_to_the_decision_resumes_as_partial(api):
+    wf = workflow_main.create_workflow(owner_id=OWNER, name="Devis", graph=_graph())
+    events = await _drain(
+        await api.defs.run_workflow(
+            wf["workflow_id"],
+            api.defs.RunBody(payload={"x": "devis"}, until="d"),
+            current_user=_user(),
+        )
+    )
+    assert events[-1]["event"] == "awaiting_input"
+    resumed = await _drain(await _resume(api, events[0]["wid"], choice="oui"))
+    assert resumed[-1]["partial"] is True and resumed[-1]["until"] == "d"
+    assert resumed[-1]["output"]["choice"] == "oui"
+    assert not [e for e in resumed if e.get("node_id") in ("yes", "no")]
