@@ -133,6 +133,27 @@ _DEFAULT_RAG_TOP_K = 5
 # (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
 MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
 
+
+class AgentNodeMessage(str):
+    """Le message d'un nœud ``agent``, et de lui seul.
+
+    La liaison de production (``workflow_runtime.bindings_for``) y ajoute la
+    consigne « personne ne répondra » ; un classifieur ou une extraction, qui
+    passent par le même ``run_agent`` avec leur propre format de réponse, ne
+    la reçoivent pas. Une sous-classe de ``str`` garde la signature
+    ``run_agent(agent_id, message)`` inchangée.
+    """
+
+
+def _asks_question(output: Any) -> bool:
+    """Vrai si une réponse texte se termine par une question."""
+    if not isinstance(output, str):
+        return False
+    lines = [line.strip() for line in output.strip().splitlines() if line.strip()]
+    # Markdown, guillemets et parenthèses autour de la question finale.
+    return bool(lines) and lines[-1].rstrip("*_ \u00a0»”\"')").endswith("?")
+
+
 # --- Triggers (T1 : socle + validation des 8 kinds) -------------------------
 #
 # Un trigger automatique n'exécute que la version PUBLIÉE d'un workflow, au
@@ -1930,14 +1951,15 @@ class _Compiler:
                 )
                 raise exc
             self.outputs[node.id] = result
-            self.emit(
-                {
-                    "event": "node_complete",
-                    "node_id": node.id,
-                    "output": result,
-                    "duration_ms": round((time.monotonic() - t0) * 1000),
-                }
-            )
+            complete = {
+                "event": "node_complete",
+                "node_id": node.id,
+                "output": result,
+                "duration_ms": round((time.monotonic() - t0) * 1000),
+            }
+            if node.type == "agent" and _asks_question(result):
+                complete["asks_question"] = True
+            self.emit(complete)
             if route is not None:
                 self.emit({"event": "route", "node_id": node.id, "route": route})
             if node.id in self._terminal_ids:
@@ -1961,16 +1983,29 @@ class _Compiler:
         elif node.type == "agent":
 
             async def body(node_input):
-                if cfg.get("input") is not None:
-                    msg = render(cfg["input"], self.outputs, node.id)
+                tpl = cfg.get("input")
+                if isinstance(tpl, str) and not tpl.strip():
+                    # Champ Entrée effacé : comme un champ vide, l'agent lit
+                    # la sortie amont (l'aide du nœud le promet).
+                    tpl = None
+                if tpl is not None:
+                    msg = render(tpl, self.outputs, node.id)
                     msg = (
                         msg
                         if isinstance(msg, str)
                         else json.dumps(msg, ensure_ascii=False)
                     )
+                elif isinstance(node_input, str) and node_input:
+                    # Une réponse texte passe telle quelle : en JSON, elle
+                    # arrivait entre guillemets avec ses retours à la ligne
+                    # échappés.
+                    msg = node_input
                 else:
                     msg = leaf_message(node_input)
-                return await self.run_agent(cfg["agent_id"], msg), None
+                return (
+                    await self.run_agent(cfg["agent_id"], AgentNodeMessage(msg)),
+                    None,
+                )
         elif node.type == "tool":
 
             async def body(node_input):

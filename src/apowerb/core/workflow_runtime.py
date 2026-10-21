@@ -50,6 +50,7 @@ from typing import Any, Literal, Optional, Union, get_args, get_origin, get_type
 
 from apowerb.core.workflow_engine import access_token_factory, run_agent_message
 from apowerb.core.workflow_graph import (
+    AgentNodeMessage,
     GraphError,
     NodeServices,
     ResolveWorkflow,
@@ -659,6 +660,18 @@ def _bind_owner_identity(owner_email: str) -> None:
     )
 
 
+# Un agent de workflow ne parle à personne : sa réponse part vers le nœud
+# suivant. Sans cette consigne, un agent conversationnel finit souvent par une
+# question (« Que souhaitez-vous faire ? ») que l'agent aval prend pour une
+# demande (cas réel 21/10/26, business_analyst -> forecasting).
+WORKFLOW_AGENT_NOTE = (
+    "[Automated workflow step: no human will read or answer this reply, it is "
+    "passed to the next step. Do not ask questions; if something is missing, "
+    "state your assumption and carry on. Return the concrete results (values, "
+    "tables or JSON), not only a commentary.]"
+)
+
+
 def bindings_for(owner_email: str, plan: Optional[str]):
     """(run_agent, run_tool, run_rag, run_notify) pour exécuter un graphe au nom
     de ``owner_email``."""
@@ -666,6 +679,8 @@ def bindings_for(owner_email: str, plan: Optional[str]):
 
     async def run_agent(agent_id: str, message: str) -> Any:
         folder = check_agent_owner(agent_id, owner_email)
+        if isinstance(message, AgentNodeMessage):
+            message = f"{WORKFLOW_AGENT_NOTE}\n\n{message}"
         return await run_agent_message(
             folder,
             message,
