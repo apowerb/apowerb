@@ -69,10 +69,10 @@ def test_agent_input_is_emitted_before_the_agent_runs_and_kept_on_complete():
         _graph(TWO_AGENTS, TWO_EDGES), run_agent, payload={"message": "Analyse"}
     )
 
-    # Entrée vide : agent2 reçoit la sortie d'agent1 sérialisée en JSON (une
-    # chaîne arrive entre guillemets), et l'événement montre exactement cela.
+    # Entrée vide : agent2 reçoit la réponse texte d'agent1 telle quelle, sans
+    # guillemets JSON, et l'événement montre exactement cela.
     started = _event(events, "node_input", "agent2")
-    assert started["input"] == received["a2"] == '"Voici les chiffres clés"'
+    assert started["input"] == received["a2"] == "Voici les chiffres clés"
     assert _event(events, "node_complete", "agent2")["input"] == received["a2"]
     # Gabarit : ce qui est montré est le message rendu, pas le gabarit.
     assert _event(events, "node_input", "agent1")["input"] == received["a1"]
