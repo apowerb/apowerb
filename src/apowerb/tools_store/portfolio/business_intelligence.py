@@ -28,6 +28,7 @@ from apowerb.tools_store.portfolio.bi_datasets import (
     _load_owned_dataset_rows,
     _load_uploaded_file_rows,
     _materialize_uploaded_file_dataset,
+    _query_owned_dataset,
     validate_forecast_columns,
 )
 
@@ -50,6 +51,9 @@ _UUID_RE = re.compile(
 # whitespace/boundary. The old check required a trailing SPACE
 # ("select "), so a model emitting "SELECT\n  ..." (newline, very common)
 # skipped DB-connection auto-detection and produced a source-less chart.
+# Rows of a dataset query handed back to the agent with the chart.
+_MAX_RETURNED_ROWS = 100
+
 _SQL_START_RE = re.compile(r"\s*(select|with|show|describe)\b", re.IGNORECASE)
 
 
@@ -197,8 +201,9 @@ async def _async_create_chart(
     connection_config_id: str,
     config: str,
     owner_email: str,
+    dataset_id: str = "",
 ) -> dict:
-    from apowerb.bi.charts.core import ChartOrigin, ChartType, DataSource, AggregationFunc
+    from apowerb.bi.charts.core import ChartOrigin, ChartType, DataSource, AggregationFunc, SourceType
     from apowerb.bi.charts.schemas import ChartCreateRequest, DataSourceSchema
     from apowerb.bi.charts.service import ChartConflictError, ChartService
     from apowerb.bi.db_stores import DatabaseChartStore
@@ -229,6 +234,31 @@ async def _async_create_chart(
 
     # Build group_by list
     group_by_list = [g.strip() for g in group_by.split(",") if g.strip()] if group_by else []
+
+    # An imported dataset is not a table of the agent's database: run the
+    # query on the dataset itself and chart the stored result. The chart data
+    # service applies neither group_by nor aggregation, so the aggregation has
+    # to happen here. The dataset is a static CSV, so a snapshot loses nothing.
+    source_type = None
+    source_limit = None
+    data_rows: list[dict] | None = None
+    if dataset_id:
+        if connection_config_id:
+            return {"success": False, "error": (
+                "Pass either dataset_id (an imported dataset) or connection_config_id "
+                "(a database), not both."
+            )}
+        queried = await _query_owned_dataset(dataset_id, query, owner_email)
+        if not queried["success"]:
+            return {"success": False, "error": queried["error"]}
+        data_rows = queried["rows"]
+        if not data_rows:
+            return {"success": False, "error": "The query returned no rows: the chart was NOT created."}
+        stored_id = await _async_store_rows_dataset(
+            data_rows, name, owner_email, organization_id, project_id, origin="chart_query",
+        )
+        query, connection_config_id = f"csv://{stored_id}", ""
+        source_type, source_limit = SourceType.CSV, len(data_rows)
 
     # Owner used to load the DB connection config when validating the query
     # below. Defaults to the chart owner; overridden to the agent's owner when
@@ -278,9 +308,14 @@ async def _async_create_chart(
                     "success": False,
                     "error": (
                         f"The chart query failed to execute, so the chart was NOT created: {exc}. "
-                        "Do not hand-write SQL against an assumed schema: call tool_text_to_sql "
-                        "with the user's question to get a query grounded in the real database "
-                        "schema, then pass its sql_query to tool_create_chart."
+                        "If the data is an imported dataset (see tool_list_datasets), it is not a "
+                        "table of this database: call tool_create_chart again with its dataset_id "
+                        "and a query FROM dataset, e.g. SELECT strftime(date_trunc('month', "
+                        "<date column>), '%Y-%m') AS month, SUM(<amount column>) AS total "
+                        "FROM dataset GROUP BY 1 ORDER BY 1 (real column names from "
+                        "tool_describe_dataset). For a table of this database, do not hand-write "
+                        "SQL against an assumed schema: call tool_text_to_sql with the user's "
+                        "question, then pass its sql_query to tool_create_chart."
                     ),
                 }
             logger.warning("[BI] chart query validation skipped (non-SQL error): %s", exc)
@@ -291,6 +326,7 @@ async def _async_create_chart(
         group_by=group_by_list,
         time_field=time_field or None,
         connection_config_id=connection_config_id or None,
+        **({"source_type": source_type, "limit": source_limit} if source_type else {}),
     )
 
     async def _create_with_name(chart_name: str):
@@ -322,7 +358,7 @@ async def _async_create_chart(
         # re-asking a chart simply makes a new one.
         import uuid
         chart = await _create_with_name(f"{name}-{uuid.uuid4().hex[:6]}")
-    return {
+    created = {
         "success": True,
         "chart_id": chart.id,
         "name": chart.name,
@@ -330,6 +366,12 @@ async def _async_create_chart(
         "chart_type": chart.chart_type.value,
         "message": f"Chart '{chart.title}' created successfully.",
     }
+    if data_rows is not None:
+        # The figures themselves, so the agent can quote them in its answer
+        # (in a workflow, only its text reaches the next node).
+        created["data"] = data_rows[:_MAX_RETURNED_ROWS]
+        created["row_count"] = len(data_rows)
+    return created
 
 
 async def _async_create_dashboard(
@@ -1009,6 +1051,7 @@ def tool_create_chart(
     connection_config_id: str = "",
     config: str = "",
     folder_name: str = "",
+    dataset_id: str = "",
 ) -> dict:
     """Creates a new chart definition for use in dashboards.
 
@@ -1023,6 +1066,15 @@ def tool_create_chart(
 
     The optional config parameter accepts a JSON string for KPI-specific
     settings (e.g. {"kpi_column": "revenue", "kpi_aggregation": "sum"}).
+
+    On an imported dataset (dataset_id from tool_list_datasets), pass
+    dataset_id and write query as one SELECT over the table named
+    `dataset` — never the file name. Date columns are real dates. Monthly
+    revenue, for example:
+        SELECT strftime(date_trunc('month', order_date), '%Y-%m') AS month,
+               SUM(order_amount) AS revenue
+        FROM dataset GROUP BY 1 ORDER BY 1
+    The result rows are returned in `data` so you can quote the figures.
 
     Args:
         name:                 Unique machine name for the chart (e.g. "monthly_revenue_bar").
@@ -1039,9 +1091,11 @@ def tool_create_chart(
         connection_config_id: ID of the database connection config to use.
         config:               JSON string with additional chart configuration.
         folder_name:          Agent folder name (injected automatically).
+        dataset_id:           Imported dataset to query (query then reads FROM dataset).
 
     Returns:
-        dict with success status, chart_id, name, title, and chart_type.
+        dict with success status, chart_id, name, title, and chart_type;
+        with dataset_id, also data (up to 100 result rows) and row_count.
     """
     try:
         return _run_async(_async_create_chart(
@@ -1051,7 +1105,7 @@ def tool_create_chart(
             description=description, refresh_interval=refresh_interval,
             time_field=time_field, group_by=group_by, aggregation=aggregation,
             connection_config_id=connection_config_id, config=config,
-            owner_email=_agent_owner(),
+            owner_email=_agent_owner(), dataset_id=dataset_id,
         ))
     except Exception as e:
         logger.exception("[BI] tool_create_chart failed")
@@ -1377,6 +1431,7 @@ def tool_create_forecast_dashboard(
 
 async def _async_store_rows_dataset(
     rows: list[dict], name: str, owner_email: str, organization_id: str, project_id: str,
+    origin: str = "forecast_dashboard",
 ) -> str:
     """Store computed rows as a CSV dataset of ``owner_email``; returns its id."""
     import uuid
@@ -1392,7 +1447,7 @@ async def _async_store_rows_dataset(
         await store_tabular_as_csv(
             store, organization_id=organization_id, project_id=project_id,
             file_id=dataset_id, name=f"{name} #{dataset_id[:8]}", data=data,
-            uploaded_by=owner_email, extra_metadata={"source": "forecast_dashboard"},
+            uploaded_by=owner_email, extra_metadata={"source": origin},
         )
     return dataset_id
 
@@ -2047,6 +2102,7 @@ def make_bi_tools(
         aggregation: str = "",
         connection_config_id: str = "",
         config: str = "",
+        dataset_id: str = "",
     ) -> dict:
         """Creates a new chart definition for use in dashboards.
 
@@ -2059,6 +2115,15 @@ def make_bi_tools(
 
         The optional config parameter accepts a JSON string for KPI-specific
         settings (e.g. {"kpi_column": "revenue", "kpi_aggregation": "sum"}).
+
+        On an imported dataset (dataset_id from tool_list_datasets), pass
+        dataset_id and write query as one SELECT over the table named
+        `dataset` — never the file name. Date columns are real dates. Monthly
+        revenue, for example:
+            SELECT strftime(date_trunc('month', order_date), '%Y-%m') AS month,
+                   SUM(order_amount) AS revenue
+            FROM dataset GROUP BY 1 ORDER BY 1
+        The result rows are returned in `data` so you can quote the figures.
 
         Args:
             name:                 Unique machine name for the chart.
@@ -2074,9 +2139,11 @@ def make_bi_tools(
             aggregation:          Aggregation function (count, sum, avg, min, max, p50, p95, p99).
             connection_config_id: ID of the database connection config to use.
             config:               JSON string with additional chart configuration.
+            dataset_id:           Imported dataset to query (query then reads FROM dataset).
 
         Returns:
-            dict with success status, chart_id, name, title, and chart_type.
+            dict with success status, chart_id, name, title, and chart_type;
+            with dataset_id, also data (up to 100 result rows) and row_count.
         """
         try:
             return _run_async(_bi_module._async_create_chart(
@@ -2085,7 +2152,7 @@ def make_bi_tools(
                 description=description, refresh_interval=refresh_interval,
                 time_field=time_field, group_by=group_by, aggregation=aggregation,
                 connection_config_id=connection_config_id, config=config,
-                owner_email=owner_email,
+                owner_email=owner_email, dataset_id=dataset_id,
             ))
         except Exception as e:
             logger.exception("[BI] tool_create_chart failed")
