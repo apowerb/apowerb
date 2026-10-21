@@ -104,6 +104,43 @@ def test_oversized_body_is_refused(client):
     assert resp.json()["detail"]["code"] == "render_preview_too_large"
 
 
+def test_amplified_template_is_refused_before_rendering(client, monkeypatch):
+    # Un petit corps peut demander un rendu géant : la même grande sortie
+    # référencée des milliers de fois. Refusé avant tout rendu.
+    from apowerb.core import workflow_graph
+
+    def _boom(*_a, **_k):  # pragma: no cover - ne doit jamais être appelé
+        raise AssertionError("le rendu géant ne doit pas être produit")
+
+    monkeypatch.setattr(workflow_graph, "render", _boom)
+    resp = client.post(
+        URL, json={"template": "{{a}}" * 1000, "outputs": {"a": "x" * 10_000}}
+    )
+    assert resp.status_code == 413, resp.text
+    assert resp.json()["detail"]["code"] == "render_preview_too_large"
+
+
+def test_amplification_bound_counts_nested_templates(client):
+    big = "y" * 300_000
+    resp = client.post(
+        URL,
+        json={
+            "template": {"a": "{{s}}", "b": ["{{s}}", "{{s.x}}"], "c": "{{s}}"},
+            "outputs": {"s": big},
+        },
+    )
+    assert resp.status_code == 413, resp.text
+
+
+def test_reasonable_template_still_renders(client):
+    resp = client.post(
+        URL,
+        json={"template": "{{a}} " * 20, "outputs": {"a": "z" * 10_000}},
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["rendered"]) == 20 * 10_001
+
+
 def test_nothing_is_executed(client, monkeypatch):
     from apowerb.core import workflow_graph
 
