@@ -754,6 +754,17 @@ def _running_is_orphaned(row: dict, *, now: datetime) -> bool:
     return (now - started) > _RUNNING_STALE_AFTER
 
 
+def _last_run_still_awaiting(row: dict) -> bool:
+    """``last_status`` est figé à la pause : seule la ligne du run dit s'il
+    attend encore (repris ou abandonné depuis, il ne bloque plus rien)."""
+    from apowerb.core import run_main
+
+    if not row.get("last_run_id"):
+        return False
+    run = run_main.get_run(row["last_run_id"], owner_id=row.get("owner_id"))
+    return (run or {}).get("status") == run_main.STATUS_AWAITING
+
+
 async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
     """Un tick pour UN trigger ``schedule`` échu. Renvoie si un run a démarré.
 
@@ -799,6 +810,20 @@ async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
                 workflow_id, next_run_at=_iso_or_none(compute_next_run(cfg, after=now))
             )
             return False
+
+    if row.get("last_status") == "awaiting" and _last_run_still_awaiting(row):
+        # Le run précédent attend une décision humaine : sans ce garde, chaque
+        # créneau en empilerait un nouveau. Le créneau est consommé.
+        logger.info(
+            "[triggers] tick sauté (run précédent en attente de décision) "
+            "workflow=%s run=%s",
+            workflow_id,
+            row.get("last_run_id"),
+        )
+        _update_trigger_row(
+            workflow_id, next_run_at=_iso_or_none(compute_next_run(cfg, after=now))
+        )
+        return False
 
     next_at = _iso_or_none(compute_next_run(cfg, after=now))
     t = workflow_trigger_store.trigger_table
