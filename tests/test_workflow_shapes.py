@@ -67,11 +67,119 @@ def test_shape_of_is_capped_in_depth_keys_and_bytes():
     deep = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": 1}}}}}}}}
     text = json.dumps(ws.capped_shape(deep))
     assert '"h"' not in text  # coupé avant la profondeur 8
-    wide = {f"k{i}": i for i in range(500)}
+    # Des clés fixes de types variés : un objet, pas une table indexée.
+    wide = {f"field_{i}": (i if i % 2 else str(i)) for i in range(500)}
     shape = ws.capped_shape(wide)
     assert len(shape["fields"]) == ws.MAX_KEYS and shape["truncated"] is True
     huge = {f"key_{i:03d}_" + "x" * 150: {f"sub_{j}_" + "y" * 150: 1 for j in range(40)} for i in range(40)}
     assert len(json.dumps(ws.capped_shape(huge))) <= ws.MAX_SHAPE_BYTES
+
+
+# --- tables indexées par des données : jamais les clés en base -------------------
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        ["ada@acme.fr", "bob@other.fr"],
+        ["2026-10-01", "2026-10-02"],
+        ["10423", "10424"],
+        ["C-0042", "C-0043"],
+        ["0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679-7425-40de-944b-e07fc1f90ae7"],
+    ],
+)
+def test_a_dict_keyed_by_data_is_a_map_without_its_keys(keys):
+    value = {k: {"total": 12.5, "paid": True} for k in keys}
+    shape = ws.shape_of(value)
+    assert shape == {"type": "map", "values": {"type": "object", "fields": {"total": N, "paid": B}}}
+    text = json.dumps(shape)
+    assert not any(k in text for k in keys)
+
+
+def test_one_data_key_among_fixed_ones_is_enough_to_hide_them():
+    shape = ws.shape_of({"total": 3, "ada@acme.fr": 1})
+    assert shape["type"] == "map" and "ada@acme.fr" not in json.dumps(shape)
+
+
+def test_many_keys_with_values_of_the_same_shape_are_a_map():
+    value = {f"Produit {i}": {"qty": i, "sku": f"S{i}"} for i in range(30)}
+    shape = ws.shape_of(value)
+    assert shape == {"type": "map", "values": {"type": "object", "fields": {"qty": N, "sku": S}}}
+    assert "Produit" not in json.dumps(shape)
+
+
+def test_an_object_with_fixed_keys_is_described_as_before():
+    assert ws.shape_of({"total": 1200, "mois": "octobre"}) == {
+        "type": "object",
+        "fields": {"total": N, "mois": S},
+    }
+
+
+def test_a_template_into_a_map_reaches_its_values():
+    graph = _graph(
+        [
+            {"id": "t", "type": "trigger", "config": {"sample_payload": {"ada@acme.fr": {"n": 1}}}},
+            {"id": "s", "type": "set", "config": {"fields": [{"key": "one", "value": "{{t.anything.n}}"}]}},
+        ],
+        [{"source": "t", "target": "s"}],
+    )
+    shapes = ws.node_shapes(graph)
+    assert shapes["s"]["shape"] == {"type": "object", "fields": {"one": N}}
+
+
+def test_a_tool_answer_keyed_by_emails_leaves_no_address_in_base_or_route(client, store):
+    answer = {"ada@acme.fr": {"orders": 3}, "bob@other.fr": {"orders": 1}}
+    ws.record_tool_shape(ALICE, "crm.lookup", answer)
+    with store.begin() as conn:
+        rows = [dict(r._mapping) for r in conn.execute(wm.workflow_store.tool_shape_table.select())]
+    assert len(rows) == 1 and "@" not in rows[0]["shape"]  # owner_id est un e-mail, lui
+    body = client.post("/api/workflows/defs/node-shapes", json={"graph": SHAPE_GRAPH}).json()
+    assert "@" not in json.dumps(body)
+    assert body["shapes"]["tool1"]["shape"]["type"] == "map"
+
+
+# --- purge des formes avec le workflow -------------------------------------------
+
+
+def _tool_graph(*tools, loop_tool=None):
+    nodes = [{"id": "t", "type": "trigger", "config": {"kind": "manual"}}]
+    edges = []
+    for i, ref in enumerate(tools):
+        nodes.append({"id": f"tool{i}", "type": "tool", "config": {"tool": ref}})
+        edges.append({"source": "t", "target": f"tool{i}"})
+    if loop_tool:
+        body = {
+            "version": 1,
+            "nodes": [
+                {"id": "item", "type": "trigger", "config": {"kind": "manual"}},
+                {"id": "inner", "type": "tool", "config": {"tool": loop_tool}},
+            ],
+            "edges": [{"source": "item", "target": "inner"}],
+        }
+        nodes.append({"id": "each", "type": "loop", "config": {"items": "{{t.rows}}", "body": body}})
+        edges.append({"source": "t", "target": "each"})
+    return {"version": 1, "nodes": nodes, "edges": edges}
+
+
+def _learned(owner):
+    return set(ws.read_tool_shapes(owner, ["crm.lookup", "erp.lines", "mail.read"]))
+
+
+def test_deleting_a_workflow_forgets_the_shapes_no_other_workflow_uses(client):
+    w1 = wm.create_workflow(owner_id=ALICE, name="A", graph=_tool_graph("crm.lookup", loop_tool="mail.read"))
+    w2 = wm.create_workflow(owner_id=ALICE, name="B", graph=_tool_graph("crm.lookup", "erp.lines"))
+    for ref in ("crm.lookup", "erp.lines", "mail.read"):
+        ws.record_tool_shape(ALICE, ref, {"a": 1})
+    ws.record_tool_shape(BOB, "erp.lines", {"a": 1})
+
+    wm.delete_workflow(w2["workflow_id"], owner_id=ALICE)
+    # erp.lines n'est plus utilisé par Alice ; crm.lookup l'est encore par A.
+    assert _learned(ALICE) == {"crm.lookup", "mail.read"}
+    assert _learned(BOB) == {"erp.lines"}  # rien chez les autres
+
+    wm.delete_workflow(w1["workflow_id"], owner_id=ALICE)
+    assert _learned(ALICE) == set()  # outil de boucle compris
+    assert _learned(BOB) == {"erp.lines"}
 
 
 # --- node_shapes : forme statique des nœuds --------------------------------------

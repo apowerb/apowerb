@@ -7,7 +7,10 @@ décrit des clés et des types, JAMAIS des valeurs :
 * ``{"type": "string" | "number" | "boolean" | "null" | "any"}`` ;
 * ``{"type": "object", "fields": {clé: forme}}`` (``fields`` absent si
   inconnu, ``truncated: true`` si des clés ont été écartées) ;
-* ``{"type": "array", "items": forme}`` (``items`` absent si inconnu).
+* ``{"type": "array", "items": forme}`` (``items`` absent si inconnu) ;
+* ``{"type": "map", "values": forme}`` : un dict indexé par des données
+  (e-mails, identifiants, dates…, ou beaucoup de clés aux valeurs de même
+  forme). Ses clés SONT des valeurs : elles ne sont jamais retenues.
 
 Deux sources : la configuration du graphe (``node_shapes``, pure) et la
 réponse des outils au dernier run de l'utilisateur (``record_tool_shape``),
@@ -16,13 +19,16 @@ car le catalogue des outils décrit leurs arguments, pas leur réponse.
 Stockage des formes apprises : une ligne par (utilisateur, outil) dans
 ``workflow_tool_shapes``, à côté des workflows (même base, même création
 idempotente au démarrage). La forme seule est écrite, plafonnée à
-``MAX_SHAPE_BYTES`` : rien d'une valeur de réponse n'atteint la base.
+``MAX_SHAPE_BYTES`` : rien d'une valeur de réponse n'atteint la base. Les
+formes d'un outil sont oubliées quand plus aucun workflow de l'utilisateur
+ne s'en sert (``forget_unused_tool_shapes``, à la suppression d'un workflow).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Iterable, Optional
 
@@ -42,6 +48,22 @@ MAX_DEPTH = 6
 MAX_KEYS = 50
 MAX_SHAPE_BYTES = 8_000
 MAX_TOOL_REF = 200
+# Au-delà, un dict dont toutes les valeurs ont la même forme est une table.
+MAP_MIN_KEYS = 20
+
+# Une clé qui est une donnée : la retenir serait retenir une valeur.
+_DATA_KEY = re.compile(
+    r"""^(?:
+        [^@\s]+@[^@\s]+\.[^@\s]+                 # e-mail
+      | \d+(?:[.,]\d+)?                           # nombre
+      | [A-Za-z]{0,4}[-_]?\d{3,}                   # numéro, identifiant (C-0042)
+      | \d{4}-\d{2}(?:-\d{2})?(?:[T\s].*)?         # date ISO
+      | \d{1,2}[/.]\d{1,2}[/.]\d{2,4}              # date JJ/MM/AAAA
+      | [0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}  # UUID
+      | [0-9a-fA-F]{16,}                          # empreinte, identifiant hexadécimal
+    )$""",
+    re.VERBOSE,
+)
 
 _ANY = {"type": "any"}
 _STRING = {"type": "string"}
@@ -91,6 +113,9 @@ def shape_of(value: Any, *, max_depth: int = MAX_DEPTH) -> dict:
         if max_depth <= 0:
             return dict(_OBJECT)
         keys = [k for k in value if isinstance(k, str)]
+        values = _map_values(value, keys, max_depth - 1)
+        if values is not None:
+            return {"type": "map", "values": values}
         shape: dict = {
             "type": "object",
             "fields": {
@@ -107,6 +132,20 @@ def shape_of(value: Any, *, max_depth: int = MAX_DEPTH) -> dict:
     return dict(_ANY)
 
 
+def _map_values(value: dict, keys: list[str], max_depth: int) -> Optional[dict]:
+    """Forme commune des valeurs si ``value`` est indexé par des données, sinon None."""
+    if not keys:
+        return None
+    first = shape_of(value[keys[0]], max_depth=max_depth)
+    if any(_DATA_KEY.match(k.strip()) for k in keys):
+        return first
+    if len(keys) >= MAP_MIN_KEYS and all(
+        shape_of(value[k], max_depth=max_depth) == first for k in keys[1:MAX_KEYS]
+    ):
+        return first
+    return None
+
+
 def capped_shape(value: Any) -> dict:
     """``shape_of`` réduite en profondeur jusqu'à tenir dans ``MAX_SHAPE_BYTES``."""
     for depth in range(MAX_DEPTH, -1, -1):
@@ -118,6 +157,9 @@ def capped_shape(value: Any) -> dict:
 
 def _at_path(shape: Optional[dict], path: str) -> dict:
     for part in (p for p in path.split(".") if p):
+        if shape and shape.get("type") == "map":
+            shape = shape.get("values")  # n'importe quelle clé de la table
+            continue
         if not shape or shape.get("type") != "object" or part not in shape.get("fields", {}):
             return dict(_ANY)
         shape = shape["fields"][part]
@@ -262,6 +304,45 @@ def read_tool_shapes(owner_id: str, tool_refs: Iterable[str]) -> dict[str, dict]
     query = t.select().where(t.c.owner_id == owner_id, t.c.tool_ref.in_(refs))
     with workflow_store.engine.begin() as conn:
         return {r.tool_ref: json.loads(r.shape) for r in conn.execute(query)}
+
+
+def tool_refs_in(graph: Any) -> set[str]:
+    """Les outils qu'un graphe appelle, corps de boucle et de ``try`` compris."""
+    if isinstance(graph, str):
+        try:
+            graph = json.loads(graph)
+        except ValueError:
+            return set()
+    found: set[str] = set()
+
+    def _walk(item: Any) -> None:
+        if isinstance(item, dict):
+            ref = (item.get("config") or {}).get("tool") if item.get("type") == "tool" else None
+            if isinstance(ref, str) and ref:
+                found.add(ref)
+            for v in item.values():
+                _walk(v)
+        elif isinstance(item, list):
+            for v in item:
+                _walk(v)
+
+    _walk(graph)
+    return found
+
+
+def forget_unused_tool_shapes(conn, owner_id: str, candidates: set[str]) -> None:
+    """Oublie les formes de ``candidates`` dont plus aucun workflow (ni révision)
+    de ``owner_id`` ne se sert. À appeler dans la transaction qui supprime."""
+    if not candidates:
+        return
+    still_used: set[str] = set()
+    for table in (workflow_store.workflow_table, workflow_store.revision_table):
+        for row in conn.execute(table.select().where(table.c.owner_id == owner_id)):
+            still_used |= tool_refs_in(row._mapping["graph"])
+    gone = sorted(candidates - still_used)
+    if gone:
+        t = workflow_store.tool_shape_table
+        conn.execute(t.delete().where(t.c.owner_id == owner_id, t.c.tool_ref.in_(gone)))
 
 
 RunTool = Callable[[str, dict], Awaitable[Any]]
