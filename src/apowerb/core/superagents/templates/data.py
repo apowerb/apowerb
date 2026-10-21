@@ -253,7 +253,11 @@ tool_text_to_sql / tool_chart_from_question already repair a query the database 
         "name": "forecasting_assistant",
         "display_name": "Forecasting Agent",
         "description": "Forecasting agent that uses th2forecast to generate predictions "
-                       "from historical data, with PostgreSQL database support.",
+                       "from historical data, with PostgreSQL database support. "
+                       "It needs the historical series itself: an attached file, an "
+                       "imported dataset or a SQL query on the database. A text "
+                       "summary (a few figures from another agent) is not enough "
+                       "to forecast.",
         "icon": "TrendingUp",
         "category": "data",
         "agent_model": "anthropic/claude-sonnet-4-5-20250929",

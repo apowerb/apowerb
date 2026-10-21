@@ -49,6 +49,26 @@ logger = getLogger(__name__)
 _FALLBACK_MESSAGE = "Execute your task now and perform the required action."
 _COMPOSITES = {"sequential", "parallel", "loop"}
 
+# Les identifiants qu'un outil rend et que le texte final de l'agent perd
+# (« J'ai généré le graphique » sans le graphique).
+_ARTIFACT_KEYS = ("chart_id", "forecast_chart_id", "dashboard_id", "dataset_id")
+# Au-delà, l'agent a balayé des datasets plutôt que produit des objets.
+_MAX_ARTIFACTS = 20
+
+
+@dataclass
+class AgentReply:
+    """La réponse d'un agent exécuté par un workflow.
+
+    ``output`` : le texte final, relu comme JSON s'il en contient — c'est la
+    sortie du nœud, lue par ``{{agent1}}``. ``artifacts`` : les identifiants
+    rendus par ses outils (voir ``tool_artifacts``), exposés à côté de la
+    sortie pour ne pas en changer la forme.
+    """
+
+    output: Any
+    artifacts: list[dict] = field(default_factory=list)
+
 
 class WorkflowUserError(ValueError):
     """Erreur rédigée par nous, sûre à montrer à l'utilisateur telle quelle.
@@ -227,6 +247,50 @@ def extract_response_text(response: Any) -> str:
         if content is not None:
             return content if isinstance(content, str) else json.dumps(content)
     return json.dumps(response)
+
+
+def _function_responses(response: Any):
+    events = response if isinstance(response, list) else [response]
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        parts = (ev.get("content") or {}).get("parts") or []
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            fr = p.get("functionResponse") or p.get("function_response")
+            if isinstance(fr, dict) and isinstance(fr.get("response"), dict):
+                yield fr.get("name") or "", fr["response"]
+
+
+def tool_artifacts(response: Any) -> list[dict]:
+    """Les identifiants (graphique, tableau de bord, dataset) rendus par les
+    outils au cours d'un run ADK, dans l'ordre, sans doublon.
+
+    Seules les clés de ``_ARTIFACT_KEYS`` d'une réponse d'outil sont gardées,
+    avec le nom de l'outil : ``tool_describe_dataset`` rend aussi un
+    ``dataset_id``, qu'il n'a pas créé — c'est au lecteur de trier. Une
+    réponse ``success: False`` est ignorée.
+    """
+    found: list[dict] = []
+    for name, resp in _function_responses(response):
+        if resp.get("success") is False:
+            continue
+        ids = {
+            k: resp[k]
+            for k in _ARTIFACT_KEYS
+            if isinstance(resp.get(k), (str, int))
+            and not isinstance(resp.get(k), bool)
+            and resp.get(k) != ""
+        }
+        if not ids:
+            continue
+        item = {"tool": name, **ids}
+        if item not in found:
+            found.append(item)
+        if len(found) >= _MAX_ARTIFACTS:
+            break
+    return found
 
 
 # --- Compilation canvas -> google.adk.workflow.Workflow --------------------
@@ -530,7 +594,7 @@ async def run_agent_message(
     owner_email: str,
     plan: Optional[str],
     token_factory: TokenFactory,
-) -> Any:
+) -> AgentReply:
     """Exécute un agent par le même chemin que le builder, message brut.
 
     ``workflowRunner.js`` appelle ``createSession`` puis ``runAgent`` : une
@@ -560,7 +624,10 @@ async def run_agent_message(
         run_mode="run",
         token=token,
     )
-    return try_parse_json(extract_response_text(response))
+    return AgentReply(
+        output=try_parse_json(extract_response_text(response)),
+        artifacts=tool_artifacts(response),
+    )
 
 
 def make_http_leaf_runner(
@@ -569,12 +636,13 @@ def make_http_leaf_runner(
     """``run_leaf`` de production pour le canvas : voir ``run_agent_message``."""
 
     async def _run(spec: AgentSpec, node_input: Any) -> Any:
-        return await run_agent_message(
+        reply = await run_agent_message(
             spec.agent_id,
             leaf_message(node_input, spec.description),
             owner_email=owner_email,
             plan=plan,
             token_factory=token_factory,
         )
+        return reply.output
 
     return _run

@@ -218,6 +218,18 @@ def apply_output_schema(instruction: str, output_schema, agent_name: str) -> str
         else output_schema
     ) or {}
     output_instruction = parsed.get("instruction", "")
+    if not output_instruction and (
+        isinstance(parsed.get("properties"), dict) or "type" in parsed
+    ):
+        # A bare JSON Schema (no "instruction" key) used to be dropped
+        # silently: the agent answered in prose and a workflow could not read
+        # {{agent1.field}}. Turn it into the instruction; the length cap below
+        # still applies.
+        output_instruction = (
+            "Respond with ONLY JSON matching this JSON Schema, no prose and "
+            "no code fence:\n"
+            + json.dumps(parsed, ensure_ascii=False)
+        )
     if (
         isinstance(output_instruction, str)
         and 0 < len(output_instruction) <= 2000

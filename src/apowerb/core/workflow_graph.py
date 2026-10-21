@@ -77,6 +77,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, model_validator
 
 from apowerb.core.workflow_engine import (
+    AgentReply,
     _Finished,
     WorkflowCancelled,
     WorkflowUserError,
@@ -1802,7 +1803,7 @@ class _Compiler:
         self.services = services or NodeServices()
         self.g = graph
         self.payload = payload
-        self.run_agent = run_agent
+        self._run_agent_raw = run_agent
         self.run_tool = run_tool
         self.run_rag = run_rag
         self.run_notify = run_notify
@@ -1817,6 +1818,22 @@ class _Compiler:
         self.workflow_stack = workflow_stack
         self.depth = depth
         self.outputs: dict[str, Any] = {}
+        # Identifiants rendus par les outils d'un nœud agent, ajoutés à son
+        # node_complete : à côté de la sortie, pour que {{id}} garde sa forme.
+        self._artifacts: dict[str, list[dict]] = {}
+
+    async def _agent_reply(self, agent_id: str, message: str) -> AgentReply:
+        # Un run_agent injecté peut rendre la valeur seule (stubs, anciens
+        # appelants) ou une AgentReply (production, run_agent_message).
+        reply = await self._run_agent_raw(agent_id, message)
+        return reply if isinstance(reply, AgentReply) else AgentReply(output=reply)
+
+    async def run_agent(self, agent_id: str, message: str) -> Any:
+        return (await self._agent_reply(agent_id, message)).output
+
+    def _artifacts_of(self, node_id: str) -> dict:
+        found = self._artifacts.pop(node_id, None)
+        return {"artifacts": found} if found else {}
 
     def _service(self, node: Node, name: str):
         fn = getattr(self.services, name)
@@ -1936,6 +1953,7 @@ class _Compiler:
                     "node_id": node.id,
                     "output": result,
                     "duration_ms": round((time.monotonic() - t0) * 1000),
+                    **self._artifacts_of(node.id),
                 }
             )
             if route is not None:
@@ -1970,7 +1988,9 @@ class _Compiler:
                     )
                 else:
                     msg = leaf_message(node_input)
-                return await self.run_agent(cfg["agent_id"], msg), None
+                reply = await self._agent_reply(cfg["agent_id"], msg)
+                self._artifacts[node.id] = reply.artifacts
+                return reply.output, None
         elif node.type == "tool":
 
             async def body(node_input):
@@ -2289,7 +2309,7 @@ class _Compiler:
         inner = _Compiler(
             body,
             payload,
-            self.run_agent,
+            self._run_agent_raw,
             self.run_tool,
             queue.put_nowait,
             self.cancel,
