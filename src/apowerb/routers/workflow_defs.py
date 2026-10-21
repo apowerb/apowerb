@@ -57,6 +57,8 @@ class GraphBody(BaseModel):
 
 class RunBody(BaseModel):
     payload: Any = None
+    # « Tester jusqu'ici » : seuls ce nœud et son amont s'exécutent.
+    until: Optional[str] = None
 
 
 class SuggestBody(BaseModel):
@@ -110,6 +112,23 @@ async def validate_graph(
     body: GraphBody, current_user: user_schemas.User = Depends(get_current_user)
 ):
     return workflow_main.check_workflow(body.graph, owner_id=current_user.email)
+
+
+@router.post("/node-shapes")
+async def node_shapes(
+    body: GraphBody, current_user: user_schemas.User = Depends(get_current_user)
+):
+    """Forme connue de la sortie de chaque nœud du brouillon, sans rien exécuter.
+
+    Lecture seule, comme ``/validate`` : la configuration du graphe, plus la
+    forme apprise de la réponse des outils de l'appelant (``workflow_shapes``).
+    """
+    from apowerb.core import workflow_shapes
+
+    graph = _call(workflow_main.parse_graph, body.graph)
+    tool_refs = [n.config.get("tool") for n in graph.nodes if n.type == "tool"]
+    learned = workflow_shapes.read_tool_shapes(current_user.email, tool_refs)
+    return {"shapes": workflow_shapes.node_shapes(graph, tool_shapes=learned)}
 
 
 @router.post("/suggest-next")
@@ -228,9 +247,17 @@ async def run_workflow(
     body: RunBody,
     current_user: user_schemas.User = Depends(get_current_user),
 ):
-    """Exécute la version courante côté serveur et diffuse ses événements (SSE)."""
+    """Exécute la version courante côté serveur et diffuse ses événements (SSE).
+
+    ``until`` limite le run à ce nœud et à son amont (``run_graph``) ; un tel
+    run partiel ne réveille aucun trigger ``workflow_done``.
+    """
     return await _run_current_version(
-        workflow_id, body.payload, current_user.email, trigger="workflow"
+        workflow_id,
+        body.payload,
+        current_user.email,
+        trigger="workflow",
+        until=body.until,
     )
 
 
@@ -291,7 +318,12 @@ async def simulate_email(
 
 
 async def _run_current_version(
-    workflow_id: str, payload: Any, owner: str, *, trigger: str
+    workflow_id: str,
+    payload: Any,
+    owner: str,
+    *,
+    trigger: str,
+    until: Optional[str] = None,
 ):
     from apowerb.core import workflow_runtime
     from apowerb.core.run_gate import resolve_owner_plan
@@ -309,9 +341,23 @@ async def _run_current_version(
         )
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail)
     graph = workflow_main.parse_graph(wf["graph"])
+    if until is not None and until not in {n.id for n in graph.nodes}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "code": "until_unknown_node",
+                "message": f"nœud inconnu pour un test partiel : {until}",
+                "params": {"node": until},
+            },
+        )
+    from apowerb.core.workflow_shapes import learning_run_tool
+
     run_agent, run_tool, run_rag, run_notify = workflow_runtime.bindings_for(
         owner, await resolve_owner_plan(owner)
     )
+    # La forme de chaque réponse d'outil est retenue (jamais ses valeurs) pour
+    # proposer ses champs au nœud suivant la prochaine fois.
+    run_tool = learning_run_tool(owner, run_tool)
     # Sous-workflows : callback owner-scopé (même contrôle d'accès que pour
     # lancer ce workflow directement, cf. get_workflow ci-dessus) — un
     # subworkflow exécute la MÊME version « courante » que ce endpoint
@@ -329,6 +375,7 @@ async def _run_current_version(
                 "workflow_id": workflow_id,
                 "version": wf["version"],
                 "payload": payload,
+                **({"until": until} if until is not None else {}),
             },
         )
     except Exception:  # noqa: BLE001 - même politique que /run-sse
@@ -348,6 +395,7 @@ async def _run_current_version(
             cancel_event=cancel_event,
             run_notify=run_notify,
             services=workflow_runtime.services_for(owner),
+            until=until,
         )
 
     return _streaming_run(
