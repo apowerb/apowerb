@@ -68,74 +68,109 @@ def test_shape_of_is_capped_in_depth_keys_and_bytes():
     text = json.dumps(ws.capped_shape(deep))
     assert '"h"' not in text  # coupé avant la profondeur 8
     # Des clés fixes de types variés : un objet, pas une table indexée.
-    wide = {f"field_{i}": (i if i % 2 else str(i)) for i in range(500)}
+    names = [f"f_{chr(97 + i // 676)}{chr(97 + i // 26 % 26)}{chr(97 + i % 26)}" for i in range(500)]
+    wide = {name: (i if i % 2 else str(i)) for i, name in enumerate(names)}
     shape = ws.capped_shape(wide)
     assert len(shape["fields"]) == ws.MAX_KEYS and shape["truncated"] is True
     huge = {f"key_{i:03d}_" + "x" * 150: {f"sub_{j}_" + "y" * 150: 1 for j in range(40)} for i in range(40)}
     assert len(json.dumps(ws.capped_shape(huge))) <= ws.MAX_SHAPE_BYTES
 
 
-# --- tables indexées par des données : jamais les clés en base -------------------
+# --- seules des clés « de programmeur » deviennent des champs ---------------------
+
+# Des clés qui sont des données : aucune ne doit atteindre la base ni la route.
+DATA_KEYS = [
+    "ada@acme.fr",
+    "2026-10-01",
+    "10423",
+    "C-0042",
+    "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "+33612345678",
+    "client_CF101197",
+    "Dupont Jean",
+    "06 12 34 56 78",
+    "06-12-34-56-78",
+    "CLIENT101197",
+    "ABCDE12345",
+    "101197CF",
+    "12345A",
+    "CF-2026-0042",
+    "C42",
+    "user:42",
+    "192.168.1.20",
+    "1 oct. 2026",
+    "FR76 3000 6000 0112 3456 7890 189",
+]
+FIELD_KEYS = ["total", "mois", "items", "item2", "q1_total", "createdAt", "order_amount"]
 
 
-@pytest.mark.parametrize(
-    "keys",
-    [
-        ["ada@acme.fr", "bob@other.fr"],
-        ["2026-10-01", "2026-10-02"],
-        ["10423", "10424"],
-        ["C-0042", "C-0043"],
-        ["0f8fad5b-d9cb-469f-a165-70867728950e", "7c9e6679-7425-40de-944b-e07fc1f90ae7"],
-    ],
-)
-def test_a_dict_keyed_by_data_is_a_map_without_its_keys(keys):
-    value = {k: {"total": 12.5, "paid": True} for k in keys}
-    shape = ws.shape_of(value)
-    assert shape == {"type": "map", "values": {"type": "object", "fields": {"total": N, "paid": B}}}
-    text = json.dumps(shape)
-    assert not any(k in text for k in keys)
+@pytest.mark.parametrize("key", DATA_KEYS)
+def test_a_data_key_is_never_a_field_name(key):
+    alone = ws.shape_of({key: {"n": 1}})
+    assert alone == {"type": "map", "values": {"type": "object", "fields": {"n": N}}}
+    mixed = ws.shape_of({"total": 3, key: {"n": 1}})
+    assert mixed == {
+        "type": "object",
+        "fields": {"total": N},
+        "others": {"type": "object", "fields": {"n": N}},
+    }
+    assert key not in json.dumps(alone) + json.dumps(mixed)
 
 
-def test_one_data_key_among_fixed_ones_is_enough_to_hide_them():
-    shape = ws.shape_of({"total": 3, "ada@acme.fr": 1})
-    assert shape["type"] == "map" and "ada@acme.fr" not in json.dumps(shape)
+@pytest.mark.parametrize("key", FIELD_KEYS)
+def test_a_programmer_identifier_stays_a_field(key):
+    assert ws.shape_of({key: 1}) == {"type": "object", "fields": {key: N}}
 
 
-def test_many_keys_with_values_of_the_same_shape_are_a_map():
+def test_a_dict_keyed_by_data_only_is_a_map():
     value = {f"Produit {i}": {"qty": i, "sku": f"S{i}"} for i in range(30)}
     shape = ws.shape_of(value)
     assert shape == {"type": "map", "values": {"type": "object", "fields": {"qty": N, "sku": S}}}
     assert "Produit" not in json.dumps(shape)
 
 
-def test_an_object_with_fixed_keys_is_described_as_before():
-    assert ws.shape_of({"total": 1200, "mois": "octobre"}) == {
-        "type": "object",
-        "fields": {"total": N, "mois": S},
-    }
+def test_a_wide_row_of_named_columns_stays_an_object():
+    row = {f"col_{chr(97 + i // 26)}{chr(97 + i % 26)}": "x" for i in range(25)}
+    shape = ws.shape_of(row)
+    assert shape["type"] == "object" and set(shape["fields"]) == set(row)
 
 
-def test_a_template_into_a_map_reaches_its_values():
+def test_a_template_reaches_the_values_of_a_map_or_of_the_other_keys():
     graph = _graph(
         [
-            {"id": "t", "type": "trigger", "config": {"sample_payload": {"ada@acme.fr": {"n": 1}}}},
-            {"id": "s", "type": "set", "config": {"fields": [{"key": "one", "value": "{{t.anything.n}}"}]}},
+            {
+                "id": "t",
+                "type": "trigger",
+                "config": {"sample_payload": {"total": 1, "ada@acme.fr": {"n": 1}}},
+            },
+            {
+                "id": "s",
+                "type": "set",
+                "config": {
+                    "fields": [
+                        {"key": "one", "value": "{{t.anything.n}}"},
+                        {"key": "sum", "value": "{{t.total}}"},
+                    ]
+                },
+            },
         ],
         [{"source": "t", "target": "s"}],
     )
     shapes = ws.node_shapes(graph)
-    assert shapes["s"]["shape"] == {"type": "object", "fields": {"one": N}}
+    assert shapes["s"]["shape"] == {"type": "object", "fields": {"one": N, "sum": N}}
 
 
-def test_a_tool_answer_keyed_by_emails_leaves_no_address_in_base_or_route(client, store):
-    answer = {"ada@acme.fr": {"orders": 3}, "bob@other.fr": {"orders": 1}}
+def test_a_tool_answer_leaves_no_data_key_in_base_or_route(client, store):
+    answer = {"total": 2, **{k: {"orders": 3} for k in DATA_KEYS}}
     ws.record_tool_shape(ALICE, "crm.lookup", answer)
     with store.begin() as conn:
         rows = [dict(r._mapping) for r in conn.execute(wm.workflow_store.tool_shape_table.select())]
-    assert len(rows) == 1 and "@" not in rows[0]["shape"]  # owner_id est un e-mail, lui
     body = client.post("/api/workflows/defs/node-shapes", json={"graph": SHAPE_GRAPH}).json()
-    assert "@" not in json.dumps(body)
-    assert body["shapes"]["tool1"]["shape"]["type"] == "map"
+    stored, served = rows[0]["shape"], json.dumps(body, ensure_ascii=False)
+    for key in DATA_KEYS:
+        assert key not in stored and key not in served
+    assert body["shapes"]["tool1"]["shape"]["fields"] == {"total": N}
+
 
 
 # --- purge des formes avec le workflow -------------------------------------------
