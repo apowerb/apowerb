@@ -93,6 +93,23 @@ def list_user_tool_configs(user_id: str) -> list[dict]:
     return tool_configs
 
 
+def redact_foreign_tool_config(config: dict, viewer_id: str) -> dict:
+    """Return ``config`` as it may be sent to ``viewer_id``'s browser.
+
+    The listing/fetch helpers decrypt every param, ``system`` configs included,
+    because executors need the real credentials. A config the viewer does not
+    own keeps its param names (the UI checks key overlaps) but every value is
+    replaced by ``None``. Owned configs are returned untouched: the edit form
+    sends the pre-filled values back on PUT, so masking them would overwrite
+    the stored secrets.
+    """
+    if "tool_config_params" not in config or config.get("owner_id") == viewer_id:
+        return config
+    params = config["tool_config_params"]
+    masked = dict.fromkeys(params) if isinstance(params, dict) else {}
+    return {**config, "tool_config_params": masked}
+
+
 def find_system_tool_config(tool_name: str) -> dict | None:
     """Find an existing system tool config by tool_name. Returns None if not found."""
     t = tool_config_store.tool_config_table

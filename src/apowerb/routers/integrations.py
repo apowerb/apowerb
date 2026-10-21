@@ -1,3 +1,5 @@
+"""Integrations router — OAuth connect, callback and disconnect for GitHub, Microsoft and Google under ``/integrations``."""
+
 from apowerb.core.setup_status import require_configured
 from logging import getLogger
 

@@ -280,6 +280,76 @@ async def _load_owned_dataset_rows(dataset_id: str, owner: str, limit: int) -> d
     }
 
 
+# Nom sous lequel la requête d'un agent voit le jeu de données.
+DATASET_TABLE = "dataset"
+
+
+def _dataset_frame(rows: list[dict[str, Any]]):
+    """Lignes CSV en DataFrame ; les colonnes de dates deviennent des dates,
+    pour que ``date_trunc('month', order_date)`` marche sans CAST, même au
+    format jj/mm/aaaa."""
+    import pandas as pd
+
+    frame = pd.DataFrame(rows)
+    for col in frame.columns:
+        values = [None if v is None or str(v).strip() == "" else str(v) for v in frame[col]]
+        parsed = [_parse_date(v) if v is not None else None for v in values]
+        # Every filled value must parse: a partial match would turn the
+        # others into NULL and silently drop them from the totals.
+        if any(v is not None for v in values) and all(
+            (p is not None) == (v is not None) for p, v in zip(parsed, values)
+        ):
+            frame[col] = pd.to_datetime(parsed)
+    return frame
+
+
+def _dataset_query_hint(frame, columns: list) -> str:
+    """Comment écrire la requête : nom de la table, colonnes et leur type."""
+    import pandas as pd
+
+    def kind(col):
+        if col not in frame.columns:
+            return "texte"
+        if pd.api.types.is_datetime64_any_dtype(frame[col]):
+            return "date"
+        return "nombre" if pd.api.types.is_numeric_dtype(frame[col]) else "texte"
+
+    described = ", ".join(f"{c} ({kind(c)})" for c in columns)
+    return (
+        f"La table du jeu de données s'appelle « {DATASET_TABLE} » : écrire un seul SELECT "
+        f"… FROM {DATASET_TABLE}. Colonnes : {described}. Une date restée en texte se "
+        "convertit avec CAST(col AS DATE) ou strptime(col, '%d/%m/%Y %H:%M')."
+    )
+
+
+async def _query_owned_dataset(dataset_id: str, sql: str, owner: str) -> dict:
+    """Exécute un SELECT sur un jeu de données de ``owner``, exposé comme la
+    table ``dataset``, dans le DuckDB isolé des tableaux de bord (ni fichier
+    ni réseau). Renvoie ``{"success": True, "rows": [...], "columns": [...]}``
+    ou une erreur qui dit comment écrire la requête."""
+    from apowerb.bi.spec.duck import SqlRunner, to_python
+    from apowerb.bi.spec.errors import SpecError
+    from apowerb.bi.spec.sql_guard import check_query
+
+    loaded = await _load_owned_dataset_rows(dataset_id, owner, MAX_DATA_ROWS)
+    if not loaded["success"]:
+        return loaded
+    if loaded["truncated"]:
+        return {"success": False, "error": (
+            f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes : il ne peut pas être agrégé ici."
+        )}
+    frame = _dataset_frame(loaded["rows"])
+    try:
+        cleaned = check_query(sql, "Requête")
+        with SqlRunner(max_rows=MAX_DATA_ROWS) as runner:
+            result = runner.run(cleaned, {DATASET_TABLE: frame})
+    except SpecError as exc:
+        return {"success": False, "error": f"{exc} {_dataset_query_hint(frame, loaded['columns'])}"}
+    columns = [str(c) for c in result.columns]
+    rows = [{c: to_python(v) for c, v in zip(columns, values)} for values in result.itertuples(index=False)]
+    return {"success": True, "rows": rows, "columns": columns}
+
+
 # ---------------------------------------------------------------------------
 # Pièce jointe du chat (file_id) : lecture limitée à l'agent et à son propriétaire
 # ---------------------------------------------------------------------------

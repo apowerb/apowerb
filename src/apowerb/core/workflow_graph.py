@@ -82,6 +82,7 @@ from apowerb.core.workflow_engine import (
     WorkflowCancelled,
     WorkflowUserError,
     _sse,
+    collect_tool_calls,
     error_fields,
     drive_workflow,
     leaf_message,
@@ -133,6 +134,11 @@ _DEFAULT_RAG_TOP_K = 5
 # dont le corps re-sérialise ``previous`` double de taille à chaque tour
 # (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
 MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
+
+# Entrée d'un nœud recopiée dans les événements (``node_input``,
+# ``node_complete``, ``node_error``) pour le panneau Test : coupée au-delà,
+# l'agent reçoit toujours le message entier.
+MAX_TRACE_INPUT_CHARS = 20_000
 
 # --- Triggers (T1 : socle + validation des 8 kinds) -------------------------
 #
@@ -1818,9 +1824,34 @@ class _Compiler:
         self.workflow_stack = workflow_stack
         self.depth = depth
         self.outputs: dict[str, Any] = {}
+        # Ce que le nœud a reçu et les outils appelés par son agent, joints à
+        # son node_complete ou node_error (voir _note_input).
+        self._trace: dict[str, dict] = {}
         # Identifiants rendus par les outils d'un nœud agent, ajoutés à son
         # node_complete : à côté de la sortie, pour que {{id}} garde sa forme.
         self._artifacts: dict[str, list[dict]] = {}
+
+    def _note_input(self, node: Node, value: Any) -> None:
+        """Montre au panneau Test ce que ``node`` va recevoir, dès maintenant.
+
+        Sans cela, seules les sorties étaient visibles : un agent qui ne
+        recevait que la réponse de l'agent précédent, sans la demande
+        d'origine, semblait « ne pas récupérer les valeurs ».
+        """
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, ensure_ascii=False, default=str)
+        )
+        fields: dict[str, Any] = {"input": value}
+        if len(text) > MAX_TRACE_INPUT_CHARS:
+            fields = {
+                "input": text[:MAX_TRACE_INPUT_CHARS],
+                "input_truncated": True,
+                "input_length": len(text),
+            }
+        self._trace[node.id] = fields
+        self.emit({"event": "node_input", "node_id": node.id, **fields})
 
     async def _agent_reply(self, agent_id: str, message: str) -> AgentReply:
         # Un run_agent injecté peut rendre la valeur seule (stubs, anciens
@@ -1923,6 +1954,7 @@ class _Compiler:
                 node_input = None
             self.emit({"event": "node_start", "node_id": node.id, "type": node.type})
             t0 = time.monotonic()
+            self._trace.pop(node.id, None)
             try:
                 result, route = await body(node_input)
             except Exception as exc:
@@ -1931,9 +1963,11 @@ class _Compiler:
                         "event": "node_error",
                         "node_id": node.id,
                         **error_fields(exc),
+                        **self._trace.pop(node.id, {}),
                     }
                 )
                 raise
+            trace = self._trace.pop(node.id, {})
             size = len(json.dumps(result, ensure_ascii=False, default=str).encode())
             if size > MAX_NODE_OUTPUT_BYTES:
                 exc = GraphError(
@@ -1943,7 +1977,12 @@ class _Compiler:
                     params={"node": node.id, "max": str(MAX_NODE_OUTPUT_BYTES)},
                 )
                 self.emit(
-                    {"event": "node_error", "node_id": node.id, **error_fields(exc)}
+                    {
+                        "event": "node_error",
+                        "node_id": node.id,
+                        **error_fields(exc),
+                        **trace,
+                    }
                 )
                 raise exc
             self.outputs[node.id] = result
@@ -1953,6 +1992,7 @@ class _Compiler:
                     "node_id": node.id,
                     "output": result,
                     "duration_ms": round((time.monotonic() - t0) * 1000),
+                    **trace,
                     **self._artifacts_of(node.id),
                 }
             )
@@ -1988,7 +2028,12 @@ class _Compiler:
                     )
                 else:
                     msg = leaf_message(node_input)
-                reply = await self._agent_reply(cfg["agent_id"], msg)
+                self._note_input(node, msg)
+                with collect_tool_calls() as calls:
+                    try:
+                        reply = await self._agent_reply(cfg["agent_id"], msg)
+                    finally:
+                        self._trace[node.id]["tool_calls"] = calls
                 self._artifacts[node.id] = reply.artifacts
                 return reply.output, None
         elif node.type == "tool":
@@ -2000,6 +2045,7 @@ class _Compiler:
                     args = UpstreamArgs(
                         node_input if isinstance(node_input, dict) else {}
                     )
+                self._note_input(node, dict(args))
                 result = await self.run_tool(cfg["tool"], args)
                 if cfg.get("on_error", "fail") == "fail":
                     reported = tool_reported_error(result)
@@ -2481,9 +2527,13 @@ async def run_graph(
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
 
-    Événements : ``node_start`` / ``node_complete`` (``output``,
-    ``duration_ms``) / ``node_error`` / ``route``, puis un seul terminal parmi
-    ``done`` (``output``), ``cancelled`` et ``error`` (``detail``).
+    Événements : ``node_start`` / ``node_input`` (``input``, nœuds agent et
+    tool, dès que l'entrée est rendue) / ``node_complete`` (``output``,
+    ``duration_ms``, et pour agent et tool ``input`` ; pour agent
+    ``tool_calls``) / ``node_error`` (avec ``input`` s'il était connu) /
+    ``route``, puis un seul terminal parmi ``done`` (``output``),
+    ``cancelled`` et ``error`` (``detail``). ``input`` trop long est coupé à
+    ``MAX_TRACE_INPUT_CHARS`` (``input_truncated``, ``input_length``).
 
     ``run_subworkflow`` — callback résolu côté routeur (même contrôle d'accès
     que pour lancer ce workflow directement), voir

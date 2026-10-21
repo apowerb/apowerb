@@ -138,19 +138,19 @@ langfuse = [
 ]
 
 [project.scripts]
-# Pointe la CLI Typer, pas ``apowerb:main`` : cette cible était morte
-# (``main()`` vit dans apowerb.main, jamais réexporté dans le __init__),
-# et elle aurait chargé tout le serveur pour lancer une commande.
+# Points to the Typer CLI, not ``apowerb:main``: that target was dead
+# (``main()`` lives in apowerb.main, never re-exported in __init__),
+# and it would have loaded the whole server just to run a command.
 apowerb = "apowerb.cli.main:app"
 
-# Point d'entree du DEMARRAGE, distinct a dessein de `apowerb config export-env`
-# qui fait la meme chose. `apowerb.cli.main` importe uvicorn et les trois
-# sous-applications, dont `cli.runs` qui construit Settings : 4,0 s mesurees,
-# contre 0,41 s pour le seul module `config`. Ces 4 s se paieraient a chaque
-# demarrage de conteneur, chaque redemarrage de pod et chaque mise a jour
-# progressive, avant meme que le serveur ne commence a demarrer.
+# Startup entry point, intentionally separate from `apowerb config export-env`
+# which does the same thing. `apowerb.cli.main` imports uvicorn and the three
+# sub-applications, including `cli.runs` which builds Settings: 4.0 s measured,
+# versus 0.41 s for the config module alone. Those 4 s would be paid on every
+# container start, pod restart and rolling update, before the server even
+# begins to start.
 #
-# La sous-commande reste, pour qui utilise deja la CLI a la main.
+# The sub-command stays for anyone already using the CLI by hand.
 apowerb-config-env = "apowerb.cli.config:app"
 
 [build-system]

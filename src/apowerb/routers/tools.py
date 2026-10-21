@@ -14,6 +14,7 @@ from apowerb.tools_store.tools_helpers import (
     find_system_tool_config,
     list_all_tool_configs,
     list_user_tool_configs,
+    redact_foreign_tool_config,
     register_tool_config,
     update_tool_config,
 )
@@ -73,8 +74,14 @@ async def get_tool_params(tool_name: str, tools_store=Depends(get_tools_store), 
 async def list_tool_configs(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
-    """Endpoint to list all tool configs for the current user."""
-    return list_user_tool_configs(user_id=current_user.email)
+    """Endpoint to list all tool configs for the current user.
+
+    Shared ``system`` configs are listed with their param names only.
+    """
+    return [
+        redact_foreign_tool_config(c, current_user.email)
+        for c in list_user_tool_configs(user_id=current_user.email)
+    ]
 
 
 @router.get("/tools_config/{tool_config_id}", tags=["tools_config"])
@@ -87,7 +94,7 @@ async def get_tool_configs(
         tool_config_id=tool_config_id,
         owner_id=current_user.email,
     )
-    return tools_configs
+    return redact_foreign_tool_config(tools_configs, current_user.email)
 
 
 @router.post("/tools_config", tags=["tools_config"])
@@ -146,6 +153,17 @@ async def list_mcp_configs(
     result = []
     for c in mcp_configs:
         params = c.get("tool_config_params", {})
+        # Headers, env and query params carry the credentials: values only
+        # for the owner, names only for a shared config.
+        owned = c.get("owner_id") == current_user.email
+
+        def _prefixed(prefix: str) -> dict:
+            return {
+                k[len(prefix):]: (v if owned else None)
+                for k, v in params.items()
+                if k.startswith(prefix)
+            }
+
         transport = params.get("transport", "http")
         mcp_type = params.get("mcp_type", "")
         mcp_server = {
@@ -168,14 +186,11 @@ async def list_mcp_configs(
         if transport == "stdio":
             mcp_server["command"] = params.get("command", "")
             mcp_server["args"] = params.get("args", "").split(" ") if params.get("args") else []
-            env = {k[4:]: v for k, v in params.items() if k.startswith("env_")}
-            mcp_server["env"] = env
+            mcp_server["env"] = _prefixed("env_")
         else:
             mcp_server["url"] = params.get("url", "")
-            headers = {k[7:]: v for k, v in params.items() if k.startswith("header_")}
-            mcp_server["headers"] = headers
-            mcp_params = {k[6:]: v for k, v in params.items() if k.startswith("param_")}
-            mcp_server["params"] = mcp_params
+            mcp_server["headers"] = _prefixed("header_")
+            mcp_server["params"] = _prefixed("param_")
         result.append(mcp_server)
     return result
 
