@@ -510,7 +510,11 @@ def _streaming_run(
             # Une reprise du même run a pu déjà se réinscrire sous ce run_id.
             if _runs.get(run_id) is entry:
                 _runs.pop(run_id, None)
+            # Pas de ``return`` dans ce ``finally`` : il avalerait le
+            # ``CancelledError`` d'un client parti.
+            settles = True
             if resume_guard is not None and not resume_guard.get("decided"):
+                settles = False
                 if outcome != run_main.STATUS_AWAITING:
                     # La reprise n'a pas atteint la décision (client parti,
                     # panne au démarrage) : rien n'a été fait, le run attend
@@ -521,38 +525,38 @@ def _streaming_run(
                         logger.exception(
                             "[workflows] run_id=%s non remis en attente", run_id
                         )
-                return
-            if outcome == run_main.STATUS_AWAITING:
+            elif outcome == run_main.STATUS_AWAITING:
                 # Une pause n'est pas une fin : ni ``finished_at``, ni
                 # notification ``workflow_done``. La reprise finira le run.
-                return
-            try:
-                run_main.finish_run(run_id, status=outcome, error_message=error_message)
-            except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
-                logger.exception(
-                    "[workflows] issue du run_id=%s non consignee", run_id
-                )
-            # T2 — un run de graphe (persisté, ``config.workflow_id`` connu)
-            # peut avoir des workflows en écoute (``workflow_done``). Import
-            # différé : ``workflow_triggers`` importe ce module pour
-            # ``launch_triggered_run`` — un import de niveau module créerait
-            # un cycle. Best-effort : un échec de notification ne doit
-            # jamais retirer au client le flux qu'il vient de recevoir.
-            try:
-                from apowerb.core import workflow_triggers as _wt
+                settles = False
+            if settles:
+                try:
+                    run_main.finish_run(run_id, status=outcome, error_message=error_message)
+                except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
+                    logger.exception(
+                        "[workflows] issue du run_id=%s non consignee", run_id
+                    )
+                # T2 — un run de graphe (persisté, ``config.workflow_id`` connu)
+                # peut avoir des workflows en écoute (``workflow_done``). Import
+                # différé : ``workflow_triggers`` importe ce module pour
+                # ``launch_triggered_run`` — un import de niveau module créerait
+                # un cycle. Best-effort : un échec de notification ne doit
+                # jamais retirer au client le flux qu'il vient de recevoir.
+                try:
+                    from apowerb.core import workflow_triggers as _wt
 
-                await _wt.notify_run_finished(
-                    run_id=run_id,
-                    owner_id=owner,
-                    status=outcome,
-                    output=final_output,
-                    error_message=error_message,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "[workflows] notification workflow_done non envoyee (run_id=%s)",
-                    run_id,
-                )
+                    await _wt.notify_run_finished(
+                        run_id=run_id,
+                        owner_id=owner,
+                        status=outcome,
+                        output=final_output,
+                        error_message=error_message,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[workflows] notification workflow_done non envoyee (run_id=%s)",
+                        run_id,
+                    )
 
     return StreamingResponse(
         _event_generator(),
