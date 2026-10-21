@@ -156,7 +156,23 @@ class TestAggregateADataset:
 
         assert result["success"] is False
         assert "FROM dataset" in result["error"]
+        assert "order_date (date)" in result["error"]
         assert not stored
+
+    @pytest.mark.asyncio
+    async def test_a_text_date_column_error_says_how_to_cast(self, dataset, chart_env):
+        """Timestamps are not read as dates: the agent must learn to convert them."""
+        dataset["rows"] = _orders(["2026-01-05 10:00:00", "2026-01-20 11:00:00",
+                                   "2026-02-03 12:00:00", "2026-02-28 13:00:00"])
+
+        failed = await _create(MONTHLY_SQL, dataset_id=DATASET_ID)
+
+        assert failed["success"] is False
+        assert "order_date (texte)" in failed["error"]
+        assert "CAST(col AS DATE)" in failed["error"]
+        fixed = await _create(MONTHLY_SQL.replace("order_date", "CAST(order_date AS DATE)"),
+                              dataset_id=DATASET_ID)
+        assert [r["month"] for r in fixed["data"]] == ["2026-01", "2026-02"]
 
     @pytest.mark.asyncio
     async def test_a_write_statement_is_refused(self, dataset, chart_env):
@@ -201,3 +217,14 @@ class TestDatabaseErrorPointsToTheDataset:
         assert result["success"] is False
         assert "dataset_id" in result["error"]
         assert "FROM dataset" in result["error"]
+
+
+def test_the_model_sees_dataset_id_and_how_to_use_it():
+    """What the LLM reads: the parameter and the table name, from the docstring."""
+    from google.adk.tools import FunctionTool
+
+    declaration = FunctionTool(bi.tool_create_chart)._get_declaration()
+    schema = declaration.parameters_json_schema or declaration.parameters.model_dump()
+
+    assert "dataset_id" in schema["properties"]
+    assert "FROM dataset" in declaration.description

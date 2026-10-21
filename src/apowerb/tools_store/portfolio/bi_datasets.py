@@ -303,6 +303,25 @@ def _dataset_frame(rows: list[dict[str, Any]]):
     return frame
 
 
+def _dataset_query_hint(frame, columns: list) -> str:
+    """Comment écrire la requête : nom de la table, colonnes et leur type."""
+    import pandas as pd
+
+    def kind(col):
+        if col not in frame.columns:
+            return "texte"
+        if pd.api.types.is_datetime64_any_dtype(frame[col]):
+            return "date"
+        return "nombre" if pd.api.types.is_numeric_dtype(frame[col]) else "texte"
+
+    described = ", ".join(f"{c} ({kind(c)})" for c in columns)
+    return (
+        f"La table du jeu de données s'appelle « {DATASET_TABLE} » : écrire un seul SELECT "
+        f"… FROM {DATASET_TABLE}. Colonnes : {described}. Une date restée en texte se "
+        "convertit avec CAST(col AS DATE) ou strptime(col, '%d/%m/%Y %H:%M')."
+    )
+
+
 async def _query_owned_dataset(dataset_id: str, sql: str, owner: str) -> dict:
     """Exécute un SELECT sur un jeu de données de ``owner``, exposé comme la
     table ``dataset``, dans le DuckDB isolé des tableaux de bord (ni fichier
@@ -319,16 +338,13 @@ async def _query_owned_dataset(dataset_id: str, sql: str, owner: str) -> dict:
         return {"success": False, "error": (
             f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes : il ne peut pas être agrégé ici."
         )}
-    hint = (
-        f"La table du jeu de données s'appelle « {DATASET_TABLE} » : écrire un seul SELECT "
-        f"… FROM {DATASET_TABLE} (colonnes : {', '.join(map(str, loaded['columns']))})."
-    )
+    frame = _dataset_frame(loaded["rows"])
     try:
         cleaned = check_query(sql, "Requête")
         with SqlRunner(max_rows=MAX_DATA_ROWS) as runner:
-            result = runner.run(cleaned, {DATASET_TABLE: _dataset_frame(loaded["rows"])})
+            result = runner.run(cleaned, {DATASET_TABLE: frame})
     except SpecError as exc:
-        return {"success": False, "error": f"{exc} {hint}"}
+        return {"success": False, "error": f"{exc} {_dataset_query_hint(frame, loaded['columns'])}"}
     columns = [str(c) for c in result.columns]
     rows = [{c: to_python(v) for c, v in zip(columns, values)} for values in result.itertuples(index=False)]
     return {"success": True, "rows": rows, "columns": columns}
