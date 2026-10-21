@@ -86,6 +86,7 @@ from apowerb.core.workflow_engine import (
     error_fields,
     drive_workflow,
     leaf_message,
+    tool_artifacts,
     try_parse_json,
 )
 
@@ -431,6 +432,14 @@ def _rule_subject(rule: dict, scope: dict, node_id: str, default: Any) -> Any:
 
 
 _ON_ERROR = ("fail", "continue")
+# Ce qu'un nœud agent ou tool promet de rendre. « any » (ou absent) garde le
+# comportement d'avant : la réponse passe telle quelle, texte ou JSON.
+_OUTPUT_TYPES = ("any", "text", "json")
+_ON_QUESTION = ("continue", "fail")
+# Ces outils rendent un identifiant qu'ils n'ont pas créé (lecture seule) :
+# le montrer comme un résultat du run induirait en erreur.
+_READ_ONLY_ARTIFACT_TOOLS = {"tool_describe_dataset"}
+_MAX_RUN_ARTIFACTS = 50
 _CLASSIFIER_ENGINES = ("agent", "jev")
 _UNCERTAIN = "uncertain"
 _DEFAULT_MIN_CONFIDENCE = 0.7
@@ -1188,13 +1197,13 @@ async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
         return str(parsed.copy_with(host=str(ips[0]))), host_header, extensions
 
     method = cfg["method"]
-    url = render(cfg["url"], outputs)
+    url = render(cfg["url"], outputs, node_id)
     url = url if isinstance(url, str) else json.dumps(url, ensure_ascii=False)
 
     headers: dict[str, str] = {}
     for h in cfg.get("headers") or []:
-        key = render(h.get("key", ""), outputs)
-        value = render(h.get("value", ""), outputs)
+        key = render(h.get("key", ""), outputs, node_id)
+        value = render(h.get("value", ""), outputs, node_id)
         key = key if isinstance(key, str) else json.dumps(key, ensure_ascii=False)
         value = (
             value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
@@ -1211,7 +1220,7 @@ async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
         headers[key] = value
 
     raw_body = cfg.get("body")
-    raw_body = render(raw_body, outputs) if raw_body is not None else None
+    raw_body = render(raw_body, outputs, node_id) if raw_body is not None else None
     json_body = raw_body if isinstance(raw_body, (dict, list)) else None
     content_body = None
     if json_body is None and raw_body is not None:
@@ -1351,7 +1360,28 @@ def validate_node(
     """
     cfg = n.config
     if n.type in _NOT_YET:
-        raise GraphError(f"{n.id} : le type {n.type} n'est pas encore exécutable")
+        raise GraphError(
+            f"{n.id} : le type {n.type} n'est pas encore exécutable",
+            code="node_not_runnable",
+            params={"node": n.id, "type": n.type},
+        )
+    if (
+        n.type in ("agent", "tool")
+        and cfg.get("output_type", "any") not in _OUTPUT_TYPES
+    ):
+        raise GraphError(
+            f"{n.id} : type de sortie inconnu {cfg.get('output_type')!r} "
+            f"(attendu : {', '.join(_OUTPUT_TYPES)})",
+            code="output_type_unknown",
+            params={"node": n.id, "value": str(cfg.get("output_type"))},
+        )
+    if n.type == "agent" and cfg.get("on_question", "continue") not in _ON_QUESTION:
+        raise GraphError(
+            f"{n.id} : on_question inconnu {cfg.get('on_question')!r} "
+            f"(attendu : {', '.join(_ON_QUESTION)})",
+            code="on_question_unknown",
+            params={"node": n.id, "value": str(cfg.get("on_question"))},
+        )
     if n.type == "classifier":
         _validate_classifier(n)
     jev_classifier = n.type == "classifier" and cfg.get("engine") == "jev"
@@ -1851,6 +1881,9 @@ class _Compiler:
         # Identifiants rendus par les outils d'un nœud agent, ajoutés à son
         # node_complete : à côté de la sortie, pour que {{id}} garde sa forme.
         self._artifacts: dict[str, list[dict]] = {}
+        # Tous les graphiques, tableaux de bord… créés pendant le run, avec
+        # leur nœud : ``done`` les rend, pour qui ne lit pas chaque nœud.
+        self.run_artifacts: list[dict] = []
 
     def _note_input(self, node: Node, value: Any) -> None:
         """Montre au panneau Test ce que ``node`` va recevoir, dès maintenant.
@@ -1884,8 +1917,48 @@ class _Compiler:
         return (await self._agent_reply(agent_id, message)).output
 
     def _artifacts_of(self, node_id: str) -> dict:
-        found = self._artifacts.pop(node_id, None)
+        found = [
+            a
+            for a in self._artifacts.pop(node_id, None) or []
+            if a.get("tool") not in _READ_ONLY_ARTIFACT_TOOLS
+        ]
+        self.run_artifacts.extend({"node_id": node_id, **a} for a in found)
         return {"artifacts": found} if found else {}
+
+    def _check_contract(self, node: Node, result: Any) -> None:
+        """Refuse une sortie qui ne tient pas ce que le nœud promet.
+
+        ``output_type`` : « json » attend un objet ou une liste, « text » une
+        chaîne. ``on_question: fail`` : un agent qui finit par une question
+        arrête le run au lieu de la passer à l'étape suivante, que personne
+        ne lira avant la fin.
+        """
+        cfg = node.config
+        expected = cfg.get("output_type", "any")
+        if isinstance(result, (dict, list)):
+            actual = "json"
+        elif isinstance(result, str):
+            actual = "text"
+        else:
+            # Nombre, booléen, None : ni du texte ni un objet JSON.
+            actual = "none" if result is None else type(result).__name__
+        if expected in ("json", "text") and expected != actual:
+            raise GraphError(
+                f"{node.id} : sortie {actual} alors que {expected} est attendu",
+                code="output_type_mismatch",
+                params={"node": node.id, "expected": expected, "actual": actual},
+            )
+        if (
+            node.type == "agent"
+            and cfg.get("on_question") == "fail"
+            and _asks_question(result)
+        ):
+            last = [line for line in str(result).strip().splitlines() if line.strip()]
+            raise GraphError(
+                f"{node.id} : l'agent a posé une question au lieu de répondre",
+                code="agent_asked_question",
+                params={"node": node.id, "question": last[-1][:300] if last else ""},
+            )
 
     def _service(self, node: Node, name: str):
         fn = getattr(self.services, name)
@@ -1978,6 +2051,8 @@ class _Compiler:
             self._trace.pop(node.id, None)
             try:
                 result, route = await body(node_input)
+                if node.type in ("agent", "tool"):
+                    self._check_contract(node, result)
             except Exception as exc:
                 self.emit(
                     {
@@ -2081,8 +2156,20 @@ class _Compiler:
                     )
                 self._note_input(node, dict(args))
                 result = await self.run_tool(cfg["tool"], args)
+                reported = tool_reported_error(result)
+                if isinstance(result, dict) and reported is None:
+                    # Même lecture que pour les outils appelés par un agent.
+                    call = {
+                        "functionResponse": {"name": cfg["tool"], "response": result}
+                    }
+                    self._artifacts[node.id] = tool_artifacts(
+                        [{"content": {"parts": [call]}}]
+                    )
+                if reported is not None and cfg.get("on_error", "fail") != "fail":
+                    # Le flux continue, mais le panneau doit le dire : sinon
+                    # l'erreur passe pour un résultat ordinaire.
+                    self._trace.setdefault(node.id, {})["reported_error"] = reported
                 if cfg.get("on_error", "fail") == "fail":
-                    reported = tool_reported_error(result)
                     if reported is not None:
                         raise GraphError(
                             f"{node.id} : l'outil a signalé une erreur : {reported}",
@@ -2178,7 +2265,7 @@ class _Compiler:
 
             async def body(node_input):
                 return {
-                    f["key"]: render(f.get("value"), self.outputs)
+                    f["key"]: render(f.get("value"), self.outputs, node.id)
                     for f in cfg["fields"]
                 }, None
         elif node.type == "condition":
@@ -2189,7 +2276,7 @@ class _Compiler:
                 outcomes = [
                     evaluate_rule(
                         rule,
-                        render(rule["field"], self.outputs)
+                        render(rule["field"], self.outputs, node.id)
                         if (rule.get("field") or "").strip()
                         else node_input,
                     )
@@ -2203,7 +2290,7 @@ class _Compiler:
 
             async def body(node_input):
                 value = (
-                    render(cfg["input"], self.outputs)
+                    render(cfg["input"], self.outputs, node.id)
                     if cfg.get("input") not in (None, "")
                     else node_input
                 )
@@ -2219,7 +2306,7 @@ class _Compiler:
         elif node.type == "rag":
 
             async def body(node_input):
-                query = render(cfg["query"], self.outputs)
+                query = render(cfg["query"], self.outputs, node.id)
                 query = (
                     query
                     if isinstance(query, str)
@@ -2253,18 +2340,18 @@ class _Compiler:
 
             async def body(node_input):
                 channel = cfg["channel"]
-                to = [render(t, self.outputs) for t in cfg.get("to") or []]
+                to = [render(t, self.outputs, node.id) for t in cfg.get("to") or []]
                 to = [
                     t if isinstance(t, str) else json.dumps(t, ensure_ascii=False)
                     for t in to
                 ]
-                subject = render(cfg.get("subject", ""), self.outputs)
+                subject = render(cfg.get("subject", ""), self.outputs, node.id)
                 subject = (
                     subject
                     if isinstance(subject, str)
                     else json.dumps(subject, ensure_ascii=False)
                 )
-                message = render(cfg.get("body", ""), self.outputs)
+                message = render(cfg.get("body", ""), self.outputs, node.id)
                 message = (
                     message
                     if isinstance(message, str)
@@ -2487,7 +2574,7 @@ class _Compiler:
         except GraphError as exc:
             raise GraphError(f"{node.id} (sous-workflow {target}) : {exc}") from exc
         payload = (
-            render(cfg["input"], self.outputs)
+            render(cfg["input"], self.outputs, node.id)
             if cfg.get("input") is not None
             else node_input
         )
@@ -2585,7 +2672,10 @@ async def run_graph(
     try:
         validate_graph(graph, workflow_id=workflow_id)
     except GraphError as exc:
-        yield _sse({"event": "error", "code": "invalid_graph", "detail": str(exc)})
+        event = {"event": "error", "code": "invalid_graph", "detail": str(exc)}
+        if exc.code:
+            event.update(cause=exc.code, params=exc.params)
+        yield _sse(event)
         return
     queue: asyncio.Queue = asyncio.Queue()
     compiler = _Compiler(
@@ -2613,4 +2703,9 @@ async def run_graph(
     elif exc is not None:
         yield _sse({"event": "error", **error_fields(exc)})
     else:
-        yield _sse({"event": "done", "output": _final_output(graph, compiler.outputs)})
+        done = {"event": "done", "output": _final_output(graph, compiler.outputs)}
+        if compiler.run_artifacts:
+            # Une boucle peut créer un graphique par tour : borné comme ceux
+            # d'un nœud.
+            done["artifacts"] = compiler.run_artifacts[:_MAX_RUN_ARTIFACTS]
+        yield _sse(done)

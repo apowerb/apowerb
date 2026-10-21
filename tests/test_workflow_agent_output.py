@@ -193,7 +193,14 @@ def test_agent_reply_artifacts_reach_node_complete_and_json_stays_addressable():
             "agent2": we.AgentReply(output="ok", artifacts=[]),
         },
     )
-    assert events[-1] == {"event": "done", "output": "ok"}
+    # done rend aussi les graphiques du run, avec le nœud qui les a créés.
+    assert events[-1] == {
+        "event": "done",
+        "output": "ok",
+        "artifacts": [
+            {"node_id": "agent1", "tool": "tool_create_chart", "chart_id": "c1"}
+        ],
+    }
     done = _completes(events)
     assert done["agent1"]["output"] == {"total": 42, "unit": "EUR"}
     assert done["agent1"]["artifacts"] == [
