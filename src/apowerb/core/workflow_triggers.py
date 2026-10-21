@@ -959,6 +959,9 @@ async def notify_run_finished(
     source_workflow_id = config.get("workflow_id")
     if not source_workflow_id:
         return
+    # « Tester jusqu'ici » : une sortie partielle n'est pas la fin du workflow.
+    if config.get("until"):
+        return
 
     prior_chain: list[str] = []
     try:

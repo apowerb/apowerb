@@ -2619,6 +2619,35 @@ class _Compiler:
         return Workflow(name=_ROOT, edges=edges, max_concurrency=1)
 
 
+def upstream_of(graph: WorkflowGraph, node_id: str) -> set[str]:
+    """``node_id`` et tous ses ancêtres parmi les nœuds de premier niveau."""
+    parents: dict[str, set[str]] = {}
+    for e in graph.edges:
+        parents.setdefault(e.target, set()).add(e.source)
+    seen, stack = {node_id}, [node_id]
+    while stack:
+        for p in parents.get(stack.pop(), ()):
+            if p not in seen:
+                seen.add(p)
+                stack.append(p)
+    return seen
+
+
+def _until_subgraph(graph: WorkflowGraph, until: str) -> WorkflowGraph:
+    """Le graphe réduit à ``until`` et à son amont.
+
+    Les entrées d'un ``merge`` sont ses ancêtres : elles restent toutes, le
+    merge ne les attend donc jamais en vain.
+    """
+    keep = upstream_of(graph, until)
+    return graph.model_copy(
+        update={
+            "nodes": [n for n in graph.nodes if n.id in keep],
+            "edges": [e for e in graph.edges if e.source in keep and e.target in keep],
+        }
+    )
+
+
 def _final_output(graph: WorkflowGraph, outputs: dict) -> Any:
     # Un nœud output désigne la sortie ; à défaut, les feuilles atteintes.
     explicit = [n.id for n in graph.nodes if n.type == "output" and n.id in outputs]
@@ -2645,6 +2674,7 @@ async def run_graph(
     workflow_id: Optional[str] = None,
     run_notify: Optional[RunNotify] = None,
     services: Optional[NodeServices] = None,
+    until: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
 
@@ -2668,9 +2698,21 @@ async def run_graph(
     encore par ``os.environ`` (``to_agent``, ``dict_to_envvar``) ; deux nœuds
     concurrents pourraient s'échanger leurs secrets. Le fan-out reste correct,
     il est seulement sérialisé.
+
+    ``until`` — « Tester jusqu'ici » du Studio : seuls ce nœud de premier
+    niveau et son amont s'exécutent, et ``done`` porte SA sortie (avec
+    ``until`` et ``partial: true``). Le graphe entier est validé d'abord. Un
+    nœud inconnu est refusé (``invalid_graph``, cause ``until_unknown_node``) ;
+    un nœud qu'un routeur a contourné finit en ``until_not_reached``.
     """
     try:
         validate_graph(graph, workflow_id=workflow_id)
+        if until is not None and until not in {n.id for n in graph.nodes}:
+            raise GraphError(
+                f"nœud inconnu pour un test partiel : {until}",
+                code="until_unknown_node",
+                params={"node": until},
+            )
     except GraphError as exc:
         event = {"event": "error", "code": "invalid_graph", "detail": str(exc)}
         if exc.code:
@@ -2679,7 +2721,7 @@ async def run_graph(
         return
     queue: asyncio.Queue = asyncio.Queue()
     compiler = _Compiler(
-        graph,
+        graph if until is None else _until_subgraph(graph, until),
         payload,
         run_agent,
         run_tool,
@@ -2702,8 +2744,25 @@ async def run_graph(
         yield _sse({"event": "cancelled"})
     elif exc is not None:
         yield _sse({"event": "error", **error_fields(exc)})
+    elif until is not None and until not in compiler.outputs:
+        yield _sse(
+            {
+                "event": "error",
+                "code": "until_not_reached",
+                "detail": f"{until} n'a pas été atteint (une route l'a contourné)",
+                "params": {"node": until},
+            }
+        )
     else:
-        done = {"event": "done", "output": _final_output(graph, compiler.outputs)}
+        if until is None:
+            done = {"event": "done", "output": _final_output(graph, compiler.outputs)}
+        else:
+            done = {
+                "event": "done",
+                "output": compiler.outputs[until],
+                "until": until,
+                "partial": True,
+            }
         if compiler.run_artifacts:
             # Une boucle peut créer un graphique par tour : borné comme ceux
             # d'un nœud.
