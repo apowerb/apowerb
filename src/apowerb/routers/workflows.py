@@ -560,6 +560,8 @@ async def render_preview(
     try:
         rendered = render(body.template, body.outputs, body.node_id)
     except GraphError as exc:
+        if exc.code == "render_too_large":
+            raise _too_large(RENDER_PREVIEW_MAX_RENDERED_BYTES)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": exc.code, "params": exc.params, "message": str(exc)},

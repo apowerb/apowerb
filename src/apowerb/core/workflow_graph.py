@@ -135,6 +135,12 @@ _DEFAULT_RAG_TOP_K = 5
 # dont le corps re-sérialise ``previous`` double de taille à chaque tour
 # (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
 MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
+# Longueur qu'un rendu de gabarit peut produire (``render``). Un gabarit court
+# peut répéter mille fois la même grande sortie : sans ce plafond, la chaîne
+# entière était construite avant le contrôle de MAX_NODE_OUTPUT_BYTES, qui ne
+# porte que sur la sortie finie. Au double de ce dernier, aucun résultat
+# légitime n'est refusé.
+MAX_RENDERED_CHARS = 2 * MAX_NODE_OUTPUT_BYTES
 
 # Entrée d'un nœud recopiée dans les événements (``node_input``,
 # ``node_complete``, ``node_error``) pour le panneau Test : coupée au-delà,
@@ -360,30 +366,77 @@ def _lookup(outputs: dict, ref: str, path: str, node_id: Optional[str] = None) -
     return value
 
 
-def render(template: Any, outputs: dict, node_id: Optional[str] = None) -> Any:
+class _RenderBudget:
+    """Ce qu'un rendu peut encore produire ; épuisé, il lève render_too_large."""
+
+    def __init__(self, node_id: Optional[str]):
+        self.left = MAX_RENDERED_CHARS
+        self.node_id = node_id
+
+    def spend(self, n: int) -> None:
+        self.left -= n
+        if self.left < 0:
+            raise GraphError(
+                f"{self.node_id} : gabarit trop grand une fois rendu "
+                f"(max {MAX_RENDERED_CHARS} caractères)",
+                code="render_too_large",
+                params={"node": self.node_id or "", "max": str(MAX_RENDERED_CHARS)},
+            )
+
+
+def _value_size(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return 0
+    return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def render(
+    template: Any,
+    outputs: dict,
+    node_id: Optional[str] = None,
+    _budget: Optional[_RenderBudget] = None,
+) -> Any:
     """Résout les gabarits ``{{noeud.chemin}}`` d'une valeur (récursivement).
 
     ``node_id`` est le nœud dont la configuration est rendue : il n'accuse
     personne d'autre si le chemin traverse un scalaire (``template_ref_invalid``,
     voir ``_lookup``).
+
+    Le rendu s'arrête dès qu'il dépasse ``MAX_RENDERED_CHARS``
+    (``render_too_large``) : chaque morceau est compté avant d'être ajouté,
+    la chaîne géante n'est jamais construite.
     """
+    budget = _budget if _budget is not None else _RenderBudget(node_id)
     if isinstance(template, dict):
-        return {k: render(v, outputs, node_id) for k, v in template.items()}
+        return {k: render(v, outputs, node_id, budget) for k, v in template.items()}
     if isinstance(template, list):
-        return [render(v, outputs, node_id) for v in template]
+        return [render(v, outputs, node_id, budget) for v in template]
     if not isinstance(template, str):
         return template
     whole = _TEMPLATE.fullmatch(template.strip())
     if whole:
-        return _lookup(outputs, whole.group(1), whole.group(2), node_id)
+        value = _lookup(outputs, whole.group(1), whole.group(2), node_id)
+        budget.spend(_value_size(value))
+        return value
 
-    def _text(m: re.Match) -> str:
+    parts: list[str] = []
+    last = 0
+    for m in _TEMPLATE.finditer(template):
+        literal = template[last : m.start()]
+        budget.spend(len(literal))
+        parts.append(literal)
         v = _lookup(outputs, m.group(1), m.group(2), node_id)
-        if v is None:
-            return ""
-        return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
-
-    return _TEMPLATE.sub(_text, template)
+        if v is not None:
+            text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+            budget.spend(len(text))
+            parts.append(text)
+        last = m.end()
+    tail = template[last:]
+    budget.spend(len(tail))
+    parts.append(tail)
+    return "".join(parts)
 
 
 def _refs(value: Any) -> set[str]:
