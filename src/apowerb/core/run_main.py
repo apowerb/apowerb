@@ -475,6 +475,7 @@ def _row_to_dict(row) -> dict:
 def get_run(run_id: str, owner_id: str) -> dict | None:
     """Un run donné, à condition qu'il appartienne à ce propriétaire."""
     with run_store.engine.begin() as conn:
+        _expire_due(conn)
         row = conn.execute(
             run_store.run_table.select().where(
                 run_store.run_table.c.run_id == run_id,
@@ -488,6 +489,7 @@ def get_run(run_id: str, owner_id: str) -> dict | None:
 def list_runs(owner_id: str, limit: int = 50) -> list[dict]:
     """Les runs d'un propriétaire, du plus récent au plus ancien."""
     with run_store.engine.begin() as conn:
+        _expire_due(conn)
         rows = conn.execute(
             run_store.run_table.select()
             .where(run_store.run_table.c.owner_id == owner_id)
@@ -528,6 +530,7 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
     ``file_bytes`` et ``file_name``. Le run d'origine n'est pas modifié.
     """
     with run_store.engine.begin() as conn:
+        _expire_due(conn)
         row = conn.execute(
             run_store.run_table.select().where(
                 run_store.run_table.c.run_id == run_id,
@@ -626,24 +629,84 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
 # (``awaiting`` -> ``running``) puis le run finit comme n'importe quel autre.
 
 
+EXPIRED_MESSAGE = "Décision humaine expirée : personne n'a répondu avant l'échéance."
+
+
 def _decision_of(state: dict) -> dict:
     return {"node_id": state.get("node_id"), **(state.get("prompt") or {})}
 
 
+def _seal(state: dict) -> str:
+    """L'instantané au repos : il porte les sorties du run, chiffré (Fernet).
+
+    Sans ``ENCRYPT_KEY`` le chiffrement lève, la pause échoue
+    (``decision_not_saved``) : jamais de repli en clair.
+    """
+    from apowerb.helpers.encryptor import encrypt_value
+
+    return encrypt_value(json.dumps(state, ensure_ascii=False, default=str))
+
+
+def _unseal(raw: str) -> dict:
+    from apowerb.helpers.encryptor import decrypt_value
+
+    # Pauses écrites en clair avant le chiffrement : un JSON, pas un jeton.
+    return json.loads(raw if raw.lstrip().startswith("{") else decrypt_value(raw))
+
+
+def _expire_due(conn) -> None:
+    """Clôt en ``error`` les décisions dont l'échéance est passée.
+
+    Pas de tâche de fond : comme la réconciliation des orphelins, l'échéance
+    est appliquée à la lecture (listes, run, reprise, abandon, rejeu), donc
+    avant que quiconque s'appuie sur le statut — le planificateur compris.
+    Le ``WHERE status`` rend l'écriture idempotente entre réplicas.
+    """
+    t = run_store.run_table
+    now = _now()
+    conn.execute(
+        t.update()
+        .where(
+            t.c.status == STATUS_AWAITING,
+            t.c.expires_at.isnot(None),
+            t.c.expires_at <= now,
+        )
+        .values(
+            status=STATUS_ERROR,
+            error_message=EXPIRED_MESSAGE,
+            finished_at=now,
+            paused_state=None,
+            decision=None,
+            assignee=None,
+        )
+    )
+
+
 def pause_run(run_id: str, snapshot: dict) -> None:
     """Consigne un run arrêté sur une décision humaine, avec son instantané."""
-    assignee = (snapshot.get("prompt") or {}).get("assignee")
-    snapshot = {**snapshot, "paused_at": _now()}
-    decision = {**_decision_of(snapshot), "paused_at": snapshot["paused_at"]}
+    from apowerb.core.workflow_graph import DEFAULT_DECISION_HOURS
+
+    prompt = snapshot.get("prompt") or {}
+    assignee = prompt.get("assignee")
+    hours = prompt.get("expires_after_hours") or DEFAULT_DECISION_HOURS
+    paused = datetime.now()
+    expires_at = (paused + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S.%f")
+    snapshot = {**snapshot, "paused_at": paused.strftime("%Y-%m-%d %H:%M:%S.%f")}
+    decision = {
+        **_decision_of(snapshot),
+        "paused_at": snapshot["paused_at"],
+        "expires_at": expires_at,
+    }
     with run_store.engine.begin() as conn:
         result = conn.execute(
             run_store.run_table.update()
             .where(run_store.run_table.c.run_id == run_id)
             .values(
                 status=STATUS_AWAITING,
-                paused_state=json.dumps(snapshot, ensure_ascii=False, default=str),
+                paused_state=_seal(snapshot),
                 decision=json.dumps(decision, ensure_ascii=False, default=str),
                 assignee=assignee.strip().lower() if isinstance(assignee, str) else None,
+                expires_at=expires_at,
                 finished_at=None,
                 resumed_at=None,
             )
@@ -666,6 +729,11 @@ def _awaiting_row(conn, run_id: str, user: str) -> dict:
     if row is None or not _may_decide(row._asdict(), user):
         raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
     data = row._asdict()
+    if data["status"] == STATUS_ERROR and data.get("error_message") == EXPIRED_MESSAGE:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "decision_expired", "expires_at": data.get("expires_at")},
+        )
     if data["status"] != STATUS_AWAITING or not data.get("paused_state"):
         raise HTTPException(
             status_code=409,
@@ -678,6 +746,7 @@ def list_awaiting(user: str) -> list[dict]:
     """Les runs en attente d'une décision de ``user`` (propriétaire ou assigné)."""
     t = run_store.run_table
     with run_store.engine.begin() as conn:
+        _expire_due(conn)
         # Jamais ``paused_state`` ici : l'instantané peut peser des Mio.
         rows = conn.execute(
             t.select()
@@ -717,8 +786,10 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
 
     t = run_store.run_table
     with run_store.engine.begin() as conn:
+        _expire_due(conn)  # validée avant un refus qui annulerait la transaction
+    with run_store.engine.begin() as conn:
         data = _awaiting_row(conn, run_id, user)
-        state = json.loads(data["paused_state"])
+        state = _unseal(data["paused_state"])
         try:
             choice, text = check_decision_answer(state.get("prompt") or {}, choice, text)
         except GraphError as exc:
@@ -785,6 +856,8 @@ def abandon_paused_run(run_id: str, user: str) -> None:
     autre.
     """
     t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        _expire_due(conn)
     with run_store.engine.begin() as conn:
         data = _awaiting_row(conn, run_id, user)
         if data["owner_id"] != user:

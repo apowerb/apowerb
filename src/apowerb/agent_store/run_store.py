@@ -106,6 +106,9 @@ class RunStore(BaseModel):
             # ``created_at`` pour juger un run ``running`` orphelin.
             Column("decision", String),
             Column("resumed_at", String),
+            # Échéance de la décision en attente (même format que
+            # ``created_at``) : passé ce moment, le run est clos en ``error``.
+            Column("expires_at", String),
         )
 
     def create_table(self):
@@ -143,6 +146,7 @@ class RunStore(BaseModel):
             "assignee": "VARCHAR",
             "decision": "VARCHAR",
             "resumed_at": "VARCHAR",
+            "expires_at": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         # Deux réplicas qui démarrent ensemble : sur Postgres, le second

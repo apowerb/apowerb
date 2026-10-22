@@ -145,6 +145,11 @@ _DEFAULT_RAG_TOP_K = 5
 # dont le corps re-sérialise ``previous`` double de taille à chaque tour
 # (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
 MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
+# Décision humaine : une attente expire (une semaine par défaut, un mois au
+# plus) et son instantané, gardé en base jusqu'à la réponse, est borné au
+# total — chaque sortie l'est déjà, pas leur somme.
+DEFAULT_DECISION_HOURS, MAX_DECISION_HOURS = 168, 720
+MAX_PAUSED_STATE_BYTES = 8 * 1024 * 1024
 # Longueur qu'un rendu de gabarit peut produire (``render``). Un gabarit court
 # peut répéter mille fois la même grande sortie : sans ce plafond, la chaîne
 # entière était construite avant le contrôle de MAX_NODE_OUTPUT_BYTES, qui ne
@@ -1680,6 +1685,13 @@ def _validate_approval(n: Node) -> None:
             code="approval_mode_unknown",
             params={"node": n.id, "mode": str(mode)},
         )
+    hours = cfg.get("expires_after_hours", DEFAULT_DECISION_HOURS)
+    if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= MAX_DECISION_HOURS:
+        raise GraphError(
+            f"{n.id} : expires_after_hours doit être un entier de 1 à {MAX_DECISION_HOURS}",
+            code="approval_expiry_invalid",
+            params={"node": n.id, "max": str(MAX_DECISION_HOURS)},
+        )
     if mode == "text":
         return
     routes = [c.get("route") for c in _decision_choices(n)]
@@ -2651,6 +2663,9 @@ class _Compiler:
                             for c in _decision_choices(node)
                         ],
                         "assignee": cfg.get("assignee") or None,
+                        "expires_after_hours": cfg.get(
+                            "expires_after_hours", DEFAULT_DECISION_HOURS
+                        ),
                     },
                 )
         else:  # pragma: no cover - refusé par validate_graph
@@ -3112,6 +3127,15 @@ async def _pause(
         # Un « Tester jusqu'ici » repris s'arrête au même nœud.
         "until": until,
     }
+    size = len(json.dumps(snapshot, ensure_ascii=False, default=str).encode("utf-8"))
+    if size > MAX_PAUSED_STATE_BYTES:
+        exc = GraphError(
+            f"{awaiting.node_id} : le run est trop lourd pour attendre une décision "
+            f"({size} octets, max {MAX_PAUSED_STATE_BYTES})",
+            code="decision_state_too_large",
+            params={"node": awaiting.node_id, "max": str(MAX_PAUSED_STATE_BYTES)},
+        )
+        return {"event": "error", **error_fields(exc)}
     try:
         saved = on_await(snapshot)
         if asyncio.iscoroutine(saved):

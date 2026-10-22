@@ -25,7 +25,7 @@ DUE = datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat()
 
 
 @pytest.mark.parametrize(
-    "status, fires", [("awaiting", 0), ("success", 1), ("cancelled", 1)]
+    "status, fires", [("awaiting", 0), ("success", 1), ("cancelled", 1), ("error", 1)]
 )
 async def test_a_schedule_waits_while_its_last_run_waits_for_a_decision(
     monkeypatch, status, fires

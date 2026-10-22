@@ -445,3 +445,103 @@ async def test_a_resume_that_died_after_the_decision_is_settled_as_an_error(api)
             .values(status="running", paused_state=None, resumed_at="2026-01-01 00:00:00.000000")
         )
     assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "error"
+
+
+# --- Délai d'attente ----------------------------------------------------------
+
+
+def _expire(run_id):
+    """L'échéance de la décision est passée."""
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        conn.execute(
+            t.update().where(t.c.run_id == run_id).values(expires_at="2026-01-01 00:00:00.000000")
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_list_says_until_when_the_decision_waits(api):
+    from datetime import datetime, timedelta
+
+    _, events = await _paused(api)
+    [item] = await api.runs.list_awaiting_runs(current_user=_user())
+    paused = datetime.fromisoformat(item["paused_at"])
+    assert datetime.fromisoformat(item["expires_at"]) - paused == timedelta(hours=168)
+
+
+@pytest.mark.asyncio
+async def test_an_expired_decision_cannot_be_answered_even_by_its_owner(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    _expire(run_id)
+    with pytest.raises(HTTPException) as exc:
+        await _resume(api, run_id, choice="oui")
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "decision_expired"
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["status"] == "error" and "expir" in run["error_message"]
+    assert await api.runs.list_awaiting_runs(current_user=_user()) == []
+
+
+@pytest.mark.asyncio
+async def test_an_expired_decision_cannot_be_abandoned_either(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    _expire(run_id)
+    with pytest.raises(HTTPException) as exc:
+        await api.runs.abandon_run(run_id, current_user=_user())
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "decision_expired"
+
+
+@pytest.mark.asyncio
+async def test_an_expired_decision_leaves_the_list_and_is_settled_on_read(api):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    _expire(run_id)
+    assert await api.runs.list_awaiting_runs(current_user=_user(ASSIGNEE)) == []
+    # Ce que lit le planificateur : le run n'attend plus, il peut relancer.
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_decision_still_within_its_delay_is_not_expired(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    # Une autre décision expirée ne touche pas celle-ci.
+    _, other = await _paused(api)
+    _expire(other[0]["wid"])
+    assert [i["run_id"] for i in await api.runs.list_awaiting_runs(current_user=_user())] == [run_id]
+    resumed = await _drain(await _resume(api, run_id, choice="oui"))
+    assert resumed[-1] == {"event": "done", "output": "ok:oui"}
+
+
+# --- Instantané au repos ------------------------------------------------------
+
+
+def _stored_state(run_id):
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        return conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()._asdict()["paused_state"]
+
+
+@pytest.mark.asyncio
+async def test_the_saved_state_is_encrypted_at_rest(api):
+    _, events = await _paused(api)
+    raw = _stored_state(events[0]["wid"])
+    assert raw and not raw.startswith("{")
+    assert "devis" not in raw and "Valider" not in raw
+
+
+@pytest.mark.asyncio
+async def test_a_state_saved_in_clear_before_encryption_still_resumes(api):
+    from apowerb.helpers.encryptor import decrypt_value
+
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    clear = decrypt_value(_stored_state(run_id))
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        conn.execute(t.update().where(t.c.run_id == run_id).values(paused_state=clear))
+    resumed = await _drain(await _resume(api, run_id, choice="oui"))
+    assert resumed[-1] == {"event": "done", "output": "ok:oui"}

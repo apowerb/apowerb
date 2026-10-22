@@ -117,6 +117,10 @@ def test_a_decision_node_is_runnable_now():
             {"question": "Q", "choices": [{"route": "x", "label": "A"}, {"route": "x", "label": "B"}]},
             "approval_choice_duplicate",
         ),
+        ({"question": "Q", "mode": "text", "expires_after_hours": 0}, "approval_expiry_invalid"),
+        ({"question": "Q", "mode": "text", "expires_after_hours": 721}, "approval_expiry_invalid"),
+        ({"question": "Q", "mode": "text", "expires_after_hours": "48"}, "approval_expiry_invalid"),
+        ({"question": "Q", "mode": "text", "expires_after_hours": True}, "approval_expiry_invalid"),
     ],
 )
 def test_a_decision_config_is_checked(cfg, code):
@@ -428,3 +432,30 @@ def test_the_engine_says_when_the_answer_is_taken_before_anything_runs_after():
 
     asyncio.run(_go())
     assert order == ["answered:d", "after"]
+
+
+# --- Délai et taille de l'attente -------------------------------------------
+
+
+def test_the_waiting_delay_is_handed_over_with_the_question():
+    env, saved = _Env(), []
+    nodes = [*NODES[:2], _decision(expires_after_hours=2), *NODES[3:]]
+    events = _run(_graph(nodes, EDGES), env, saved=saved)
+    assert events[-1]["expires_after_hours"] == 2
+    assert saved[0]["prompt"]["expires_after_hours"] == 2
+
+
+def test_without_a_delay_the_decision_waits_a_week():
+    env, saved = _Env(), []
+    _run(_graph(NODES, EDGES), env, saved=saved)
+    assert saved[0]["prompt"]["expires_after_hours"] == wg.DEFAULT_DECISION_HOURS == 168
+
+
+def test_a_pause_too_large_to_keep_fails_before_anything_is_saved(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_PAUSED_STATE_BYTES", 200)
+    env, saved = _Env(), []
+    events = _run(_graph(NODES, EDGES), env, saved=saved)
+    assert saved == []
+    assert events[-1]["event"] == "error"
+    assert events[-1]["code"] == "decision_state_too_large"
+    assert events[-1]["params"] == {"node": "d", "max": "200"}
