@@ -136,7 +136,7 @@ async def test_a_failed_published_run_alerts_its_owner_once(outbox, clock):
     assert "Relances" in mail["subject"]
     assert run_id in mail["body"]
     assert "tool_down" in mail["body"] and "étape a" in mail["body"]
-    assert "https://app.example.com/workflows" in mail["body"]
+    assert f"https://app.example.com/workflows/{wid}" in mail["body"]
     # Le message d'erreur peut porter des données du run : jamais dans l'alerte.
     assert "boom" not in mail["body"] and "boom" not in mail["subject"]
 
@@ -354,6 +354,70 @@ async def test_a_broken_alert_does_not_break_the_listeners(outbox, monkeypatch):
     monkeypatch.setattr(wt, "fire_workflow_done_triggers", _listeners)
     await _finish(_failed_run(_workflow()))
     assert len(calls) == 1
+
+
+def _alert_state(run_id):
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        row = conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()
+    return row._mapping["failure_alert"]
+
+
+async def test_a_cancelled_caller_still_sends_the_alert(outbox, monkeypatch):
+    # Client parti pendant l'envoi : l'alerte part quand même, sinon le run
+    # resterait « claimed » et l'heure prise sans aucun mail.
+    import asyncio
+
+    started, release = asyncio.Event(), asyncio.Event()
+    sent = outbox.mail
+
+    async def _slow_mail(*args):
+        started.set()
+        await release.wait()
+        await sent(*args)
+
+    monkeypatch.setattr(wa, "_send_mail", _slow_mail)
+    run_id = _failed_run(_workflow())
+    caller = asyncio.create_task(_finish(run_id))
+    await started.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    release.set()
+    for _ in range(50):
+        if _alert_state(run_id) == wa.SENT:
+            break
+        await asyncio.sleep(0.01)
+    assert len(outbox.mails) == 1
+    assert _alert_state(run_id) == wa.SENT
+
+
+async def test_a_cancelled_send_gives_back_the_run_and_the_hour(outbox, monkeypatch):
+    # Arrêt du serveur pendant l'envoi : rien n'est parti, la réservation et
+    # le créneau sont rendus — l'échec suivant alerte au lieu d'être regroupé.
+    import asyncio
+
+    started = asyncio.Event()
+
+    async def _stuck_mail(*_args):
+        started.set()
+        await asyncio.Event().wait()
+
+    wid = _workflow()
+    first = _failed_run(wid)
+    monkeypatch.setattr(wa, "_send_mail", _stuck_mail)
+    task = asyncio.create_task(
+        wa.alert_run_failed(run_id=first, owner_id=ALICE, workflow_id=wid)
+    )
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert _alert_state(first) is None
+    monkeypatch.setattr(wa, "_send_mail", outbox.mail)
+    await _finish(_failed_run(wid))
+    assert len(outbox.mails) == 1
+    assert "regroupés" not in outbox.mails[0]["body"]
 
 
 def test_the_alert_clock_is_utc():

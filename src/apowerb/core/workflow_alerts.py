@@ -29,6 +29,7 @@ Anti-tempête :
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -91,7 +92,9 @@ def _settle(run_id: str, outcome: str) -> None:
         )
 
 
-def _take_slot(workflow_id: str, owner_id: str) -> Optional[int]:
+def _take_slot(
+    workflow_id: str, owner_id: str, now: Optional[datetime] = None
+) -> Optional[int]:
     """Le droit d'alerter maintenant pour ce workflow.
 
     Renvoie le nombre d'échecs regroupés depuis la dernière alerte, ou
@@ -101,7 +104,7 @@ def _take_slot(workflow_id: str, owner_id: str) -> Optional[int]:
     """
     t = run_main.run_store.failure_alert_table
     engine = run_main.run_store.engine
-    now = _clock()
+    now = now or _clock()
     stamp, cutoff = now.strftime(_STAMP), (now - ALERT_COOLDOWN).strftime(_STAMP)
     for _ in range(3):
         with engine.begin() as conn:
@@ -145,6 +148,26 @@ def _take_slot(workflow_id: str, owner_id: str) -> Optional[int]:
     return None
 
 
+def _release(run_id: str, workflow_id: str, now: datetime, grouped: int) -> None:
+    """Rend la réservation du run et le créneau pris à ``now`` : l'envoi a été
+    annulé avant de partir, l'échec suivant doit pouvoir alerter."""
+    slots = run_main.run_store.failure_alert_table
+    runs = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        conn.execute(
+            slots.update()
+            .where(
+                slots.c.workflow_id == workflow_id,
+                slots.c.last_sent_at == now.strftime(_STAMP),
+            )
+            # Vide : plus ancien que tout horodatage, donc hors délai.
+            .values(last_sent_at="", grouped=grouped)
+        )
+        conn.execute(
+            runs.update().where(runs.c.run_id == run_id).values(failure_alert=None)
+        )
+
+
 async def _send_mail(to: str, subject: str, body: str) -> None:
     from apowerb.helpers.email_sender import send_email
 
@@ -175,7 +198,8 @@ def _message(
         f"Le workflow « {name} » a échoué.",
         f"Run : {run_id}",
         f"Erreur : {error}",
-        f"Détails : {_app_url()}/workflows",
+        # Le Studio du workflow, où se lit l'historique de ses runs.
+        f"Détails : {_app_url()}/workflows/{workflow.get('workflow_id')}",
     ]
     if grouped:
         lines.append(
@@ -206,7 +230,8 @@ async def alert_run_failed(
     if workflow is None or not alert_enabled(workflow):
         _settle(run_id, OFF)
         return OFF
-    grouped = _take_slot(workflow_id, owner_id)
+    now = _clock()
+    grouped = _take_slot(workflow_id, owner_id, now)
     if grouped is None:
         _settle(run_id, GROUPED)
         return GROUPED
@@ -214,11 +239,18 @@ async def alert_run_failed(
     outcome = SENT
     try:
         await _send_mail(owner_id, subject, body)
+    except asyncio.CancelledError:
+        # Arrêt du serveur pendant l'envoi : rien n'est parti.
+        _release(run_id, workflow_id, now, grouped)
+        raise
     except Exception:  # noqa: BLE001 - une alerte ratée ne doit rien casser
         logger.exception("[alerts] email d'échec non envoyé (run_id=%s)", run_id)
         outcome = FAILED
     try:
         await _send_teams(owner_id, subject, body)
+    except asyncio.CancelledError:
+        _settle(run_id, outcome)  # le mail, lui, est parti
+        raise
     except Exception as exc:  # noqa: BLE001
         if getattr(exc, "code", None) != "teams_not_configured":
             logger.exception("[alerts] alerte Teams non envoyée (run_id=%s)", run_id)

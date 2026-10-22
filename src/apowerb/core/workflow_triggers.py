@@ -1018,6 +1018,10 @@ async def notify_run_finished(
                 error_node=error_node,
             )
         )
+        # Référence forte : détachée d'un appelant annulé, la tâche ne doit
+        # pas être ramassée avant la fin de l'envoi.
+        _alerts_in_flight.add(alert)
+        alert.add_done_callback(_alerts_in_flight.discard)
 
     prior_chain: list[str] = []
     try:
@@ -1039,7 +1043,12 @@ async def notify_run_finished(
         )
     finally:
         if alert is not None:
-            await alert
+            # shield : un appelant annulé (client parti) n'annule pas l'envoi,
+            # qui laisserait le run réservé et l'heure prise sans aucun mail.
+            await asyncio.shield(alert)
+
+
+_alerts_in_flight: set[asyncio.Task] = set()
 
 
 async def _alert_failure(**kwargs: Any) -> None:
