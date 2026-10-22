@@ -638,3 +638,18 @@ async def test_a_decision_taken_by_a_lost_claim_does_not_run_on(api, monkeypatch
         row = conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()._asdict()
     # La ligne appartient à l'autre reprise : ni close, ni remise en attente.
     assert row["status"] == "running" and row["paused_state"]
+
+
+@pytest.mark.asyncio
+async def test_the_assignee_is_told_the_decision_expired_not_that_it_is_unknown(api):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    _expire(run_id)
+    with pytest.raises(HTTPException) as exc:
+        await _resume(api, run_id, user=ASSIGNEE, choice="oui")
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "decision_expired"
+    # Un tiers ne l'apprend pas pour autant.
+    with pytest.raises(HTTPException) as other:
+        await _resume(api, run_id, user=STRANGER, choice="oui")
+    assert other.value.status_code == 404

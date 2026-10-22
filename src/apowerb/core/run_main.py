@@ -677,7 +677,8 @@ def _expire_due(conn) -> None:
             finished_at=now,
             paused_state=None,
             decision=None,
-            assignee=None,
+            # L'assigné reste : sa réponse tardive s'entend dire « expirée »
+            # (409), pas « inconnue » (404).
         )
     )
 
