@@ -37,6 +37,7 @@
       "src/apowerb/helpers/env_scope.py": 6,
       "src/apowerb/helpers/litellm_config.py": 2,
       "src/apowerb/main.py": 1,
+      "src/apowerb/memory/case_bank.py": 1,
       "src/apowerb/memory/service.py": 1,
       "src/apowerb/routers/adk_runner.py": 2,
       "src/apowerb/routers/audio_stream.py": 2,
