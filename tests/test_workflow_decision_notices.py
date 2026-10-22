@@ -550,3 +550,300 @@ async def test_a_damaged_clear_state_closes_the_run_with_a_coded_refusal(api):
     assert (
         run["status"] == "error" and run["error_message"] == run_main.UNREADABLE_MESSAGE
     )
+
+
+# --- Retrait annoncé à l'assigné ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_decision_tells_the_assignee_it_is_withdrawn(api, outbox):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    await api.runs.abandon_run(run_id, current_user=_user())
+    await decision_notices.tick()
+    asked, withdrawn = outbox.to(ASSIGNEE)
+    assert "Valider devis ?" in asked["text"]
+    assert "abandon" in withdrawn["subject"].lower()
+    assert "n'attend plus ta décision" in withdrawn["text"]
+    # Sa réponse tardive s'entend dire « déjà réglée », pas « inconnue ».
+    with pytest.raises(HTTPException) as exc:
+        await _resume(api, run_id, user=ASSIGNEE, choice="oui")
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "decision_already_answered"
+
+
+@pytest.mark.asyncio
+async def test_an_expired_decision_tells_the_assignee_once(api, outbox):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    deadline = _deadline(run_id)
+    await decision_notices.tick(now=deadline + timedelta(minutes=1))
+    await decision_notices.tick(now=deadline + timedelta(minutes=2))
+    ends = [m for m in outbox.to(ASSIGNEE) if "expir" in m["subject"].lower()]
+    assert len(ends) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_resume_tells_the_assignee_too(api, outbox, monkeypatch):
+    held = asyncio.Event()
+
+    async def _slow_plan(owner):
+        held.set()
+        await asyncio.Event().wait()
+
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    monkeypatch.setattr(run_gate, "resolve_owner_plan", _slow_plan)
+    stream = (await _resume(api, run_id, user=ASSIGNEE, choice="oui")).body_iterator
+    await stream.__anext__()
+    await asyncio.wait_for(held.wait(), 5)
+    await api.runs.cancel_workflow(run_id, current_user=_user())
+    _ = [chunk async for chunk in stream]
+    await asyncio.gather(*list(api.runs._detached_runs), return_exceptions=True)
+    assert any("abandon" in m["subject"].lower() for m in outbox.to(ASSIGNEE))
+
+
+@pytest.mark.asyncio
+async def test_without_assignee_the_owner_is_not_told_twice_of_the_end(api, outbox):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    await api.runs.abandon_run(run_id, current_user=_user())
+    await decision_notices.tick()
+    ends = [m for m in outbox.to(OWNER) if "abandon" in m["subject"].lower()]
+    assert len(ends) == 1
+
+
+# --- Pauses d'avant cette version ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_pause_from_before_this_version_is_still_reminded(api, outbox):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    deadline = _deadline(run_id)
+    # Ligne écrite par la version précédente : pas d'heure de rappel.
+    _set(run_id, remind_at=None)
+    await decision_notices.tick(now=deadline - timedelta(hours=25))
+    assert len(outbox.to(ASSIGNEE)) == 1
+    await decision_notices.tick(now=deadline - timedelta(hours=23))
+    await decision_notices.tick(now=deadline - timedelta(hours=22))
+    assert ["Rappel" in m["subject"] for m in outbox.to(ASSIGNEE)] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_a_pause_from_before_this_version_with_a_local_deadline_is_reminded(
+    api, outbox
+):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    decision = json.loads(_row(run_id)["decision"])
+    paused = datetime.fromisoformat(decision["paused_at"])
+    legacy_deadline = (paused + timedelta(hours=168)).astimezone()
+    _set(
+        run_id,
+        remind_at=None,
+        expires_at=legacy_deadline.strftime("%Y-%m-%d %H:%M:%S.%f"),
+    )
+    await decision_notices.tick(now=legacy_deadline - timedelta(hours=23))
+    assert ["Rappel" in m["subject"] for m in outbox.mails] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_a_pause_with_an_unreadable_deadline_is_skipped_not_fatal(api, outbox):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    _, other = await _paused(api)
+    _set(run_id, remind_at=None, expires_at="pas une date")
+    # Les autres décisions passent toujours ; la ligne abîmée reste en attente.
+    assert await decision_notices.tick() >= 0
+    assert run_main.get_run(other[0]["wid"], owner_id=OWNER)["status"] == "awaiting"
+    assert _row(run_id)["status"] == "awaiting"
+
+
+# --- Plusieurs passages en même temps -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_passes_send_each_notice_once(api, outbox, monkeypatch):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    outbox.mails.clear()
+    _set(run_id, notified_at=None)
+    # Deux réplicas qui passent au même moment, avant et après l'échéance du
+    # rappel puis après l'échéance tout court.
+    deadline = _deadline(run_id)
+    for moment in (
+        None,
+        deadline - timedelta(hours=1),
+        deadline + timedelta(minutes=1),
+    ):
+        await asyncio.gather(*(decision_notices.tick(now=moment) for _ in range(5)))
+    subjects = [m["subject"] for m in outbox.to(ASSIGNEE)]
+    assert len(subjects) == 3, subjects  # avis, rappel, expiration
+    assert len(outbox.to(OWNER)) == 1  # expiration
+    assert [f["run_id"] for f in api.finished] == [run_id]
+
+
+def test_a_reservation_is_won_by_one_connection_only(tmp_path, monkeypatch):
+    """Le vrai garde : un ``UPDATE ... WHERE ... IS NULL`` sur une base fichier,
+    disputé par plusieurs connexions dans des threads (comme des réplicas)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import create_engine, event
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'runs.db'}", connect_args={"timeout": 30}
+    )
+
+    @event.listens_for(engine, "connect")
+    def _attach(dbapi_connection, _record):  # pragma: no cover
+        dbapi_connection.execute(
+            f"ATTACH DATABASE '{tmp_path / 'public.db'}' AS public"
+        )
+
+    monkeypatch.setattr(run_main.run_store, "engine", engine)
+    run_main.run_store.metadata.create_all(engine)
+    run_id = run_main.start_run(trigger="workflow", owner_id=OWNER, config={})
+    t = run_main.run_store.run_table
+    stamp = datetime.now(timezone.utc).isoformat()
+
+    def _try(_):
+        return decision_notices._reserve(
+            run_id, t.c.notified_at.is_(None), notified_at=stamp
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        won = list(pool.map(_try, range(16)))
+    assert won.count(True) == 1
+
+
+# --- Transport ----------------------------------------------------------------
+
+_REAL_SEND_MAIL = decision_notices._send_mail
+_REAL_SEND_TEAMS = decision_notices._send_teams
+
+
+class _Response:
+    def __init__(self, status):
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _Client:
+    posts: list = []
+    status = 200
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def post(self, url, json=None):
+        _Client.posts.append({"url": url, "json": json, "kwargs": self.kwargs})
+        return _Response(_Client.status)
+
+
+@pytest.fixture
+def teams_http(monkeypatch):
+    import httpx
+
+    _Client.posts, _Client.status = [], 200
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    return _Client
+
+
+@pytest.mark.asyncio
+async def test_the_mail_goes_through_the_system_mailer(monkeypatch):
+    from apowerb.helpers import system_mailer
+
+    sent = []
+
+    async def _mailer(**kwargs):
+        sent.append(kwargs)
+        return True
+
+    monkeypatch.setattr(system_mailer, "send_system_email", _mailer)
+    await _REAL_SEND_MAIL(to="a@example.com", subject="S", html="<p>H</p>", text="T")
+    assert sent == [
+        {"to": "a@example.com", "subject": "S", "html": "<p>H</p>", "text": "T"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_teams_posts_a_card_to_the_recipients_webhook(monkeypatch, teams_http):
+    from apowerb.integrations import teams
+
+    url = "https://contoso.webhook.office.com/webhookb2/x"
+
+    async def _url(email):
+        assert email == ASSIGNEE
+        return url
+
+    monkeypatch.setattr(teams, "get_teams_webhook_url_for_owner", _url)
+    monkeypatch.setattr(teams, "validate_teams_webhook_url", lambda u: u)
+    await _REAL_SEND_TEAMS(
+        to=ASSIGNEE, subject="Décision attendue", body="Valider ?\nlien"
+    )
+    [post] = teams_http.posts
+    assert post["url"] == url
+    assert post["kwargs"]["follow_redirects"] is False
+    texts = [b["text"] for b in post["json"]["attachments"][0]["content"]["body"]]
+    assert texts == ["Décision attendue", "Valider ?\nlien"]
+
+
+@pytest.mark.asyncio
+async def test_teams_is_skipped_for_someone_without_account_or_webhook(
+    monkeypatch, teams_http
+):
+    from apowerb.integrations import teams
+    from apowerb.users.exceptions import UserNotFoundException
+
+    async def _unknown(email):
+        raise UserNotFoundException("User not found")
+
+    monkeypatch.setattr(teams, "get_teams_webhook_url_for_owner", _unknown)
+    await _REAL_SEND_TEAMS(to="externe@example.com", subject="S", body="B")
+
+    async def _none(email):
+        return None
+
+    monkeypatch.setattr(teams, "get_teams_webhook_url_for_owner", _none)
+    await _REAL_SEND_TEAMS(to=ASSIGNEE, subject="S", body="B")
+    assert teams_http.posts == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_or_failing_webhook_raises_for_the_caller_to_log(
+    monkeypatch, teams_http
+):
+    from apowerb.integrations import teams
+
+    async def _url(email):
+        return "https://evil.example.com/hook"
+
+    monkeypatch.setattr(teams, "get_teams_webhook_url_for_owner", _url)
+    with pytest.raises(teams.TeamsWebhookRefused):
+        await _REAL_SEND_TEAMS(to=ASSIGNEE, subject="S", body="B")
+    assert teams_http.posts == []
+
+    monkeypatch.setattr(teams, "validate_teams_webhook_url", lambda u: u)
+    teams_http.status = 500
+    with pytest.raises(RuntimeError):
+        await _REAL_SEND_TEAMS(to=ASSIGNEE, subject="S", body="B")
+
+
+@pytest.mark.asyncio
+async def test_a_teams_failure_does_not_stop_the_mail(api, outbox, monkeypatch):
+    async def _down(**kwargs):
+        raise RuntimeError("webhook en panne")
+
+    monkeypatch.setattr(decision_notices, "_send_teams", _down)
+    await _paused(api, assignee=ASSIGNEE)
+    assert [m["to"] for m in outbox.mails] == [ASSIGNEE]

@@ -27,7 +27,7 @@ lien, aucune autre donnée du run.
 from __future__ import annotations
 
 import html
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, Optional
 
@@ -97,6 +97,7 @@ def _rows(*where, run_id: Optional[str]) -> list[dict]:
                 t.c.decision,
                 t.c.status,
                 t.c.error_message,
+                t.c.expires_at,
                 t.c.remind_at,
             )
             .where(*where)
@@ -203,12 +204,18 @@ async def _announce_end(row: dict) -> None:
 
     name = _workflow_name(row)
     word, sentence = _end_wording(row)
-    await _send(
-        row["owner_id"],
-        f"Décision {word} — {name}",
-        [f"Workflow « {name} ».", sentence],
-        f"{_app_url()}/workflows",
-    )
+    subject, link = f"Décision {word} — {name}", f"{_app_url()}/workflows"
+    owner = row["owner_id"]
+    await _send(owner, subject, [f"Workflow « {name} ».", sentence], link)
+    assignee = row.get("assignee")
+    if assignee and assignee.lower() != owner.lower():
+        # Elle avait été sollicitée : elle sait qu'elle n'a plus à répondre.
+        await _send(
+            assignee,
+            subject,
+            [f"Le workflow « {name} » n'attend plus ta décision.", sentence],
+            link,
+        )
     await workflow_triggers.notify_run_finished(
         run_id=row["run_id"],
         owner_id=row["owner_id"],
@@ -219,6 +226,35 @@ async def _announce_end(row: dict) -> None:
 
 
 # --- Passages -----------------------------------------------------------------
+
+
+def _remind_moment(row: dict) -> Optional[datetime]:
+    """L'heure du rappel ; recalculée pour une pause d'avant ``remind_at``.
+
+    ``None`` si l'échéance est illisible : la ligne est sautée, les autres
+    passent (``_expire_due`` la saute de même).
+    """
+    import json
+
+    from apowerb.core import run_main
+    from apowerb.core.workflow_graph import DEFAULT_DECISION_HOURS
+
+    try:
+        if row.get("remind_at"):
+            return run_main._instant(row["remind_at"])
+        if not row.get("expires_at"):
+            return None
+        expires = run_main._instant(row["expires_at"])
+        paused_at = json.loads(row.get("decision") or "{}").get("paused_at")
+        paused = (
+            datetime.fromisoformat(paused_at)
+            if paused_at
+            else expires - timedelta(hours=DEFAULT_DECISION_HOURS)
+        )
+        return run_main.remind_moment(paused, expires)
+    except ValueError:
+        logger.error("[decisions] échéance illisible (run_id=%s)", row.get("run_id"))
+        return None
 
 
 async def tick(now: Optional[datetime] = None, *, run_id: Optional[str] = None) -> int:
@@ -248,10 +284,10 @@ async def tick(now: Optional[datetime] = None, *, run_id: Optional[str] = None) 
         awaiting,
         t.c.notified_at.isnot(None),
         t.c.reminded_at.is_(None),
-        t.c.remind_at.isnot(None),
         run_id=run_id,
     ):
-        if run_main._instant(row["remind_at"]) > now:
+        moment = _remind_moment(row)
+        if moment is None or moment > now:
             continue
         if _reserve(
             row["run_id"], awaiting, t.c.reminded_at.is_(None), reminded_at=stamp

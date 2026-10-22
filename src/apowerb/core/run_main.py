@@ -996,8 +996,9 @@ def abandon_paused_run(run_id: str, user: str) -> None:
             .values(
                 status=STATUS_CANCELLED,
                 paused_state=None,
-                assignee=None,
                 decision=None,
+                # L'assigné reste : il est prévenu du retrait, et sa réponse
+                # tardive s'entend dire « déjà réglée » (409), pas « inconnue ».
                 error_message=ABANDONED_MESSAGE,
                 finished_at=_now(),
                 end_notice=END_NOTICE_PENDING,
@@ -1033,7 +1034,6 @@ def stop_unanswered_resume(run_id: str, resumed_at: str | None) -> bool:
             .values(
                 status=STATUS_CANCELLED,
                 paused_state=None,
-                assignee=None,
                 decision=None,
                 error_message=STOPPED_MESSAGE,
                 finished_at=_now(),
