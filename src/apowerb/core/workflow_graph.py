@@ -39,6 +39,11 @@ Types de nœuds :
   nœuds faits sans les réexécuter (``replayed``). Refusé dans le corps d'un
   ``loop``/``try`` et dans un sous-workflow (``approval_nested``).
 
+« Reprendre ici » s'appuie sur le même rejeu : un run qui échoue sur un nœud
+de premier niveau confie à ``on_fail`` l'instantané de ce qui était fait, et
+un nouveau run repart avec ``resume=`` sans réexécuter l'amont. Un ``loop``,
+un ``try`` ou un ``subworkflow`` en échec est repris en entier.
+
 Le déclencheur du corps d'une boucle reçoit ``{item, index, previous}`` —
 ``previous`` est la sortie de l'itération précédente, ou l'entrée de la
 boucle au premier tour. Le corps ne lit que son propre déclencheur ; la
@@ -83,6 +88,7 @@ from google.adk.workflow import FunctionNode, JoinNode, Workflow
 from google.genai import types
 from pydantic import BaseModel, Field, model_validator
 
+from apowerb.configs.th2logger import setup_logging
 from apowerb.core.workflow_engine import (
     AgentReply,
     _Finished,
@@ -134,6 +140,7 @@ _MAX_LOOP = 100
 _MAX_RETRIES = 3
 _MAX_RETRY_DELAY_MS = 5000
 _MAX_SUBWORKFLOW_DEPTH = 3
+logger = setup_logging(__name__)
 # Conversion csv bornée comme la réponse du nœud http (1 Mio) : le texte
 # vient d'un agent, d'un outil ou d'un payload, donc d'une source non sûre.
 MAX_CSV_BYTES = 1 * 1024 * 1024
@@ -2105,6 +2112,8 @@ class _Compiler:
         # Tous les graphiques, tableaux de bord… créés pendant le run, avec
         # leur nœud : ``done`` les rend, pour qui ne lit pas chaque nœud.
         self.run_artifacts: list[dict] = list(resume.get("artifacts") or [])
+        # Le dernier nœud de ce niveau qui a échoué : « Reprendre ici » repart de lui.
+        self.failed_node: Optional[str] = None
 
     def _note_input(self, node: Node, value: Any) -> None:
         """Montre au panneau Test ce que ``node`` va recevoir, dès maintenant.
@@ -2293,6 +2302,7 @@ class _Compiler:
             except _AwaitingDecision:
                 raise
             except Exception as exc:
+                self.failed_node = node.id
                 self.emit(
                     {
                         "event": "node_error",
@@ -2311,6 +2321,7 @@ class _Compiler:
                     code="node_output_too_large",
                     params={"node": node.id, "max": str(MAX_NODE_OUTPUT_BYTES)},
                 )
+                self.failed_node = node.id
                 self.emit(
                     {
                         "event": "node_error",
@@ -2990,6 +3001,7 @@ async def run_graph(
     resume: Optional[dict] = None,
     run_id: Optional[str] = None,
     on_answered: Optional[Callable[[str], Any]] = None,
+    on_fail: Optional[Callable[[dict], Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
 
@@ -3004,6 +3016,13 @@ async def run_graph(
     ``answered_by``, ``answered_at``) : les nœuds déjà faits sont réémis avec
     ``replayed: true`` sans être réexécutés. ``on_answered(node_id)`` est
     appelé quand la réponse est prise, avant tout nœud en aval.
+
+    « Reprendre ici » : quand un nœud de premier niveau échoue, l'instantané
+    (``failed_node``, graphe, payload, ``outputs``, ``routes``, ``artifacts``,
+    ``until``) est confié à ``on_fail``, borné comme une pause. Le terminal
+    ``error`` porte alors ``failed_node`` et ``retryable`` (vrai seulement si
+    l'instantané est enregistré). Une reprise est un ``resume`` sans
+    ``answer`` : les nœuds de ``outputs`` sont rejoués, le reste s'exécute.
 
     Événements : ``node_start`` / ``node_input`` (``input``, nœuds agent et
     tool, dès que l'entrée est rendue) / ``node_complete`` (``output``,
@@ -3085,7 +3104,13 @@ async def run_graph(
             )
         )
     elif exc is not None:
-        yield _sse({"event": "error", **error_fields(exc)})
+        event = {"event": "error", **error_fields(exc)}
+        if compiler.failed_node is not None:
+            event["failed_node"] = compiler.failed_node
+            event["retryable"] = await _save_failure(
+                graph, payload, compiler, on_fail=on_fail, until=until
+            )
+        yield _sse(event)
     elif until is not None and until not in compiler.outputs:
         yield _sse(
             {
@@ -3110,6 +3135,70 @@ async def run_graph(
             # d'un nœud.
             done["artifacts"] = compiler.run_artifacts[:_MAX_RUN_ARTIFACTS]
         yield _sse(done)
+
+
+async def _save_failure(
+    graph: WorkflowGraph,
+    payload: Any,
+    compiler: _Compiler,
+    *,
+    on_fail: Optional[Callable[[dict], Any]],
+    until: Optional[str],
+) -> bool:
+    """Confie à ``on_fail`` de quoi reprendre au nœud en échec.
+
+    Jamais bloquant : l'erreur du run reste l'erreur du run, l'instantané
+    manquant dit seulement qu'on ne pourra pas reprendre (``retryable``).
+    """
+    if on_fail is None:
+        return False
+    snapshot = {
+        "failed_node": compiler.failed_node,
+        "graph": graph.model_dump(mode="json"),
+        "payload": payload,
+        "outputs": compiler.outputs,
+        "routes": compiler.routes,
+        "artifacts": compiler.run_artifacts,
+        "until": until,
+    }
+    size = len(json.dumps(snapshot, ensure_ascii=False, default=str).encode("utf-8"))
+    if size > MAX_PAUSED_STATE_BYTES:
+        logger.warning(
+            "[workflow] échec sur %s : instantané trop lourd (%s octets), reprise impossible",
+            compiler.failed_node,
+            size,
+        )
+        return False
+    try:
+        saved = on_fail(snapshot)
+        if asyncio.iscoroutine(saved):
+            await saved
+    except Exception:  # noqa: BLE001 - l'erreur du run prime
+        logger.exception(
+            "[workflow] échec sur %s : instantané non enregistré", compiler.failed_node
+        )
+        return False
+    return True
+
+
+def retry_mismatch(before: dict, after: WorkflowGraph, done) -> list[str]:
+    """Les nœuds rejoués par « Reprendre ici » qui ont changé depuis l'échec.
+
+    Un nœud ``done`` est rejoué avec sa sortie d'alors : elle ne vaut plus si
+    son type, sa configuration ou ses entrées (arêtes qui y mènent, avec leur
+    route) ont changé, ou s'il a disparu. Libellé et position ne comptent pas.
+    Le nœud en échec et son aval peuvent changer : ils s'exécutent.
+    """
+    old = WorkflowGraph.model_validate(before)
+
+    def signature(graph: WorkflowGraph, node_id: str):
+        node = next((n for n in graph.nodes if n.id == node_id), None)
+        if node is None:
+            return None
+        inputs = sorted((e.source, e.route or "") for e in graph.edges if e.target == node_id)
+        return node.type, json.dumps(node.config, sort_keys=True, default=str), inputs
+
+    return [i for i in sorted(done) if signature(old, i) != signature(after, i)]
 
 
 async def _pause(

@@ -109,6 +109,11 @@ class RunStore(BaseModel):
             # Échéance de la décision en attente (même format que
             # ``created_at``) : passé ce moment, le run est clos en ``error``.
             Column("expires_at", String),
+            # Run de graphe en ``error`` : l'instantané scellé de ce qui était
+            # fait (sorties, routes), relu par « Reprendre ici », et le nœud
+            # en échec, qui reste lisible une fois l'instantané purgé.
+            Column("failure_state", String),
+            Column("failure_node", String),
         )
 
     def create_table(self):
@@ -147,6 +152,8 @@ class RunStore(BaseModel):
             "decision": "VARCHAR",
             "resumed_at": "VARCHAR",
             "expires_at": "VARCHAR",
+            "failure_state": "VARCHAR",
+            "failure_node": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         # Deux réplicas qui démarrent ensemble : sur Postgres, le second

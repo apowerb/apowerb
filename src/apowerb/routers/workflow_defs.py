@@ -29,7 +29,7 @@ from apowerb.auth.dependencies import get_current_user
 from apowerb.core import run_main, workflow_main, workflow_suggest_stats
 from apowerb.core.workflow_graph import run_graph
 from apowerb.core.workflow_suggest_stats import SuggestEvent
-from apowerb.routers.workflows import _streaming_run, logger, pause_saver
+from apowerb.routers.workflows import _streaming_run, failure_saver, logger, pause_saver
 from apowerb.users import schemas as user_schemas
 
 router = APIRouter(prefix="/workflows/defs", tags=["workflows"])
@@ -397,6 +397,7 @@ async def _run_current_version(
             services=workflow_runtime.services_for(owner),
             until=until,
             on_await=pause_saver(run_id),
+            on_fail=failure_saver(run_id),
             run_id=run_id,
         )
 
