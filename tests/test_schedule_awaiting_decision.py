@@ -12,8 +12,8 @@ import pytest
 from apowerb.core import flow_scheduler
 from apowerb.core import workflow_triggers as wt
 from tests.test_workflow_triggers_schedule import (  # noqa: F401
-    _Recorder,
     _publish_schedule,
+    _Recorder,
     _row,
     _set_row,
     _settle,
@@ -25,7 +25,7 @@ DUE = datetime(2000, 1, 1, tzinfo=timezone.utc).isoformat()
 
 
 @pytest.mark.parametrize(
-    "status, fires", [("awaiting", 0), ("success", 1), ("cancelled", 1), ("error", 1)]
+    "status, fires", [("awaiting", 0), ("running", 0), ("success", 1), ("cancelled", 1), ("error", 1)]
 )
 async def test_a_schedule_waits_while_its_last_run_waits_for_a_decision(
     monkeypatch, status, fires

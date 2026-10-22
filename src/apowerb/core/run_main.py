@@ -682,6 +682,27 @@ def _expire_due(conn) -> None:
     )
 
 
+def _release_dead_resumptions(conn) -> None:
+    """Remet en attente les reprises mortes avant d'avoir pris la décision.
+
+    Même règle que ``_reconcile_if_orphaned`` (instantané encore là, âge
+    compté depuis la reprise), appliquée sans que le propriétaire ouvre le
+    run : la liste de l'assigné, la reprise et l'abandon en dépendent.
+    """
+    t = run_store.run_table
+    stale = (datetime.now() - RUN_STALE_AFTER).strftime("%Y-%m-%d %H:%M:%S.%f")
+    conn.execute(
+        t.update()
+        .where(
+            t.c.status == STATUS_RUNNING,
+            t.c.paused_state.isnot(None),
+            t.c.resumed_at.isnot(None),
+            t.c.resumed_at <= stale,
+        )
+        .values(status=STATUS_AWAITING, resumed_at=None)
+    )
+
+
 def pause_run(run_id: str, snapshot: dict) -> None:
     """Consigne un run arrêté sur une décision humaine, avec son instantané."""
     from apowerb.core.workflow_graph import DEFAULT_DECISION_HOURS
@@ -746,6 +767,7 @@ def list_awaiting(user: str) -> list[dict]:
     """Les runs en attente d'une décision de ``user`` (propriétaire ou assigné)."""
     t = run_store.run_table
     with run_store.engine.begin() as conn:
+        _release_dead_resumptions(conn)
         _expire_due(conn)
         # Jamais ``paused_state`` ici : l'instantané peut peser des Mio.
         rows = conn.execute(
@@ -764,7 +786,10 @@ def list_awaiting(user: str) -> list[dict]:
         out.append(
             {
                 "run_id": data["run_id"],
+                # Interne (nom du workflow) : la route le retire, l'assigné
+                # n'a pas à connaître l'adresse du propriétaire.
                 "owner_id": data["owner_id"],
+                "mine": data["owner_id"] == user,
                 "workflow_id": config.get("workflow_id"),
                 **json.loads(data.get("decision") or "{}"),
             }
@@ -786,7 +811,10 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
 
     t = run_store.run_table
     with run_store.engine.begin() as conn:
-        _expire_due(conn)  # validée avant un refus qui annulerait la transaction
+        # Validées avant un refus qui annulerait la transaction.
+        _release_dead_resumptions(conn)
+        _expire_due(conn)
+    resumed_at = _now()
     with run_store.engine.begin() as conn:
         data = _awaiting_row(conn, run_id, user)
         state = _unseal(data["paused_state"])
@@ -802,7 +830,7 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
         claimed = conn.execute(
             t.update()
             .where(t.c.run_id == run_id, t.c.status == STATUS_AWAITING)
-            .values(status=STATUS_RUNNING, resumed_at=_now())
+            .values(status=STATUS_RUNNING, resumed_at=resumed_at)
         )
         if claimed.rowcount != 1:
             raise HTTPException(
@@ -816,22 +844,27 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
         "answered_at": datetime.now(timezone.utc).isoformat(),
     }
     data["config"] = json.loads(data.get("config") or "{}")
-    return {"run": data, "state": state, "answer": answer}
+    return {"run": data, "state": state, "answer": answer, "resumed_at": resumed_at}
 
 
-def mark_decided(run_id: str) -> None:
+def mark_decided(run_id: str, resumed_at: str | None = None) -> bool:
     """La réponse est prise par le moteur : l'instantané ne sert plus.
 
     Sans instantané, ni ``release_paused_run`` ni la réconciliation ne
-    remettent le run en attente : la suite a pu agir.
+    remettent le run en attente : la suite a pu agir. ``resumed_at`` est
+    celui de la prise : si la ligne a été remise en attente puis reprise
+    ailleurs entre-temps, elle n'est plus la nôtre et rien n'est écrit.
+    Renvoie si la décision est bien consignée pour cette reprise.
     """
     t = run_store.run_table
+    where = [t.c.run_id == run_id, t.c.status == STATUS_RUNNING]
+    if resumed_at is not None:
+        where.append(t.c.resumed_at == resumed_at)
     with run_store.engine.begin() as conn:
-        conn.execute(
-            t.update()
-            .where(t.c.run_id == run_id, t.c.status == STATUS_RUNNING)
-            .values(paused_state=None, decision=None, assignee=None)
+        done = conn.execute(
+            t.update().where(*where).values(paused_state=None, decision=None, assignee=None)
         )
+    return done.rowcount == 1
 
 
 def release_paused_run(run_id: str) -> None:
@@ -857,6 +890,7 @@ def abandon_paused_run(run_id: str, user: str) -> None:
     """
     t = run_store.run_table
     with run_store.engine.begin() as conn:
+        _release_dead_resumptions(conn)
         _expire_due(conn)
     with run_store.engine.begin() as conn:
         data = _awaiting_row(conn, run_id, user)

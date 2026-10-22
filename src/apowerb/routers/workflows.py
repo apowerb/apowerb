@@ -286,6 +286,9 @@ _OWNER_ONLY_FIELDS = (
     "tool_calls",
     "artifacts",
     "reported_error",
+    # Texte brut d'une exception : il peut citer les données du run ; le code
+    # et ses paramètres suffisent à l'expliquer.
+    "detail",
 )
 
 
@@ -324,11 +327,23 @@ async def _decision_resume_runner(
 
 def _decision_taken(run_id: str, claimed: dict[str, Any]) -> Callable[[str], None]:
     """``on_answered`` de la reprise : posé par le moteur lui-même, pas lu
-    dans le flux SSE, et consigné en base avant tout nœud en aval."""
+    dans le flux SSE, et consigné en base avant tout nœud en aval.
 
-    def _taken(_node_id: str) -> None:
+    Si la ligne n'est plus celle de cette prise (remise en attente puis
+    reprise ailleurs), la suite ne doit pas s'exécuter deux fois : le nœud
+    échoue et ``_streaming_run`` laisse la ligne à l'autre reprise.
+    """
+    from apowerb.core.workflow_graph import GraphError
+
+    def _taken(node_id: str) -> None:
+        if not run_main.mark_decided(run_id, claimed.get("resumed_at")):
+            claimed["lost"] = True
+            raise GraphError(
+                f"{node_id} : cette décision a été reprise ailleurs",
+                code="decision_already_answered",
+                params={"node": node_id},
+            )
         claimed["decided"] = True
-        run_main.mark_decided(run_id)
 
     return _taken
 
@@ -527,7 +542,10 @@ def _streaming_run(
             # Pas de ``return`` dans ce ``finally`` : il avalerait le
             # ``CancelledError`` d'un client parti.
             settles = True
-            if resume_guard is not None and not resume_guard.get("decided"):
+            if resume_guard is not None and resume_guard.get("lost"):
+                # Une autre reprise tient la ligne : ni fin, ni remise en attente.
+                settles = False
+            elif resume_guard is not None and not resume_guard.get("decided"):
                 settles = False
                 if outcome != run_main.STATUS_AWAITING:
                     # La reprise n'a pas atteint la décision (client parti,
@@ -573,7 +591,7 @@ def _streaming_run(
                     )
 
     return StreamingResponse(
-        _event_generator(),
+        _detached(_event_generator()) if resume_guard is not None else _event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -582,6 +600,38 @@ def _streaming_run(
             "X-Workflow-Id": run_id,
         },
     )
+
+
+# Reprises en cours, gardées en vie hors de la connexion qui les a lancées.
+_detached_runs: set[asyncio.Task] = set()
+
+
+def _detached(events: AsyncGenerator[bytes, None]) -> AsyncGenerator[bytes, None]:
+    """Exécute ``events`` dans une tâche à part et en relaie le flux.
+
+    Une reprise suit une réponse déjà donnée : un client qui part (onglet
+    fermé, page quittée, une autre décision ouverte) ne doit pas annuler le
+    run et perdre la décision. La connexion ne fait que relayer ; l'arrêt
+    volontaire passe par ``/runs/{id}/cancel`` (``cancel_event``).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for chunk in events:
+                queue.put_nowait(chunk)
+        finally:
+            queue.put_nowait(None)
+
+    task = asyncio.get_running_loop().create_task(_pump())
+    _detached_runs.add(task)
+    task.add_done_callback(_detached_runs.discard)
+
+    async def _relay() -> AsyncGenerator[bytes, None]:
+        while (chunk := await queue.get()) is not None:
+            yield chunk
+
+    return _relay()
 
 
 # Codes de GraphError dont le statut HTTP n'est pas 404.
@@ -752,6 +802,7 @@ async def list_awaiting_runs(
             )
             names[key] = (wf or {}).get("name")
         item["workflow_name"] = names[key]
+        item.pop("owner_id", None)
     return items
 
 
