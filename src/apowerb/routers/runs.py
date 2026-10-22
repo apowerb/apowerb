@@ -4,6 +4,9 @@ from apowerb.agent_store.agent_manager import AgentStore
 from apowerb.auth.dependencies import get_current_user
 from apowerb.users import schemas as user_schemas
 from typing import Dict
+from logging import getLogger
+
+logger = getLogger(__name__)
 
 # import asyncio
 # from concurrent.futures import ThreadPoolExecutor
@@ -38,7 +41,7 @@ async def run_adk_agent(agent_id: str, agent_store=Depends(get_agent_store), _cu
             # Assuming the agent has a run method
             agent.run()
         except Exception as e:
-            print(f"Error running agent {agent_id}: {e}")
+            logger.exception(f"Error running agent {agent_id}")
 
     thread = threading.Thread(target=run_agent_thread, daemon=True)
     running_agents[agent_id] = thread

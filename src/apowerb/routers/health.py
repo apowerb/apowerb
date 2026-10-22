@@ -19,10 +19,26 @@ import asyncio
 from logging import getLogger
 from typing import Any, Optional
 
+import os
+
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 
-DEPENDENCY_TIMEOUT_S: float = 2.0
+
+def _parse_timeout(env_value: str | None, default: float = 2.0) -> float:
+    """Read HEALTH_DEPENDENCY_TIMEOUT_S; fall back to *default* when the
+    value is absent, non-numeric, or not a positive number."""
+    if env_value is None:
+        return default
+    try:
+        value = float(env_value)
+        return value if value > 0 else default
+    except ValueError:
+        return default
+
+DEPENDENCY_TIMEOUT_S: float = _parse_timeout(
+    os.environ.get("HEALTH_DEPENDENCY_TIMEOUT_S")
+)
 
 router = APIRouter(prefix="/health", tags=["health"])
 logger = getLogger(__name__)
