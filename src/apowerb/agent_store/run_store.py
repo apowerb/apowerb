@@ -12,6 +12,7 @@ Cette table est l'entrée rejouable qui manquait. Elle ne remplace pas
 idempotence. Les deux convergeront le jour où le moteur d'exécution sera unifié.
 """
 
+import json
 from typing import Any
 
 from pydantic import BaseModel
@@ -56,6 +57,7 @@ class RunStore(BaseModel):
     engine: Any = None
     metadata: Any = None
     run_table: Any = None
+    trace_table: Any = None
 
     def __init__(self, **data: Any):
         super().__init__(**data)
@@ -119,6 +121,23 @@ class RunStore(BaseModel):
             Column("notified_at", String),
             Column("reminded_at", String),
             Column("end_notice", String),
+            # Le workflow d'un run de graphe (``config.workflow_id``), en
+            # colonne pour que l'historique d'un workflow se filtre en SQL.
+            Column("workflow_id", String, index=True),
+            # L'échec sous forme structurée, en JSON : ``code`` (traduit par
+            # l'interface), ``params``, ``ref`` et ``node_id`` (le nœud fautif).
+            # ``error_message`` garde le texte, pour les lecteurs existants.
+            Column("error_info", String),
+        )
+        # Le déroulé d'un run (ses événements SSE, plafonnés) : à part, pour
+        # que les listes de runs ne le chargent jamais.
+        self.trace_table = Table(
+            f"{self.table_name}_traces",
+            self.metadata,
+            Column("run_id", String, primary_key=True),
+            Column("events", String),
+            Column("truncated", Integer, default=0),
+            Column("updated_at", String),
         )
 
     def create_table(self):
@@ -161,6 +180,8 @@ class RunStore(BaseModel):
             "notified_at": "VARCHAR",
             "reminded_at": "VARCHAR",
             "end_notice": "VARCHAR",
+            "workflow_id": "VARCHAR",
+            "error_info": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         # Deux réplicas qui démarrent ensemble : sur Postgres, le second
@@ -181,9 +202,37 @@ class RunStore(BaseModel):
                     logger.info("Run store: colonne %s ajoutée.", col)
             if if_not_exists:
                 # ``index=True`` ne vaut que pour une table neuve.
-                conn.execute(
-                    text(
-                        f'CREATE INDEX IF NOT EXISTS "ix_{self.table_name}_assignee" '
-                        f'ON {schema_prefix}"{self.table_name}" ("assignee")'
+                for col in ("assignee", "workflow_id"):
+                    conn.execute(
+                        text(
+                            f'CREATE INDEX IF NOT EXISTS "ix_{self.table_name}_{col}" '
+                            f'ON {schema_prefix}"{self.table_name}" ("{col}")'
+                        )
                     )
+            if "workflow_id" not in existing and "config" in existing:
+                self._backfill_workflow_id(conn)
+
+    def _backfill_workflow_id(self, conn) -> None:
+        """Rattache à leur workflow les runs de graphe consignés avant la colonne.
+
+        Une seule fois, quand la colonne vient d'être ajoutée : sans ce
+        rattrapage, l'historique d'un workflow commencerait au déploiement.
+        """
+        t = self.run_table
+        rows = conn.execute(
+            t.select()
+            .with_only_columns(t.c.run_id, t.c.config)
+            .where(t.c.workflow_id.is_(None), t.c.config.like('%"workflow_id"%'))
+        ).fetchall()
+        for run_id, config in rows:
+            try:
+                workflow_id = (json.loads(config or "{}") or {}).get("workflow_id")
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if workflow_id:
+                conn.execute(
+                    t.update()
+                    .where(t.c.run_id == run_id)
+                    .values(workflow_id=str(workflow_id))
                 )
+        logger.info("Run store: %d run(s) rattaché(s) à leur workflow.", len(rows))

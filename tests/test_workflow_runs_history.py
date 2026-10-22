@@ -1,0 +1,582 @@
+"""L'historique des runs d'un workflow, tel que le Studio le montre.
+
+Un utilisateur métier ne voyait les échecs de ses workflows planifiés que par
+l'API, et seulement sous forme d'un message brut : la liste ne savait ni se
+limiter à un workflow, ni à un statut, ni se paginer, et un run passé ne
+gardait rien de son déroulé nœud par nœud.
+
+Ce que ces tests figent :
+
+- ``list_runs`` filtre par workflow, par statut et se pagine, toujours dans
+  le périmètre du propriétaire ;
+- un run de graphe garde son échec sous forme structurée (code, paramètres,
+  ``ref``, nœud fautif) en plus du message ;
+- sa trace d'événements est conservée, plafonnée, et relue par son seul
+  propriétaire ;
+- le déclencheur est normalisé (``trigger_kind``) pour que l'interface n'ait
+  rien à analyser ;
+- ``failure_listeners`` dit quels workflows publiés écoutent l'échec.
+"""
+
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.pool import StaticPool
+
+from apowerb.core import run_main
+
+OWNER = "u@example.com"
+OTHER = "someone-else@example.com"
+
+
+def _sqlite_engine():
+    """SQLite qui répond au schéma du store (``public`` attaché, vide ou non)."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _attach_public_schema(dbapi_connection, _record):  # pragma: no cover
+        dbapi_connection.execute("ATTACH DATABASE ':memory:' AS public")
+
+    return engine
+
+
+@pytest.fixture
+def store(monkeypatch, tmp_path):
+    engine = _sqlite_engine()
+    run_store = run_main.run_store
+    monkeypatch.setattr(run_store, "engine", engine)
+    run_store.metadata.create_all(engine)
+    monkeypatch.setattr(run_main, "_run_input_dir", lambda run_id: tmp_path / run_id)
+    return run_store
+
+
+def _graph_run(workflow_id="wf-1", owner=OWNER, trigger="workflow", **extra):
+    return run_main.start_run(
+        trigger=trigger,
+        owner_id=owner,
+        config={"workflow_id": workflow_id, "version": 1, "payload": {}},
+        **extra,
+    )
+
+
+# --- filtres et pagination ---------------------------------------------------
+
+
+def test_runs_can_be_listed_for_one_workflow(store):
+    mine = _graph_run("wf-1")
+    _graph_run("wf-2")
+
+    listed = run_main.list_runs(OWNER, workflow_id="wf-1")
+
+    assert [r["run_id"] for r in listed] == [mine]
+    assert listed[0]["workflow_id"] == "wf-1"
+
+
+def test_a_workflow_filter_never_reaches_another_owner(store):
+    _graph_run("wf-1", owner=OTHER)
+
+    assert run_main.list_runs(OWNER, workflow_id="wf-1") == []
+
+
+def test_runs_can_be_filtered_by_status(store):
+    ok = _graph_run()
+    run_main.finish_run(ok, status="success")
+    failed = _graph_run()
+    run_main.finish_run(failed, status="error", error_message="boom")
+    waiting = _graph_run()
+    with store.engine.begin() as conn:
+        conn.execute(
+            store.run_table.update()
+            .where(store.run_table.c.run_id == waiting)
+            .values(status="awaiting")
+        )
+
+    assert [r["run_id"] for r in run_main.list_runs(OWNER, statuses=["error"])] == [failed]
+    assert [r["run_id"] for r in run_main.list_runs(OWNER, statuses=["awaiting"])] == [waiting]
+    both = {r["run_id"] for r in run_main.list_runs(OWNER, statuses=["error", "success"])}
+    assert both == {ok, failed}
+
+
+def test_an_unknown_status_is_refused_rather_than_ignored(store):
+    with pytest.raises(ValueError):
+        run_main.list_runs(OWNER, statuses=["failed"])
+
+
+def test_runs_are_paginated_newest_first(store):
+    ids = [_graph_run() for _ in range(5)]
+
+    first = run_main.list_runs(OWNER, workflow_id="wf-1", limit=2)
+    second = run_main.list_runs(OWNER, workflow_id="wf-1", limit=2, offset=2)
+    last = run_main.list_runs(OWNER, workflow_id="wf-1", limit=2, offset=4)
+
+    assert [r["run_id"] for r in first] == ids[::-1][:2]
+    assert [r["run_id"] for r in second] == ids[::-1][2:4]
+    assert [r["run_id"] for r in last] == ids[::-1][4:]
+
+
+def test_a_replay_inherits_the_workflow_it_replays(store):
+    original = _graph_run("wf-9")
+    run_main.finish_run(original, status="error", error_message="boom")
+
+    replay = run_main.prepare_replay(original, owner_id=OWNER)
+
+    listed = run_main.list_runs(OWNER, workflow_id="wf-9")
+    assert {r["run_id"] for r in listed} == {original, replay["run_id"]}
+
+
+# --- déclencheur normalisé et durée -----------------------------------------
+
+
+def test_the_trigger_is_normalised_for_the_interface(store):
+    manual = _graph_run(trigger="workflow")
+    simulated = _graph_run(trigger="workflow_simulated_email")
+    scheduled = _graph_run(
+        trigger=json.dumps({"kind": "schedule", "detail": {"cron": "0 9 * * *"}})
+    )
+    chained = _graph_run(
+        trigger=json.dumps({"kind": "workflow_done", "detail": {"workflow_id": "wf-0", "on": "error"}})
+    )
+
+    by_id = {r["run_id"]: r for r in run_main.list_runs(OWNER)}
+    assert by_id[manual]["trigger_kind"] == "manual"
+    assert by_id[simulated]["trigger_kind"] == "simulated_email"
+    assert by_id[scheduled]["trigger_kind"] == "schedule"
+    assert by_id[scheduled]["trigger_detail"] == {"cron": "0 9 * * *"}
+    assert by_id[chained]["trigger_kind"] == "workflow_done"
+    assert by_id[chained]["trigger_detail"]["on"] == "error"
+
+
+def test_a_finished_run_carries_its_duration(store):
+    run_id = _graph_run()
+    with store.engine.begin() as conn:
+        conn.execute(
+            store.run_table.update()
+            .where(store.run_table.c.run_id == run_id)
+            .values(
+                created_at="2026-10-22 10:00:00.000000",
+                finished_at="2026-10-22 10:00:02.500000",
+                status="success",
+            )
+        )
+
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["duration_ms"] == 2500
+
+
+def test_a_run_without_an_end_has_no_duration(store):
+    run_id = _graph_run()
+    assert run_main.get_run(run_id, owner_id=OWNER)["duration_ms"] is None
+
+
+# --- échec structuré ---------------------------------------------------------
+
+
+def test_a_failure_keeps_its_code_params_and_node(store):
+    run_id = _graph_run()
+
+    run_main.finish_run(run_id, status="error", error_message="agent2 : réponse non JSON")
+    run_main.record_failure(
+        run_id,
+        {"code": "output_type_mismatch", "params": {"node": "agent2"}, "node_id": "agent2"},
+    )
+
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["error_message"] == "agent2 : réponse non JSON"
+    assert run["error"] == {
+        "code": "output_type_mismatch",
+        "params": {"node": "agent2"},
+        "node_id": "agent2",
+    }
+
+
+def test_a_success_has_no_structured_error(store):
+    run_id = _graph_run()
+    run_main.finish_run(run_id, status="success")
+    run_main.record_failure(run_id, {"code": "internal", "node_id": None})
+    assert run_main.get_run(run_id, owner_id=OWNER)["error"] is None
+
+
+def test_a_replayed_run_does_not_inherit_a_stale_failure(store):
+    """``finish_run`` remet l'échec structuré à zéro : il n'appartient qu'à l'issue écrite."""
+    run_id = _graph_run()
+    run_main.finish_run(run_id, status="error", error_message="a")
+    run_main.record_failure(run_id, {"code": "internal", "node_id": "n1"})
+    with run_main.run_store.engine.begin() as conn:
+        t = run_main.run_store.run_table
+        conn.execute(t.update().where(t.c.run_id == run_id).values(status="running"))
+    run_main.finish_run(run_id, status="error", error_message="b")
+    assert run_main.get_run(run_id, owner_id=OWNER)["error"] is None
+
+
+# --- la trace : nœud fautif ------------------------------------------------
+
+
+def _sse(event):
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _trace(*events):
+    trace = run_main.RunTrace()
+    for e in events:
+        trace.add(_sse(e))
+    return trace
+
+
+def test_the_faulty_node_is_found_by_its_reference():
+    trace = _trace(
+        {"event": "node_error", "node_id": "http1", "code": "http_error", "detail": "x", "ref": "aaa"},
+        {"event": "error", "code": "http_error", "detail": "x", "ref": "aaa"},
+    )
+    assert trace.failure()["node_id"] == "http1"
+    assert trace.failure()["code"] == "http_error"
+
+
+def test_an_error_caught_by_a_try_is_not_blamed_for_a_later_failure():
+    """Contre-exemple : le dernier ``node_error`` n'est pas forcément le fautif."""
+    trace = _trace(
+        {"event": "node_error", "node_id": "try1.agent1", "attempt": 0, "code": "internal", "detail": "a", "ref": "r1"},
+        {"event": "node_complete", "node_id": "try1", "output": {}},
+        {"event": "node_error", "node_id": "agent3", "code": "output_type_mismatch", "detail": "b", "params": {"node": "agent3"}},
+        {"event": "node_error", "node_id": "try2.agent4", "attempt": 0, "code": "internal", "detail": "c", "ref": "r9"},
+        {"event": "error", "code": "output_type_mismatch", "detail": "b", "params": {"node": "agent3"}},
+    )
+    failure = trace.failure()
+    assert failure["node_id"] == "agent3"
+    assert failure["params"] == {"node": "agent3"}
+
+
+def test_a_failure_inside_a_loop_names_the_inner_node():
+    trace = _trace(
+        {"event": "node_error", "node_id": "loop1.agent2", "iteration": 1, "code": "internal", "detail": "d", "ref": "zz"},
+        {"event": "node_error", "node_id": "loop1", "code": "internal", "detail": "d", "ref": "zz"},
+        {"event": "error", "code": "internal", "detail": "d", "ref": "zz"},
+    )
+    assert trace.failure()["node_id"] == "loop1.agent2"
+
+
+def test_a_run_level_error_names_no_node():
+    trace = _trace({"event": "error", "code": "invalid_graph", "detail": "bad"})
+    assert trace.failure() == {"code": "invalid_graph", "node_id": None}
+
+
+def test_a_run_that_did_not_fail_has_no_failure():
+    trace = _trace({"event": "node_complete", "node_id": "a", "output": 1}, {"event": "done", "output": 1})
+    assert trace.failure() is None
+
+
+# --- la trace : plafonds -----------------------------------------------------
+
+
+def test_a_huge_output_is_cut_in_the_trace_only():
+    big = "x" * (run_main.TRACE_FIELD_MAX_CHARS + 10)
+    trace = _trace({"event": "node_complete", "node_id": "a", "output": big})
+
+    kept = trace.events[0]
+    assert kept["node_id"] == "a"
+    assert kept["output"] != big
+    assert kept["output_truncated"] is True
+    assert trace.truncated is True
+
+
+def test_the_trace_stops_growing_past_its_budget_but_keeps_the_ending(monkeypatch):
+    monkeypatch.setattr(run_main, "TRACE_MAX_BYTES", 2_000)
+    events = [{"event": "node_complete", "node_id": f"n{i}", "output": "y" * 300} for i in range(30)]
+    events.append({"event": "error", "code": "internal", "detail": "fin", "ref": "q"})
+    trace = _trace(*events)
+
+    assert trace.truncated is True
+    assert trace.events[-1]["event"] == "error"
+    assert len(json.dumps(trace.events)) < 2_000 + 1_000
+
+
+def test_non_json_chunks_are_ignored():
+    trace = run_main.RunTrace()
+    trace.add(": keep-alive\n\n")
+    trace.add(b"data: not json\n\n")
+    assert trace.events == []
+
+
+# --- la trace : enregistrement et lecture ---------------------------------
+
+
+def test_a_trace_is_saved_and_read_back_by_its_owner_only(store):
+    run_id = _graph_run()
+    trace = _trace({"event": "node_start", "node_id": "a"}, {"event": "done", "output": None})
+
+    run_main.save_trace(run_id, trace)
+
+    assert run_main.get_trace(run_id, owner_id=OWNER) == {
+        "events": trace.events,
+        "truncated": False,
+        "available": True,
+    }
+    assert run_main.get_trace(run_id, owner_id=OTHER) is None
+
+
+def test_a_trace_saved_again_replaces_the_previous_one(store):
+    """Une reprise après décision réémet tout le déroulé : elle remplace la trace de la pause."""
+    run_id = _graph_run()
+    run_main.save_trace(run_id, _trace({"event": "awaiting_input", "node_id": "d"}))
+    run_main.save_trace(run_id, _trace({"event": "done", "output": 1}))
+
+    assert run_main.get_trace(run_id, owner_id=OWNER)["events"] == [{"event": "done", "output": 1}]
+
+
+def test_an_old_run_without_trace_says_so(store):
+    run_id = _graph_run()
+    assert run_main.get_trace(run_id, owner_id=OWNER) == {
+        "events": [],
+        "truncated": False,
+        "available": False,
+    }
+
+
+def test_the_list_does_not_carry_the_trace(store):
+    run_id = _graph_run()
+    run_main.save_trace(run_id, _trace({"event": "done", "output": "z" * 1000}))
+    listed = run_main.list_runs(OWNER)
+    assert "events" not in listed[0]
+
+
+# --- le flux réel : _streaming_run consigne l'échec structuré et la trace --
+
+
+def _user(email=OWNER):
+    return SimpleNamespace(email=email, user_id=1, role="USER")
+
+
+async def _drain(response):
+    chunks = [c async for c in response.body_iterator]
+    return b"".join(c if isinstance(c, bytes) else c.encode() for c in chunks)
+
+
+@pytest.fixture
+def workflows(monkeypatch, store):
+    from apowerb.routers import workflows as module
+
+    module._runs.clear()
+
+    async def _quiet(**_kwargs):
+        return None
+
+    from apowerb.core import workflow_triggers
+
+    monkeypatch.setattr(workflow_triggers, "notify_run_finished", _quiet)
+    return module
+
+
+@pytest.mark.asyncio
+async def test_a_failed_graph_run_is_recorded_with_its_faulty_node_and_trace(workflows):
+    run_id = _graph_run("wf-7")
+
+    async def _runner(_cancel):
+        yield _sse({"event": "node_start", "node_id": "agent1", "type": "agent"})
+        yield _sse({"event": "node_error", "node_id": "agent1", "code": "output_type_mismatch", "detail": "pas du JSON", "params": {"node": "agent1"}})
+        yield _sse({"event": "error", "code": "output_type_mismatch", "detail": "pas du JSON", "params": {"node": "agent1"}})
+
+    response = workflows._streaming_run(
+        run_id=run_id, agent_ids=[], file_bytes=None, owner=OWNER, runner=_runner
+    )
+    await _drain(response)
+
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["status"] == "error"
+    assert run["error_message"] == "pas du JSON"
+    assert run["error"]["code"] == "output_type_mismatch"
+    assert run["error"]["node_id"] == "agent1"
+    assert run["error"]["params"] == {"node": "agent1"}
+    events = run_main.get_trace(run_id, owner_id=OWNER)["events"]
+    assert [e["event"] for e in events] == ["run_started", "node_start", "node_error", "error"]
+
+
+@pytest.mark.asyncio
+async def test_a_paused_run_keeps_its_trace_so_far(workflows):
+    run_id = _graph_run("wf-7")
+
+    async def _runner(_cancel):
+        yield _sse({"event": "node_complete", "node_id": "agent1", "output": "ok"})
+        yield _sse({"event": "awaiting_input", "node_id": "decision1", "question": "?"})
+
+    response = workflows._streaming_run(
+        run_id=run_id, agent_ids=[], file_bytes=None, owner=OWNER, runner=_runner
+    )
+    await _drain(response)
+
+    events = run_main.get_trace(run_id, owner_id=OWNER)["events"]
+    assert events[-1]["event"] == "awaiting_input"
+
+
+# --- les routes ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_runs_route_passes_its_filters(workflows):
+    failed = _graph_run("wf-1")
+    run_main.finish_run(failed, status="error", error_message="boom")
+    _graph_run("wf-1")
+    _graph_run("wf-2")
+
+    listed = await workflows.list_runs(
+        limit=10, offset=0, workflow_id="wf-1", status="error", current_user=_user()
+    )
+
+    assert [r["run_id"] for r in listed] == [failed]
+
+
+@pytest.mark.asyncio
+async def test_the_runs_route_refuses_an_unknown_status(workflows):
+    with pytest.raises(HTTPException) as excinfo:
+        await workflows.list_runs(
+            limit=10, offset=0, workflow_id=None, status="nope", current_user=_user()
+        )
+    assert excinfo.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_the_runs_route_bounds_its_page(workflows):
+    with pytest.raises(HTTPException) as excinfo:
+        await workflows.list_runs(
+            limit=10_000, offset=0, workflow_id=None, status=None, current_user=_user()
+        )
+    assert excinfo.value.status_code == 422
+    with pytest.raises(HTTPException):
+        await workflows.list_runs(
+            limit=10, offset=-1, workflow_id=None, status=None, current_user=_user()
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_trace_route_hides_a_foreign_run(workflows):
+    run_id = _graph_run(owner=OTHER)
+    run_main.save_trace(run_id, _trace({"event": "done", "output": "secret"}))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await workflows.get_run_trace(run_id, current_user=_user())
+    assert excinfo.value.status_code == 404
+
+    mine = await workflows.get_run_trace(run_id, current_user=_user(OTHER))
+    assert mine["events"][0]["output"] == "secret"
+
+
+# --- base déjà en service ----------------------------------------------------
+
+
+def test_an_existing_runs_table_gets_the_new_columns_and_its_workflows_back(monkeypatch):
+    from sqlalchemy import inspect as sa_inspect
+
+    engine = _sqlite_engine()
+    run_store = run_main.run_store
+    monkeypatch.setattr(run_store, "engine", engine)
+    schema = run_store.run_table.schema
+    qualified = f"{schema}.agent_runs" if schema else "agent_runs"
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                # Les colonnes d'origine de la table, avant toutes les ajoutées.
+                f"CREATE TABLE {qualified} (run_id VARCHAR PRIMARY KEY, trigger VARCHAR, "
+                "owner_id VARCHAR, organization_id VARCHAR, agent_ids VARCHAR, config VARCHAR, "
+                "input_file_name VARCHAR, input_file_path VARCHAR, status VARCHAR, "
+                "attempts INTEGER, error_message VARCHAR, created_at VARCHAR, "
+                "finished_at VARCHAR, replay_of VARCHAR)"
+            )
+        )
+        insert = (
+            f"INSERT INTO {qualified} (run_id, trigger, owner_id, status, config, created_at) "
+            "VALUES (:id, :trigger, :o, :status, :c, :at)"
+        )
+        conn.execute(
+            text(insert),
+            {
+                "id": "old1",
+                "trigger": "workflow",
+                "o": OWNER,
+                "status": "error",
+                "c": json.dumps({"workflow_id": "wf-old", "version": 2, "payload": {}}),
+                "at": "2026-01-01 00:00:00.000000",
+            },
+        )
+        conn.execute(
+            text(insert),
+            {
+                "id": "old2",
+                "trigger": "chat",
+                "o": OWNER,
+                "status": "success",
+                "c": json.dumps({"agent_name": "a"}),
+                "at": "2026-01-01 00:00:01.000000",
+            },
+        )
+
+    run_store.create_table()
+
+    columns = {c["name"] for c in sa_inspect(engine).get_columns("agent_runs", schema=schema)}
+    assert {"workflow_id", "error_info"} <= columns
+    assert [r["run_id"] for r in run_main.list_runs(OWNER, workflow_id="wf-old")] == ["old1"]
+
+
+# --- qui écoute l'échec -----------------------------------------------------
+
+
+@pytest.fixture
+def trigger_store(monkeypatch):
+    from apowerb.core import workflow_main as wm
+    from apowerb.core import workflow_triggers as wt
+
+    engine = _sqlite_engine()
+    monkeypatch.setattr(wm.workflow_store, "engine", engine)
+    wm.workflow_store.metadata.create_all(engine)
+    monkeypatch.setattr(wt.workflow_trigger_store, "engine", engine)
+    wt.workflow_trigger_store.metadata.create_all(engine)
+    return wm, wt
+
+
+def _listener_graph(source_id, on):
+    return {
+        "version": 1,
+        "nodes": [
+            {"id": "start", "type": "trigger", "config": {"kind": "workflow_done", "workflow_id": source_id, "on": on}}
+        ],
+        "edges": [],
+    }
+
+
+def _publish(wm, wf, owner):
+    wm.update_workflow(wf["workflow_id"], owner_id=owner, expected_version=wf["version"], status="published")
+
+
+def test_failure_listeners_are_the_published_workflows_that_hear_an_error(trigger_store):
+    wm, wt = trigger_store
+    src = wm.create_workflow(owner_id=OWNER, name="Source", graph={"version": 1, "nodes": [], "edges": []})
+    on_error = wm.create_workflow(owner_id=OWNER, name="Alerte", graph=_listener_graph(src["workflow_id"], "error"))
+    _publish(wm, on_error, OWNER)
+    on_any = wm.create_workflow(owner_id=OWNER, name="Journal", graph=_listener_graph(src["workflow_id"], "any"))
+    _publish(wm, on_any, OWNER)
+    on_success = wm.create_workflow(owner_id=OWNER, name="Suite", graph=_listener_graph(src["workflow_id"], "success"))
+    _publish(wm, on_success, OWNER)
+    # Un brouillon n'écoute rien tant qu'il n'est pas publié.
+    wm.create_workflow(owner_id=OWNER, name="Brouillon", graph=_listener_graph(src["workflow_id"], "error"))
+
+    listeners = wt.failure_listeners(src["workflow_id"], OWNER)
+
+    assert sorted(item["name"] for item in listeners) == ["Alerte", "Journal"]
+
+
+def test_failure_listeners_never_cross_owners(trigger_store):
+    wm, wt = trigger_store
+    src = wm.create_workflow(owner_id=OWNER, name="Source", graph={"version": 1, "nodes": [], "edges": []})
+    theirs = wm.create_workflow(owner_id=OTHER, name="Espion", graph=_listener_graph(src["workflow_id"], "error"))
+    try:
+        _publish(wm, theirs, OTHER)
+    except Exception:  # noqa: BLE001 - la validation peut déjà refuser une source étrangère
+        pass
+
+    assert wt.failure_listeners(src["workflow_id"], OWNER) == []

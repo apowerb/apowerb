@@ -485,11 +485,15 @@ def _streaming_run(
         outcome = run_main.STATUS_SUCCESS
         error_message: Optional[str] = None
         final_output: Any = None
+        # Le déroulé, pour rouvrir le run depuis l'historique (``/runs/{id}/trace``).
+        trace = run_main.RunTrace()
         try:
             # ``run_id`` est émis d'emblée pour que le client puisse se
             # raccrocher — y compris après un rejeu, où il diffère du wid
             # qu'il avait envoyé.
-            yield f"data: {json.dumps({'event': 'run_started', 'wid': run_id})}\n\n".encode()
+            started = f"data: {json.dumps({'event': 'run_started', 'wid': run_id})}\n\n"
+            trace.add(started)
+            yield started.encode()
             stream = (
                 runner(cancel_event)
                 if runner is not None
@@ -499,6 +503,7 @@ def _streaming_run(
                 # L'issue est lue AVANT de céder le morceau : un client qui
                 # part pendant ce ``yield`` ne doit pas la faire mentir.
                 terminal = _terminal_event(chunk)
+                trace.add(chunk)
                 if terminal is not None and terminal["event"] == "error":
                     outcome = run_main.STATUS_ERROR
                     error_message = str(terminal.get("detail") or "")
@@ -524,17 +529,17 @@ def _streaming_run(
             cancel_event.set()
             if outcome != run_main.STATUS_AWAITING:
                 outcome = run_main.STATUS_CANCELLED
-            yield f"data: {json.dumps({'event': 'cancelled'})}\n\n".encode()
+            cancelled = f"data: {json.dumps({'event': 'cancelled'})}\n\n"
+            trace.add(cancelled)
+            yield cancelled.encode()
             raise
         except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
             outcome = run_main.STATUS_ERROR
             error_message = f"{type(exc).__name__}: {exc}"
             logger.exception("[workflows] run_id=%s a echoue", run_id)
-            yield (
-                "data: "
-                + json.dumps({"event": "error", "detail": error_message})
-                + "\n\n"
-            ).encode()
+            failed = "data: " + json.dumps({"event": "error", "detail": error_message}) + "\n\n"
+            trace.add(failed)
+            yield failed.encode()
         finally:
             # Une reprise du même run a pu déjà se réinscrire sous ce run_id.
             if _runs.get(run_id) is entry:
@@ -574,6 +579,20 @@ def _streaming_run(
                 # notification ``workflow_done``. La reprise finira le run.
                 settles = False
                 notice = True
+            # Une pause garde son déroulé jusque-là ; une reprise qui n'a pas
+            # pris la décision ne remplace pas celui de la pause.
+            keeps_trace = settles or (
+                outcome == run_main.STATUS_AWAITING
+                and not (
+                    resume_guard is not None
+                    and (resume_guard.get("lost") or not resume_guard.get("decided"))
+                )
+            )
+            if keeps_trace:
+                try:
+                    run_main.save_trace(run_id, trace)
+                except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
+                    logger.exception("[workflows] déroulé du run_id=%s non consigné", run_id)
             if notice:
                 # Aussitôt, sans attendre le passage du planificateur ; chaque
                 # avis est réservé avant l'envoi, il ne part qu'une fois.
@@ -588,6 +607,8 @@ def _streaming_run(
             if settles:
                 try:
                     run_main.finish_run(run_id, status=outcome, error_message=error_message)
+                    if outcome == run_main.STATUS_ERROR:
+                        run_main.record_failure(run_id, trace.failure())
                 except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
                     logger.exception(
                         "[workflows] issue du run_id=%s non consignee", run_id
@@ -801,18 +822,45 @@ async def render_preview(
     return {"rendered": rendered}
 
 
+_MAX_RUNS_PAGE = 200
+
+
 @router.get("/runs")
 async def list_runs(
     limit: int = 50,
+    offset: int = 0,
+    workflow_id: Optional[str] = None,
+    status: Optional[str] = None,
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Les runs de l'utilisateur, du plus récent au plus ancien.
 
-    Chaque entrée porte son déclencheur, son statut, la cause de son échec le
-    cas echeant, et ``input_available`` — l'entrée est-elle encore sur disque,
-    c'est-à-dire ce run est-il rejouable.
+    Chaque entrée porte son déclencheur (``trigger_kind``), son statut, sa
+    durée, la cause de son échec le cas echeant (``error_message`` et, pour
+    un run de graphe, ``error`` : code, paramètres, nœud fautif), et
+    ``input_available`` — l'entrée est-elle encore sur disque, c'est-à-dire
+    ce run est-il rejouable.
+
+    ``workflow_id`` limite aux runs d'un workflow, ``status`` (une liste
+    séparée par des virgules : ``error``, ``awaiting``…) à ces statuts ;
+    ``limit``/``offset`` paginent.
     """
-    return run_main.list_runs(current_user.email, limit=limit)
+    if not 1 <= limit <= _MAX_RUNS_PAGE or offset < 0:
+        raise HTTPException(
+            status_code=422,  # ``status`` est ici le filtre, pas le module
+            detail=f"limit must be within 1..{_MAX_RUNS_PAGE} and offset >= 0",
+        )
+    statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
+    try:
+        return run_main.list_runs(
+            current_user.email,
+            limit=limit,
+            offset=offset,
+            workflow_id=workflow_id,
+            statuses=statuses,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/runs/awaiting")
@@ -889,6 +937,25 @@ async def abandon_run(
     except Exception:  # noqa: BLE001
         logger.exception("[workflows] fin de décision non annoncée (run_id=%s)", run_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/runs/{run_id}/trace")
+async def get_run_trace(
+    run_id: str,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Le déroulé d'un run (ses événements, plafonnés), pour le rouvrir.
+
+    Au seul propriétaire, comme ``GET /runs/{run_id}``. ``available`` est
+    faux pour un run consigné avant que la trace existe.
+    """
+    trace = run_main.get_trace(run_id, owner_id=current_user.email)
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown run: {run_id}",
+        )
+    return trace
 
 
 @router.get("/runs/{run_id}")
