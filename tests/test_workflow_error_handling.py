@@ -121,16 +121,13 @@ def test_unknown_on_error_value_is_refused_on_any_supported_node():
     assert _code([T, _agent("ignore"), OK], ROUTED_EDGES[:2]) == "on_error_unknown"
 
 
-def test_on_error_on_a_node_that_cannot_fail_is_refused():
-    nodes = [
-        T,
-        {
-            "id": "s",
-            "type": "set",
-            "config": {"fields": [{"key": "k", "value": "v"}], "on_error": "continue"},
-        },
-    ]
-    assert _code(nodes, [{"source": "t", "target": "s"}]) == "on_error_unsupported"
+def test_a_null_on_error_means_fail_like_in_the_studio():
+    wg.validate_graph(_graph([T, _agent(None), OK], ROUTED_EDGES[:2]))
+    node = _agent()
+    node["config"]["on_error"] = None
+    wg.validate_graph(_graph([T, node, OK], ROUTED_EDGES[:2]))
+    events = _run(_graph([T, node, OK], ROUTED_EDGES[:2]), _Env(agents={"a1": _boom}))
+    assert events[-1]["event"] == "error"
 
 
 def test_fail_is_accepted_everywhere_as_the_default():
@@ -210,22 +207,12 @@ def test_classifier_route_named_error_conflicts_with_the_error_output():
 
 @pytest.mark.parametrize("value", [0, 3601, True, "10", 1.5])
 def test_timeout_out_of_bounds_is_refused(value):
-    assert (
-        _code([T, _agent(timeout_s=value)], [{"source": "t", "target": "a"}])
-        == "node_timeout_invalid"
-    )
-
-
-def test_timeout_on_a_node_without_one_is_refused():
-    nodes = [
-        T,
-        {
-            "id": "s",
-            "type": "set",
-            "config": {"fields": [{"key": "k", "value": "v"}], "timeout_s": 5},
-        },
-    ]
-    assert _code(nodes, [{"source": "t", "target": "s"}]) == "node_timeout_unsupported"
+    sub = {
+        "id": "a",
+        "type": "subworkflow",
+        "config": {"workflow_id": "w2", "timeout_s": value},
+    }
+    assert _code([T, sub], [{"source": "t", "target": "a"}]) == "node_timeout_invalid"
 
 
 def test_error_fields_are_readable_downstream_of_a_handled_node():
@@ -288,7 +275,7 @@ def test_continue_goes_on_and_keeps_the_error_in_the_trace():
     assert not any(e["event"] == "node_error" for e in events)
 
 
-def test_continue_on_a_tool_that_raises_now_goes_on():
+def test_continue_on_a_tool_that_raises_stops_the_run_as_before():
     def raising(_args):
         raise wg.GraphError("panne", code="tool_down")
 
@@ -301,8 +288,23 @@ def test_continue_on_a_tool_that_raises_now_goes_on():
     events = _run(
         _graph([T, tool, KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env
     )
-    assert events[-1]["event"] == "done"
-    assert _complete(events, "a")["handled_error"]["code"] == "tool_down"
+    assert events[-1]["event"] == "error"
+    assert next(e for e in events if e["event"] == "node_error")["code"] == "tool_down"
+    assert not _started(events, "ko")
+
+
+def test_route_on_a_tool_that_raises_takes_the_error_output():
+    def raising(_args):
+        raise wg.GraphError("panne", code="tool_down")
+
+    tool = {
+        "id": "a",
+        "type": "tool",
+        "config": {"tool": "x.y", "args": {}, "on_error": "route"},
+    }
+    events = _run(_graph([T, tool, OK, KO], ROUTED_EDGES), _Env(tools={"x.y": raising}))
+    assert events[-1]["output"]["code"] == "tool_down"
+    assert not _started(events, "ok")
 
 
 def test_continue_on_a_reported_tool_error_keeps_the_tool_result():
@@ -472,13 +474,31 @@ class _Slow:
         return "trop tard"
 
 
+def _slow_inner(agent="a1"):
+    return {
+        "version": 1,
+        "nodes": [
+            {"id": "it", "type": "trigger"},
+            {"id": "slow", "type": "agent", "config": {"agent_id": agent}},
+        ],
+        "edges": [{"source": "it", "target": "slow"}],
+    }
+
+
+def _sub(on_error=None, **cfg):
+    config = {"workflow_id": "w2", **cfg}
+    if on_error is not None:
+        config["on_error"] = on_error
+    return {"id": "a", "type": "subworkflow", "config": config}
+
+
 def test_timeout_fails_the_node_and_really_cancels_it():
     slow = _Slow()
-    env = _Env(agents={"a1": slow})
+    env = _Env(agents={"a1": slow}, workflows={"w2": _slow_inner()})
     t0 = time.monotonic()
-    events = _run(_graph([T, _agent(timeout_s=1), OK], ROUTED_EDGES[:2]), env)
+    events = _run(_graph([T, _sub(timeout_s=1), OK], ROUTED_EDGES[:2]), env)
     assert time.monotonic() - t0 < 3
-    err = next(e for e in events if e["event"] == "node_error")
+    err = next(e for e in events if e["event"] == "node_error" and e["node_id"] == "a")
     assert err["code"] == "node_timeout"
     assert err["params"] == {"node": "a", "seconds": "1"}
     assert slow.cancelled
@@ -486,16 +506,30 @@ def test_timeout_fails_the_node_and_really_cancels_it():
 
 
 def test_timeout_follows_on_error_route():
-    env = _Env(agents={"a1": _Slow()})
-    events = _run(_graph([T, _agent("route", timeout_s=1), OK, KO], ROUTED_EDGES), env)
+    env = _Env(agents={"a1": _Slow()}, workflows={"w2": _slow_inner()})
+    events = _run(_graph([T, _sub("route", timeout_s=1), OK, KO], ROUTED_EDGES), env)
     assert events[-1]["output"]["code"] == "node_timeout"
     assert not _started(events, "ok")
 
 
 def test_a_fast_node_is_untouched_by_its_timeout():
+    env = _Env(workflows={"w2": _slow_inner()})
+    events = _run(_graph([T, _sub(timeout_s=1), OK], ROUTED_EDGES[:2]), env)
+    assert events[-1]["event"] == "done"
+
+
+def test_a_timeout_raised_inside_the_node_is_not_its_time_limit():
+    # Contre-exemple de la garde ``deadline.expired()`` : un TimeoutError
+    # levé par le nœud lui-même (base, réseau) garde son propre sens.
     env = _Env()
-    events = _run(_graph([T, _agent(timeout_s=1), OK], ROUTED_EDGES[:2]), env)
-    assert events[-1] == {"event": "done", "output": "ok:out:a1"}
+
+    async def loading(_workflow_id):
+        raise TimeoutError("base de données lente")
+
+    env.run_subworkflow = loading
+    events = _run(_graph([T, _sub(timeout_s=30), OK], ROUTED_EDGES[:2]), env)
+    assert events[-1]["event"] == "error"
+    assert all(e.get("code") != "node_timeout" for e in events)
 
 
 def test_subworkflow_timeout_stops_the_inner_run():

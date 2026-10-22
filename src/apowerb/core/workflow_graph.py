@@ -44,9 +44,13 @@ Gestion d'erreur par nœud (``on_error``, sur les nœuds qui peuvent
 ``continue`` laisse le flux avancer, l'erreur restant visible dans la trace
 (``handled_error`` du ``node_complete``) ; ``route`` ajoute une sortie
 ``error`` qui porte ``{code, detail, params, node}`` comme celle d'un
-``try``, et n'arrête jamais le run. ``timeout_s`` borne la durée d'un nœud
-(``_TIMEOUT_TYPES``) : au-delà, sa tâche est annulée et l'erreur
-``node_timeout`` suit ``on_error``.
+``try``, et n'arrête jamais le run. Sur un ``tool``, ``continue`` garde son
+sens d'avant : seule l'erreur que l'outil signale dans son résultat est
+absorbée. ``timeout_s`` borne la durée d'un sous-workflow
+(``_TIMEOUT_TYPES``) : au-delà, son run interne est annulé et l'erreur
+``node_timeout`` suit ``on_error``. Posés sur un nœud qui n'en a pas, ces
+réglages sont ignorés, comme avant leur arrivée : un graphe enregistré
+s'exécute toujours.
 
 Le déclencheur du corps d'une boucle reçoit ``{item, index, previous}`` —
 ``previous`` est la sortie de l'itération précédente, ou l'entrée de la
@@ -543,7 +547,10 @@ _SUCCESS_ROUTE = "__success__"
 # la même que la route ``error`` d'un ``try``.
 _ERROR_OUTPUT_KEYS = {"code", "detail", "params", "node"}
 # ``timeout_s`` d'un nœud ; ``http`` garde le sien (borne et code propres).
-_TIMEOUT_TYPES = {"agent", "tool", "extract", "subworkflow"}
+# Seulement là où l'annulation arrête vraiment le travail : un agent tourne
+# derrière un appel HTTP à ADK (le serveur continue sans le client), un outil
+# synchrone dans un thread qu'on ne peut pas interrompre.
+_TIMEOUT_TYPES = {"subworkflow"}
 MIN_NODE_TIMEOUT, MAX_NODE_TIMEOUT = 1, 3600
 # Ce qu'un nœud agent ou tool promet de rendre. « any » (ou absent) garde le
 # comportement d'avant : la réponse passe telle quelle, texte ou JSON.
@@ -629,7 +636,8 @@ def _declared_routes(node: Node) -> set[str]:
 
 
 def _on_error(node: Node) -> str:
-    return node.config.get("on_error", "fail")
+    # ``null`` vaut le défaut, comme dans le Studio.
+    return node.config.get("on_error") or "fail"
 
 
 def _routes_on_error(node: Node) -> bool:
@@ -1743,15 +1751,16 @@ def validate_node(
 
 
 def _validate_error_handling(n: Node) -> None:
-    """``on_error`` et ``timeout_s`` d'un nœud, mêmes règles que le Studio."""
+    """``on_error`` et ``timeout_s`` d'un nœud, mêmes règles que le Studio.
+
+    Sur un type qui n'en a pas, ils sont ignorés et non refusés : main ne les
+    vérifiait pas, et un graphe enregistré doit continuer de s'exécuter. Le
+    Studio les signale à l'édition.
+    """
     cfg = n.config
-    mode = cfg.get("on_error", "fail")
-    if mode != "fail" and mode in _ON_ERROR and n.type not in _ON_ERROR_TYPES:
-        raise GraphError(
-            f"{n.id} : le type {n.type} n'a pas de réglage d'erreur",
-            code="on_error_unsupported",
-            params={"node": n.id, "type": n.type},
-        )
+    mode = _on_error(n)
+    if n.type not in _ON_ERROR_TYPES:
+        mode = "fail"
     if mode not in _ON_ERROR or (n.type == "classifier" and mode == "continue"):
         allowed = ("fail", "route") if n.type == "classifier" else _ON_ERROR
         raise GraphError(
@@ -1769,13 +1778,7 @@ def _validate_error_handling(n: Node) -> None:
             code="on_error_route_conflict",
             params={"node": n.id},
         )
-    if "timeout_s" in cfg and n.type != "http":
-        if n.type not in _TIMEOUT_TYPES:
-            raise GraphError(
-                f"{n.id} : le type {n.type} n'a pas de délai",
-                code="node_timeout_unsupported",
-                params={"node": n.id, "type": n.type},
-            )
+    if "timeout_s" in cfg and n.type in _TIMEOUT_TYPES:
         value = cfg["timeout_s"]
         if (
             isinstance(value, bool)
@@ -2523,6 +2526,14 @@ class _Compiler:
             or node.type not in _ON_ERROR_TYPES
             or isinstance(exc, WorkflowCancelled)
         ):
+            return None
+        if (
+            node.type == "tool"
+            and mode == "continue"
+            and getattr(exc, "code", None) != "tool_reported_error"
+        ):
+            # Sens d'avant : un outil qui lève ou rate son contrat arrête le
+            # run ; seule l'erreur qu'il signale lui-même est absorbée.
             return None
         error = _error_output(exc, node.id)
         ref = error_fields(exc).get("ref")

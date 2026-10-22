@@ -484,6 +484,9 @@ def _streaming_run(
     async def _event_generator() -> AsyncGenerator[bytes, None]:
         outcome = run_main.STATUS_SUCCESS
         error_message: Optional[str] = None
+        # Code et étape de l'échec, seuls repris par l'alerte d'échec.
+        error_code: Optional[str] = None
+        error_node: Optional[str] = None
         final_output: Any = None
         try:
             # ``run_id`` est émis d'emblée pour que le client puisse se
@@ -502,6 +505,8 @@ def _streaming_run(
                 if terminal is not None and terminal["event"] == "error":
                     outcome = run_main.STATUS_ERROR
                     error_message = str(terminal.get("detail") or "")
+                    error_code = terminal.get("code")
+                    error_node = (terminal.get("params") or {}).get("node")
                 elif terminal is not None and terminal["event"] == "awaiting_input":
                     # Déjà consigné par ``run_main.pause_run`` (on_await).
                     outcome = run_main.STATUS_AWAITING
@@ -607,6 +612,8 @@ def _streaming_run(
                         status=outcome,
                         output=final_output,
                         error_message=error_message,
+                        error_code=error_code,
+                        error_node=error_node,
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(

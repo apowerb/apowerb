@@ -30,7 +30,7 @@ Anti-tempête :
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -41,18 +41,22 @@ from apowerb.core import run_main
 logger = logging.getLogger(__name__)
 
 ALERT_COOLDOWN = timedelta(hours=1)
-# Une décision close depuis plus longtemps (découverte après un arrêt du
-# serveur, ou au déploiement de cette alerte) ne réveille plus personne.
-_MAX_ERROR_CHARS = 500
 _TEAMS_NODE_ID = "failure_alert"
-_STAMP = "%Y-%m-%d %H:%M:%S.%f"  # celui de run_main._now : triable
+# ``workflow_failure_alerts.last_sent_at`` : UTC, triable comme texte.
+_STAMP = "%Y-%m-%d %H:%M:%S.%f"
 
 # Issue de la réservation, écrite dans agent_runs.failure_alert.
 CLAIMED, SENT, GROUPED, OFF, FAILED = "claimed", "sent", "grouped", "off", "failed"
 
 
 def _clock() -> datetime:
-    return datetime.now()
+    return datetime.now(timezone.utc)
+
+
+def _app_url() -> str:
+    from apowerb.configs.settings import get_settings
+
+    return get_settings().app_public_url.rstrip("/")
 
 
 def alert_enabled(workflow: dict) -> bool:
@@ -154,14 +158,24 @@ async def _send_teams(owner_id: str, subject: str, body: str) -> None:
 
 
 def _message(
-    workflow: dict, run_id: str, error_message: str, grouped: int
+    workflow: dict,
+    run_id: str,
+    error_code: Optional[str],
+    error_node: Optional[str],
+    grouped: int,
 ) -> tuple[str, str]:
+    """Code et étape seulement : le message d'erreur peut porter des données
+    du run (sortie d'un outil, contenu d'un document), qu'un mail ou une carte
+    Teams ne doit pas transporter. Le détail se lit dans le Studio."""
     name = workflow.get("name") or workflow.get("workflow_id")
-    error = (error_message or "erreur sans message").strip()[:_MAX_ERROR_CHARS]
+    error = error_code or "inconnue"
+    if error_node:
+        error += f" (étape {error_node})"
     lines = [
         f"Le workflow « {name} » a échoué.",
         f"Run : {run_id}",
         f"Erreur : {error}",
+        f"Détails : {_app_url()}/workflows",
     ]
     if grouped:
         lines.append(
@@ -176,7 +190,12 @@ def _message(
 
 
 async def alert_run_failed(
-    *, run_id: str, owner_id: str, workflow_id: str, error_message: Optional[str]
+    *,
+    run_id: str,
+    owner_id: str,
+    workflow_id: str,
+    error_code: Optional[str] = None,
+    error_node: Optional[str] = None,
 ) -> Optional[str]:
     """Alerte pour ce run en échec ; renvoie l'issue, ``None`` si déjà traité."""
     from apowerb.core import workflow_main
@@ -191,7 +210,7 @@ async def alert_run_failed(
     if grouped is None:
         _settle(run_id, GROUPED)
         return GROUPED
-    subject, body = _message(workflow, run_id, error_message or "", grouped)
+    subject, body = _message(workflow, run_id, error_code, error_node, grouped)
     outcome = SENT
     try:
         await _send_mail(owner_id, subject, body)

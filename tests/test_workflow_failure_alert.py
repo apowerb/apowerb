@@ -8,7 +8,7 @@ regroupés. Ni « Tester jusqu'ici » (``config.until``), ni run annulé, ni la
 fin d'une décision humaine, que ``decision_notices`` annonce déjà.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -67,6 +67,7 @@ def outbox(monkeypatch):
     box = _Outbox()
     monkeypatch.setattr(wa, "_send_mail", box.mail)
     monkeypatch.setattr(wa, "_send_teams", box.team)
+    monkeypatch.setattr(wa, "_app_url", lambda: "https://app.example.com")
 
     # Les écouteurs workflow_done ne sont pas l'objet de ce fichier.
     async def _no_listeners(**_kw):
@@ -102,15 +103,21 @@ def _failed_run(workflow_id, *, status="error", until=None, message="ToolError: 
     return run_id
 
 
-async def _finish(run_id, status="error", message="ToolError: boom"):
+async def _finish(run_id, status="error", message="ToolError: boom", code="tool_down"):
     await wt.notify_run_finished(
-        run_id=run_id, owner_id=ALICE, status=status, output=None, error_message=message
+        run_id=run_id,
+        owner_id=ALICE,
+        status=status,
+        output=None,
+        error_message=message,
+        error_code=code if status == "error" else None,
+        error_node="a" if status == "error" else None,
     )
 
 
 @pytest.fixture()
 def clock(monkeypatch):
-    now = [datetime(2026, 10, 22, 9, 0)]
+    now = [datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc)]
     monkeypatch.setattr(wa, "_clock", lambda: now[0])
     return now
 
@@ -127,7 +134,11 @@ async def test_a_failed_published_run_alerts_its_owner_once(outbox, clock):
     mail = outbox.mails[0]
     assert mail["to"] == ALICE
     assert "Relances" in mail["subject"]
-    assert run_id in mail["body"] and "ToolError: boom" in mail["body"]
+    assert run_id in mail["body"]
+    assert "tool_down" in mail["body"] and "étape a" in mail["body"]
+    assert "https://app.example.com/workflows" in mail["body"]
+    # Le message d'erreur peut porter des données du run : jamais dans l'alerte.
+    assert "boom" not in mail["body"] and "boom" not in mail["subject"]
 
 
 async def test_the_per_run_claim_is_kept_in_the_database(outbox):
@@ -140,7 +151,7 @@ async def test_the_per_run_claim_is_kept_in_the_database(outbox):
     assert row._mapping["failure_alert"] == wa.SENT
     assert (
         await wa.alert_run_failed(
-            run_id=run_id, owner_id=ALICE, workflow_id=wid, error_message="x"
+            run_id=run_id, owner_id=ALICE, workflow_id=wid, error_code="x"
         )
         is None
     )
@@ -305,3 +316,45 @@ async def test_a_decision_end_never_alerts_even_when_finished_again(outbox):
         _failed_run(_workflow(name="Autre")), message=run_main.EXPIRED_MESSAGE
     )
     assert len(outbox.mails) == 1
+
+
+# --- ordre et horloge ------------------------------------------------------------
+
+
+async def test_listeners_never_wait_for_the_alert(outbox, monkeypatch):
+    import asyncio
+
+    heard = asyncio.Event()
+
+    async def _slow_alert(**_kw):
+        # Ne finit que si les écouteurs ont déjà été prévenus.
+        await heard.wait()
+
+    async def _listeners(**_kw):
+        heard.set()
+        return []
+
+    monkeypatch.setattr(wa, "alert_run_failed", _slow_alert)
+    monkeypatch.setattr(wt, "fire_workflow_done_triggers", _listeners)
+    await asyncio.wait_for(_finish(_failed_run(_workflow())), timeout=2)
+    assert heard.is_set()
+
+
+async def test_a_broken_alert_does_not_break_the_listeners(outbox, monkeypatch):
+    calls = []
+
+    async def _boom(**_kw):
+        raise RuntimeError("alerte en panne")
+
+    async def _listeners(**kw):
+        calls.append(kw)
+        return []
+
+    monkeypatch.setattr(wa, "alert_run_failed", _boom)
+    monkeypatch.setattr(wt, "fire_workflow_done_triggers", _listeners)
+    await _finish(_failed_run(_workflow()))
+    assert len(calls) == 1
+
+
+def test_the_alert_clock_is_utc():
+    assert wa._clock().utcoffset() == timedelta(0)
