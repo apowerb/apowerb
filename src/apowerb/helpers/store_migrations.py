@@ -50,3 +50,11 @@ def ensure_store_tables() -> None:
                 exc,
             )
             raise
+
+    from apowerb.memory.case_bank import default_case_bank
+
+    try:
+        default_case_bank().create_table()
+    except Exception as exc:  # pragma: no cover - depends on the database
+        _logger.error("failed to create table for CaseBank: %s", exc)
+        raise

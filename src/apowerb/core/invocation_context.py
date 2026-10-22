@@ -148,6 +148,17 @@ def get_agent_organization_id(default: str = "default") -> str:
     return os.getenv("AGENT_ORGANIZATION_ID", default)
 
 
+def get_bound_organization_id() -> Optional[str]:
+    """Organization id bound for THIS invocation, or ``None`` -- never the env.
+
+    For data that must never cross customers (the case bank): when nothing
+    bound the organization for the current task, the right answer is
+    "unknown", not whichever customer last wrote ``AGENT_ORGANIZATION_ID``.
+    """
+    val = _agent_org_var.get()
+    return val if val and val.strip() else None
+
+
 def get_agent_project_id(default: str = "thaink2") -> str:
     """Project id of the running agent (ContextVar, else legacy env var)."""
     val = _agent_project_var.get()
