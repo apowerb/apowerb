@@ -6,6 +6,11 @@ et le nœud ``document`` la résout ici, pour le propriétaire du run SEULEMENT.
 ``TH2_ATTACHMENT_ROOT`` est partagé par tous les comptes : accepter un chemin
 venu d'un gabarit permettrait de lire les pièces jointes d'un autre compte.
 
+Les fichiers PRODUITS par un nœud ``file`` passent par ``store_generated`` :
+mêmes refs, mêmes contrôles, dossier ``workflow_generated``, types limités
+aux formats que le moteur sait produire (``workflow_files.FORMATS``) — ils
+n'ouvrent pas ces types aux envois de fichiers (``store``).
+
 Une ref est un petit fichier JSON (« sidecar ») sous
 ``<racine>/workflow_refs/<ref>.json`` : propriétaire, chemin, nom, type,
 taille. Le chemin est vérifié sous la racine à l'enregistrement ET à la
@@ -21,6 +26,7 @@ import secrets
 from pathlib import Path
 from typing import Optional
 
+from apowerb.core import workflow_files
 from apowerb.core.workflow_engine import WorkflowUserError
 from apowerb.storage.filename import sanitize_filename
 
@@ -30,6 +36,8 @@ ALLOWED_CONTENT_TYPES = {
     "image/png": ".png",
     "image/jpeg": ".jpg",
 }
+MAX_GENERATED_BYTES = 5 * 1024 * 1024
+GENERATED_CONTENT_TYPES = frozenset(ct for _, ct in workflow_files.FORMATS.values())
 _REF = re.compile(r"^att_[0-9a-f]{32}$")
 _MAX_NAME = 120  # bien sous la limite des systèmes de fichiers (255 octets)
 
@@ -104,7 +112,21 @@ def store(owner: str, name: str, content_type: str, data: bytes) -> dict:
             f"fichier vide ou trop gros (max {MAX_ATTACHMENT_BYTES} octets)",
             code="attachment_size",
         )
-    safe = sanitize_filename(name or f"piece{ext}") or f"piece{ext}"
+    safe = _bounded_name(name, f"piece{ext}")
+    if not safe.lower().endswith(ext) and not (
+        ext == ".jpg" and safe.lower().endswith(".jpeg")
+    ):
+        safe += ext
+    folder = root() / "workflow_uploads" / secrets.token_hex(16)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / safe
+    path.write_bytes(data)
+    ref = register(owner, path, safe, content_type, len(data))
+    return {"name": safe, "size": len(data), "content_type": content_type, "ref": ref}
+
+
+def _bounded_name(name: Optional[str], default: str) -> str:
+    safe = sanitize_filename(name or default) or default
     if len(safe) > _MAX_NAME:
         stem, dot, suffix = safe.rpartition(".")
         safe = (
@@ -112,11 +134,24 @@ def store(owner: str, name: str, content_type: str, data: bytes) -> dict:
             if dot and len(suffix) <= 10
             else safe[:_MAX_NAME]
         )
-    if not safe.lower().endswith(ext) and not (
-        ext == ".jpg" and safe.lower().endswith(".jpeg")
-    ):
-        safe += ext
-    folder = root() / "workflow_uploads" / secrets.token_hex(16)
+    return safe
+
+
+def store_generated(owner: str, name: str, content_type: str, data: bytes) -> dict:
+    """Enregistre un fichier produit par un nœud ``file`` et renvoie
+    ``{name, size, content_type, ref}``."""
+    if content_type not in GENERATED_CONTENT_TYPES:
+        raise AttachmentError(
+            f"type de fichier produit refusé : {content_type}",
+            code="attachment_type",
+        )
+    if not data or len(data) > MAX_GENERATED_BYTES:
+        raise AttachmentError(
+            f"fichier vide ou trop gros (max {MAX_GENERATED_BYTES} octets)",
+            code="attachment_size",
+        )
+    safe = _bounded_name(name, "fichier")
+    folder = root() / "workflow_generated" / secrets.token_hex(16)
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / safe
     path.write_bytes(data)

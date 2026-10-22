@@ -28,6 +28,13 @@ produit :
   (``Integration``, provider ``teams_webhook`` — voir
   ``apowerb.integrations.teams``) : l'URL n'est jamais écrite dans le
   graphe, ni renvoyée dans un événement ou une erreur.
+* un email peut porter des pièces jointes : des refs (``workflow_attachments``)
+  résolues pour le **propriétaire du run** seulement, bornées en taille ;
+* un nœud file stocke son fichier comme une ref du propriétaire
+  (``store_generated``), au plus ``MAX_RUN_FILES`` par run ; un nœud
+  file_save la dépose sur son OneDrive via son intégration Microsoft
+  (``onedrive_write.tool_upload_file``, sous son identité) : le chemin local
+  vient de la ref résolue, jamais du graphe.
 
 ``workflow_graph`` ne sait pas non plus faire de requête HTTP sortante : ce
 nœud (``http``) n'a en revanche besoin d'aucune ressource par propriétaire
@@ -263,6 +270,40 @@ _SEND_LIMIT = 30
 _send_history: dict[str, list[float]] = {}
 
 
+MAX_RUN_FILES = 20
+MAX_EMAIL_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+
+def _read_attachments(owner_email: str, node_id: str, refs: list) -> list:
+    """(nom, type, octets) des refs du propriétaire, ou le code produit."""
+    from apowerb.core import workflow_attachments
+
+    metas = []
+    total = 0
+    for ref in refs:
+        try:
+            meta = workflow_attachments.resolve(ref, owner_email)
+        except workflow_attachments.AttachmentError:
+            raise GraphError(
+                f"{node_id} : pièce jointe introuvable ({str(ref)[:40]})",
+                code="notification_attachment_not_found",
+                params={"node": node_id, "ref": str(ref)[:40]},
+            ) from None
+        total += int(meta.get("size") or 0)
+        metas.append(meta)
+    if total > MAX_EMAIL_ATTACHMENT_BYTES:
+        raise GraphError(
+            f"{node_id} : pièces jointes de {total} octets, max {MAX_EMAIL_ATTACHMENT_BYTES}",
+            code="notification_attachments_too_large",
+            params={"node": node_id, "max": str(MAX_EMAIL_ATTACHMENT_BYTES)},
+        )
+    files = []
+    for meta in metas:
+        with open(meta["path"], "rb") as f:
+            files.append((meta["name"], meta.get("content_type") or "application/octet-stream", f.read()))
+    return files
+
+
 def _reserve_sends(owner_email: str, node_id: str, count: int) -> None:
     """Réserve ``count`` envois pour ``owner_email`` ou refuse tout le lot.
 
@@ -439,10 +480,21 @@ def _notify_for(owner_email: str):
     """Le callback ``run_notify`` injecté dans le compilateur pour ce propriétaire."""
 
     async def run_notify(
-        node_id: str, channel: str, to: list, subject: str, body: str
+        node_id: str,
+        channel: str,
+        to: list,
+        subject: str,
+        body: str,
+        attachments: Optional[list] = None,
     ) -> int:
         from apowerb.helpers.email_sender import send_email
 
+        if attachments and channel != "email":
+            raise GraphError(
+                f"{node_id} : seules les notifications email ont des pièces jointes",
+                code="notification_attachments_email_only",
+                params={"node": node_id},
+            )
         if channel == "app":
             _reserve_sends(owner_email, node_id, 1)
             await _notify_owner_in_app(owner_email, subject, body)
@@ -454,9 +506,17 @@ def _notify_for(owner_email: str):
             return 1
 
         addresses = [_checked_email(node_id, addr) for addr in to]
+        files = (
+            await asyncio.to_thread(_read_attachments, owner_email, node_id, attachments)
+            if attachments
+            else []
+        )
         _reserve_sends(owner_email, node_id, len(addresses))
         for addr in addresses:
-            await send_email(to=addr, subject=subject, body=body)
+            if files:
+                await send_email(to=addr, subject=subject, body=body, attachments=files)
+            else:
+                await send_email(to=addr, subject=subject, body=body)
         return len(addresses)
 
     return run_notify
@@ -861,9 +921,29 @@ def insert_row(params: dict, table: str, row: dict) -> int:
         conn.close()
 
 
+def _upload_to_onedrive(owner_email: str, path: str, dest: str, conflict: str) -> dict:
+    """Dépôt sous l'identité du propriétaire (son intégration Microsoft).
+
+    Exécuté dans le thread de ``asyncio.to_thread``, qui travaille sur une
+    copie du contexte : l'identité liée ici ne survit pas à l'appel.
+    """
+    from apowerb.tools_store.portfolio import onedrive_write
+
+    _bind_owner_identity(owner_email)
+    return onedrive_write.tool_upload_file(
+        local_file_path=path, destination_path=dest, conflict_behavior=conflict
+    )
+
+
 def services_for(owner_email: str) -> NodeServices:
-    """Services des nœuds document / classifier Jev / db_write pour
-    ``owner_email`` ; appels bloquants exécutés dans un thread."""
+    """Services des nœuds document / classifier Jev / db_write / file /
+    file_save pour ``owner_email`` ; appels bloquants exécutés dans un thread.
+
+    Construit pour UN run : le compteur de fichiers produits lui est propre.
+    """
+    from apowerb.core import workflow_attachments
+
+    produced = 0
 
     async def document(ref: str) -> dict:
         return await asyncio.to_thread(_read_document, ref, owner_email)
@@ -878,7 +958,51 @@ def services_for(owner_email: str) -> NodeServices:
         inserted = await asyncio.to_thread(insert_row, params, table, row)
         return {"inserted": inserted}
 
-    return NodeServices(document=document, jev_classify=jev_classify, db_write=db_write)
+    async def save_file(name: str, content_type: str, data: bytes) -> dict:
+        nonlocal produced
+        if produced >= MAX_RUN_FILES:
+            raise GraphError(
+                f"plus de {MAX_RUN_FILES} fichiers produits dans ce run",
+                code="file_run_limit",
+                params={"max": str(MAX_RUN_FILES)},
+            )
+        produced += 1
+        return await asyncio.to_thread(
+            workflow_attachments.store_generated, owner_email, name, content_type, data
+        )
+
+    async def save_to_drive(provider: str, ref: str, folder: str, conflict: str) -> dict:
+        try:
+            meta = await asyncio.to_thread(workflow_attachments.resolve, ref, owner_email)
+        except workflow_attachments.AttachmentError:
+            raise GraphError(
+                f"fichier introuvable ({str(ref)[:40]})",
+                code="file_save_not_found",
+                params={"ref": str(ref)[:40]},
+            ) from None
+        dest = f"{folder}/{meta['name']}" if folder else meta["name"]
+        result = await asyncio.to_thread(
+            _upload_to_onedrive, owner_email, meta["path"], dest, conflict
+        )
+        if not isinstance(result, dict) or result.get("status") != "success":
+            # Le message de l'outil peut citer des chemins du serveur :
+            # journaux seulement.
+            reason = str((result or {}).get("message") or "")[:300]
+            logger.warning("[workflow file_save] OneDrive : %s", reason)
+            raise GraphError(
+                "dépôt sur OneDrive impossible",
+                code="file_save_failed",
+                params={"provider": provider},
+            )
+        return {"name": result.get("name") or meta["name"], "path": dest, "web_url": result.get("webUrl")}
+
+    return NodeServices(
+        document=document,
+        jev_classify=jev_classify,
+        db_write=db_write,
+        save_file=save_file,
+        save_to_drive=save_to_drive,
+    )
 
 
 def resolve_workflow_for(owner_email: str) -> ResolveWorkflow:

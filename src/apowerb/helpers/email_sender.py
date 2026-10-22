@@ -11,11 +11,14 @@ from __future__ import annotations
 import os
 import smtplib
 from email.message import EmailMessage
-from typing import Optional
+from typing import Optional, Sequence
 
 from apowerb.configs.th2logger import setup_logging
 
 logger = setup_logging(__name__)
+
+# (nom, type MIME, octets) d'une pièce jointe.
+Attachment = tuple[str, str, bytes]
 
 
 def _env(name: str) -> Optional[str]:
@@ -32,7 +35,9 @@ def _smtp_configured() -> bool:
     )
 
 
-def _send_smtp(*, to: str, subject: str, body: str) -> None:
+def _send_smtp(
+    *, to: str, subject: str, body: str, attachments: Sequence[Attachment] = ()
+) -> None:
     host = _env("SMTP_HOST")
     port = int(_env("SMTP_PORT") or "587")
     user = _env("SMTP_USER")
@@ -44,6 +49,14 @@ def _send_smtp(*, to: str, subject: str, body: str) -> None:
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
+    for name, content_type, data in attachments:
+        maintype, _, subtype = content_type.partition("/")
+        msg.add_attachment(
+            data,
+            maintype=maintype or "application",
+            subtype=subtype or "octet-stream",
+            filename=name,
+        )
 
     with smtplib.SMTP(host, port, timeout=10) as client:
         client.ehlo()
@@ -58,14 +71,25 @@ def _send_smtp(*, to: str, subject: str, body: str) -> None:
         client.send_message(msg)
 
 
-async def send_email(*, to: str, subject: str, body: str) -> None:
-    """Send an email. Falls back to a log-only pretend-send in dev."""
+async def send_email(
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    attachments: Optional[Sequence[Attachment]] = None,
+) -> None:
+    """Send an email. Falls back to a log-only pretend-send in dev.
+
+    Attachments are logged by name only, never their bytes.
+    """
+    attachments = list(attachments or ())
     if not _smtp_configured():
         logger.warning(
-            "email pretend-sent to %s: subject=%s body=%s",
+            "email pretend-sent to %s: subject=%s body=%s attachments=%s",
             to,
             subject,
             body,
+            [name for name, _, _ in attachments],
         )
         return
 
@@ -78,6 +102,7 @@ async def send_email(*, to: str, subject: str, body: str) -> None:
             to=to,
             subject=subject,
             body=body,
+            attachments=attachments,
         )
     except Exception as exc:
         logger.error(

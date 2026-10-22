@@ -78,6 +78,15 @@ _FIXED_SHAPES = {
     "notification": {"channel": _STRING, "sent": _NUMBER},
     "document": {"documents": _ARRAY, "text": _STRING, "count": _NUMBER},
     "db_write": {"table": _STRING, "inserted": _NUMBER},
+    "file": {
+        "name": _STRING,
+        "ref": _STRING,
+        "size": _NUMBER,
+        "content_type": _STRING,
+        "format": _STRING,
+        "rows": _NUMBER,
+    },
+    "file_save": {"provider": _STRING, "name": _STRING, "path": _STRING, "web_url": _STRING},
 }
 _EXTRACT_TYPES = {
     "string": _STRING,
