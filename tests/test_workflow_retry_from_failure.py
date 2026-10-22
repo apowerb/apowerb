@@ -332,6 +332,23 @@ async def test_a_new_input_wired_into_a_replayed_node_is_refused(api):
 
 
 @pytest.mark.asyncio
+async def test_a_failed_node_deleted_since_the_failure_is_refused(api):
+    wf, events = await _failed(api)
+    graph = _graph()
+    graph["nodes"] = [n for n in graph["nodes"] if n["id"] != "a2"]
+    graph["nodes"][-1]["config"]["value"] = "fin:{{a1}}"
+    graph["edges"] = [{"source": "t", "target": "a1"}, {"source": "a1", "target": "o"}]
+    workflow_main.update_workflow(
+        wf["workflow_id"], owner_id=OWNER, expected_version=wf["version"], graph=graph
+    )
+    refused = await _refused(api, events[0]["wid"])
+    assert refused.status_code == 409
+    assert refused.detail["code"] == "retry_graph_changed"
+    assert refused.detail["params"]["nodes"] == ["a2"]
+    assert run_main.get_run(events[0]["wid"], owner_id=OWNER)["retry_available"] is True
+
+
+@pytest.mark.asyncio
 async def test_a_deleted_workflow_cannot_be_resumed(api):
     wf, events = await _failed(api)
     workflow_main.delete_workflow(wf["workflow_id"], owner_id=OWNER)

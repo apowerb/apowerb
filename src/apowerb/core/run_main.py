@@ -1198,9 +1198,13 @@ def prepare_retry(run_id: str, owner_id: str) -> dict:
         raise HTTPException(status_code=422, detail=detail)
     graph = workflow_main.parse_graph(wf["graph"])
     changed = workflow_graph.retry_mismatch(state["graph"], graph, state.get("outputs") or {})
+    # Le nœud en échec et la borne « Tester jusqu'ici » doivent exister encore :
+    # sans eux, la reprise sauterait à la suite sans le dire.
     until = state.get("until")
-    if until is not None and until not in {n.id for n in graph.nodes}:
-        changed.append(until)
+    present = {n.id for n in graph.nodes}
+    for node_id in (state.get("failed_node"), until):
+        if node_id is not None and node_id not in present and node_id not in changed:
+            changed.append(node_id)
     if changed:
         raise HTTPException(
             status_code=409,
