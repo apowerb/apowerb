@@ -974,6 +974,8 @@ async def notify_run_finished(
     status: str,
     output: Any,
     error_message: Optional[str],
+    error_code: Optional[str] = None,
+    error_node: Optional[str] = None,
 ) -> None:
     """Déclenche les triggers ``workflow_done`` en écoute sur CE run.
 
@@ -1003,6 +1005,24 @@ async def notify_run_finished(
     if config.get("until"):
         return
 
+    alert = None
+    if status == run_main.STATUS_ERROR:
+        # « Me prévenir en cas d'échec » : en parallèle des écouteurs, qui
+        # n'attendent jamais l'envoi d'un mail.
+        alert = asyncio.create_task(
+            _alert_failure(
+                run_id=run_id,
+                owner_id=owner_id,
+                workflow_id=source_workflow_id,
+                error_code=error_code,
+                error_node=error_node,
+            )
+        )
+        # Référence forte : détachée d'un appelant annulé, la tâche ne doit
+        # pas être ramassée avant la fin de l'envoi.
+        _alerts_in_flight.add(alert)
+        alert.add_done_callback(_alerts_in_flight.discard)
+
     prior_chain: list[str] = []
     try:
         own_trigger = json.loads(d.get("trigger") or "{}")
@@ -1011,15 +1031,36 @@ async def notify_run_finished(
     if isinstance(own_trigger, dict):
         prior_chain = list((own_trigger.get("detail") or {}).get("chain") or [])
 
-    await fire_workflow_done_triggers(
-        source_workflow_id=source_workflow_id,
-        source_owner_id=owner_id,
-        source_run_id=run_id,
-        status=status,
-        output=output,
-        error=_error_detail(status, error_message),
-        prior_chain=prior_chain,
-    )
+    try:
+        await fire_workflow_done_triggers(
+            source_workflow_id=source_workflow_id,
+            source_owner_id=owner_id,
+            source_run_id=run_id,
+            status=status,
+            output=output,
+            error=_error_detail(status, error_message),
+            prior_chain=prior_chain,
+        )
+    finally:
+        if alert is not None:
+            # shield : un appelant annulé (client parti) n'annule pas l'envoi,
+            # qui laisserait le run réservé et l'heure prise sans aucun mail.
+            await asyncio.shield(alert)
+
+
+_alerts_in_flight: set[asyncio.Task] = set()
+
+
+async def _alert_failure(**kwargs: Any) -> None:
+    """``workflow_alerts.alert_run_failed`` sans jamais lever."""
+    try:
+        from apowerb.core import workflow_alerts
+
+        await workflow_alerts.alert_run_failed(**kwargs)
+    except Exception:  # noqa: BLE001 - une alerte ratée ne casse pas la fin du run
+        logger.exception(
+            "[triggers] alerte d'échec non traitée (run_id=%s)", kwargs.get("run_id")
+        )
 
 
 async def fire_workflow_done_triggers(
