@@ -208,6 +208,54 @@ def test_jev_classifier_uncertain_without_route_fails_loudly():
     assert events[-1]["event"] == "error"
 
 
+USAGE = {"prompt_tokens": 484, "completion_tokens": 32, "cost": 0.00002}
+UNC_EDGES = CLF_EDGES + [{"source": "clf", "target": "o_unc", "route": "uncertain"}]
+
+
+def _clf_run(answer):
+    svc = FakeServices(docs={"att_a": "doc"}, jev={"doc": answer})
+    return _run([T, DOC, _clf(), AR_OUT, OTHER_OUT, UNC_OUT], UNC_EDGES, ONE, svc)
+
+
+def test_jev_trace_tells_a_decided_autre_from_an_uncertain_run():
+    decided = _complete(_clf_run(_jev("autre", 0.91)), "clf")
+    hesitant = _complete(_clf_run(_jev("autre", 0.62, uncertain=True)), "clf")
+    assert decided["classification"] == {
+        "route": "autre",
+        "label": "autre",
+        "confidence": 0.91,
+        "uncertain": False,
+    }
+    assert hesitant["classification"] == {
+        "route": "uncertain",
+        "label": None,
+        "confidence": 0.62,
+        "uncertain": True,
+        "best_guess": "autre",
+    }
+    # Les nœuds suivants reçoivent toujours l'entrée du classifieur, inchangée.
+    assert decided["output"] == hesitant["output"]
+
+
+def test_jev_trace_carries_the_token_cost():
+    events = _clf_run({**_jev("ar"), "usage": USAGE})
+    assert _complete(events, "clf")["classification"]["usage"] == USAGE
+
+
+def test_jev_uncertain_failure_keeps_the_classification_in_the_trace():
+    answer = {**_jev("ar", 0.5, uncertain=True), "usage": USAGE}
+    svc = FakeServices(docs={"att_a": "doc"}, jev={"doc": answer})
+    err = _error(_run([T, DOC, _clf(), AR_OUT, OTHER_OUT], CLF_EDGES, ONE, svc), "clf")
+    assert err["code"] == "classifier_uncertain"
+    assert err["classification"] == {
+        "label": None,
+        "confidence": 0.5,
+        "uncertain": True,
+        "best_guess": "ar",
+        "usage": USAGE,
+    }
+
+
 def test_jev_classifier_empty_text_fails_before_calling_jev():
     svc = FakeServices(docs={"att_a": "   "})
     events = _run([T, DOC, _clf(), AR_OUT, OTHER_OUT], CLF_EDGES, ONE, svc)

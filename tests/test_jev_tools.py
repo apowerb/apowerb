@@ -100,6 +100,12 @@ class TestClassify:
         }
         assert result["total"] == 3
 
+    def test_each_result_keeps_the_jev_usage(self, fake):
+        result = jev.tool_jev_classify(
+            labels=_LABELS, items=["app crash on save", "something vague"]
+        )
+        assert [r["usage"] for r in result["results"]] == [{"cost": 0.0001}] * 2
+
     def test_question_is_a_choice_over_the_given_labels(self, fake):
         jev.tool_jev_classify(
             labels=_LABELS, items=["app crash"], instructions="Support tickets"

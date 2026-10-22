@@ -140,12 +140,27 @@ def test_jev_service_maps_the_single_result(monkeypatch):
         calls.update(labels=labels, items=items, min=min_confidence)
         return {
             "status": "success",
-            "results": [{"index": 0, "label": "ar", "confidence": 0.97, "uncertain": False, "best_guess": "ar"}],
+            "results": [
+                {
+                    "index": 0,
+                    "label": "ar",
+                    "confidence": 0.97,
+                    "uncertain": False,
+                    "best_guess": "ar",
+                    "usage": {"cost": 0.00002},
+                }
+            ],
         }
 
     monkeypatch.setattr(jev, "tool_jev_classify", fake)
     out = asyncio.run(rt.services_for(ALICE).jev_classify({"ar": "x", "autre": "y"}, "texte", "", 0.8))
-    assert out == {"label": "ar", "confidence": 0.97, "uncertain": False, "best_guess": "ar"}
+    assert out == {
+        "label": "ar",
+        "confidence": 0.97,
+        "uncertain": False,
+        "best_guess": "ar",
+        "usage": {"cost": 0.00002},
+    }
     assert calls == {"labels": {"ar": "x", "autre": "y"}, "items": ["texte"], "min": 0.8}
 
 

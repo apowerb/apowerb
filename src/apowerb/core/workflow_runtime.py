@@ -763,6 +763,7 @@ def _jev_classify(labels: dict, text: str, instructions: str, min_confidence: fl
         "confidence": row.get("confidence"),
         "uncertain": bool(row.get("uncertain")),
         "best_guess": row.get("best_guess"),
+        "usage": row.get("usage"),
     }
 
 

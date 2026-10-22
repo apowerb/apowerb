@@ -269,7 +269,7 @@ class NodeServices(BaseModel):
     * ``document(ref)`` -> ``{"name", "text", "page_count"}`` : ref opaque
       d'une pièce jointe (``workflow_attachments``), propriétaire contrôlé ;
     * ``jev_classify(labels, text, instructions, min_confidence)`` ->
-      ``{"label", "confidence", "uncertain", "best_guess"}`` ;
+      ``{"label", "confidence", "uncertain", "best_guess"[, "usage"]}`` ;
     * ``db_write(connection, table, row)`` -> ``{"inserted"}`` : valeurs
       liées, jamais concaténées dans le SQL.
     """
@@ -2216,8 +2216,21 @@ class _Compiler:
             cfg.get("instructions") or "",
             float(cfg.get("min_confidence", _DEFAULT_MIN_CONFIDENCE)),
         )
+        # La décision va dans la trace (node_complete, ou node_error si elle
+        # échoue) ; la sortie reste l'entrée, que les nœuds suivants lisent.
+        detail = {
+            "label": result.get("label"),
+            "confidence": result.get("confidence"),
+            "uncertain": bool(result.get("uncertain")),
+        }
+        if detail["uncertain"]:
+            detail["best_guess"] = result.get("best_guess")
+        if result.get("usage") is not None:
+            detail["usage"] = result["usage"]
+        self._trace.setdefault(node.id, {})["classification"] = detail
         if result.get("uncertain"):
             if any(e.source == node.id and e.route == _UNCERTAIN for e in self.g.edges):
+                detail["route"] = _UNCERTAIN
                 return node_input, _UNCERTAIN
             raise GraphError(
                 f"{node.id} : Jev hésite (meilleure route {result.get('best_guess')!r}, "
@@ -2233,6 +2246,7 @@ class _Compiler:
                 code="classifier_no_route",
                 params={"node": node.id, "routes": ", ".join(r["route"] for r in routes)},
             )
+        detail["route"] = label
         return node_input, label
 
     async def _db_write(self, node: Node) -> dict:
