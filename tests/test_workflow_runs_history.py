@@ -347,6 +347,175 @@ def test_the_list_does_not_carry_the_trace(store):
     assert "events" not in listed[0]
 
 
+# --- la trace au repos : chiffrée, puis oubliée --------------------------------
+
+
+def _stored_trace(store, run_id):
+    t = store.trace_table
+    with store.engine.begin() as conn:
+        row = conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()
+    return row._asdict()["events"] if row else None
+
+
+def test_a_trace_is_encrypted_at_rest(store):
+    run_id = _graph_run()
+    run_main.save_trace(
+        run_id,
+        _trace(
+            {
+                "event": "node_complete",
+                "node_id": "agent1",
+                "input": "iban FR76-secret",
+                "output": "réponse-confidentielle",
+                "tool_calls": [{"name": "crm", "args": {"q": "client-caché"}}],
+            }
+        ),
+    )
+
+    raw = _stored_trace(store, run_id)
+    assert raw and not raw.lstrip().startswith("[")
+    for clear in ("FR76-secret", "confidentielle", "client-cach", "agent1", "node_complete"):
+        assert clear not in raw
+    assert run_main.get_trace(run_id, owner_id=OWNER)["events"][0]["output"] == "réponse-confidentielle"
+
+
+def test_without_a_key_no_trace_is_written(store, monkeypatch):
+    from apowerb.helpers import encryptor
+
+    monkeypatch.setattr(encryptor, "fernet", None)
+    run_id = _graph_run()
+
+    with pytest.raises(RuntimeError):
+        run_main.save_trace(run_id, _trace({"event": "done", "output": "secret"}))
+    assert _stored_trace(store, run_id) is None
+
+
+def test_a_trace_that_can_no_longer_be_read_says_so(store):
+    """Clé changée depuis l'écriture : la trace est indisponible, pas une erreur 500."""
+    run_id = _graph_run()
+    with store.engine.begin() as conn:
+        conn.execute(
+            store.trace_table.insert().values(
+                run_id=run_id, events="gAAAAA-plus-lisible", truncated=0, updated_at=run_main._now()
+            )
+        )
+
+    assert run_main.get_trace(run_id, owner_id=OWNER) == {
+        "events": [],
+        "truncated": False,
+        "available": False,
+    }
+
+
+def test_forgetting_a_workflow_drops_its_traces_only(store):
+    mine = _graph_run("wf-1")
+    sibling = _graph_run("wf-2")
+    theirs = _graph_run("wf-1", owner=OTHER)
+    for run_id in (mine, sibling, theirs):
+        run_main.save_trace(run_id, _trace({"event": "done", "output": 1}))
+
+    assert run_main.forget_workflow_traces("wf-1", owner_id=OWNER) == 1
+
+    assert _stored_trace(store, mine) is None
+    assert _stored_trace(store, sibling) is not None
+    assert _stored_trace(store, theirs) is not None
+
+
+def test_deleting_a_workflow_drops_the_traces_of_its_runs(store, trigger_store):
+    wm, _ = trigger_store
+    wf = wm.create_workflow(owner_id=OWNER, name="Jetable", graph={"version": 1, "nodes": [], "edges": []})
+    run_id = _graph_run(wf["workflow_id"])
+    run_main.save_trace(run_id, _trace({"event": "done", "output": "sortie"}))
+
+    wm.delete_workflow(wf["workflow_id"], owner_id=OWNER)
+
+    assert _stored_trace(store, run_id) is None
+
+
+def _age_trace(store, run_id, stamp="2020-01-01 00:00:00.000000"):
+    with store.engine.begin() as conn:
+        conn.execute(
+            store.trace_table.update().where(store.trace_table.c.run_id == run_id).values(updated_at=stamp)
+        )
+
+
+def test_old_traces_are_purged_but_a_waiting_run_keeps_its_own(store):
+    old = _graph_run()
+    recent = _graph_run()
+    waiting = _graph_run()
+    for run_id in (old, recent, waiting):
+        run_main.save_trace(run_id, _trace({"event": "done", "output": 1}))
+    _age_trace(store, old)
+    _age_trace(store, waiting)
+    with store.engine.begin() as conn:
+        conn.execute(
+            store.run_table.update().where(store.run_table.c.run_id == waiting).values(status="awaiting")
+        )
+
+    assert run_main.purge_old_traces(days=30) == 1
+
+    assert _stored_trace(store, old) is None
+    assert _stored_trace(store, recent) is not None
+    assert _stored_trace(store, waiting) is not None
+
+
+@pytest.mark.parametrize(
+    ("raw", "days"),
+    [(None, 30), ("7", 7), ("0", 30), ("abc", 30)],
+)
+def test_the_trace_retention_is_read_from_the_environment(monkeypatch, raw, days):
+    if raw is None:
+        monkeypatch.delenv("RUN_TRACE_RETENTION_DAYS", raising=False)
+    else:
+        monkeypatch.setenv("RUN_TRACE_RETENTION_DAYS", raw)
+    assert run_main.trace_retention_days() == days
+
+
+# --- mutations survivantes de la première revue ---------------------------------
+
+
+def test_a_node_error_without_the_reference_is_not_the_faulty_one():
+    trace = _trace(
+        {"event": "node_error", "node_id": "http1", "code": "http_error", "detail": "x", "ref": "aaa"},
+        {"event": "node_error", "node_id": "agent9", "code": "internal", "detail": "y"},
+        {"event": "error", "code": "http_error", "detail": "x", "ref": "aaa"},
+    )
+    assert trace.failure()["node_id"] == "http1"
+
+
+def test_runs_started_in_the_same_instant_keep_a_stable_order(store, monkeypatch):
+    monkeypatch.setattr(run_main, "_now", lambda: "2026-10-22 10:00:00.000000")
+    ids = [_graph_run() for _ in range(6)]
+
+    first = run_main.list_runs(OWNER, limit=3)
+    second = run_main.list_runs(OWNER, limit=3, offset=3)
+
+    assert [r["run_id"] for r in first + second] == sorted(ids, reverse=True)
+
+
+# --- heures : ISO UTC pour le navigateur ----------------------------------------
+
+
+def test_run_times_are_sent_as_utc_iso(store, monkeypatch):
+    from datetime import datetime, timezone
+
+    run_id = _graph_run()
+    run_main.finish_run(run_id, status="success")
+    stored = run_main.run_store.run_table
+    with store.engine.begin() as conn:
+        row = conn.execute(stored.select().where(stored.c.run_id == run_id)).fetchone()._asdict()
+
+    run = run_main.get_run(run_id, owner_id=OWNER)
+
+    for field in ("created_at", "finished_at"):
+        sent = datetime.fromisoformat(run[field])
+        assert sent.utcoffset().total_seconds() == 0
+        # Le même instant que l'heure locale stockée, à la milliseconde près.
+        local = datetime.strptime(row[field], "%Y-%m-%d %H:%M:%S.%f").astimezone()
+        assert abs((sent - local.astimezone(timezone.utc)).total_seconds()) < 0.001
+    assert run["duration_ms"] is not None
+
+
 # --- le flux réel : _streaming_run consigne l'échec structuré et la trace --
 
 
@@ -415,6 +584,26 @@ async def test_a_paused_run_keeps_its_trace_so_far(workflows):
     assert events[-1]["event"] == "awaiting_input"
 
 
+@pytest.mark.asyncio
+async def test_without_a_key_the_run_is_recorded_without_its_trace(workflows, monkeypatch):
+    from apowerb.helpers import encryptor
+
+    monkeypatch.setattr(encryptor, "fernet", None)
+    run_id = _graph_run("wf-7")
+
+    async def _runner(_cancel):
+        yield _sse({"event": "node_complete", "node_id": "agent1", "output": "secret"})
+        yield _sse({"event": "done", "output": "secret"})
+
+    response = workflows._streaming_run(
+        run_id=run_id, agent_ids=[], file_bytes=None, owner=OWNER, runner=_runner
+    )
+    await _drain(response)
+
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "success"
+    assert _stored_trace(run_main.run_store, run_id) is None
+
+
 # --- les routes ---------------------------------------------------------------
 
 
@@ -470,9 +659,8 @@ async def test_the_trace_route_hides_a_foreign_run(workflows):
 # --- base déjà en service ----------------------------------------------------
 
 
-def test_an_existing_runs_table_gets_the_new_columns_and_its_workflows_back(monkeypatch):
-    from sqlalchemy import inspect as sa_inspect
-
+def _legacy_runs_table(monkeypatch, rows):
+    """Une table ``agent_runs`` d'avant les colonnes ajoutées, avec ces lignes."""
     engine = _sqlite_engine()
     run_store = run_main.run_store
     monkeypatch.setattr(run_store, "engine", engine)
@@ -489,38 +677,54 @@ def test_an_existing_runs_table_gets_the_new_columns_and_its_workflows_back(monk
                 "finished_at VARCHAR, replay_of VARCHAR)"
             )
         )
-        insert = (
-            f"INSERT INTO {qualified} (run_id, trigger, owner_id, status, config, created_at) "
-            "VALUES (:id, :trigger, :o, :status, :c, :at)"
-        )
-        conn.execute(
-            text(insert),
-            {
-                "id": "old1",
-                "trigger": "workflow",
-                "o": OWNER,
-                "status": "error",
-                "c": json.dumps({"workflow_id": "wf-old", "version": 2, "payload": {}}),
-                "at": "2026-01-01 00:00:00.000000",
-            },
-        )
-        conn.execute(
-            text(insert),
-            {
-                "id": "old2",
-                "trigger": "chat",
-                "o": OWNER,
-                "status": "success",
-                "c": json.dumps({"agent_name": "a"}),
-                "at": "2026-01-01 00:00:01.000000",
-            },
-        )
+        for i, (run_id, trigger, config) in enumerate(rows):
+            conn.execute(
+                text(
+                    f"INSERT INTO {qualified} (run_id, trigger, owner_id, status, config, created_at) "
+                    "VALUES (:id, :trigger, :o, 'error', :c, :at)"
+                ),
+                {"id": run_id, "trigger": trigger, "o": OWNER, "c": config, "at": f"2026-01-01 00:00:0{i}.000000"},
+            )
+    return engine, schema
 
-    run_store.create_table()
+
+def test_an_existing_runs_table_gets_the_new_columns_and_its_workflows_back(monkeypatch):
+    from sqlalchemy import inspect as sa_inspect
+
+    engine, schema = _legacy_runs_table(
+        monkeypatch,
+        [
+            ("old1", "workflow", json.dumps({"workflow_id": "wf-old", "version": 2, "payload": {}})),
+            ("old2", "chat", json.dumps({"agent_name": "a"})),
+            # Une config illisible qui cite la clé ne bloque pas les autres.
+            ("old3", "workflow", '{"workflow_id": pas du json'),
+        ],
+    )
+
+    run_main.run_store.create_table()
 
     columns = {c["name"] for c in sa_inspect(engine).get_columns("agent_runs", schema=schema)}
     assert {"workflow_id", "error_info"} <= columns
     assert [r["run_id"] for r in run_main.list_runs(OWNER, workflow_id="wf-old")] == ["old1"]
+
+
+def test_a_failed_backfill_does_not_undo_the_new_columns(monkeypatch):
+    """Le rattrapage tourne après le COMMIT des ALTER : son échec ne les annule pas."""
+    from sqlalchemy import inspect as sa_inspect
+
+    engine, schema = _legacy_runs_table(
+        monkeypatch, [("old1", "workflow", json.dumps({"workflow_id": "wf-old"}))]
+    )
+
+    def _broken(self):
+        raise RuntimeError("panne pendant le rattrapage")
+
+    monkeypatch.setattr(type(run_main.run_store), "_backfill_workflow_id", _broken)
+
+    run_main.run_store.create_table()
+
+    columns = {c["name"] for c in sa_inspect(engine).get_columns("agent_runs", schema=schema)}
+    assert {"workflow_id", "error_info"} <= columns
 
 
 # --- qui écoute l'échec -----------------------------------------------------

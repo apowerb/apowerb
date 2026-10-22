@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -502,6 +503,10 @@ def _row_to_dict(row) -> dict:
         run["error"] = None
     run["trigger_kind"], run["trigger_detail"] = _trigger_kind(run.get("trigger"))
     run["duration_ms"] = _duration_ms(run.get("created_at"), run.get("finished_at"))
+    # Stockées en heure locale du serveur, sans fuseau : le navigateur les
+    # lirait dans le sien. Il reçoit l'instant en UTC.
+    for field in ("created_at", "finished_at"):
+        run[field] = _utc_iso(run.get(field))
     tools = run.get("tools_executed")
     run["tools_executed"] = json.loads(tools) if tools else None
     try:
@@ -700,10 +705,17 @@ class RunTrace:
 
 
 def save_trace(run_id: str, trace: RunTrace) -> None:
-    """Remplace la trace d'un run (une reprise réémet tout le déroulé)."""
+    """Remplace la trace d'un run (une reprise réémet tout le déroulé).
+
+    Elle porte les entrées, sorties et appels d'outils du run : chiffrée
+    comme l'instantané d'une pause (``_seal``). Sans ``ENCRYPT_KEY`` le
+    chiffrement lève et rien n'est écrit : jamais de repli en clair.
+    """
+    from apowerb.helpers.encryptor import encrypt_value
+
     t = run_store.trace_table
     values = dict(
-        events=json.dumps(trace.events, ensure_ascii=False, default=str),
+        events=encrypt_value(json.dumps(trace.events, ensure_ascii=False, default=str)),
         truncated=1 if trace.truncated else 0,
         updated_at=_now(),
     )
@@ -713,8 +725,28 @@ def save_trace(run_id: str, trace: RunTrace) -> None:
             conn.execute(t.insert().values(run_id=run_id, **values))
 
 
+def _open_trace(raw: str | None) -> list | None:
+    """Les événements d'une trace stockée ; ``None`` si elle n'est plus lisible."""
+    from cryptography.fernet import InvalidToken
+
+    from apowerb.helpers.encryptor import decrypt_value
+
+    if not raw:
+        return []
+    try:
+        # Traces écrites en clair avant le chiffrement : un JSON, pas un jeton.
+        return json.loads(raw if raw.lstrip().startswith("[") else decrypt_value(raw))
+    except (InvalidToken, RuntimeError, ValueError) as exc:
+        logger.warning("[RUNS] déroulé illisible (%s)", type(exc).__name__)
+        return None
+
+
 def get_trace(run_id: str, owner_id: str) -> dict | None:
-    """La trace d'un run, à son seul propriétaire. ``None`` : run inconnu ou d'autrui."""
+    """La trace d'un run, à son seul propriétaire. ``None`` : run inconnu ou d'autrui.
+
+    Une trace absente (run d'avant la trace, purgée) ou illisible (clé
+    changée) est dite indisponible.
+    """
     runs, traces = run_store.run_table, run_store.trace_table
     with run_store.engine.begin() as conn:
         owned = conn.execute(
@@ -727,13 +759,77 @@ def get_trace(run_id: str, owner_id: str) -> dict | None:
         row = conn.execute(
             traces.select().where(traces.c.run_id == run_id)
         ).fetchone()
-    if row is None:
+    events = _open_trace(row.events) if row is not None else None
+    if events is None:
         return {"events": [], "truncated": False, "available": False}
-    return {
-        "events": json.loads(row.events or "[]"),
-        "truncated": bool(row.truncated),
-        "available": True,
-    }
+    return {"events": events, "truncated": bool(row.truncated), "available": True}
+
+
+def forget_workflow_traces(workflow_id: str, owner_id: str) -> int:
+    """Oublie les traces des runs d'un workflow supprimé. Rend leur nombre.
+
+    Les runs eux-mêmes restent (statut, erreur, rejeu refusé faute de
+    graphe) ; leurs sorties n'ont plus de raison d'être gardées.
+    """
+    runs, traces = run_store.run_table, run_store.trace_table
+    owned = (
+        runs.select()
+        .with_only_columns(runs.c.run_id)
+        .where(runs.c.workflow_id == workflow_id, runs.c.owner_id == owner_id)
+    )
+    with run_store.engine.begin() as conn:
+        result = conn.execute(traces.delete().where(traces.c.run_id.in_(owned)))
+    return result.rowcount or 0
+
+
+TRACE_RETENTION_DEFAULT_DAYS = 30
+
+
+def trace_retention_days() -> int:
+    """Durée de vie d'une trace, de ``RUN_TRACE_RETENTION_DAYS`` (30 jours par défaut)."""
+    raw = os.environ.get("RUN_TRACE_RETENTION_DAYS")
+    if raw is None:
+        return TRACE_RETENTION_DEFAULT_DAYS
+    try:
+        days = int(raw)
+    except ValueError:
+        days = 0
+    if days < 1:
+        logger.warning(
+            "[RUNS] RUN_TRACE_RETENTION_DAYS=%r invalide, %d jours retenus",
+            raw,
+            TRACE_RETENTION_DEFAULT_DAYS,
+        )
+        return TRACE_RETENTION_DEFAULT_DAYS
+    return days
+
+
+def purge_old_traces(days: int | None = None) -> int:
+    """Supprime les traces plus vieilles que la rétention. Rend leur nombre.
+
+    Un run en attente d'une décision garde la sienne : sa reprise la
+    remplacera, et son échéance borne déjà son âge.
+    """
+    days = days or trace_retention_days()
+    # ``updated_at`` suit le format de ``_now`` : la comparaison de chaînes
+    # vaut comparaison de dates.
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S.%f")
+    runs, traces = run_store.run_table, run_store.trace_table
+    waiting = (
+        runs.select()
+        .with_only_columns(runs.c.run_id)
+        .where(runs.c.status == STATUS_AWAITING)
+    )
+    with run_store.engine.begin() as conn:
+        result = conn.execute(
+            traces.delete().where(
+                traces.c.updated_at < cutoff, traces.c.run_id.not_in(waiting)
+            )
+        )
+    deleted = result.rowcount or 0
+    if deleted:
+        logger.info("[RUNS] %d déroulé(s) de plus de %d jours purgé(s)", deleted, days)
+    return deleted
 
 
 def _refuse_if_side_effects(tools_executed: str | None) -> None:
@@ -899,6 +995,16 @@ def _iso(stamp: str | None) -> str | None:
     if not stamp:
         return stamp
     return _instant(stamp).isoformat()
+
+
+def _utc_iso(stamp: str | None) -> str | None:
+    """Un horodatage stocké, en ISO UTC à la milliseconde pour le navigateur."""
+    if not stamp:
+        return stamp
+    try:
+        return _instant(stamp).astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    except ValueError:
+        return stamp
 
 
 def _decision_of(state: dict) -> dict:

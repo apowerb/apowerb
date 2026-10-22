@@ -620,6 +620,7 @@ app.include_router(api_router)
 # Start background webhook subscription renewal loop + backlog drain
 from apowerb.scheduler.webhook_renewal import webhook_renewal_loop
 from apowerb.scheduler.events_retention import events_retention_loop
+from apowerb.scheduler.trace_retention import trace_retention_loop
 from apowerb.scheduler import backlog_worker
 from apowerb.scheduler.notifier_watch import notifier_watch_loop
 from apowerb.bug_reports.tracking import bug_report_watch_loop
@@ -698,6 +699,24 @@ async def _start_webhook_renewal():
         print("[STARTUP HOOK] events_retention_loop scheduled", flush=True)
     except Exception as e:
         print(f"[STARTUP HOOK] events_retention_loop schedule raised: {e!r}", flush=True)
+
+    try:
+        trace_task = asyncio.create_task(trace_retention_loop())
+
+        def _on_trace_retention_done(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                print(
+                    f"[STARTUP HOOK] trace_retention_loop crashed: {exc!r}",
+                    flush=True,
+                )
+
+        trace_task.add_done_callback(_on_trace_retention_done)
+        print("[STARTUP HOOK] trace_retention_loop scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] trace_retention_loop schedule raised: {e!r}", flush=True)
 
     try:
         # Drain webhook_logs queue one row at a time. Serialising agent

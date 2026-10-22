@@ -19,6 +19,8 @@ from pydantic import BaseModel
 from sqlalchemy import (
     Table,
     Column,
+    Index,
+    bindparam,
     Integer,
     String,
     MetaData,
@@ -122,12 +124,15 @@ class RunStore(BaseModel):
             Column("reminded_at", String),
             Column("end_notice", String),
             # Le workflow d'un run de graphe (``config.workflow_id``), en
-            # colonne pour que l'historique d'un workflow se filtre en SQL.
-            Column("workflow_id", String, index=True),
+            # colonne pour que l'historique d'un workflow se filtre en SQL ;
+            # indexé avec ``created_at`` (voir ``Index`` plus bas).
+            Column("workflow_id", String),
             # L'échec sous forme structurée, en JSON : ``code`` (traduit par
             # l'interface), ``params``, ``ref`` et ``node_id`` (le nœud fautif).
             # ``error_message`` garde le texte, pour les lecteurs existants.
             Column("error_info", String),
+            # L'historique d'un workflow : filtré par workflow, trié par date.
+            Index(f"ix_{self.table_name}_workflow_created", "workflow_id", "created_at"),
         )
         # Le déroulé d'un run (ses événements SSE, plafonnés) : à part, pour
         # que les listes de runs ne le chargent jamais.
@@ -202,37 +207,93 @@ class RunStore(BaseModel):
                     logger.info("Run store: colonne %s ajoutée.", col)
             if if_not_exists:
                 # ``index=True`` ne vaut que pour une table neuve.
-                for col in ("assignee", "workflow_id"):
-                    conn.execute(
-                        text(
-                            f'CREATE INDEX IF NOT EXISTS "ix_{self.table_name}_{col}" '
-                            f'ON {schema_prefix}"{self.table_name}" ("{col}")'
-                        )
+                conn.execute(
+                    text(
+                        f'CREATE INDEX IF NOT EXISTS "ix_{self.table_name}_assignee" '
+                        f'ON {schema_prefix}"{self.table_name}" ("assignee")'
                     )
-            if "workflow_id" not in existing and "config" in existing:
-                self._backfill_workflow_id(conn)
+                )
+                conn.execute(
+                    text(
+                        f'CREATE INDEX IF NOT EXISTS "ix_{self.table_name}_workflow_created" '
+                        f'ON {schema_prefix}"{self.table_name}" ("workflow_id", "created_at")'
+                    )
+                )
+        # Après le COMMIT des ALTER : le rattrapage parcourt toute la table et
+        # ne doit pas la garder verrouillée. Un échec n'empêche pas le
+        # démarrage ; seuls les runs anciens manquent alors à l'historique.
+        if "workflow_id" not in existing and "config" in existing:
+            try:
+                self._backfill_workflow_id()
+            except Exception:  # noqa: BLE001
+                logger.exception("Run store: rattachement des runs à leur workflow échoué.")
 
-    def _backfill_workflow_id(self, conn) -> None:
+    def _backfill_workflow_id(self) -> int:
         """Rattache à leur workflow les runs de graphe consignés avant la colonne.
 
         Une seule fois, quand la colonne vient d'être ajoutée : sans ce
         rattrapage, l'historique d'un workflow commencerait au déploiement.
+        Une seule requête ``UPDATE`` quand la base sait lire le JSON. Avant
+        Postgres 16 (pas de ``IS JSON``), une ``config`` qui n'en est pas fait
+        échouer la requête : le rattrapage repasse alors par lots.
         """
+        schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
+        table = f'{schema_prefix}"{self.table_name}"'
+        dialect = self.engine.dialect.name
+        if dialect == "postgresql":
+            version = self.engine.dialect.server_version_info or (0,)
+            if not version or version[0] == 0:
+                with self.engine.connect() as conn:
+                    version = conn.dialect.server_version_info or (0,)
+            extract = "config::json->>'workflow_id'"
+            guard = "config IS JSON OBJECT" if version[0] >= 16 else "TRUE"
+        elif dialect == "sqlite":
+            extract, guard = "json_extract(config, '$.workflow_id')", "json_valid(config)"
+        else:
+            extract = None
+        if extract is not None:
+            try:
+                with self.engine.begin() as conn:
+                    updated = conn.execute(
+                        text(
+                            f"UPDATE {table} SET workflow_id = {extract} "
+                            f"WHERE workflow_id IS NULL AND config LIKE '%\"workflow_id\"%' "
+                            f"AND {guard} AND {extract} IS NOT NULL"
+                        )
+                    ).rowcount
+                logger.info("Run store: %d run(s) rattaché(s) à leur workflow.", updated)
+                return updated
+            except Exception as exc:  # noqa: BLE001 - repli par lots
+                logger.warning(
+                    "Run store: rattachement en une requête impossible (%s), repli par lots.",
+                    type(exc).__name__,
+                )
+        return self._backfill_workflow_id_by_row()
+
+    def _backfill_workflow_id_by_row(self, batch: int = 1_000) -> int:
+        """Repli : lu en Python, écrit par lots, chacun dans sa transaction."""
         t = self.run_table
-        rows = conn.execute(
-            t.select()
-            .with_only_columns(t.c.run_id, t.c.config)
-            .where(t.c.workflow_id.is_(None), t.c.config.like('%"workflow_id"%'))
-        ).fetchall()
+        with self.engine.connect() as conn:
+            rows = conn.execute(
+                t.select()
+                .with_only_columns(t.c.run_id, t.c.config)
+                .where(t.c.workflow_id.is_(None), t.c.config.like('%"workflow_id"%'))
+            ).fetchall()
+        found = []
         for run_id, config in rows:
             try:
                 workflow_id = (json.loads(config or "{}") or {}).get("workflow_id")
             except (json.JSONDecodeError, AttributeError):
                 continue
             if workflow_id:
-                conn.execute(
-                    t.update()
-                    .where(t.c.run_id == run_id)
-                    .values(workflow_id=str(workflow_id))
-                )
-        logger.info("Run store: %d run(s) rattaché(s) à leur workflow.", len(rows))
+                found.append({"rid": run_id, "wid": str(workflow_id)})
+        update = (
+            t.update()
+            .where(t.c.run_id == bindparam("rid"))
+            .values(workflow_id=bindparam("wid"))
+        )
+        for start in range(0, len(found), batch):
+            with self.engine.begin() as conn:
+                conn.execute(update, found[start : start + batch])
+        logger.info("Run store: %d run(s) rattaché(s) à leur workflow.", len(found))
+        return len(found)

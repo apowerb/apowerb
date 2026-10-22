@@ -308,7 +308,10 @@ def _for_assignee(chunk: str, user: str) -> str:
 
 
 async def _decision_resume_runner(
-    run_id: str, claimed: dict[str, Any], cancel_event: asyncio.Event
+    run_id: str,
+    claimed: dict[str, Any],
+    cancel_event: asyncio.Event,
+    trace: Optional[run_main.RunTrace] = None,
 ) -> AsyncGenerator[str, None]:
     """Reprend un run arrêté sur une décision, sous l'identité du propriétaire.
 
@@ -317,11 +320,14 @@ async def _decision_resume_runner(
     run déjà à moitié fait. ``claimed["decided"]`` passe à vrai quand le
     moteur prend la réponse (``on_answered``) : avant, un arrêt remet le run
     en attente (voir ``_streaming_run``). L'assigné reçoit le flux sans les données du
-    propriétaire.
+    propriétaire ; ``trace`` (celle du propriétaire) reçoit le flux complet,
+    avant l'expurgation.
     """
     answer = claimed["answer"]
     redact = answer["answered_by"] != claimed["run"]["owner_id"]
     async for chunk in _decision_resume_stream(run_id, claimed, cancel_event):
+        if trace is not None:
+            trace.add(chunk)
         yield _for_assignee(chunk, answer["answered_by"]) if redact else chunk
 
 
@@ -462,11 +468,14 @@ def _streaming_run(
     owner: str,
     runner: Optional[Callable[[asyncio.Event], AsyncGenerator[str, None]]] = None,
     resume_guard: Optional[dict] = None,
+    trace: Optional[run_main.RunTrace] = None,
 ) -> StreamingResponse:
     """Drive one run and stream it, recording how it ends.
 
     ``runner`` remplace l'exécution du canvas (les runs de graphe passent par
     ici pour hériter du suivi, de l'annulation et de la trace en base).
+    ``trace`` : un ``runner`` qui alimente lui-même le déroulé (avec le flux
+    d'avant une expurgation) ; ce qu'il cède n'y est alors pas ajouté.
 
     Factorisé entre le démarrage et le rejeu : les deux exécutent la même
     chose, la seule différence étant d'où vient l'entrée. L'issue est écrite
@@ -486,13 +495,14 @@ def _streaming_run(
         error_message: Optional[str] = None
         final_output: Any = None
         # Le déroulé, pour rouvrir le run depuis l'historique (``/runs/{id}/trace``).
-        trace = run_main.RunTrace()
+        fed_by_runner = trace is not None
+        run_trace = trace if fed_by_runner else run_main.RunTrace()
         try:
             # ``run_id`` est émis d'emblée pour que le client puisse se
             # raccrocher — y compris après un rejeu, où il diffère du wid
             # qu'il avait envoyé.
             started = f"data: {json.dumps({'event': 'run_started', 'wid': run_id})}\n\n"
-            trace.add(started)
+            run_trace.add(started)
             yield started.encode()
             stream = (
                 runner(cancel_event)
@@ -503,7 +513,8 @@ def _streaming_run(
                 # L'issue est lue AVANT de céder le morceau : un client qui
                 # part pendant ce ``yield`` ne doit pas la faire mentir.
                 terminal = _terminal_event(chunk)
-                trace.add(chunk)
+                if not fed_by_runner:
+                    run_trace.add(chunk)
                 if terminal is not None and terminal["event"] == "error":
                     outcome = run_main.STATUS_ERROR
                     error_message = str(terminal.get("detail") or "")
@@ -530,7 +541,7 @@ def _streaming_run(
             if outcome != run_main.STATUS_AWAITING:
                 outcome = run_main.STATUS_CANCELLED
             cancelled = f"data: {json.dumps({'event': 'cancelled'})}\n\n"
-            trace.add(cancelled)
+            run_trace.add(cancelled)
             yield cancelled.encode()
             raise
         except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
@@ -538,7 +549,7 @@ def _streaming_run(
             error_message = f"{type(exc).__name__}: {exc}"
             logger.exception("[workflows] run_id=%s a echoue", run_id)
             failed = "data: " + json.dumps({"event": "error", "detail": error_message}) + "\n\n"
-            trace.add(failed)
+            run_trace.add(failed)
             yield failed.encode()
         finally:
             # Une reprise du même run a pu déjà se réinscrire sous ce run_id.
@@ -590,7 +601,7 @@ def _streaming_run(
             )
             if keeps_trace:
                 try:
-                    run_main.save_trace(run_id, trace)
+                    run_main.save_trace(run_id, run_trace)
                 except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
                     logger.exception("[workflows] déroulé du run_id=%s non consigné", run_id)
             if notice:
@@ -608,7 +619,7 @@ def _streaming_run(
                 try:
                     run_main.finish_run(run_id, status=outcome, error_message=error_message)
                     if outcome == run_main.STATUS_ERROR:
-                        run_main.record_failure(run_id, trace.failure())
+                        run_main.record_failure(run_id, run_trace.failure())
                 except Exception:  # noqa: BLE001 - la trace ne doit pas casser le flux
                     logger.exception(
                         "[workflows] issue du run_id=%s non consignee", run_id
@@ -911,13 +922,17 @@ async def resume_run(
     claimed = run_main.claim_paused_run(
         run_id, current_user.email, body.choice, body.text
     )
+    # Le flux de l'assigné est expurgé : la trace du propriétaire est
+    # alimentée avant, par le runner.
+    trace = run_main.RunTrace()
     return _streaming_run(
         run_id=run_id,
         agent_ids=[],
         file_bytes=None,
         owner=claimed["run"]["owner_id"],
-        runner=lambda cancel: _decision_resume_runner(run_id, claimed, cancel),
+        runner=lambda cancel: _decision_resume_runner(run_id, claimed, cancel, trace),
         resume_guard=claimed,
+        trace=trace,
     )
 
 
