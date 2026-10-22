@@ -301,11 +301,15 @@ async def _retry_runner(
             owner, await resolve_owner_plan(owner)
         )
     except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
-        yield (
-            "data: "
-            + json.dumps({"event": "error", "detail": f"{type(exc).__name__}: {exc}"})
-            + "\n\n"
-        )
+        # Rien n'a tourné : la copie de l'instantané reste sur ce run en
+        # échec, qui se reprend au même nœud.
+        failed = {
+            "event": "error",
+            "detail": f"{type(exc).__name__}: {exc}",
+            "failed_node": config["retry_from"],
+            "retryable": True,
+        }
+        yield "data: " + json.dumps(failed) + "\n\n"
         return
     # Dit au client que les nœuds ``replayed`` qui suivent étaient faits
     # avant l'échec (et non avant une décision).
@@ -519,6 +523,7 @@ def _streaming_run(
     owner: str,
     runner: Optional[Callable[[asyncio.Event], AsyncGenerator[str, None]]] = None,
     resume_guard: Optional[dict] = None,
+    detach: bool = False,
 ) -> StreamingResponse:
     """Drive one run and stream it, recording how it ends.
 
@@ -672,7 +677,11 @@ def _streaming_run(
                     )
 
     return StreamingResponse(
-        _detached(_event_generator(), entry) if resume_guard is not None else _event_generator(),
+        (
+            _detached(_event_generator(), entry)
+            if resume_guard is not None or detach
+            else _event_generator()
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -694,7 +703,8 @@ def _detached(
 
     Une reprise suit une réponse déjà donnée : un client qui part (onglet
     fermé, page quittée, une autre décision ouverte) ne doit pas annuler le
-    run et perdre la décision. La connexion ne fait que relayer ; l'arrêt
+    run et perdre la décision. De même pour « Reprendre ici », qui a consommé
+    l'échec de l'original. La connexion ne fait que relayer ; l'arrêt
     volontaire passe par ``POST /{wid}/cancel``, qui annule aussi la tâche
     (``entry["task"]``) pour interrompre le nœud en cours.
     """
@@ -951,6 +961,7 @@ async def retry_from_failure(
         file_bytes=None,
         owner=owner,
         runner=lambda cancel: _retry_runner(owner, retry, cancel),
+        detach=True,
     )
 
 
