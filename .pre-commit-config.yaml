@@ -1,3 +1,6 @@
+# Deliberate harness counter-examples (python3 scripts/harness.py tests/harness/fixtures/bad).
+exclude: ^tests/harness/fixtures/
+
 repos:
   # -------------------------
   # Basic hygiene
@@ -41,6 +44,18 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies: []
+
+  # -------------------------
+  # Harness – strict rules as scripts (see AGENTS.md)
+  # -------------------------
+  - repo: local
+    hooks:
+      - id: harness
+        name: harness
+        entry: python3 scripts/harness.py
+        language: system
+        pass_filenames: false
+        types: [python]
 
   # -------------------------
   # Tests (optional but recommended)
