@@ -358,3 +358,52 @@ async def test_a_broken_alert_does_not_break_the_listeners(outbox, monkeypatch):
 
 def test_the_alert_clock_is_utc():
     assert wa._clock().utcoffset() == timedelta(0)
+
+
+# --- « Reprendre ici » -------------------------------------------------------------
+# Une reprise est un nouveau run (``replay_of``) qui finit par le même
+# ``notify_run_finished`` : réussie, elle n'alerte pas ; en échec, elle suit
+# la règle commune (une alerte par run, une par heure et par workflow).
+
+
+def _retry_of(run_id, workflow_id, *, status):
+    retry = run_main.start_run(
+        trigger="workflow",
+        owner_id=ALICE,
+        config={"workflow_id": workflow_id, "retry_from": "a"},
+        replay_of=run_id,
+    )
+    run_main.finish_run(
+        retry, status=status, error_message="x" if status == "error" else None
+    )
+    return retry
+
+
+async def test_a_successful_retry_does_not_alert_again(outbox):
+    wid = _workflow()
+    failed = _failed_run(wid)
+    await _finish(failed)
+    retry = _retry_of(failed, wid, status="success")
+    await _finish(retry, status="success")
+    assert len(outbox.mails) == 1
+    assert retry not in outbox.mails[0]["body"]
+
+
+async def test_a_failed_retry_alerts_once_as_its_own_run(outbox, clock):
+    wid = _workflow()
+    failed = _failed_run(wid)
+    await _finish(failed)
+    clock[0] += timedelta(hours=2)  # hors du délai par workflow
+    retry = _retry_of(failed, wid, status="error")
+    await _finish(retry)
+    await _finish(retry)
+    await _finish(failed)
+    assert [retry in m["body"] for m in outbox.mails] == [False, True]
+
+
+async def test_a_failed_retry_within_the_hour_is_grouped(outbox):
+    wid = _workflow()
+    failed = _failed_run(wid)
+    await _finish(failed)
+    await _finish(_retry_of(failed, wid, status="error"))
+    assert len(outbox.mails) == 1

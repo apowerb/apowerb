@@ -123,6 +123,11 @@ class RunStore(BaseModel):
             # Alerte d'échec (``workflow_alerts``) : réservée avant l'envoi,
             # puis son issue (sent, grouped, off, failed). Une seule par run.
             Column("failure_alert", String),
+            # Run de graphe en ``error`` : l'instantané scellé de ce qui était
+            # fait (sorties, routes), relu par « Reprendre ici », et le nœud
+            # en échec, qui reste lisible une fois l'instantané purgé.
+            Column("failure_state", String),
+            Column("failure_node", String),
         )
         # Dernière alerte d'échec par workflow et échecs regroupés depuis :
         # au plus une alerte par heure pour un workflow qui échoue en boucle.
@@ -176,6 +181,8 @@ class RunStore(BaseModel):
             "reminded_at": "VARCHAR",
             "end_notice": "VARCHAR",
             "failure_alert": "VARCHAR",
+            "failure_state": "VARCHAR",
+            "failure_node": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         # Deux réplicas qui démarrent ensemble : sur Postgres, le second

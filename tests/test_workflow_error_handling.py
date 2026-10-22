@@ -455,6 +455,37 @@ def test_a_handled_node_inside_a_try_body_does_not_trip_the_try():
     assert events[-1] == {"event": "done", "output": "ok"}
 
 
+def _snapshots(graph, env):
+    saved = []
+
+    async def _go():
+        async for _chunk in wg.run_graph(
+            graph,
+            payload={},
+            run_agent=env.run_agent,
+            run_tool=env.run_tool,
+            run_subworkflow=env.run_subworkflow,
+            cancel_event=asyncio.Event(),
+            on_fail=saved.append,
+        ):
+            pass
+
+    asyncio.run(_go())
+    return saved
+
+
+def test_a_handled_failure_is_never_the_node_to_retry_from():
+    # « Reprendre ici » repart du nœud en échec : jamais d'un nœud dont
+    # on_error a absorbé l'échec.
+    env = _Env(agents={"a1": _boom})
+    assert _snapshots(_graph([T, _agent("route"), OK, KO], ROUTED_EDGES), env) == []
+    after = {"id": "b", "type": "agent", "config": {"agent_id": "b1"}}
+    edges = [*ROUTED_EDGES[:2], {"source": "a", "target": "b", "route": "error"}]
+    env = _Env(agents={"a1": _boom, "b1": _boom})
+    saved = _snapshots(_graph([T, _agent("route"), OK, after], edges), env)
+    assert [s["failed_node"] for s in saved] == ["b"]
+
+
 # --- timeout_s ----------------------------------------------------------------------
 
 
