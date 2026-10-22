@@ -16,12 +16,19 @@ envoyé et applique les échéances.
 Une seule fois : chaque avis est réservé sur sa colonne d'``agent_runs``
 (``notified_at``, ``reminded_at``, ``end_notice``) par un ``UPDATE ... WHERE``
 qui ne réussit qu'une fois, entre deux passages comme entre réplicas, avant
-de partir. Un envoi en échec n'est donc pas retenté : au plus une fois,
-jamais en boucle.
+de partir. Un envoi en échec n'est pas retenté, jamais en boucle. Seule
+exception : un passage annulé en plein envoi (extinction) rend sa
+réservation, et l'avis repart au passage suivant — un mail déjà parti peut
+alors repartir une fois. La fin, elle, n'est plus rendue dès que les
+déclencheurs « End of a workflow » ont été appelés : aucun run déclenché
+n'est lancé deux fois.
 
-Ce que dit un message : la question, le nom du workflow, l'échéance et un
-lien vers la page Workflows, qui demande la connexion. Aucun jeton dans le
-lien, aucune autre donnée du run.
+Ce que dit un message : le nom du workflow, l'échéance et un lien vers la
+page Workflows, qui demande la connexion ; le mail porte aussi la question.
+La carte Teams ne porte rien qui vienne du run (la question est un gabarit
+rendu avec ses données, et le Markdown des cartes Adaptive n'a pas
+d'échappement documenté). Aucun jeton dans le lien, aucune autre donnée du
+run.
 """
 
 from __future__ import annotations
@@ -160,12 +167,15 @@ def _deadline(stamp: Optional[str]) -> Optional[str]:
     return moment.astimezone(timezone.utc).strftime(_DEADLINE_FORMAT)
 
 
-async def _send(to: str, subject: str, lines: list[str], link: str) -> None:
+async def _send(
+    to: str, subject: str, lines: list[str], link: str, *, card: list[str]
+) -> None:
     """Mail et Teams ; un canal en panne n'éteint pas l'autre.
 
-    ``lines`` sont du texte (la question vient du run) : échappées pour le
-    HTML du mail et pour le Markdown de la carte Teams, jamais injectées
-    telles quelles. Seul ``link`` reste un lien.
+    ``lines`` (le mail) peuvent venir du run : échappées pour le HTML,
+    jamais injectées telles quelles. ``card`` (Teams) ne porte que du texte
+    du module et le nom du workflow, échappés pour le Markdown. Seul
+    ``link`` reste un lien.
     """
     from apowerb.helpers.system_mailer import render_branded_email
 
@@ -181,9 +191,9 @@ async def _send(to: str, subject: str, lines: list[str], link: str) -> None:
         await _send_mail(to=to, subject=subject, html=page, text=text)
     except Exception:  # noqa: BLE001 - l'autre canal part quand même
         logger.exception("[decisions] mail non envoyé à %s (%s)", to, subject)
-    card = "\n".join([*(_markdown_text(line) for line in lines), "", link])
+    body = "\n".join([*(_markdown_text(line) for line in card), "", link])
     try:
-        await _send_teams(to=to, subject=_markdown_text(subject), body=card)
+        await _send_teams(to=to, subject=_markdown_text(subject), body=body)
     except Exception:  # noqa: BLE001
         logger.exception("[decisions] carte Teams non envoyée à %s (%s)", to, subject)
 
@@ -194,15 +204,20 @@ async def _ask(row: dict, *, reminder: bool) -> None:
     decision = json.loads(row.get("decision") or "{}")
     name = _workflow_name(row)
     subject = f"{'Rappel : décision' if reminder else 'Décision'} attendue — {name}"
+    deadline = _deadline(decision.get("expires_at"))
+    until = [f"Sans réponse le {deadline}, le run s'arrêtera."] if deadline else []
     lines = [
         f"Le workflow « {name} » attend ta décision :",
         decision.get("question") or "",
+        *until,
     ]
-    deadline = _deadline(decision.get("expires_at"))
-    if deadline:
-        lines.append(f"Sans réponse le {deadline}, le run s'arrêtera.")
+    card = [
+        f"Le workflow « {name} » attend ta décision.",
+        "Ouvre la page Workflows pour lire la question et répondre.",
+        *until,
+    ]
     link = f"{_app_url()}/workflows?decision={row['run_id']}"
-    await _send(row.get("assignee") or row["owner_id"], subject, lines, link)
+    await _send(row.get("assignee") or row["owner_id"], subject, lines, link, card=card)
 
 
 async def _tell_end(row: dict) -> None:
@@ -210,16 +225,13 @@ async def _tell_end(row: dict) -> None:
     word, sentence = _end_wording(row)
     subject, link = f"Décision {word} — {name}", f"{_app_url()}/workflows"
     owner = row["owner_id"]
-    await _send(owner, subject, [f"Workflow « {name} ».", sentence], link)
+    lines = [f"Workflow « {name} ».", sentence]
+    await _send(owner, subject, lines, link, card=lines)
     assignee = row.get("assignee")
     if assignee and assignee.lower() != owner.lower():
         # Elle avait été sollicitée : elle sait qu'elle n'a plus à répondre.
-        await _send(
-            assignee,
-            subject,
-            [f"Le workflow « {name} » n'attend plus ta décision.", sentence],
-            link,
-        )
+        lines = [f"Le workflow « {name} » n'attend plus ta décision.", sentence]
+        await _send(assignee, subject, lines, link, card=lines)
 
 
 def _end_wording(row: dict) -> tuple[str, str]:
@@ -234,11 +246,25 @@ def _end_wording(row: dict) -> tuple[str, str]:
 
 async def _announce_end(row: dict) -> None:
     """Avis de fin, puis la fin elle-même aux déclencheurs, quoi qu'il
-    arrive à l'avis (workflow introuvable, envoi en panne)."""
-    from apowerb.core import workflow_triggers
+    arrive à l'avis (workflow introuvable, envoi en panne).
 
+    Annulé pendant l'avis, il rend la réservation : rien n'est encore parti
+    aux déclencheurs, le passage suivant reprend tout. Annulé pendant
+    ``notify_run_finished``, il la garde : des runs déclenchés sont peut-être
+    déjà lancés, les relancer doublerait leurs effets.
+    """
+    from apowerb.core import run_main, workflow_triggers
+
+    t = run_main.run_store.run_table
     try:
         await _tell_end(row)
+    except asyncio.CancelledError:
+        _reserve(
+            row["run_id"],
+            t.c.end_notice == "sent",
+            end_notice=run_main.END_NOTICE_PENDING,
+        )
+        raise
     except Exception:  # noqa: BLE001 - les déclencheurs doivent voir la fin
         logger.exception("[decisions] avis de fin en échec (run_id=%s)", row["run_id"])
     await workflow_triggers.notify_run_finished(
@@ -334,12 +360,7 @@ async def tick(now: Optional[datetime] = None, *, run_id: Optional[str] = None) 
     for row in _rows(pending, run_id=run_id):
         if _reserve(row["run_id"], pending, end_notice="sent"):
             count += 1
-            await _sending(
-                _announce_end(row),
-                row,
-                t.c.end_notice == "sent",
-                end_notice=run_main.END_NOTICE_PENDING,
-            )
+            await _guarded(_announce_end(row), row)
     return count
 
 
