@@ -319,7 +319,8 @@ def test_l_effacement_de_la_memoire_efface_aussi_les_cas_de_l_appelant(bank):
     )
     app.dependency_overrides[agent_memory._memory_service] = lambda: NoMemory()
     app.dependency_overrides[agent_memory._case_bank] = lambda: bank
-    assert TestClient(app).delete(f"/api/agents/{AGENT}/memory").status_code == 204
+    response = TestClient(app).delete(f"/api/agents/{AGENT}/memory")
+    assert response.status_code == 204
     assert [
         c["task_summary"]
         for c in bank.search(

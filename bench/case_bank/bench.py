@@ -230,8 +230,8 @@ def _scripted_model():
 
     def parse(message: str) -> dict:
         number = re.search(r"n° (\S+)", message).group(1)
-        raw = re.search(r"montant de ([\d  ]+,\d{2}) (\S+)", message)
-        amount = float(raw.group(1).replace(" ", "").replace(" ", "").replace(",", "."))
+        raw = re.search(r"montant de ([\d ]+,\d{2}) (\S+)", message)
+        amount = float(raw.group(1).replace(" ", "").replace(",", "."))
         currency = "USD" if raw.group(2) in ("$", "USD") else "EUR"
         d = re.search(r"avant le (\d{2})/(\d{2})/(\d{4})", message)
         if d:
