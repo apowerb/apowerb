@@ -51,7 +51,8 @@ absorbée. ``timeout_s`` borne la durée d'un sous-workflow
 ``node_timeout`` suit ``on_error``. Limite : un outil synchrone en cours
 dans ce sous-workflow tourne dans un thread que l'annulation n'arrête pas ;
 il finit son appel (et ses écritures), seul son résultat est perdu. Une
-valeur ``on_error`` inconnue vaut ``fail`` (avertie à la validation).
+valeur ``on_error`` inconnue vaut ``fail`` (avertie à la validation), sauf
+sur un ``tool`` qui la refusait déjà.
 Posés sur un nœud qui n'en a pas, ces réglages sont ignorés, comme avant
 leur arrivée : un graphe enregistré s'exécute toujours.
 
@@ -1783,6 +1784,13 @@ def _validate_error_handling(n: Node) -> None:
     cfg = n.config
     mode = _on_error(n)
     raw = cfg.get("on_error")
+    if n.type == "tool" and raw is not None and raw not in _ON_ERROR:
+        # Déjà refusé avant la v1 : aucun outil enregistré n'en porte.
+        raise GraphError(
+            f"{n.id} : on_error inconnu {raw!r} (attendu : {', '.join(_ON_ERROR)})",
+            code="on_error_unknown",
+            params={"node": n.id, "value": str(raw)},
+        )
     if n.type in _ON_ERROR_TYPES and raw is not None and raw != mode:
         logger.warning("%s : on_error %r ignoré, vaut fail", n.id, raw)
     if (
