@@ -60,6 +60,7 @@ class RunStore(BaseModel):
     metadata: Any = None
     run_table: Any = None
     trace_table: Any = None
+    failure_alert_table: Any = None
 
     def __init__(self, **data: Any):
         super().__init__(**data)
@@ -132,6 +133,9 @@ class RunStore(BaseModel):
             # ``failure_node``. ``error_message`` garde le texte, pour les
             # lecteurs existants.
             Column("error_info", String),
+            # Alerte d'échec (``workflow_alerts``) : réservée avant l'envoi,
+            # puis son issue (sent, grouped, off, failed). Une seule par run.
+            Column("failure_alert", String),
             # Run de graphe en ``error`` : l'instantané scellé de ce qui était
             # fait (sorties, routes), relu par « Reprendre ici », et le nœud
             # en échec, qui reste lisible une fois l'instantané purgé.
@@ -149,6 +153,16 @@ class RunStore(BaseModel):
             Column("events", String),
             Column("truncated", Integer, default=0),
             Column("updated_at", String),
+        )
+        # Dernière alerte d'échec par workflow et échecs regroupés depuis :
+        # au plus une alerte par heure pour un workflow qui échoue en boucle.
+        self.failure_alert_table = Table(
+            "workflow_failure_alerts",
+            self.metadata,
+            Column("workflow_id", String, primary_key=True),
+            Column("owner_id", String, nullable=False),
+            Column("last_sent_at", String, nullable=False),
+            Column("grouped", Integer, nullable=False, default=0),
         )
 
     def create_table(self):
@@ -193,6 +207,7 @@ class RunStore(BaseModel):
             "end_notice": "VARCHAR",
             "workflow_id": "VARCHAR",
             "error_info": "VARCHAR",
+            "failure_alert": "VARCHAR",
             "failure_state": "VARCHAR",
             "failure_node": "VARCHAR",
         }

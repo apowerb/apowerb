@@ -610,3 +610,94 @@ def test_request_goes_to_the_validated_ip_with_host_and_sni(monkeypatch, no_real
         "host_header": "api.example.com:8443",
         "sni": "api.example.com",
     }
+
+
+# --- Statut 4xx/5xx : un échec qui suit on_error -------------------------------
+
+
+def _status_handler(code):
+    def handler(request):
+        return httpx.Response(code, content=b'{"error": "nope"}')
+
+    return handler
+
+
+def test_error_status_fails_the_node_when_not_accepted(monkeypatch):
+    _patch_transport(monkeypatch, _status_handler(404))
+    nodes, edges = _http_graph(
+        {"method": "GET", "url": "https://api.example.com/x", "accept_error_status": False}
+    )
+    events = _run(nodes, edges)
+    err = _node_error(events)
+    assert err["code"] == "http_error_status"
+    assert err["params"] == {"node": "h", "status": "404"}
+    assert events[-1]["event"] == "error"
+
+
+def test_missing_accept_error_status_keeps_the_old_lenient_behaviour(monkeypatch):
+    # Migration : un nœud enregistré avant ce réglage n'a pas le champ.
+    _patch_transport(monkeypatch, _status_handler(500))
+    nodes, edges = _http_graph({"method": "GET", "url": "https://api.example.com/x"})
+    events = _run(nodes, edges)
+    assert events[-1]["event"] == "done"
+    assert events[-1]["output"]["status"] == 500
+
+
+def test_error_status_with_continue_keeps_the_response(monkeypatch):
+    _patch_transport(monkeypatch, _status_handler(503))
+    nodes, edges = _http_graph(
+        {
+            "method": "GET",
+            "url": "https://api.example.com/x",
+            "accept_error_status": False,
+            "on_error": "continue",
+        }
+    )
+    events = _run(nodes, edges)
+    assert events[-1]["event"] == "done"
+    assert events[-1]["output"]["status"] == 503
+    assert events[-1]["output"]["body"] == {"error": "nope"}
+    done = next(e for e in events if e["event"] == "node_complete" and e["node_id"] == "h")
+    assert done["handled_error"]["code"] == "http_error_status"
+
+
+def test_error_status_with_route_takes_the_error_output(monkeypatch):
+    _patch_transport(monkeypatch, _status_handler(422))
+    nodes = [
+        T,
+        {
+            "id": "h",
+            "type": "http",
+            "config": {
+                "method": "GET",
+                "url": "https://api.example.com/x",
+                "accept_error_status": False,
+                "on_error": "route",
+            },
+        },
+        {"id": "ok", "type": "output", "config": {"value": "ok"}},
+        {"id": "ko", "type": "output", "config": {"value": "{{h.params.status}}"}},
+    ]
+    edges = [
+        {"source": "t", "target": "h"},
+        {"source": "h", "target": "ok"},
+        {"source": "h", "target": "ko", "route": "error"},
+    ]
+    events = _run(nodes, edges)
+    assert events[-1] == {"event": "done", "output": "422"}
+
+
+def test_a_non_boolean_accept_error_status_is_ignored_with_a_warning(
+    caplog, monkeypatch
+):
+    # Graphe enregistré : on exécute avec le défaut (accepter) plutôt que refuser.
+    _patch_transport(monkeypatch, _status_handler(500))
+    nodes, edges = _http_graph(
+        {"method": "GET", "url": "https://api.example.com/x", "accept_error_status": 0}
+    )
+    with caplog.at_level("WARNING"):
+        wg.validate_graph(
+            wg.WorkflowGraph.model_validate({"version": 1, "nodes": nodes, "edges": edges})
+        )
+    assert "accept_error_status" in caplog.text
+    assert _run(nodes, edges)[-1]["event"] == "done"

@@ -7,6 +7,7 @@ nouveau run (amont ``replayed``, jamais réexécuté) et les refus.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -72,9 +73,16 @@ def api(monkeypatch, tmp_path):
     # Compteur d'appels par agent ; ``fail`` : les agents qui lèvent.
     calls: dict[str, list] = {}
     fail = {"fautif"}
+    # ``block[agent_id] = (entré, porte)`` : l'agent signale son entrée puis
+    # attend la porte (pour arrêter un run au milieu d'un nœud).
+    block: dict[str, tuple] = {}
 
     async def _agent(agent_id, message):
         calls.setdefault(agent_id, []).append(message)
+        if agent_id in block:
+            entered, gate = block[agent_id]
+            entered.set()
+            await gate.wait()
         if agent_id in fail:
             raise RuntimeError(f"{agent_id} en panne")
         return f"{agent_id}-ok"
@@ -88,7 +96,9 @@ def api(monkeypatch, tmp_path):
     from apowerb.routers import workflow_defs, workflows
 
     workflows._runs.clear()
-    return SimpleNamespace(defs=workflow_defs, runs=workflows, calls=calls, fail=fail)
+    return SimpleNamespace(
+        defs=workflow_defs, runs=workflows, calls=calls, fail=fail, block=block
+    )
 
 
 def _user(email=OWNER):
@@ -127,6 +137,32 @@ def _row(run_id):
     t = run_main.run_store.run_table
     with run_main.run_store.engine.begin() as conn:
         return conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()._asdict()
+
+
+def _old(delta):
+    return (datetime.now() - delta - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+async def _settled(api):
+    """Attend les reprises détachées encore en cours."""
+    await asyncio.gather(*list(api.runs._detached_runs), return_exceptions=True)
+
+
+async def _blocked_retry(api, run_id):
+    """Une reprise arrêtée dans le nœud en échec ; rend (flux, run de reprise, porte)."""
+    entered, gate = asyncio.Event(), asyncio.Event()
+    api.block["fautif"] = (entered, gate)
+    api.fail.clear()
+    stream = (await _retry(api, run_id)).body_iterator
+    first = await stream.__anext__()
+    first = first.decode() if isinstance(first, bytes) else first
+    retry_id = json.loads(first[len("data: "):])["wid"]
+    await asyncio.wait_for(entered.wait(), 5)
+    return stream, retry_id, gate
+
+
+async def _rest(stream):
+    return [c async for c in stream]
 
 
 def _set(run_id, **values):
@@ -438,6 +474,203 @@ async def test_a_run_without_state_is_refused(api):
     _set(run_id, failure_state=None, failure_node=None)
     refused = await _refused(api, run_id)
     assert refused.status_code == 409 and refused.detail["code"] == "retry_unavailable"
+
+
+# --- Une reprise qui n'aboutit pas rend l'échec à l'original ------------------
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_resumption_mid_node_gives_the_failure_back(api):
+    _, events = await _failed(api)
+    original = events[0]["wid"]
+    stream, retry_id, gate = await _blocked_retry(api, original)
+    await api.runs.cancel_workflow(retry_id, current_user=_user())
+    await _rest(stream)
+    await _settled(api)
+    assert run_main.get_run(retry_id, owner_id=OWNER)["status"] == "cancelled"
+    assert _row(retry_id)["failure_state"] is None
+    assert run_main.get_run(original, owner_id=OWNER)["retry_available"] is True
+    # La sonde de la revue : on peut reprendre encore, sans relancer l'amont.
+    del api.block["fautif"]
+    again = await _drain(await _retry(api, original))
+    assert again[-1]["event"] == "done"
+    assert len(api.calls["amont"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_resumption_between_nodes_gives_the_failure_back(api):
+    _, events = await _failed(api)
+    original = events[0]["wid"]
+    stream, retry_id, gate = await _blocked_retry(api, original)
+    # Seul le signal : le nœud finit, l'arrêt est vu avant le suivant.
+    api.runs._runs[retry_id]["cancel_event"].set()
+    gate.set()
+    rest = await _rest(stream)
+    await _settled(api)
+    assert b'"cancelled"' in b"".join(c if isinstance(c, bytes) else c.encode() for c in rest)
+    assert run_main.get_run(retry_id, owner_id=OWNER)["status"] == "cancelled"
+    assert run_main.get_run(original, owner_id=OWNER)["retry_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_client_leaving_does_not_stop_a_resumption(api):
+    _, events = await _failed(api)
+    original = events[0]["wid"]
+    stream, retry_id, gate = await _blocked_retry(api, original)
+    await stream.aclose()
+    gate.set()
+    await _settled(api)
+    assert run_main.get_run(retry_id, owner_id=OWNER)["status"] == "success"
+    assert run_main.get_run(original, owner_id=OWNER)["retry_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_successful_resumption_does_not_give_the_failure_back(api):
+    _, events = await _failed(api)
+    api.fail.clear()
+    await _drain(await _retry(api, events[0]["wid"]))
+    refused = await _refused(api, events[0]["wid"])
+    assert refused.detail["code"] == "retry_already_started"
+
+
+@pytest.mark.asyncio
+async def test_a_resumption_cut_off_gives_the_failure_back_and_keeps_no_stale_state(api):
+    _, events = await _failed(api)
+    original = events[0]["wid"]
+    retry = run_main.prepare_retry(original, owner_id=OWNER)
+    child = retry["run_id"]
+    # Tant qu'elle tourne, la reprise porte la copie mais ne se reprend pas.
+    assert _row(child)["failure_state"] is not None
+    assert run_main.get_run(child, owner_id=OWNER)["retry_available"] is False
+    _set(child, created_at=_old(run_main.RUN_STALE_AFTER))
+    assert run_main.get_run(child, owner_id=OWNER)["status"] == "error"
+    assert _row(child)["failure_state"] is None
+    assert run_main.get_run(original, owner_id=OWNER)["retry_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_resumption_that_cannot_start_stays_resumable(api, monkeypatch):
+    _, events = await _failed(api)
+
+    def _down(owner, plan):
+        raise RuntimeError("plan indisponible")
+
+    monkeypatch.setattr(workflow_runtime, "bindings_for", _down)
+    out = await _drain(await _retry(api, events[0]["wid"]))
+    await _settled(api)
+    assert out[-1]["event"] == "error"
+    assert out[-1]["failed_node"] == "a2" and out[-1]["retryable"] is True
+    assert run_main.get_run(out[0]["wid"], owner_id=OWNER)["retry_available"] is True
+
+
+# --- Concurrence et refus ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_loser_of_two_simultaneous_resumptions_hears_already_started(api, monkeypatch):
+    _, events = await _failed(api)
+    original = events[0]["wid"]
+    real = workflow_main.check_workflow
+    rival: dict = {}
+
+    def _check(graph, **kwargs):
+        # L'autre reprise passe entre la lecture et la consommation.
+        if not rival:
+            rival["retry"] = None
+            rival["retry"] = run_main.prepare_retry(original, owner_id=OWNER)
+        return real(graph, **kwargs)
+
+    monkeypatch.setattr(workflow_main, "check_workflow", _check)
+    with pytest.raises(HTTPException) as caught:
+        run_main.prepare_retry(original, owner_id=OWNER)
+    assert caught.value.detail["code"] == "retry_already_started"
+    assert caught.value.detail["params"]["run_id"] == rival["retry"]["run_id"]
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        children = conn.execute(t.select().where(t.c.replay_of == original)).fetchall()
+    assert len(children) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failure_taken_before_its_new_run_exists_says_already_started(api):
+    _, events = await _failed(api)
+    run_id = events[0]["wid"]
+    _set(run_id, failure_state=None)
+    refused = await _refused(api, run_id)
+    assert refused.detail["code"] == "retry_already_started"
+
+
+@pytest.mark.asyncio
+async def test_a_test_up_to_here_bound_deleted_since_the_failure_is_refused(api):
+    wf, events = await _failed(api, until="o")
+    graph = _graph()
+    graph["nodes"] = [n for n in graph["nodes"] if n["id"] != "o"]
+    graph["edges"] = [e for e in graph["edges"] if e["target"] != "o"]
+    workflow_main.update_workflow(
+        wf["workflow_id"], owner_id=OWNER, expected_version=wf["version"], graph=graph
+    )
+    refused = await _refused(api, events[0]["wid"])
+    assert refused.detail["code"] == "retry_graph_changed"
+    assert refused.detail["params"]["nodes"] == ["o"]
+
+
+# --- Runs déclenchés et rejeux ------------------------------------------------
+
+
+async def _triggered(api):
+    wf = workflow_main.create_workflow(owner_id=OWNER, name="Devis", graph=_graph())
+    wf = workflow_main.update_workflow(
+        wf["workflow_id"], owner_id=OWNER, expected_version=wf["version"], status="published"
+    )
+    run_id, task = await wt.launch_triggered_run(
+        workflow_id=wf["workflow_id"], owner_id=OWNER, kind="webhook", detail={}, payload={"x": "devis"}
+    )
+    await task
+    return wf, run_id
+
+
+@pytest.mark.asyncio
+async def test_a_failed_triggered_run_can_be_resumed(api):
+    _, run_id = await _triggered(api)
+    assert run_main.get_run(run_id, owner_id=OWNER)["retry_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_triggered_run_is_resumed_on_its_published_version_not_a_draft(api):
+    wf, run_id = await _triggered(api)
+    workflow_main.update_workflow(
+        wf["workflow_id"],
+        owner_id=OWNER,
+        expected_version=wf["version"],
+        graph=_graph("brouillon:{{a1}}"),
+        status="draft",
+    )
+    api.fail.clear()
+    resumed = await _drain(await _retry(api, run_id))
+    assert resumed[-1]["event"] == "done"
+    assert api.calls["fautif"][-1] == "b:amont-ok"
+    run = run_main.get_run(resumed[0]["wid"], owner_id=OWNER)
+    assert run["config"]["version"] == wf["version"]
+
+
+@pytest.mark.asyncio
+async def test_a_triggered_run_is_resumed_on_a_fix_published_since(api):
+    wf, run_id = await _triggered(api)
+    fixed = workflow_main.update_workflow(
+        wf["workflow_id"], owner_id=OWNER, expected_version=wf["version"], graph=_graph("corrigé:{{a1}}")
+    )
+    api.fail.clear()
+    resumed = await _drain(await _retry(api, run_id))
+    assert api.calls["fautif"][-1] == "corrigé:amont-ok"
+    assert run_main.get_run(resumed[0]["wid"], owner_id=OWNER)["config"]["version"] == fixed["version"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_replay_can_be_resumed(api):
+    _, events = await _failed(api)
+    out = await _drain(await api.runs.replay_run(events[0]["wid"], current_user=_user()))
+    assert out[-1]["event"] == "error" and out[-1]["retryable"] is True
+    assert run_main.get_run(out[0]["wid"], owner_id=OWNER)["retry_available"] is True
 
 
 # --- Moteur : la sauvegarde ne casse jamais l'erreur ------------------------

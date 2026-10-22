@@ -39,6 +39,23 @@ Types de nœuds :
   nœuds faits sans les réexécuter (``replayed``). Refusé dans le corps d'un
   ``loop``/``try`` et dans un sous-workflow (``approval_nested``).
 
+Gestion d'erreur par nœud (``on_error``, sur les nœuds qui peuvent
+échouer : ``_ON_ERROR_TYPES``) : ``fail`` (défaut) arrête le run ;
+``continue`` laisse le flux avancer, l'erreur restant visible dans la trace
+(``handled_error`` du ``node_complete``) ; ``route`` ajoute une sortie
+``error`` qui porte ``{code, detail, params, node}`` comme celle d'un
+``try``, et n'arrête jamais le run. Sur un ``tool``, ``continue`` garde son
+sens d'avant : seule l'erreur que l'outil signale dans son résultat est
+absorbée. ``timeout_s`` borne la durée d'un sous-workflow
+(``_TIMEOUT_TYPES``) : au-delà, son run interne est annulé et l'erreur
+``node_timeout`` suit ``on_error``. Limite : un outil synchrone en cours
+dans ce sous-workflow tourne dans un thread que l'annulation n'arrête pas ;
+il finit son appel (et ses écritures), seul son résultat est perdu. Une
+valeur ``on_error`` inconnue vaut ``fail`` (avertie à la validation), sauf
+sur un ``tool`` qui la refusait déjà.
+Posés sur un nœud qui n'en a pas, ces réglages sont ignorés, comme avant
+leur arrivée : un graphe enregistré s'exécute toujours.
+
 « Reprendre ici » s'appuie sur le même rejeu : un run qui échoue sur un nœud
 de premier niveau confie à ``on_fail`` l'instantané de ce qui était fait, et
 un nouveau run repart avec ``resume=`` sans réexécuter l'amont. Un ``loop``,
@@ -78,6 +95,7 @@ import json
 import re
 import socket
 import time
+from contextlib import aclosing
 from datetime import date, datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -346,6 +364,14 @@ class WorkflowTestCase(BaseModel):
     expect: TestExpectation
 
 
+class WorkflowSettings(BaseModel):
+    """Réglages du workflow, hors nœuds. ``None`` = valeur par défaut."""
+
+    # « Me prévenir en cas d'échec » (``workflow_alerts``) : par défaut, oui
+    # sur un workflow publié, non sur un brouillon.
+    notify_on_failure: Optional[bool] = None
+
+
 class WorkflowGraph(BaseModel):
     version: Literal[1] = 1
     nodes: list[Node] = Field(default_factory=list)
@@ -353,6 +379,7 @@ class WorkflowGraph(BaseModel):
     # None (et non []) : avec exclude_none, un graphe sans tests reste stocké
     # à l'identique.
     tests: Optional[list[WorkflowTestCase]] = None
+    settings: Optional[WorkflowSettings] = None
 
     @model_validator(mode="after")
     def _unique_test_ids(self):
@@ -506,7 +533,39 @@ def _rule_subject(rule: dict, scope: dict, node_id: str, default: Any) -> Any:
     return render(field, scope, node_id)
 
 
-_ON_ERROR = ("fail", "continue")
+_ON_ERROR = ("fail", "continue", "route")
+# Nœuds dont l'échec peut être géré (``on_error``) : ceux qui appellent un
+# agent, un outil, le réseau, la base ou un autre workflow. Un classifieur
+# n'a pas de ``continue`` : sans route, il ne mène nulle part.
+_ON_ERROR_TYPES = {
+    "agent",
+    "tool",
+    "extract",
+    "classifier",
+    "rag",
+    "http",
+    "subworkflow",
+    "notification",
+    "document",
+    "db_write",
+}
+_ERROR_ROUTE = "error"
+# Route interne des arêtes de succès d'un nœud ``on_error: route`` : ADK
+# déclenche toujours une arête sans route, l'échec partirait aussi par là.
+# Jamais stockée dans le graphe ni émise.
+_SUCCESS_ROUTE = "__success__"
+# Ce qu'un « Reprendre ici » reprend de l'instantané d'échec pour rejouer
+# l'amont ; ``handled_errors`` garde un échec absorbé visible au rejeu.
+RESUME_KEYS = ("outputs", "routes", "artifacts", "handled_errors")
+# Sortie d'un échec géré (``route``, ou ``continue`` sans résultat partiel),
+# la même que la route ``error`` d'un ``try``.
+_ERROR_OUTPUT_KEYS = {"code", "detail", "params", "node"}
+# ``timeout_s`` d'un nœud ; ``http`` garde le sien (borne et code propres).
+# Seulement là où l'annulation arrête vraiment le travail : un agent tourne
+# derrière un appel HTTP à ADK (le serveur continue sans le client), un outil
+# synchrone dans un thread qu'on ne peut pas interrompre.
+_TIMEOUT_TYPES = {"subworkflow"}
+MIN_NODE_TIMEOUT, MAX_NODE_TIMEOUT = 1, 3600
 # Ce qu'un nœud agent ou tool promet de rendre. « any » (ou absent) garde le
 # comportement d'avant : la réponse passe telle quelle, texte ou JSON.
 _OUTPUT_TYPES = ("any", "text", "json")
@@ -585,7 +644,38 @@ def _declared_routes(node: Node) -> set[str]:
     routes = {r.get("route") for r in cfg.get("routes") or [] if r.get("route")}
     if node.type == "classifier" and cfg.get("engine") == "jev":
         routes.add(_UNCERTAIN)
+    if _routes_on_error(node):
+        routes.add(_ERROR_ROUTE)
     return routes
+
+
+def _on_error(node: Node) -> str:
+    """Mode effectif : ``null`` ou une valeur que ce type n'a pas valent
+    ``fail``, comme dans le Studio ; un graphe enregistré reste exécutable."""
+    mode = node.config.get("on_error") or "fail"
+    if (
+        node.type not in _ON_ERROR_TYPES
+        or mode not in _ON_ERROR
+        or (node.type == "classifier" and mode == "continue")
+    ):
+        return "fail"
+    return mode
+
+
+def _routes_on_error(node: Node) -> bool:
+    """Le nœud a-t-il une sortie ``error`` (``on_error: route``) ?"""
+    return node.type in _ON_ERROR_TYPES and _on_error(node) == "route"
+
+
+def _error_output(exc: BaseException, node_id: Optional[str]) -> dict:
+    """Ce qu'un échec rend à la suite du flux : jamais l'exception brute."""
+    fields = error_fields(exc)
+    return {
+        "code": fields.get("code"),
+        "detail": fields.get("detail"),
+        "params": fields.get("params") or {},
+        "node": getattr(exc, "_apowerb_inner_node", None) or node_id,
+    }
 
 
 def _decision_choices(node: Node) -> list[dict]:
@@ -1202,7 +1292,11 @@ def _output_form(node: Node, graph: WorkflowGraph) -> tuple[str, Optional[set[st
         fields = node.config.get("fields") or []
         return _KNOWN_DICT, {f.get(name) for f in fields if isinstance(f, dict)}
     if node.type in _FIXED_OUTPUT_KEYS:
-        return _KNOWN_DICT, _FIXED_OUTPUT_KEYS[node.type]
+        keys = _FIXED_OUTPUT_KEYS[node.type]
+        if node.type in _ON_ERROR_TYPES and _on_error(node) != "fail":
+            # Un échec géré rend sa description à la place de la sortie.
+            keys = keys | _ERROR_OUTPUT_KEYS
+        return _KNOWN_DICT, keys
     return _UNKNOWN, None
 
 
@@ -1535,11 +1629,7 @@ def validate_node(
         _validate_db_write(n)
     if n.type == "tool" and not cfg.get("tool"):
         raise GraphError(f"{n.id} : outil manquant")
-    if n.type == "tool" and cfg.get("on_error", "fail") not in _ON_ERROR:
-        raise GraphError(
-            f"{n.id} : on_error inconnu {cfg.get('on_error')!r} "
-            f"(attendu : {', '.join(_ON_ERROR)})"
-        )
+    _validate_error_handling(n)
     if n.type == "router" and not cfg.get("rules"):
         raise GraphError(f"{n.id} : aucune règle de routage")
     if n.type == "classifier" and len(_declared_routes(n)) < 2:
@@ -1634,6 +1724,13 @@ def validate_node(
                 f"{n.id} : timeout_s doit être un entier de {MIN_HTTP_TIMEOUT} à "
                 f"{MAX_HTTP_TIMEOUT}"
             )
+        if not isinstance(cfg.get("accept_error_status", True), bool):
+            # Ignoré (accepté, comme avant ce réglage) plutôt que refusé.
+            logger.warning(
+                "%s : accept_error_status %r ignoré (true ou false attendu)",
+                n.id,
+                cfg["accept_error_status"],
+            )
         if cfg.get("auth") is not None:
             # Pas de stockage de secret encore branché pour ce nœud : voir le
             # docstring du module et le rapport du lot. auth doit rester null
@@ -1674,6 +1771,55 @@ def validate_node(
             if not cfg.get("subject"):
                 raise GraphError(f"{n.id} : subject manquant")
 
+
+
+def _validate_error_handling(n: Node) -> None:
+    """``on_error`` et ``timeout_s`` d'un nœud, mêmes règles que le Studio.
+
+    Sur un type qui n'en a pas, ils sont ignorés et non refusés : main ne les
+    vérifiait pas, et un graphe enregistré doit continuer de s'exécuter. Une
+    valeur ``on_error`` inconnue aussi : elle vaut ``fail``, avec un
+    avertissement. Le Studio les signale à l'édition.
+    """
+    cfg = n.config
+    mode = _on_error(n)
+    raw = cfg.get("on_error")
+    if n.type == "tool" and raw is not None and raw not in _ON_ERROR:
+        # Déjà refusé avant la v1 : aucun outil enregistré n'en porte.
+        raise GraphError(
+            f"{n.id} : on_error inconnu {raw!r} (attendu : {', '.join(_ON_ERROR)})",
+            code="on_error_unknown",
+            params={"node": n.id, "value": str(raw)},
+        )
+    if n.type in _ON_ERROR_TYPES and raw is not None and raw != mode:
+        logger.warning("%s : on_error %r ignoré, vaut fail", n.id, raw)
+    if (
+        mode == "route"
+        and n.type == "classifier"
+        and any(r.get("route") == _ERROR_ROUTE for r in cfg.get("routes") or [])
+    ):
+        raise GraphError(
+            f"{n.id} : la route {_ERROR_ROUTE!r} est réservée à la sortie d'erreur",
+            code="on_error_route_conflict",
+            params={"node": n.id},
+        )
+    if cfg.get("timeout_s") is not None and n.type in _TIMEOUT_TYPES:
+        value = cfg["timeout_s"]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not MIN_NODE_TIMEOUT <= value <= MAX_NODE_TIMEOUT
+        ):
+            raise GraphError(
+                f"{n.id} : timeout_s doit être un entier de {MIN_NODE_TIMEOUT} "
+                f"à {MAX_NODE_TIMEOUT} secondes",
+                code="node_timeout_invalid",
+                params={
+                    "node": n.id,
+                    "min": str(MIN_NODE_TIMEOUT),
+                    "max": str(MAX_NODE_TIMEOUT),
+                },
+            )
 
 
 def _validate_approval(n: Node) -> None:
@@ -1862,12 +2008,36 @@ def validate_graph(
                 raise GraphError(
                     f"arête {e.source} -> {e.target} : route {e.route!r} non déclarée par {e.source}"
                 )
+        elif _routes_on_error(src):
+            # Succès sans route, échec par la route « error ».
+            if e.route not in (None, _ERROR_ROUTE):
+                raise GraphError(
+                    f"arête {e.source} -> {e.target} : {e.source} n'a que la "
+                    f"sortie {_ERROR_ROUTE!r} en plus de son succès",
+                    code="on_error_route_unknown",
+                    params={"node": e.source, "route": str(e.route)},
+                )
+        elif e.route == _ERROR_ROUTE and src.type in _ON_ERROR_TYPES:
+            raise GraphError(
+                f"arête {e.source} -> {e.target} : une sortie d'erreur demande "
+                "on_error: route",
+                code="on_error_route_unexpected",
+                params={"node": e.source},
+            )
         elif e.route is not None:
             raise GraphError(
                 f"arête {e.source} -> {e.target} : route sur un nœud qui ne route pas"
             )
 
     for n in graph.nodes:
+        if _routes_on_error(n) and not any(
+            e.source == n.id and e.route == _ERROR_ROUTE for e in graph.edges
+        ):
+            raise GraphError(
+                f"{n.id} : branchez la sortie {_ERROR_ROUTE!r} (on_error: route)",
+                code="on_error_route_missing",
+                params={"node": n.id},
+            )
         if (
             n.type == "approval"
             and n.config.get("mode", "choices") == "both"
@@ -2077,6 +2247,11 @@ class _Compiler:
         resume = resume or {}
         self._replay_outputs: dict[str, Any] = dict(resume.get("outputs") or {})
         self._replay_routes: dict[str, str] = dict(resume.get("routes") or {})
+        self._replay_handled: dict[str, dict] = dict(
+            resume.get("handled_errors") or {}
+        )
+        # Échecs absorbés par on_error, gardés dans les instantanés.
+        self.handled_errors: dict[str, dict] = {}
         self.answer: Optional[dict] = resume.get("answer")
         # Prévenu quand la réponse est prise, avant tout nœud en aval : à
         # partir de là, une coupure ne doit plus remettre le run en attente.
@@ -2296,22 +2471,25 @@ class _Compiler:
             t0 = time.monotonic()
             self._trace.pop(node.id, None)
             try:
-                result, route = await body(node_input)
+                result, route = await self._timed(node, body, node_input)
                 if node.type in ("agent", "tool"):
                     self._check_contract(node, result)
             except _AwaitingDecision:
                 raise
             except Exception as exc:
-                self.failed_node = node.id
-                self.emit(
-                    {
-                        "event": "node_error",
-                        "node_id": node.id,
-                        **error_fields(exc),
-                        **self._trace.pop(node.id, {}),
-                    }
-                )
-                raise
+                handled = self._handled(node, exc)
+                if handled is None:
+                    self.failed_node = node.id
+                    self.emit(
+                        {
+                            "event": "node_error",
+                            "node_id": node.id,
+                            **error_fields(exc),
+                            **self._trace.pop(node.id, {}),
+                        }
+                    )
+                    raise
+                result, route = handled
             trace = self._trace.pop(node.id, {})
             size = len(json.dumps(result, ensure_ascii=False, default=str).encode())
             if size > MAX_NODE_OUTPUT_BYTES:
@@ -2351,6 +2529,57 @@ class _Compiler:
 
         return FunctionNode(func=_fn, name=_adk_name(node.id))
 
+    async def _timed(self, node: Node, body, node_input: Any) -> tuple[Any, Any]:
+        """``body`` borné par ``timeout_s`` : au-delà, sa tâche est annulée."""
+        seconds = node.config.get("timeout_s") if node.type in _TIMEOUT_TYPES else None
+        if seconds is None:
+            return await body(node_input)
+        deadline = asyncio.timeout(seconds)
+        try:
+            async with deadline:
+                return await body(node_input)
+        except TimeoutError:
+            if not deadline.expired():
+                raise  # levée par le nœud lui-même, pas par son délai
+            raise GraphError(
+                f"{node.id} : délai dépassé ({seconds} s)",
+                code="node_timeout",
+                params={"node": node.id, "seconds": str(seconds)},
+            ) from None
+
+    def _handled(self, node: Node, exc: Exception) -> Optional[tuple[Any, Any]]:
+        """``(sortie, route)`` d'un échec que ``on_error`` absorbe, sinon ``None``.
+
+        L'annulation n'est jamais un échec du nœud. L'erreur absorbée reste
+        dans la trace (``handled_error``) : sans elle, le panneau Test
+        montrerait un nœud réussi.
+        """
+        mode = _on_error(node)
+        if (
+            mode == "fail"
+            or node.type not in _ON_ERROR_TYPES
+            or isinstance(exc, WorkflowCancelled)
+        ):
+            return None
+        if (
+            node.type == "tool"
+            and mode == "continue"
+            and not getattr(exc, "_apowerb_reported", False)
+        ):
+            # Sens d'avant : un outil qui lève ou rate son contrat arrête le
+            # run ; seule l'erreur qu'il signale lui-même est absorbée.
+            return None
+        error = _error_output(exc, node.id)
+        ref = error_fields(exc).get("ref")
+        handled = {**error, "on_error": mode, **({"ref": ref} if ref else {})}
+        self._trace.setdefault(node.id, {})["handled_error"] = handled
+        self.handled_errors[node.id] = handled
+        if mode == "route":
+            return error, _ERROR_ROUTE
+        # ``continue`` : un résultat partiel (réponse http, résultat d'outil)
+        # vaut mieux que la description de l'erreur.
+        return getattr(exc, "_apowerb_partial", error), None
+
     def _replay(self, node: Node) -> Any:
         """Un nœud fait avant la pause : ses événements, pas son exécution."""
         result = self._replay_outputs[node.id]
@@ -2358,6 +2587,10 @@ class _Compiler:
         base = {"node_id": node.id, "replayed": True}
         self.emit({"event": "node_start", "type": node.type, **base})
         self.outputs[node.id] = result
+        handled = self._replay_handled.get(node.id)
+        if handled is not None:
+            self.handled_errors[node.id] = handled
+            base["handled_error"] = handled
         self.emit({"event": "node_complete", "output": result, "duration_ms": 0, **base})
         if route is not None:
             self.routes[node.id] = route
@@ -2373,6 +2606,8 @@ class _Compiler:
             # (« multiple terminal nodes produced output », ADK 2.9) :
             # un fan-out sans merge, ou plusieurs nœuds output.
             return None
+        if route is None and _routes_on_error(node) and not _is_routed(node):
+            route = _SUCCESS_ROUTE
         return result if route is None else Event(output=result, route=route)
 
     def _body(self, node: Node):
@@ -2434,21 +2669,26 @@ class _Compiler:
                     self._artifacts[node.id] = tool_artifacts(
                         [{"content": {"parts": [call]}}]
                     )
-                if reported is not None and cfg.get("on_error", "fail") != "fail":
-                    # Le flux continue, mais le panneau doit le dire : sinon
-                    # l'erreur passe pour un résultat ordinaire.
-                    self._trace.setdefault(node.id, {})["reported_error"] = reported
-                if cfg.get("on_error", "fail") == "fail":
-                    if reported is not None:
-                        raise GraphError(
-                            f"{node.id} : l'outil a signalé une erreur : {reported}",
-                            code="tool_reported_error",
-                            params={
-                                "node": node.id,
-                                "tool": cfg["tool"],
-                                "message": reported,
-                            },
-                        )
+                if reported is not None:
+                    if _on_error(node) == "continue":
+                        # Comme avant : le résultat passé en aval tient son
+                        # contrat, sinon le run s'arrête (output_type_mismatch).
+                        self._check_contract(node, result)
+                        # Le message tel que l'outil l'a écrit, à côté du code.
+                        self._trace.setdefault(node.id, {})["reported_error"] = reported
+                    exc = GraphError(
+                        f"{node.id} : l'outil a signalé une erreur : {reported}",
+                        code="tool_reported_error",
+                        params={
+                            "node": node.id,
+                            "tool": cfg["tool"],
+                            "message": reported,
+                        },
+                    )
+                    # ``continue`` passe le résultat de l'outil, comme avant.
+                    exc._apowerb_partial = result
+                    exc._apowerb_reported = True
+                    raise exc
                 return result, None
         elif node.type == "router":
 
@@ -2604,7 +2844,19 @@ class _Compiler:
         elif node.type == "http":
 
             async def body(node_input):
-                return await _http_call(node.id, cfg, self.outputs), None
+                response = await _http_call(node.id, cfg, self.outputs)
+                # Absent = accepté : un nœud enregistré avant ce réglage garde
+                # son comportement ; le Studio écrit false sur un nœud neuf.
+                # Une valeur non booléenne vaut l'absence (voir la validation).
+                if response["status"] >= 400 and cfg.get("accept_error_status") is False:
+                    exc = GraphError(
+                        f"{node.id} : réponse HTTP {response['status']}",
+                        code="http_error_status",
+                        params={"node": node.id, "status": str(response["status"])},
+                    )
+                    exc._apowerb_partial = response
+                    raise exc
+                return response, None
         elif node.type == "notification":
 
             async def body(node_input):
@@ -2804,16 +3056,22 @@ class _Compiler:
             depth=self.depth if depth is None else depth,
             nested=True,
         )
-        async for item in drive_workflow(inner.build(), queue, root_name=_ROOT):
-            if isinstance(item, _Finished):
-                if item.exc is not None:
-                    try:
-                        item.exc._apowerb_inner_node = last_error_node
-                    except (AttributeError, TypeError):
-                        pass
-                    raise item.exc
-                break
-            emit(item)
+        # aclosing : un nœud annulé (délai, arrêt) ferme le générateur dès la
+        # sortie du bloc plutôt qu'au ramasse-miettes. Non discriminé par les
+        # tests : l'annulation de la tâche suffit déjà à arrêter l'interne.
+        async with aclosing(
+            drive_workflow(inner.build(), queue, root_name=_ROOT)
+        ) as items:
+            async for item in items:
+                if isinstance(item, _Finished):
+                    if item.exc is not None:
+                        try:
+                            item.exc._apowerb_inner_node = last_error_node
+                        except (AttributeError, TypeError):
+                            pass
+                        raise item.exc
+                    break
+                emit(item)
         return _final_output(body, inner.outputs)
 
     async def _try(
@@ -2842,13 +3100,7 @@ class _Compiler:
                 raise
             except Exception as exc:  # noqa: BLE001 - épuisé -> route "error", jamais une exception globale
                 last_exc = exc
-        fields = error_fields(last_exc)
-        return {
-            "code": fields.get("code"),
-            "detail": fields.get("detail"),
-            "params": fields.get("params") or {},
-            "node": getattr(last_exc, "_apowerb_inner_node", None),
-        }, "error"
+        return _error_output(last_exc, None), "error"
 
     async def _subworkflow(self, node: Node, cfg: dict, node_input: Any) -> Any:
         """Exécute le workflow ``cfg['workflow_id']`` via ``self.run_subworkflow``.
@@ -2925,11 +3177,16 @@ class _Compiler:
         # vers une même cible (« non » et la réponse libre d'une décision)
         # deviennent une arête à liste de routes.
         routed: dict[tuple[str, str], list[str]] = {}
+        by_id = {n.id: n for n in self.g.nodes}
         for e in self.g.edges:
-            if e.route is None:
+            route = e.route
+            src = by_id[e.source]
+            if route is None and _routes_on_error(src) and not _is_routed(src):
+                route = _SUCCESS_ROUTE
+            if route is None:
                 edges.append((exit_[e.source], entry[e.target]))
             else:
-                routed.setdefault((e.source, e.target), []).append(e.route)
+                routed.setdefault((e.source, e.target), []).append(route)
         for (source, target), routes in routed.items():
             edges.append(
                 AdkEdge(
@@ -3159,6 +3416,7 @@ async def _save_failure(
         "outputs": compiler.outputs,
         "routes": compiler.routes,
         "artifacts": compiler.run_artifacts,
+        "handled_errors": compiler.handled_errors,
         "until": until,
     }
     size = len(json.dumps(snapshot, ensure_ascii=False, default=str).encode("utf-8"))
@@ -3227,6 +3485,7 @@ async def _pause(
         "outputs": compiler.outputs,
         "routes": compiler.routes,
         "artifacts": compiler.run_artifacts,
+        "handled_errors": compiler.handled_errors,
         # Un « Tester jusqu'ici » repris s'arrête au même nœud.
         "until": until,
     }

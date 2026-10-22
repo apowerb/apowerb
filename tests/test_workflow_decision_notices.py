@@ -24,7 +24,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi import HTTPException
 
-from apowerb.core import decision_notices, run_gate, run_main, workflow_main
+from apowerb.core import (
+    decision_notices,
+    run_gate,
+    run_main,
+    workflow_main,
+    workflow_triggers,
+)
 from tests.test_workflow_decision_routes import (  # noqa: F401
     ASSIGNEE,
     OWNER,
@@ -37,6 +43,7 @@ from tests.test_workflow_decision_routes import (  # noqa: F401
 )
 
 T0 = datetime(2026, 10, 20, 10, 0, tzinfo=timezone.utc)
+_REAL_NOTIFY_RUN_FINISHED = workflow_triggers.notify_run_finished
 
 
 class _Outbox:
@@ -855,33 +862,37 @@ async def test_a_teams_failure_does_not_stop_the_mail(api, outbox, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_question_cannot_hide_a_link_in_the_teams_card(api, outbox):
+async def test_the_teams_card_carries_nothing_from_the_run(api, outbox):
     graph = _graph(ASSIGNEE)
     graph["nodes"][1]["config"]["question"] = "Valider {{t.x}} ?"
     wf = workflow_main.create_workflow(
         owner_id=OWNER, name="Devis *urgent*", graph=graph
     )
-    trap = "[Ouvrir la décision](https://phish.example/login)"
+    traps = [
+        "[Ouvrir la décision](https://phish.example/login)",
+        "&#91;Ouvrir&#93;&#40;https://entity.example&#41;",
+    ]
     await _drain(
         await api.defs.run_workflow(
             wf["workflow_id"],
-            api.defs.RunBody(payload={"x": trap}),
+            api.defs.RunBody(payload={"x": " ".join(traps)}),
             current_user=_user(),
         )
     )
     [card] = outbox.teams
-    # La carte Teams lit du Markdown : rien du run n'y devient un lien.
-    assert trap not in card["body"]
-    assert r"\[Ouvrir la décision\]\(https://phish.example/login\)" in card["body"]
+    # Aucun échappement n'est garanti par les cartes Adaptive : la question
+    # (gabarit rendu avec le run) n'y figure pas du tout.
+    for part in (card["body"], card["subject"]):
+        assert "phish" not in part and "entity" not in part and "Valider" not in part
+    assert r"Devis \*urgent\*" in card["body"]
     assert card["subject"] == r"Décision attendue — Devis \*urgent\*"
     # Le seul lien est celui de la page Workflows, intact.
     link = f"https://app.example.com/workflows?decision={_last_run()}"
     assert card["body"].endswith("\n" + link)
-    # Le mail, lui, garde le texte tel quel (échappé pour le HTML seulement).
+    # Le mail porte la question (HTML échappé, texte brut tel quel).
     [mail] = outbox.mails
-    assert (
-        trap in mail["text"] and mail["subject"] == "Décision attendue — Devis *urgent*"
-    )
+    assert traps[0] in mail["text"] and "Valider" in mail["html"]
+    assert mail["subject"] == "Décision attendue — Devis *urgent*"
 
 
 def _held_mail(monkeypatch, outbox):
@@ -1040,3 +1051,99 @@ async def test_stopping_does_not_close_a_resume_taken_elsewhere(api):
     assert run_main.stop_unanswered_resume(run_id, "2026-10-22T09:59:00+00:00") is False
     assert _row(run_id)["status"] == run_main.STATUS_RUNNING
     assert run_main.stop_unanswered_resume(run_id, held) is True
+
+
+@pytest.mark.asyncio
+async def test_a_cut_send_does_not_release_a_notice_taken_again(
+    api, outbox, monkeypatch
+):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    outbox.mails.clear()
+    _set(run_id, notified_at=None)
+    started, _ = _held_mail(monkeypatch, outbox)
+    scheduler_pass = asyncio.create_task(decision_notices.tick())
+    await asyncio.wait_for(started.wait(), 5)
+    # Pendant l'envoi, la ligne est réservée à nouveau (nouvelle décision du
+    # même run, déjà annoncée) : l'annulation ne doit pas la lui reprendre.
+    later = "2026-10-22T12:00:00+00:00"
+    _set(run_id, notified_at=later)
+    scheduler_pass.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler_pass
+    assert _row(run_id)["notified_at"] == later
+
+
+def _closed_unannounced(run_id):
+    _set(
+        run_id,
+        status=run_main.STATUS_CANCELLED,
+        error_message=run_main.ABANDONED_MESSAGE,
+        end_notice=run_main.END_NOTICE_PENDING,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_end_notice_cut_before_the_triggers_is_sent_by_the_next_pass(
+    api, outbox, monkeypatch
+):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    _closed_unannounced(run_id)
+    started, _ = _held_mail(monkeypatch, outbox)
+    scheduler_pass = asyncio.create_task(decision_notices.tick())
+    await asyncio.wait_for(started.wait(), 5)
+    scheduler_pass.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler_pass
+    # Rien n'est parti aux déclencheurs : l'avis de fin est rendu.
+    assert _row(run_id)["end_notice"] == run_main.END_NOTICE_PENDING
+    assert api.finished == []
+    monkeypatch.setattr(decision_notices, "_send_mail", outbox.mail)
+    await decision_notices.tick()
+    assert [f["run_id"] for f in api.finished] == [run_id]
+    assert sum("abandon" in m["subject"].lower() for m in outbox.mails) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_end_cut_while_launching_triggered_runs_never_launches_twice(
+    api, outbox, monkeypatch
+):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    source = json.loads(_row(run_id)["config"])["workflow_id"]
+    _closed_unannounced(run_id)
+    # La vraie fin (``notify_run_finished`` → ``fire_workflow_done_triggers``),
+    # deux workflows en écoute ; le second lancement est coupé (extinction).
+    monkeypatch.setattr(
+        workflow_triggers, "notify_run_finished", _REAL_NOTIFY_RUN_FINISHED
+    )
+    listening = [
+        {"workflow_id": dest, "config": json.dumps({"workflow_id": source})}
+        for dest in ("dest-1", "dest-2")
+    ]
+    monkeypatch.setattr(
+        workflow_triggers, "list_active_triggers", lambda kind, owner_id: listening
+    )
+    launched, hold = [], asyncio.Event()
+    second = asyncio.Event()
+
+    async def _launch(*, workflow_id, **kwargs):
+        launched.append(workflow_id)
+        if len(launched) == 2:
+            second.set()
+            await hold.wait()
+        return f"run-{workflow_id}", None
+
+    monkeypatch.setattr(workflow_triggers, "launch_triggered_run", _launch)
+    scheduler_pass = asyncio.create_task(decision_notices.tick())
+    await asyncio.wait_for(second.wait(), 5)
+    scheduler_pass.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler_pass
+    hold.set()
+    # « dest-1 » est lancé : la fin reste annoncée, aucun passage ne relance.
+    assert _row(run_id)["end_notice"] == "sent"
+    await decision_notices.tick()
+    await decision_notices.tick()
+    assert launched == ["dest-1", "dest-2"]
