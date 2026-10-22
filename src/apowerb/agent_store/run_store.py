@@ -106,9 +106,19 @@ class RunStore(BaseModel):
             # ``created_at`` pour juger un run ``running`` orphelin.
             Column("decision", String),
             Column("resumed_at", String),
-            # Échéance de la décision en attente (même format que
-            # ``created_at``) : passé ce moment, le run est clos en ``error``.
+            # Échéance de la décision en attente : passé ce moment, le run est
+            # clos en ``error``. ISO UTC ; les pauses plus anciennes gardent
+            # le format de ``created_at`` (heure locale du serveur).
             Column("expires_at", String),
+            # Avis de la décision (``core.decision_notices``) : heure du
+            # rappel (ISO UTC), puis ce qui est déjà parti — chaque envoi est
+            # réservé sur sa colonne avant de partir, une seule fois.
+            # ``end_notice`` vaut ``pending`` quand une fin sans réponse
+            # (expirée, abandonnée, illisible) reste à annoncer.
+            Column("remind_at", String),
+            Column("notified_at", String),
+            Column("reminded_at", String),
+            Column("end_notice", String),
         )
 
     def create_table(self):
@@ -147,6 +157,10 @@ class RunStore(BaseModel):
             "decision": "VARCHAR",
             "resumed_at": "VARCHAR",
             "expires_at": "VARCHAR",
+            "remind_at": "VARCHAR",
+            "notified_at": "VARCHAR",
+            "reminded_at": "VARCHAR",
+            "end_notice": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         # Deux réplicas qui démarrent ensemble : sur Postgres, le second

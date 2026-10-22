@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -634,6 +634,10 @@ UNREADABLE_MESSAGE = (
     "Décision humaine illisible : l'instantané ne se déchiffre plus "
     "(ENCRYPT_KEY changée depuis la pause ?)."
 )
+ABANDONED_MESSAGE = "Décision humaine abandonnée"
+STOPPED_MESSAGE = "Décision humaine abandonnée : run arrêté avant que la réponse soit prise."
+# ``end_notice`` d'une fin sans réponse que ``core.decision_notices`` annonce.
+END_NOTICE_PENDING = "pending"
 # Runs clos sans réponse possible : un retardataire apprend pourquoi (409).
 _CLOSED_DECISIONS = {
     EXPIRED_MESSAGE: "decision_expired",
@@ -641,11 +645,24 @@ _CLOSED_DECISIONS = {
 }
 
 
+def _instant(stamp: str) -> datetime:
+    """Une échéance stockée, en instant avec fuseau.
+
+    Les pauses écrivent de l'ISO UTC. Celles d'avant gardent le format
+    ``_now``, en heure locale du serveur : lue avec les règles de la date
+    elle-même, elle reste juste de part et d'autre d'un changement d'heure.
+    """
+    if "T" in stamp:
+        moment = datetime.fromisoformat(stamp)
+        return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+    return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S.%f").astimezone()
+
+
 def _iso(stamp: str | None) -> str | None:
-    """Un horodatage ``_now`` (heure locale du serveur) en ISO avec fuseau."""
+    """Une échéance stockée en ISO avec fuseau, pour le navigateur."""
     if not stamp:
         return stamp
-    return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S.%f").astimezone().isoformat()
+    return _instant(stamp).isoformat()
 
 
 def _decision_of(state: dict) -> dict:
@@ -670,33 +687,52 @@ def _unseal(raw: str) -> dict:
     return json.loads(raw if raw.lstrip().startswith("{") else decrypt_value(raw))
 
 
-def _expire_due(conn) -> None:
+def _expire_due(conn, now: datetime | None = None) -> None:
     """Clôt en ``error`` les décisions dont l'échéance est passée.
 
-    Pas de tâche de fond : comme la réconciliation des orphelins, l'échéance
-    est appliquée à la lecture (listes, run, reprise, abandon, rejeu), donc
-    avant que quiconque s'appuie sur le statut — le planificateur compris.
-    Le ``WHERE status`` rend l'écriture idempotente entre réplicas.
+    Appliquée à la lecture (listes, run, reprise, abandon, rejeu), donc
+    avant que quiconque s'appuie sur le statut — le planificateur compris ;
+    ``core.decision_notices`` l'applique aussi à chaque passage pour
+    annoncer l'expiration. La comparaison se fait en instants, pas en
+    chaînes : les échéances anciennes (heure locale) et nouvelles (UTC)
+    n'ont pas le même format. Les décisions en attente sont peu nombreuses.
+    Le ``WHERE status`` et l'échéance lue rendent l'écriture idempotente
+    entre réplicas.
     """
     t = run_store.run_table
-    now = _now()
-    conn.execute(
-        t.update()
-        .where(
-            t.c.status == STATUS_AWAITING,
-            t.c.expires_at.isnot(None),
-            t.c.expires_at <= now,
+    now = now or datetime.now(timezone.utc)
+    pending = conn.execute(
+        t.select()
+        .with_only_columns(t.c.run_id, t.c.expires_at)
+        .where(t.c.status == STATUS_AWAITING, t.c.expires_at.isnot(None))
+    ).fetchall()
+    for run_id, expires_at in pending:
+        try:
+            due = _instant(expires_at) <= now
+        except ValueError:
+            # Une échéance illisible ne doit pas casser toutes les lectures.
+            logger.error("[RUNS] échéance illisible pour run_id=%s : %r", run_id, expires_at)
+            continue
+        if not due:
+            continue
+        conn.execute(
+            t.update()
+            .where(
+                t.c.run_id == run_id,
+                t.c.status == STATUS_AWAITING,
+                t.c.expires_at == expires_at,
+            )
+            .values(
+                status=STATUS_ERROR,
+                error_message=EXPIRED_MESSAGE,
+                finished_at=_now(),
+                paused_state=None,
+                decision=None,
+                end_notice=END_NOTICE_PENDING,
+                # L'assigné reste : sa réponse tardive s'entend dire
+                # « expirée » (409), pas « inconnue » (404).
+            )
         )
-        .values(
-            status=STATUS_ERROR,
-            error_message=EXPIRED_MESSAGE,
-            finished_at=now,
-            paused_state=None,
-            decision=None,
-            # L'assigné reste : sa réponse tardive s'entend dire « expirée »
-            # (409), pas « inconnue » (404).
-        )
-    )
 
 
 def _release_dead_resumptions(conn) -> None:
@@ -720,18 +756,26 @@ def _release_dead_resumptions(conn) -> None:
     )
 
 
-def pause_run(run_id: str, snapshot: dict) -> None:
-    """Consigne un run arrêté sur une décision humaine, avec son instantané."""
+def remind_moment(paused: datetime, expires: datetime) -> datetime:
+    """Quand rappeler la décision : 24 h avant l'échéance, à mi-délai si
+    le délai ne laisse pas 48 h."""
+    delay = expires - paused
+    return expires - min(timedelta(hours=24), delay / 2)
+
+
+def pause_run(run_id: str, snapshot: dict, now: datetime | None = None) -> None:
+    """Consigne un run arrêté sur une décision humaine, avec son instantané.
+
+    L'échéance est calculée et stockée en UTC : une heure locale à décalage
+    figé se tromperait d'une heure à travers un changement d'heure.
+    """
     from apowerb.core.workflow_graph import DEFAULT_DECISION_HOURS
 
     prompt = snapshot.get("prompt") or {}
     assignee = prompt.get("assignee")
     hours = prompt.get("expires_after_hours") or DEFAULT_DECISION_HOURS
-    paused = datetime.now().astimezone()
+    paused = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     expires = paused + timedelta(hours=hours)
-    # La colonne garde le format ``_now`` (comparée à lui) ; ce qui part au
-    # navigateur est en ISO avec fuseau.
-    expires_at = expires.strftime("%Y-%m-%d %H:%M:%S.%f")
     snapshot = {**snapshot, "paused_at": paused.isoformat()}
     decision = {
         **_decision_of(snapshot),
@@ -747,9 +791,14 @@ def pause_run(run_id: str, snapshot: dict) -> None:
                 paused_state=_seal(snapshot),
                 decision=json.dumps(decision, ensure_ascii=False, default=str),
                 assignee=assignee.strip().lower() if isinstance(assignee, str) else None,
-                expires_at=expires_at,
+                expires_at=expires.isoformat(),
                 finished_at=None,
                 resumed_at=None,
+                # Une nouvelle décision : elle sera annoncée, puis rappelée.
+                remind_at=remind_moment(paused, expires).isoformat(),
+                notified_at=None,
+                reminded_at=None,
+                end_notice=None,
             )
         )
     if result.rowcount != 1:
@@ -826,8 +875,6 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
     réussit qu'une fois), 422 (réponse non permise). Renvoie la ligne, son
     instantané (``state``) et la réponse (``answer``).
     """
-    from datetime import timezone
-
     from cryptography.fernet import InvalidToken
 
     from apowerb.core.workflow_graph import GraphError, check_decision_answer
@@ -842,10 +889,11 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
         data = _awaiting_row(conn, run_id, user)
         try:
             state = _unseal(data["paused_state"])
-        except InvalidToken:
-            # Clé changée ou instantané abîmé : aucune reprise possible. Le
-            # run est clos ici plutôt que laissé en attente jusqu'à son
-            # échéance ; le refus suit, hors de cette transaction.
+        except (InvalidToken, ValueError):
+            # Clé changée, jeton abîmé ou ancien instantané en clair corrompu
+            # (``JSONDecodeError`` est une ``ValueError``) : aucune reprise
+            # possible. Le run est clos ici plutôt que laissé en attente
+            # jusqu'à son échéance ; le refus suit, hors de cette transaction.
             state = None
             conn.execute(
                 t.update()
@@ -856,6 +904,7 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
                     finished_at=_now(),
                     paused_state=None,
                     decision=None,
+                    end_notice=END_NOTICE_PENDING,
                 )
             )
     if state is None:
@@ -949,12 +998,47 @@ def abandon_paused_run(run_id: str, user: str) -> None:
                 paused_state=None,
                 assignee=None,
                 decision=None,
-                error_message="Décision humaine abandonnée",
+                error_message=ABANDONED_MESSAGE,
                 finished_at=_now(),
+                end_notice=END_NOTICE_PENDING,
             )
         )
         if done.rowcount != 1:
             raise HTTPException(
                 status_code=409, detail={"code": "decision_already_answered"}
             )
+
+
+def stop_unanswered_resume(run_id: str, resumed_at: str | None) -> bool:
+    """Clôt en ``cancelled`` une reprise arrêtée avant de prendre la réponse.
+
+    L'arrêt est demandé par le propriétaire (``POST /{wid}/cancel``) : le
+    run s'arrête vraiment, comme un abandon, au lieu de se remettre en
+    attente derrière un panneau qui dit « annulé ». ``resumed_at`` est celui
+    de la prise : une ligne reprise ailleurs entre-temps n'est pas touchée.
+    Renvoie si la ligne a été close.
+    """
+    t = run_store.run_table
+    where = [
+        t.c.run_id == run_id,
+        t.c.status == STATUS_RUNNING,
+        t.c.paused_state.isnot(None),
+    ]
+    if resumed_at is not None:
+        where.append(t.c.resumed_at == resumed_at)
+    with run_store.engine.begin() as conn:
+        done = conn.execute(
+            t.update()
+            .where(*where)
+            .values(
+                status=STATUS_CANCELLED,
+                paused_state=None,
+                assignee=None,
+                decision=None,
+                error_message=STOPPED_MESSAGE,
+                finished_at=_now(),
+                end_notice=END_NOTICE_PENDING,
+            )
+        )
+    return done.rowcount == 1
 
