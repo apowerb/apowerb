@@ -992,8 +992,13 @@ def abandon_paused_run(run_id: str, user: str) -> None:
 
 
 def save_failure(run_id: str, snapshot: dict) -> None:
-    """Consigne l'instantané d'un run en échec, scellé comme une pause."""
+    """Consigne l'instantané d'un run en échec, scellé comme une pause.
+
+    Purge au passage les instantanés échus : un run déclenché (webhook,
+    planifié) que personne n'ouvre ne garde pas le sien au-delà du délai.
+    """
     with run_store.engine.begin() as conn:
+        _purge_failure_states(conn)
         result = conn.execute(
             run_store.run_table.update()
             .where(run_store.run_table.c.run_id == run_id)

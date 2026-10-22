@@ -382,6 +382,19 @@ async def test_an_expired_state_gives_a_clear_code(api):
 
 
 @pytest.mark.asyncio
+async def test_a_new_failure_purges_the_states_nobody_opened(api):
+    _, events = await _failed(api)
+    old_run = events[0]["wid"]
+    old = (datetime.now() - run_main.RETRY_STATE_TTL - timedelta(minutes=1)).strftime(
+        "%Y-%m-%d %H:%M:%S.%f"
+    )
+    _set(old_run, finished_at=old)
+    _, again = await _failed(api)
+    assert _row(old_run)["failure_state"] is None
+    assert _row(again[0]["wid"])["failure_state"] is not None
+
+
+@pytest.mark.asyncio
 async def test_an_unreadable_state_gives_a_clear_code_and_is_dropped(api):
     _, events = await _failed(api)
     run_id = events[0]["wid"]
