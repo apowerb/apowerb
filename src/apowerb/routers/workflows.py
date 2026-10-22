@@ -307,6 +307,10 @@ async def _retry_runner(
             + "\n\n"
         )
         return
+    # Dit au client que les nœuds ``replayed`` qui suivent étaient faits
+    # avant l'échec (et non avant une décision).
+    started = {"event": "retry_started", "replay_of": retry["replay_of"], "node_id": config["retry_from"]}
+    yield "data: " + json.dumps(started) + "\n\n"
     async for chunk in workflow_graph.run_graph(
         retry["graph"],
         payload=state.get("payload"),

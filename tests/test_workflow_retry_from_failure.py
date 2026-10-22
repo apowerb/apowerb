@@ -202,6 +202,7 @@ async def test_resuming_replays_upstream_without_running_it_and_reruns_the_faile
     resumed = await _drain(await _retry(api, original))
     new_run = resumed[0]["wid"]
     assert new_run != original
+    assert resumed[1] == {"event": "retry_started", "replay_of": original, "node_id": "a2"}
     assert resumed[-1] == {"event": "done", "output": "fin:fautif-ok"}
     # Contre-exemple discriminant : l'amont n'a pas été rappelé.
     assert len(api.calls["amont"]) == 1
