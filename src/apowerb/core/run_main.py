@@ -630,6 +630,22 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
 
 
 EXPIRED_MESSAGE = "Décision humaine expirée : personne n'a répondu avant l'échéance."
+UNREADABLE_MESSAGE = (
+    "Décision humaine illisible : l'instantané ne se déchiffre plus "
+    "(ENCRYPT_KEY changée depuis la pause ?)."
+)
+# Runs clos sans réponse possible : un retardataire apprend pourquoi (409).
+_CLOSED_DECISIONS = {
+    EXPIRED_MESSAGE: "decision_expired",
+    UNREADABLE_MESSAGE: "decision_state_unreadable",
+}
+
+
+def _iso(stamp: str | None) -> str | None:
+    """Un horodatage ``_now`` (heure locale du serveur) en ISO avec fuseau."""
+    if not stamp:
+        return stamp
+    return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S.%f").astimezone().isoformat()
 
 
 def _decision_of(state: dict) -> dict:
@@ -711,13 +727,16 @@ def pause_run(run_id: str, snapshot: dict) -> None:
     prompt = snapshot.get("prompt") or {}
     assignee = prompt.get("assignee")
     hours = prompt.get("expires_after_hours") or DEFAULT_DECISION_HOURS
-    paused = datetime.now()
-    expires_at = (paused + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S.%f")
-    snapshot = {**snapshot, "paused_at": paused.strftime("%Y-%m-%d %H:%M:%S.%f")}
+    paused = datetime.now().astimezone()
+    expires = paused + timedelta(hours=hours)
+    # La colonne garde le format ``_now`` (comparée à lui) ; ce qui part au
+    # navigateur est en ISO avec fuseau.
+    expires_at = expires.strftime("%Y-%m-%d %H:%M:%S.%f")
+    snapshot = {**snapshot, "paused_at": paused.isoformat()}
     decision = {
         **_decision_of(snapshot),
         "paused_at": snapshot["paused_at"],
-        "expires_at": expires_at,
+        "expires_at": expires.isoformat(),
     }
     with run_store.engine.begin() as conn:
         result = conn.execute(
@@ -751,11 +770,12 @@ def _awaiting_row(conn, run_id: str, user: str) -> dict:
     if row is None or not _may_decide(row._asdict(), user):
         raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
     data = row._asdict()
-    if data["status"] == STATUS_ERROR and data.get("error_message") == EXPIRED_MESSAGE:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "decision_expired", "expires_at": data.get("expires_at")},
-        )
+    closed = _CLOSED_DECISIONS.get(data.get("error_message") or "")
+    if data["status"] == STATUS_ERROR and closed:
+        detail = {"code": closed}
+        if closed == "decision_expired":
+            detail["expires_at"] = _iso(data.get("expires_at"))
+        raise HTTPException(status_code=409, detail=detail)
     if data["status"] != STATUS_AWAITING or not data.get("paused_state"):
         raise HTTPException(
             status_code=409,
@@ -808,6 +828,8 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
     """
     from datetime import timezone
 
+    from cryptography.fernet import InvalidToken
+
     from apowerb.core.workflow_graph import GraphError, check_decision_answer
 
     t = run_store.run_table
@@ -818,7 +840,27 @@ def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
     resumed_at = _now()
     with run_store.engine.begin() as conn:
         data = _awaiting_row(conn, run_id, user)
-        state = _unseal(data["paused_state"])
+        try:
+            state = _unseal(data["paused_state"])
+        except InvalidToken:
+            # Clé changée ou instantané abîmé : aucune reprise possible. Le
+            # run est clos ici plutôt que laissé en attente jusqu'à son
+            # échéance ; le refus suit, hors de cette transaction.
+            state = None
+            conn.execute(
+                t.update()
+                .where(t.c.run_id == run_id, t.c.status == STATUS_AWAITING)
+                .values(
+                    status=STATUS_ERROR,
+                    error_message=UNREADABLE_MESSAGE,
+                    finished_at=_now(),
+                    paused_state=None,
+                    decision=None,
+                )
+            )
+    if state is None:
+        raise HTTPException(status_code=409, detail={"code": "decision_state_unreadable"})
+    with run_store.engine.begin() as conn:
         try:
             choice, text = check_decision_answer(state.get("prompt") or {}, choice, text)
         except GraphError as exc:

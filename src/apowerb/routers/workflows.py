@@ -591,7 +591,7 @@ def _streaming_run(
                     )
 
     return StreamingResponse(
-        _detached(_event_generator()) if resume_guard is not None else _event_generator(),
+        _detached(_event_generator(), entry) if resume_guard is not None else _event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -606,30 +606,41 @@ def _streaming_run(
 _detached_runs: set[asyncio.Task] = set()
 
 
-def _detached(events: AsyncGenerator[bytes, None]) -> AsyncGenerator[bytes, None]:
+def _detached(
+    events: AsyncGenerator[bytes, None], entry: dict[str, Any]
+) -> AsyncGenerator[bytes, None]:
     """Exécute ``events`` dans une tâche à part et en relaie le flux.
 
     Une reprise suit une réponse déjà donnée : un client qui part (onglet
     fermé, page quittée, une autre décision ouverte) ne doit pas annuler le
     run et perdre la décision. La connexion ne fait que relayer ; l'arrêt
-    volontaire passe par ``/runs/{id}/cancel`` (``cancel_event``).
+    volontaire passe par ``POST /{wid}/cancel``, qui annule aussi la tâche
+    (``entry["task"]``) pour interrompre le nœud en cours.
     """
     queue: asyncio.Queue = asyncio.Queue()
+    relayed = True
 
     async def _pump() -> None:
         try:
             async for chunk in events:
-                queue.put_nowait(chunk)
+                # Plus personne n'écoute : la suite tourne sans s'accumuler.
+                if relayed:
+                    queue.put_nowait(chunk)
         finally:
             queue.put_nowait(None)
 
     task = asyncio.get_running_loop().create_task(_pump())
+    entry["task"] = task
     _detached_runs.add(task)
     task.add_done_callback(_detached_runs.discard)
 
     async def _relay() -> AsyncGenerator[bytes, None]:
-        while (chunk := await queue.get()) is not None:
-            yield chunk
+        nonlocal relayed
+        try:
+            while (chunk := await queue.get()) is not None:
+                yield chunk
+        finally:
+            relayed = False
 
     return _relay()
 
@@ -1009,4 +1020,10 @@ async def cancel_workflow(
         )
 
     entry["cancel_event"].set()
+    # ``cancel_event`` n'est lu qu'entre deux nœuds. Une reprise détachée n'a
+    # plus de client dont le départ annulerait sa tâche : on l'annule ici,
+    # comme le faisait la déconnexion, pour interrompre le nœud en cours.
+    task = entry.get("task")
+    if task is not None and not task.done():
+        task.cancel()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

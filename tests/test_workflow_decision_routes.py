@@ -499,7 +499,10 @@ async def test_the_list_says_until_when_the_decision_waits(api):
     _, events = await _paused(api)
     [item] = await api.runs.list_awaiting_runs(current_user=_user())
     paused = datetime.fromisoformat(item["paused_at"])
-    assert datetime.fromisoformat(item["expires_at"]) - paused == timedelta(hours=168)
+    expires = datetime.fromisoformat(item["expires_at"])
+    # ISO avec fuseau : le navigateur ne devine pas l'heure du serveur.
+    assert paused.tzinfo is not None and expires.tzinfo is not None
+    assert expires - paused == timedelta(hours=168)
 
 
 @pytest.mark.asyncio
@@ -653,3 +656,80 @@ async def test_the_assignee_is_told_the_decision_expired_not_that_it_is_unknown(
     with pytest.raises(HTTPException) as other:
         await _resume(api, run_id, user=STRANGER, choice="oui")
     assert other.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_state_sealed_with_another_key_closes_the_run_with_a_coded_refusal(api):
+    from cryptography.fernet import Fernet
+
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    # ENCRYPT_KEY changée depuis la pause : l'instantané n'est plus lisible.
+    foreign = Fernet(Fernet.generate_key()).encrypt(b'{"node_id": "d"}').decode()
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        conn.execute(t.update().where(t.c.run_id == run_id).values(paused_state=foreign))
+    for _ in range(2):
+        with pytest.raises(HTTPException) as exc:
+            await _resume(api, run_id, user=ASSIGNEE, choice="oui")
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "decision_state_unreadable"
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["status"] == "error" and "illisible" in run["error_message"]
+    assert _stored_state(run_id) is None
+    assert await api.runs.list_awaiting_runs(current_user=_user()) == []
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_resumed_run_interrupts_the_node_in_progress(api, monkeypatch):
+    import asyncio
+
+    from apowerb.core import workflow_runtime
+
+    started, interrupted = asyncio.Event(), []
+
+    async def _slow_agent(agent_id, message):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            interrupted.append(agent_id)
+            raise
+
+    async def _unused(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("non appelé")
+
+    monkeypatch.setattr(
+        workflow_runtime, "bindings_for", lambda owner, plan: (_slow_agent, _unused, _unused, _unused)
+    )
+    graph = _graph()
+    graph["nodes"][2] = {"id": "yes", "type": "agent", "config": {"agent_id": "agent1"}}
+    wf = workflow_main.create_workflow(owner_id=OWNER, name="Lent", graph=graph)
+    events = await _drain(
+        await api.defs.run_workflow(
+            wf["workflow_id"], api.defs.RunBody(payload={"x": "devis"}), current_user=_user()
+        )
+    )
+    run_id = events[0]["wid"]
+    response = await _resume(api, run_id, choice="oui")
+    await asyncio.wait_for(started.wait(), 5)
+    # Arrêter, pas fermer l'onglet : le nœud en cours est interrompu.
+    await api.runs.cancel_workflow(run_id, current_user=_user())
+    resumed = await asyncio.wait_for(_drain(response), 5)
+    await asyncio.gather(*list(api.runs._detached_runs), return_exceptions=True)
+    assert interrupted == ["agent1"]
+    assert resumed[-1] == {"event": "cancelled"}
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_only_the_owner_can_stop_a_resumed_run(api):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    response = await _resume(api, run_id, user=ASSIGNEE, choice="oui")
+    with pytest.raises(HTTPException) as exc:
+        await api.runs.cancel_workflow(run_id, current_user=_user(ASSIGNEE))
+    assert exc.value.status_code == 403
+    resumed = await _drain(response)
+    assert resumed[-1]["event"] == "done"
+    assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "success"
