@@ -269,6 +269,8 @@ def finish_run(run_id: str, status: str, error_message: str | None = None) -> No
     """
     t = run_store.run_table
     with run_store.engine.begin() as conn:
+        if status == STATUS_CANCELLED:
+            _give_back_retry(conn, run_id)
         conn.execute(
             t.update()
             # Une pause consignée (``pause_run``) n'est jamais une fin : seule
@@ -404,6 +406,37 @@ def _sse_event(block: str) -> dict | None:
     return event if isinstance(event, dict) else None
 
 
+def _give_back_retry(conn, run_id: str) -> None:
+    """Rend à l'original l'instantané d'une reprise qui n'a pas abouti.
+
+    La reprise a consommé l'échec de l'original (``prepare_retry``) et en
+    porte la copie. Arrêtée (Stop, coupure) avant une vraie fin, elle ne doit
+    pas emporter la seule possibilité de reprendre : l'original redevient
+    reprenable. Seulement s'il est toujours en échec et sans instantané
+    (idempotent). Une reprise qui réussit ou échoue à son tour ne rend rien :
+    l'échec est alors le sien.
+    """
+    t = run_store.run_table
+    row = conn.execute(
+        t.select()
+        .with_only_columns(t.c.replay_of, t.c.config, t.c.failure_state, t.c.failure_node)
+        .where(t.c.run_id == run_id)
+    ).fetchone()
+    if row is None or not row.replay_of or not row.failure_state:
+        return
+    if "retry_from" not in json.loads(row.config or "{}"):
+        return
+    conn.execute(
+        t.update()
+        .where(
+            t.c.run_id == row.replay_of,
+            t.c.status == STATUS_ERROR,
+            t.c.failure_state.is_(None),
+        )
+        .values(failure_state=row.failure_state, failure_node=row.failure_node)
+    )
+
+
 def _reconcile_if_orphaned(conn, row):
     """Règle un run resté ``running`` faute d'avoir pu consigner son issue.
 
@@ -453,13 +486,23 @@ def _reconcile_if_orphaned(conn, row):
         "Run settled by reconciliation: no completion was recorded within "
         f"{hours}h; its actual outcome is unknown."
     )
+    # Une reprise coupée net : on ignore jusqu'où elle est allée, sa copie de
+    # l'instantané ne dit plus la vérité. L'échec revient à l'original.
+    retry = "retry_from" in json.loads(data.get("config") or "{}")
+    if retry:
+        _give_back_retry(conn, data["run_id"])
     conn.execute(
         run_store.run_table.update()
         .where(
             run_store.run_table.c.run_id == data["run_id"],
             run_store.run_table.c.status == STATUS_RUNNING,
         )
-        .values(status=STATUS_ERROR, error_message=message, finished_at=_now())
+        .values(
+            status=STATUS_ERROR,
+            error_message=message,
+            finished_at=_now(),
+            **({"failure_state": None, "failure_node": None} if retry else {}),
+        )
     )
     return conn.execute(
         run_store.run_table.select().where(
@@ -1097,8 +1140,14 @@ def stop_unanswered_resume(run_id: str, resumed_at: str | None) -> bool:
 # le panneau Test) — c'est ce qui permet de corriger le nœud fautif avant de
 # reprendre — à condition que les nœuds rejoués n'aient pas changé
 # (``workflow_graph.retry_mismatch``). Un run déclenché (webhook, planifié)
-# avait tourné sur la version publiée : sa reprise tourne aussi sur la
-# dernière sauvegarde.
+# avait tourné sur la version publiée : il reprend sur la version publiée
+# actuelle (un correctif republié compte), ou, si le workflow est repassé en
+# brouillon, sur la version qu'il avait exécutée — jamais sur un brouillon.
+#
+# La reprise emporte l'instantané de l'original et en garde une copie. Si
+# elle n'aboutit pas (Stop, coupure, run réconcilié), elle le lui rend
+# (``_give_back_retry``) : l'original redevient reprenable. Elle ne garde
+# l'échec pour elle que si elle échoue à son tour.
 
 
 def save_failure(run_id: str, snapshot: dict) -> None:
@@ -1159,7 +1208,19 @@ def _retry_refusal(conn, data: dict) -> HTTPException:
         return HTTPException(
             status_code=409, detail={"code": "retry_expired", "params": {"days": days}}
         )
+    if data.get("failure_node"):
+        # Instantané consommé par une reprise dont le run n'est pas encore
+        # écrit (``start_run`` suit la consommation) : elle est bien partie.
+        return HTTPException(status_code=409, detail={"code": "retry_already_started"})
     return HTTPException(status_code=409, detail={"code": "retry_unavailable"})
+
+
+def _is_triggered(trigger: str | None) -> bool:
+    """Run lancé par un déclencheur (webhook, planifié…), pas depuis le Studio."""
+    try:
+        return isinstance(json.loads(trigger or ""), dict)
+    except ValueError:
+        return False
 
 
 def prepare_retry(run_id: str, owner_id: str) -> dict:
@@ -1213,6 +1274,13 @@ def prepare_retry(run_id: str, owner_id: str) -> dict:
     config = json.loads(data.get("config") or "{}")
     workflow_id = config.get("workflow_id")
     wf = workflow_main.get_workflow(workflow_id, owner_id=owner_id) if workflow_id else None
+    if wf is not None and _is_triggered(data.get("trigger")) and wf.get("status") != "published":
+        # Un run déclenché tournait sur la version publiée : il ne reprend
+        # jamais sur un brouillon, mais sur la version qu'il avait exécutée.
+        raw = workflow_main.get_workflow_graph_at(
+            workflow_id, config.get("version"), owner_id=owner_id
+        )
+        wf = None if raw is None else {**wf, "graph": raw, "version": config.get("version")}
     if wf is None:
         raise HTTPException(status_code=409, detail={"code": "retry_workflow_missing"})
     report = workflow_main.check_workflow(wf["graph"], workflow_id=workflow_id)
