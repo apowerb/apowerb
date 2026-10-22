@@ -31,8 +31,9 @@ produit :
 * un email peut porter des pièces jointes : des refs (``workflow_attachments``)
   résolues pour le **propriétaire du run** seulement, bornées en taille ;
 * un nœud file stocke son fichier comme une ref du propriétaire
-  (``store_generated``), au plus ``MAX_RUN_FILES`` par run ; un nœud
-  file_save la dépose sur son OneDrive via son intégration Microsoft
+  (``store_generated``), au plus ``MAX_RUN_FILES`` par exécution (une reprise
+  repart de zéro) ; un nœud file_save la dépose sur son OneDrive via son
+  intégration Microsoft
   (``onedrive_write.tool_upload_file``, sous son identité) : le chemin local
   vient de la ref résolue, jamais du graphe.
 

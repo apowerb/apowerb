@@ -274,6 +274,10 @@ MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_FILE_ROWS = 10_000
 # Word et PDF : le rendu est lent au caractère (PDF ≈ 30 s pour 450 000).
 MAX_FILE_TEXT_CHARS = 200_000
+# Bornées avant construction : des objets aux clés toutes différentes
+# multiplient les colonnes, donc les cellules.
+MAX_FILE_COLUMNS = 1_000
+MAX_FILE_CELLS = 500_000
 MAX_FILE_NAME = 120
 # Règles d'Excel pour un nom de feuille.
 _SHEET_FORBIDDEN = re.compile(r"[\[\]:*?/\\]")
@@ -1892,6 +1896,63 @@ def _file_refs(node_id: str, value: Any, *, code_prefix: str, limit: int) -> lis
     return refs
 
 
+def _build_file(node_id: str, fmt: str, value: Any, sheet: Optional[str]) -> tuple:
+    """(octets, lignes) du fichier, bornes vérifiées avant toute cellule."""
+    table = None
+    if fmt in workflow_files.TABULAR:
+        try:
+            table = workflow_files.parse_table(value)
+        except workflow_files.RowsError as exc:
+            raise GraphError(
+                f"{node_id} : {fmt} attend une liste de lignes "
+                f"(objets, ou listes avec l'en-tête en premier) : {exc}",
+                code="file_bad_rows",
+                params={"node": node_id, "format": fmt},
+            ) from None
+        rows = len(table.records)
+        if rows > MAX_FILE_ROWS:
+            raise GraphError(
+                f"{node_id} : {rows} lignes, max {MAX_FILE_ROWS}",
+                code="file_too_many_rows",
+                params={"node": node_id, "max": str(MAX_FILE_ROWS)},
+            )
+        if table.width > MAX_FILE_COLUMNS:
+            raise GraphError(
+                f"{node_id} : {table.width} colonnes, max {MAX_FILE_COLUMNS}",
+                code="file_too_many_columns",
+                params={"node": node_id, "max": str(MAX_FILE_COLUMNS)},
+            )
+        if rows * table.width > MAX_FILE_CELLS:
+            raise GraphError(
+                f"{node_id} : {rows * table.width} cellules, max {MAX_FILE_CELLS}",
+                code="file_too_many_cells",
+                params={"node": node_id, "max": str(MAX_FILE_CELLS)},
+            )
+    elif (
+        fmt in workflow_files.RICH_TEXT
+        and workflow_files.text_length(value) > MAX_FILE_TEXT_CHARS
+    ):
+        raise GraphError(
+            f"{node_id} : texte trop long pour un fichier {fmt} "
+            f"(max {MAX_FILE_TEXT_CHARS} caractères)",
+            code="file_text_too_long",
+            params={"node": node_id, "format": fmt, "max": str(MAX_FILE_TEXT_CHARS)},
+        )
+    try:
+        return workflow_files.build(fmt, value, sheet, table=table)
+    except Exception as exc:
+        # Type seulement : le message d'une bibliothèque de rendu peut citer
+        # le contenu d'une cellule.
+        logger.warning(
+            "[workflow file] %s : rendu %s impossible (%s)", node_id, fmt, type(exc).__name__
+        )
+        raise GraphError(
+            f"{node_id} : fichier {fmt} impossible à produire depuis ce contenu",
+            code="file_build_failed",
+            params={"node": node_id, "format": fmt},
+        ) from None
+
+
 def _file_name(node: Node, rendered: Any, fmt: str) -> str:
     from apowerb.storage.filename import sanitize_filename
 
@@ -2469,44 +2530,10 @@ class _Compiler:
         fmt = cfg["format"]
         value = render(cfg["content"], self.outputs, node.id)
         name = _file_name(node, render(cfg.get("filename"), self.outputs, node.id), fmt)
-        if fmt in workflow_files.TABULAR:
-            try:
-                rows = workflow_files.row_count(value)
-            except workflow_files.RowsError as exc:
-                raise GraphError(
-                    f"{node.id} : {fmt} attend une liste de lignes "
-                    f"(objets, ou listes avec l'en-tête en premier) : {exc}",
-                    code="file_bad_rows",
-                    params={"node": node.id, "format": fmt},
-                ) from None
-            if rows > MAX_FILE_ROWS:
-                raise GraphError(
-                    f"{node.id} : {rows} lignes, max {MAX_FILE_ROWS}",
-                    code="file_too_many_rows",
-                    params={"node": node.id, "max": str(MAX_FILE_ROWS)},
-                )
-        elif (
-            fmt in workflow_files.RICH_TEXT
-            and workflow_files.text_length(value) > MAX_FILE_TEXT_CHARS
-        ):
-            raise GraphError(
-                f"{node.id} : texte trop long pour un fichier {fmt} "
-                f"(max {MAX_FILE_TEXT_CHARS} caractères)",
-                code="file_text_too_long",
-                params={"node": node.id, "format": fmt, "max": str(MAX_FILE_TEXT_CHARS)},
-            )
-        try:
-            data, rows = await asyncio.to_thread(
-                workflow_files.build, fmt, value, cfg.get("sheet_name") or None
-            )
-        except Exception as exc:
-            # Le détail (bibliothèque de rendu) reste dans les journaux.
-            logger.warning("[workflow file] %s : rendu %s impossible : %s", node.id, fmt, exc)
-            raise GraphError(
-                f"{node.id} : fichier {fmt} impossible à produire depuis ce contenu",
-                code="file_build_failed",
-                params={"node": node.id, "format": fmt},
-            ) from None
+        # Lecture, bornes et rendu hors de la boucle d'événements.
+        data, rows = await asyncio.to_thread(
+            _build_file, node.id, fmt, value, cfg.get("sheet_name") or None
+        )
         if not data:
             raise GraphError(
                 f"{node.id} : contenu vide, aucun fichier produit",

@@ -19,7 +19,7 @@ import csv
 import io
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Iterator, NamedTuple, Optional
 
 # format -> (extension, type MIME)
 FORMATS: dict[str, tuple[str, str]] = {
@@ -61,8 +61,23 @@ def _as_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
-def table(value: Any) -> tuple[list[str], list[list[Any]]]:
-    """(en-tête, lignes) d'une valeur tabulaire, ou ``RowsError``."""
+class Table(NamedTuple):
+    """Valeur tabulaire lue sans être élargie : ses dimensions se bornent
+    avant que la moindre cellule soit produite."""
+
+    keys: list  # clés des objets, ou None pour des listes
+    header: list[str]
+    records: list  # lignes de données (objets ou listes)
+    width: int  # nombre de colonnes
+
+    def rows(self) -> Iterator[list[Any]]:
+        if self.keys is None:
+            return (list(r) for r in self.records)
+        return ([row.get(k) for k in self.keys] for row in self.records)
+
+
+def parse_table(value: Any) -> Table:
+    """La ``Table`` d'une valeur tabulaire, ou ``RowsError``."""
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -75,14 +90,12 @@ def table(value: Any) -> tuple[list[str], list[list[Any]]]:
     if not isinstance(value, list) or not value:
         raise RowsError("liste de lignes vide ou absente")
     if all(isinstance(r, dict) for r in value):
-        header: list[str] = []
-        for row in value:
-            for key in row:
-                if key not in header:
-                    header.append(str(key))
-        return header, [[row.get(k) for k in header] for row in value]
+        # dict : ordre de première apparition, en temps linéaire.
+        keys = list(dict.fromkeys(k for row in value for k in row))
+        return Table(keys, [str(k) for k in keys], value, len(keys))
     if all(isinstance(r, list) for r in value):
-        return [str(c) for c in value[0]], [list(r) for r in value[1:]]
+        width = max(len(r) for r in value)
+        return Table(None, [str(c) for c in value[0]], value[1:], width)
     raise RowsError("lignes mêlant objets, listes ou valeurs simples")
 
 
@@ -103,7 +116,7 @@ def _cell(value: Any, neutralise: bool = True) -> Any:
     return text
 
 
-def _csv(header: list[str], rows: list[list[Any]]) -> bytes:
+def _csv(header: list[str], rows: Iterator[list[Any]]) -> bytes:
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
     writer.writerow([_cell(h) for h in header])
@@ -113,24 +126,32 @@ def _csv(header: list[str], rows: list[list[Any]]) -> bytes:
     return buf.getvalue().encode("utf-8-sig")
 
 
-def _xlsx(header: list[str], rows: list[list[Any]], sheet: Optional[str]) -> bytes:
+def _xlsx(header: list[str], rows: Iterator[list[Any]], sheet: Optional[str]) -> bytes:
     from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = sheet or "Data"
-    # Pas d'apostrophe ici (elle resterait visible, ex. "+33…") : une cellule
-    # de type texte n'est jamais évaluée comme formule.
-    ws.append([_cell(h, neutralise=False) for h in header])
-    for row in rows:
-        ws.append([_cell(c, neutralise=False) for c in row])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    for r in ws.iter_rows():
-        for cell in r:
+    # Écriture en flux : la mémoire ne grandit pas avec le nombre de cellules.
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet(sheet or "Data")
+    bold = Font(bold=True)
+
+    def cells(values, header=False):
+        out = []
+        for value in values:
+            # Pas d'apostrophe ici (elle resterait visible, ex. "+33…") : une
+            # cellule de type texte n'est jamais évaluée comme formule.
+            cell = WriteOnlyCell(ws, value=_cell(value, neutralise=False))
             if isinstance(cell.value, str):
                 cell.data_type = "s"
+            if header:
+                cell.font = bold
+            out.append(cell)
+        return out
+
+    ws.append(cells(header, header=True))
+    for row in rows:
+        ws.append(cells(row))
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -238,13 +259,15 @@ def _pdf(text: str) -> bytes:
 
 
 def build(
-    fmt: str, value: Any, sheet: Optional[str] = None
+    fmt: str, value: Any, sheet: Optional[str] = None, table: Optional[Table] = None
 ) -> tuple[bytes, Optional[int]]:
-    """(octets, nombre de lignes pour un format tabulaire) du fichier ``fmt``."""
+    """(octets, nombre de lignes pour un format tabulaire) du fichier ``fmt``.
+    ``table`` : la valeur déjà lue (et bornée) par ``parse_table``."""
     if fmt in TABULAR:
-        header, rows = table(value)
-        data = _csv(header, rows) if fmt == "csv" else _xlsx(header, rows, sheet)
-        return data, len(rows)
+        t = table or parse_table(value)
+        rows = t.rows()
+        data = _csv(t.header, rows) if fmt == "csv" else _xlsx(t.header, rows, sheet)
+        return data, len(t.records)
     if fmt == "json":
         if isinstance(value, str):
             try:
@@ -265,8 +288,3 @@ def build(
 def text_length(value: Any) -> int:
     """Longueur du texte qu'un format mis en page aurait à rendre."""
     return len(_as_text(value))
-
-
-def row_count(value: Any) -> int:
-    """Nombre de lignes d'une valeur tabulaire (pour borner avant de construire)."""
-    return len(table(value)[1])

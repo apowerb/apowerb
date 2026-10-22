@@ -104,7 +104,8 @@ Note de 1 (faible) à 3 (fort) ; pour l'effort et le risque, 3 = élevé.
      - csv et xlsx : une liste d'objets, ou une liste de listes avec l'en-tête en premier ; une chaîne JSON de l'une ou l'autre est acceptée ;
      - docx et pdf : du Markdown simple (titres, listes ; tableaux en Word seulement), 200 000 caractères au plus, car le rendu PDF coûte au caractère.
    - Sortie : `{name, ref, size, content_type, format, rows}` ; `{{file1}}` désigne le fichier entier, à joindre ou à déposer.
-   - Bornes : 5 Mio, 10 000 lignes, 20 fichiers par exécution (le compteur repart à chaque run, y compris un « Test up to here »). Un contenu vide est refusé.
+   - Bornes : 5 Mio, 10 000 lignes, 1 000 colonnes et 500 000 cellules (des objets aux clés toutes différentes multiplient les colonnes), vérifiées avant de produire la moindre cellule et hors de la boucle d'événements. Un contenu vide est refusé.
+   - 20 fichiers au plus par exécution du moteur : le compteur repart à zéro à chaque exécution, y compris un « Test up to here » et la reprise d'un run après une approbation. Ce n'est donc pas un quota par run ni par compte.
    - Cellules : en CSV, une cellule qui commence par `=`, `+`, `@` ou `-` (hors nombre) est préfixée d'une apostrophe (injection de formules) ; en Excel, toute cellule texte est typée texte, donc jamais évaluée, et garde sa valeur exacte. Les caractères de contrôle sont retirés.
    - PDF : police DejaVu livrée avec matplotlib, car l'image de production n'a pas de police système.
    - Stockage : une ref `att_` du propriétaire, sous `workflow_generated/`. Les types produits ne sont **pas** ajoutés aux envois de fichiers (`store`).
@@ -123,7 +124,7 @@ Chaque nœud a ses règles de validation identiques côté moteur et côté stud
 ## 5. Hypothèses et suites
 
 - **Hypothèse** : `TH2_ATTACHMENT_ROOT` est persistant en production, comme pour les pièces jointes des triggers mail. Sinon, un fichier produit disparaît au redémarrage et son lien de téléchargement renvoie 404.
-- **Purge** : rien ne supprime encore `workflow_generated/`. Il faut une rétention, par exemple 30 jours, alignée sur celle des entrées de run.
+- **Prérequis avant la production : purge et quota.** Rien ne supprime encore `workflow_generated/` et aucun quota par compte ne borne son volume (un workflow planifié peut produire 20 fichiers de 5 Mio à chaque exécution). Il faut une rétention, par exemple 30 jours alignée sur celle des entrées de run, et un quota de stockage par propriétaire.
 - **Échec SMTP silencieux, préexistant** : `send_email` retombe sur un faux envoi journalisé quand le relais échoue. Le nœud compte alors l'envoi comme fait, pièces jointes comprises. C'est à corriger à part.
 - **Lot 2** :
   - réponse synchrone au webhook (`?wait=`) ;

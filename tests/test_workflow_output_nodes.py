@@ -258,9 +258,93 @@ def test_xlsx_neutralises_formulas():
 def test_csv_neutralises_formulas():
     svc = FakeServices()
     nodes, edges = _chain(_file({"format": "csv", "content": "{{t.rows}}"}))
-    _run(nodes, edges, {"rows": [{"a": "=1+1"}, {"a": "-5"}]}, svc)
+    rows = [{"=cmd": "=1+1"}, {"=cmd": "-5"}, {"=cmd": "-1+1"}, {"=cmd": "-2,5"}]
+    _run(nodes, edges, {"rows": rows}, svc)
     lines = svc.saved[0]["data"].decode("utf-8-sig").splitlines()
-    assert lines == ["a", "'=1+1", "-5"]
+    # L'en-tête aussi ; un nombre négatif reste un nombre.
+    assert lines == ["'=cmd", "'=1+1", "-5", "'-1+1", '"-2,5"']
+
+
+# --- bornes avant construction ---------------------------------------------------
+
+
+def _no_build(monkeypatch):
+    def boom(*a, **k):
+        pytest.fail("rien ne doit être construit au-delà des bornes")
+
+    monkeypatch.setattr(wg.workflow_files, "build", boom)
+
+
+def test_heterogeneous_keys_are_bounded_before_building(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_FILE_COLUMNS", 5)
+    _no_build(monkeypatch)
+    svc = FakeServices()
+    rows = [{f"k{r}_{i}": 1 for i in range(2)} for r in range(3)]  # 6 colonnes
+    nodes, edges = _chain(_file({"format": "csv", "content": "{{t.rows}}"}))
+    events = _run(nodes, edges, {"rows": rows}, svc)
+    err = _error(events, "f")
+    assert err["code"] == "file_too_many_columns"
+    assert err["params"] == {"node": "f", "max": "5"}
+    assert svc.saved == []
+
+
+def test_lists_count_their_widest_row_as_columns(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_FILE_COLUMNS", 2)
+    _no_build(monkeypatch)
+    nodes, edges = _chain(_file({"format": "xlsx", "content": "{{t.rows}}"}))
+    events = _run(nodes, edges, {"rows": [["a"], [1, 2, 3]]}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_many_columns"
+
+
+def test_cells_are_bounded_before_building(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_FILE_CELLS", 5)
+    _no_build(monkeypatch)
+    svc = FakeServices()
+    nodes, edges = _chain(_file({"format": "xlsx", "content": "{{t.rows}}"}))
+    events = _run(nodes, edges, {"rows": ROWS}, svc)  # 2 lignes x 3 colonnes
+    err = _error(events, "f")
+    assert err["code"] == "file_too_many_cells"
+    assert err["params"] == {"node": "f", "max": "5"}
+    assert svc.saved == []
+
+
+def test_table_is_read_once_outside_the_event_loop(monkeypatch):
+    import threading
+
+    seen = []
+    real = wg.workflow_files.parse_table
+
+    def spy(value):
+        seen.append(threading.current_thread() is threading.main_thread())
+        return real(value)
+
+    monkeypatch.setattr(wg.workflow_files, "parse_table", spy)
+    svc = FakeServices()
+    nodes, edges = _chain(_file({"format": "csv", "content": "{{t.rows}}"}))
+    _run(nodes, edges, {"rows": ROWS}, svc)
+    assert seen == [False]
+    assert svc.saved
+
+
+def test_heterogeneous_header_keeps_first_seen_order():
+    svc = FakeServices()
+    nodes, edges = _chain(_file({"format": "csv", "content": "{{t.rows}}"}))
+    _run(nodes, edges, {"rows": [{"b": 1, "a": 2}, {"c": 3, "a": 4}]}, svc)
+    lines = svc.saved[0]["data"].decode("utf-8-sig").splitlines()
+    assert lines == ["b,a,c", "1,2,", ",4,3"]
+
+
+def test_render_failure_logs_the_error_type_only(monkeypatch, caplog):
+    def fail(*a, **k):
+        raise ValueError("cellule secrète 4242")
+
+    monkeypatch.setattr(wg.workflow_files, "build", fail)
+    nodes, edges = _chain(_file({"format": "text", "content": "x"}))
+    with caplog.at_level("WARNING"):
+        events = _run(nodes, edges, {}, FakeServices())
+    assert _error(events, "f")["code"] == "file_build_failed"
+    assert "ValueError" in caplog.text
+    assert "4242" not in caplog.text
 
 
 def test_control_characters_do_not_break_xlsx_or_docx():
@@ -520,6 +604,15 @@ def test_email_without_attachments_keeps_the_old_call():
     events = _run(nodes, edges, {}, None, run_notify)
     assert calls == ["Rapport"]
     assert _complete(events, "n")["output"] == {"channel": "email", "sent": 1}
+
+
+def test_attachments_that_render_to_nothing_are_refused():
+    async def run_notify(*a, **k):
+        pytest.fail("rien ne doit partir")
+
+    nodes, edges = _chain(_mail({"attachments": "{{t.refs}}"}))
+    events = _run(nodes, edges, {"refs": []}, None, run_notify)
+    assert _error(events, "n")["code"] == "notification_attachment_missing"
 
 
 def test_too_many_attachments_are_refused(monkeypatch):
