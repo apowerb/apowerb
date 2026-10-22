@@ -986,9 +986,12 @@ def abandon_paused_run(run_id: str, user: str) -> None:
 # fait (``save_failure``). « Reprendre ici » ouvre un NOUVEAU run qui cite
 # l'original (``replay_of``) : l'amont est rejoué depuis l'instantané, jamais
 # réexécuté, le nœud en échec et la suite s'exécutent. La version est la
-# dernière sauvegarde du workflow — c'est ce qui permet de corriger le nœud
-# fautif avant de reprendre — à condition que les nœuds rejoués n'aient pas
-# changé (``workflow_graph.retry_mismatch``).
+# dernière sauvegarde du workflow, brouillon compris (``get_workflow``, comme
+# le panneau Test) — c'est ce qui permet de corriger le nœud fautif avant de
+# reprendre — à condition que les nœuds rejoués n'aient pas changé
+# (``workflow_graph.retry_mismatch``). Un run déclenché (webhook, planifié)
+# avait tourné sur la version publiée : sa reprise tourne aussi sur la
+# dernière sauvegarde.
 
 
 def save_failure(run_id: str, snapshot: dict) -> None:

@@ -221,6 +221,15 @@ async def test_resuming_replays_upstream_without_running_it_and_reruns_the_faile
 
 
 @pytest.mark.asyncio
+async def test_a_plain_replay_of_a_resumption_runs_everything_again(api):
+    _, events = await _failed(api)
+    api.fail.clear()
+    resumed = await _drain(await _retry(api, events[0]["wid"]))
+    replay = run_main.prepare_replay(resumed[0]["wid"], owner_id=OWNER, force=True)
+    assert "retry_from" not in replay["config"]
+
+
+@pytest.mark.asyncio
 async def test_a_resumption_that_fails_again_can_be_resumed_in_turn(api):
     _, events = await _failed(api)
     again = await _drain(await _retry(api, events[0]["wid"]))
