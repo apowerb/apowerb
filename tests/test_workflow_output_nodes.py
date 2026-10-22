@@ -626,3 +626,133 @@ def test_too_many_attachments_are_refused(monkeypatch):
         nodes, edges, {"refs": ["att_" + "a" * 32, "att_" + "b" * 32]}, None, run_notify
     )
     assert _error(events, "n")["code"] == "notification_too_many_attachments"
+
+
+# --- texte : bornes avant sérialisation et avant rendu ---------------------------
+
+
+def _deep(depth, leaf=1):
+    value = leaf
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize("fmt", ["json", "text", "markdown", "pdf"])
+def test_deep_values_are_refused_before_serialising(monkeypatch, fmt):
+    monkeypatch.setattr(wg, "MAX_FILE_DEPTH", 5)
+    _no_build(monkeypatch)
+    nodes, edges = _chain(_file({"format": fmt, "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": _deep(6)}, FakeServices())
+    err = _error(events, "f")
+    assert err["code"] == "file_too_deep"
+    assert err["params"] == {"node": "f", "max": "5"}
+
+
+def test_json_given_as_text_is_held_to_the_same_depth(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_FILE_DEPTH", 5)
+    _no_build(monkeypatch)
+    nodes, edges = _chain(_file({"format": "json", "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": json.dumps(_deep(6))}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_deep"
+
+
+def test_json_stops_serialising_at_the_size_cap(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_FILE_BYTES", 100)
+    _no_build(monkeypatch)
+    chunks = []
+    real = json.JSONEncoder.iterencode
+
+    def spy(self, o, _one_shot=False):
+        for chunk in real(self, o, _one_shot):
+            chunks.append(chunk)
+            yield chunk
+
+    monkeypatch.setattr(json.JSONEncoder, "iterencode", spy)
+    nodes, edges = _chain(_file({"format": "json", "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": list(range(5000))}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_large"
+    # Arrêt à la borne : la sérialisation complète ferait ~5 000 morceaux.
+    assert len(chunks) < 200
+
+
+def test_rich_text_from_a_structure_is_measured_without_building_it(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_FILE_TEXT_CHARS", 50)
+    _no_build(monkeypatch)
+    nodes, edges = _chain(_file({"format": "pdf", "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": {"k": list(range(5000))}}, FakeServices())
+    assert _error(events, "f")["code"] == "file_text_too_long"
+
+
+@pytest.mark.parametrize("fmt", ["docx", "pdf"])
+def test_markdown_tables_are_bounded_in_cells(monkeypatch, fmt):
+    monkeypatch.setattr(wg, "MAX_DOC_TABLE_CELLS", 5)
+    _no_build(monkeypatch)
+    text = "| a | b | c |\n|---|---|---|\n| 1 | 2 | 3 |"
+    nodes, edges = _chain(_file({"format": fmt, "content": text}))
+    events = _run(nodes, edges, {}, FakeServices())
+    err = _error(events, "f")
+    assert err["code"] == "file_too_many_cells"
+    assert err["params"] == {"node": "f", "max": "5"}
+
+
+def test_markdown_tables_are_bounded_in_columns(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_DOC_TABLE_COLUMNS", 2)
+    _no_build(monkeypatch)
+    text = "| a | b | c |\n|---|---|---|"
+    nodes, edges = _chain(_file({"format": "docx", "content": text}))
+    events = _run(nodes, edges, {}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_many_columns"
+
+
+def test_cells_of_all_tables_add_up(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_DOC_TABLE_CELLS", 7)
+    _no_build(monkeypatch)
+    table = "| a | b |\n|---|---|\n| 1 | 2 |"  # 4 cellules
+    nodes, edges = _chain(_file({"format": "docx", "content": table + "\n\n" + table}))
+    events = _run(nodes, edges, {}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_many_cells"
+
+
+@pytest.mark.parametrize("fmt", ["docx", "pdf"])
+def test_rich_text_is_bounded_in_lines(monkeypatch, fmt):
+    monkeypatch.setattr(wg, "MAX_FILE_TEXT_LINES", 3)
+    _no_build(monkeypatch)
+    nodes, edges = _chain(_file({"format": fmt, "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": "a\nb\nc\nd"}, FakeServices())
+    err = _error(events, "f")
+    assert err["code"] == "file_too_many_lines"
+    assert err["params"] == {"node": "f", "max": "3"}
+
+
+def test_a_small_word_table_is_still_rendered():
+    import docx
+
+    svc = FakeServices()
+    text = "| a | b |\n|---|---|\n| 1 | 2 |"
+    nodes, edges = _chain(_file({"format": "docx", "content": text}))
+    _run(nodes, edges, {}, svc)
+    doc = docx.Document(io.BytesIO(svc.saved[0]["data"]))
+    assert [c.text for c in doc.tables[0].rows[1].cells] == ["1", "2"]
+
+
+def test_errors_never_quote_the_content():
+    nodes, edges = _chain(_save({"provider": "onedrive", "file": "{{t.x}}"}))
+    events = _run(nodes, edges, {"x": {"nom": "secret-4242"}}, FakeServices())
+    assert _error(events, "s")["code"] == "file_save_bad_file"
+    assert "4242" not in json.dumps([e for e in events if "error" in e["event"]])
+
+    async def run_notify(*a, **k):
+        pytest.fail("rien ne doit partir")
+
+    nodes, edges = _chain(_mail({"attachments": "{{t.x}}"}))
+    events = _run(nodes, edges, {"x": [{"nom": "secret-4242"}]}, None, run_notify)
+    assert _error(events, "n")["code"] == "notification_attachment_bad_ref"
+    assert "4242" not in json.dumps([e for e in events if "error" in e["event"]])
+
+
+def test_plain_text_in_a_json_file_stays_valid_json():
+    svc = FakeServices()
+    nodes, edges = _chain(_file({"format": "json", "content": "{{t.v}}"}))
+    _run(nodes, edges, {"v": "bonjour"}, svc)
+    assert json.loads(svc.saved[0]["data"]) == "bonjour"

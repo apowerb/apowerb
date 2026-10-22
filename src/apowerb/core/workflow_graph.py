@@ -276,12 +276,20 @@ MAX_NOTIFICATION_ATTACHMENTS = 5
 FILE_FORMATS = tuple(workflow_files.FORMATS)
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_FILE_ROWS = 10_000
-# Word et PDF : le rendu est lent au caractère (PDF ≈ 30 s pour 450 000).
+# Word et PDF : texte borné en caractères (et en lignes, plus bas).
 MAX_FILE_TEXT_CHARS = 200_000
 # Bornées avant construction : des objets aux clés toutes différentes
 # multiplient les colonnes, donc les cellules.
 MAX_FILE_COLUMNS = 1_000
 MAX_FILE_CELLS = 500_000
+# Une valeur non textuelle est écrite en JSON indenté : l'indentation croît
+# avec la profondeur, bornée avant toute sérialisation.
+MAX_FILE_DEPTH = 50
+# Word et PDF : tableaux Markdown (Word plafonne à 63 colonnes) et lignes
+# (le rendu PDF coûte surtout à la ligne : ≈ 5 s pour 2 000 lignes).
+MAX_DOC_TABLE_COLUMNS = 63
+MAX_DOC_TABLE_CELLS = 20_000
+MAX_FILE_TEXT_LINES = 2_000
 MAX_FILE_NAME = 120
 # Règles d'Excel pour un nom de feuille.
 _SHEET_FORBIDDEN = re.compile(r"[\[\]:*?/\\]")
@@ -1892,12 +1900,67 @@ def _file_refs(node_id: str, value: Any, *, code_prefix: str, limit: int) -> lis
         ref = item.get("ref") if isinstance(item, dict) else item
         if not isinstance(ref, str) or not ref.strip():
             raise GraphError(
-                f"{node_id} : élément qui n'est pas un fichier ({str(item)[:80]!r})",
+                f"{node_id} : élément qui n'est pas un fichier (attendu : une ref "
+                "ou la sortie d'un nœud Fichier)",
                 code=f"{code_prefix}_attachment_bad_ref",
                 params={"node": node_id},
             )
         refs.append(ref.strip())
     return refs
+
+
+def _bounded_file_text(node_id: str, fmt: str, value: Any) -> str:
+    """Le texte d'un fichier json, markdown, text, docx ou pdf, bornes
+    vérifiées avant de le produire en entier et avant tout rendu."""
+    if fmt == "json":
+        value = workflow_files.json_value(value)
+    if workflow_files.depth(value, MAX_FILE_DEPTH) > MAX_FILE_DEPTH:
+        raise GraphError(
+            f"{node_id} : valeur imbriquée sur plus de {MAX_FILE_DEPTH} niveaux",
+            code="file_too_deep",
+            params={"node": node_id, "max": str(MAX_FILE_DEPTH)},
+        )
+    rich = fmt in workflow_files.RICH_TEXT
+    # Un caractère vaut au moins un octet : la borne en octets reste vérifiée
+    # après coup, celle-ci évite seulement de produire au-delà.
+    limit = MAX_FILE_TEXT_CHARS if rich else MAX_FILE_BYTES
+    try:
+        text = workflow_files.bounded_text(value, limit, as_json=fmt == "json")
+    except workflow_files.TextTooLong:
+        if rich:
+            raise GraphError(
+                f"{node_id} : texte trop long pour un fichier {fmt} "
+                f"(max {MAX_FILE_TEXT_CHARS} caractères)",
+                code="file_text_too_long",
+                params={"node": node_id, "format": fmt, "max": str(MAX_FILE_TEXT_CHARS)},
+            ) from None
+        raise GraphError(
+            f"{node_id} : fichier de plus de {MAX_FILE_BYTES} octets",
+            code="file_too_large",
+            params={"node": node_id, "max": str(MAX_FILE_BYTES)},
+        ) from None
+    if not rich:
+        return text
+    if text.count("\n") + 1 > MAX_FILE_TEXT_LINES:
+        raise GraphError(
+            f"{node_id} : plus de {MAX_FILE_TEXT_LINES} lignes de texte",
+            code="file_too_many_lines",
+            params={"node": node_id, "max": str(MAX_FILE_TEXT_LINES)},
+        )
+    widest, cells = workflow_files.markdown_tables(text)
+    if widest > MAX_DOC_TABLE_COLUMNS:
+        raise GraphError(
+            f"{node_id} : tableau de {widest} colonnes, max {MAX_DOC_TABLE_COLUMNS}",
+            code="file_too_many_columns",
+            params={"node": node_id, "max": str(MAX_DOC_TABLE_COLUMNS)},
+        )
+    if cells > MAX_DOC_TABLE_CELLS:
+        raise GraphError(
+            f"{node_id} : {cells} cellules de tableau, max {MAX_DOC_TABLE_CELLS}",
+            code="file_too_many_cells",
+            params={"node": node_id, "max": str(MAX_DOC_TABLE_CELLS)},
+        )
+    return text
 
 
 def _build_file(node_id: str, fmt: str, value: Any, sheet: Optional[str]) -> tuple:
@@ -1932,18 +1995,11 @@ def _build_file(node_id: str, fmt: str, value: Any, sheet: Optional[str]) -> tup
                 code="file_too_many_cells",
                 params={"node": node_id, "max": str(MAX_FILE_CELLS)},
             )
-    elif (
-        fmt in workflow_files.RICH_TEXT
-        and workflow_files.text_length(value) > MAX_FILE_TEXT_CHARS
-    ):
-        raise GraphError(
-            f"{node_id} : texte trop long pour un fichier {fmt} "
-            f"(max {MAX_FILE_TEXT_CHARS} caractères)",
-            code="file_text_too_long",
-            params={"node": node_id, "format": fmt, "max": str(MAX_FILE_TEXT_CHARS)},
-        )
+    text = None
+    if table is None:
+        text = _bounded_file_text(node_id, fmt, value)
     try:
-        return workflow_files.build(fmt, value, sheet, table=table)
+        return workflow_files.build(fmt, value, sheet, table=table, text=text)
     except Exception as exc:
         # Type seulement : le message d'une bibliothèque de rendu peut citer
         # le contenu d'une cellule.
@@ -2579,7 +2635,7 @@ class _Compiler:
         ref = value.get("ref") if isinstance(value, dict) else value
         if not isinstance(ref, str) or not ref.strip():
             raise GraphError(
-                f"{node.id} : {str(value)[:80]!r} n'est pas un fichier "
+                f"{node.id} : ce n'est pas un fichier "
                 "(attendu : la sortie d'un nœud Fichier, ex. {{file1}})",
                 code="file_save_bad_file",
                 params={"node": node.id},

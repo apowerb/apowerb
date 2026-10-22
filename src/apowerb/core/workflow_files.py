@@ -61,6 +61,62 @@ def _as_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
+class TextTooLong(Exception):
+    """Le texte à produire dépasse la borne demandée."""
+
+
+def depth(value: Any, stop: int) -> int:
+    """Profondeur d'imbrication de ``value`` (listes, objets), sans
+    récursion ; le parcours s'arrête dès que ``stop`` est dépassé."""
+    deepest = 0
+    stack = [(value, 0)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, dict):
+            children = item.values()
+        elif isinstance(item, list):
+            children = item
+        else:
+            continue
+        level += 1
+        deepest = max(deepest, level)
+        if deepest > stop:
+            return deepest
+        stack.extend((c, level) for c in children)
+    return deepest
+
+
+def bounded_text(value: Any, limit: int, as_json: bool = False) -> str:
+    """Le texte de ``value`` (une valeur non textuelle en JSON indenté),
+    produit morceau par morceau et abandonné dès que ``limit`` caractères
+    sont dépassés (``TextTooLong``) : jamais la chaîne entière d'abord.
+    ``as_json`` : tout passe par JSON (un texte devient une chaîne JSON)."""
+    if isinstance(value, str) and not as_json:
+        if len(value) > limit:
+            raise TextTooLong
+        return value
+    if value is None and not as_json:
+        return ""
+    parts, size = [], 0
+    encoder = json.JSONEncoder(ensure_ascii=False, indent=2, default=str)
+    for chunk in encoder.iterencode(value):
+        size += len(chunk)
+        if size > limit:
+            raise TextTooLong
+        parts.append(chunk)
+    return "".join(parts)
+
+
+def json_value(value: Any) -> Any:
+    """La valeur d'un fichier JSON : un texte JSON est relu, sinon gardé."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (ValueError, RecursionError):
+            return value
+    return value
+
+
 class Table(NamedTuple):
     """Valeur tabulaire lue sans être élargie : ses dimensions se bornent
     avant que la moindre cellule soit produite."""
@@ -167,6 +223,29 @@ def _split_row(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
+def markdown_tables(text: str) -> tuple[int, int]:
+    """(colonnes du plus large, cellules au total) des tableaux Markdown que
+    ``_docx`` construirait : de quoi borner avant toute construction."""
+    lines = text.splitlines()
+    widest = cells = 0
+    i = 0
+    while i < len(lines):
+        if (
+            lines[i].lstrip().startswith("|")
+            and i + 1 < len(lines)
+            and _TABLE_SEP.match(lines[i + 1])
+        ):
+            width = len(_split_row(lines[i]))
+            rows, i = 1, i + 2
+            while i < len(lines) and lines[i].lstrip().startswith("|"):
+                rows, i = rows + 1, i + 1
+            widest = max(widest, width)
+            cells += rows * width
+            continue
+        i += 1
+    return widest, cells
+
+
 def _docx(text: str) -> bytes:
     import docx
 
@@ -259,32 +338,30 @@ def _pdf(text: str) -> bytes:
 
 
 def build(
-    fmt: str, value: Any, sheet: Optional[str] = None, table: Optional[Table] = None
+    fmt: str,
+    value: Any,
+    sheet: Optional[str] = None,
+    table: Optional[Table] = None,
+    text: Optional[str] = None,
 ) -> tuple[bytes, Optional[int]]:
     """(octets, nombre de lignes pour un format tabulaire) du fichier ``fmt``.
-    ``table`` : la valeur déjà lue (et bornée) par ``parse_table``."""
+    ``table`` / ``text`` : la valeur déjà lue et bornée (``parse_table``,
+    ``bounded_text``)."""
     if fmt in TABULAR:
         t = table or parse_table(value)
         rows = t.rows()
         data = _csv(t.header, rows) if fmt == "csv" else _xlsx(t.header, rows, sheet)
         return data, len(t.records)
     if fmt == "json":
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except ValueError:
-                pass
-        return json.dumps(
-            value, ensure_ascii=False, indent=2, default=str
-        ).encode(), None
-    text = _as_text(value)
+        if text is None:
+            text = json.dumps(
+                json_value(value), ensure_ascii=False, indent=2, default=str
+            )
+        return text.encode(), None
+    if text is None:
+        text = _as_text(value)
     if fmt == "docx":
         return _docx(_CONTROL.sub("", text)), None
     if fmt == "pdf":
         return _pdf(_CONTROL.sub("", text)), None
     return text.encode("utf-8"), None
-
-
-def text_length(value: Any) -> int:
-    """Longueur du texte qu'un format mis en page aurait à rendre."""
-    return len(_as_text(value))
