@@ -152,3 +152,20 @@ def _models_schema_untouched():
         "use the sqlite_engine fixture instead",
         pytrace=False,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_decision_notice_leaves(monkeypatch):
+    """No human-decision notice (mail, Teams) ever leaves a test.
+
+    A run that pauses on an ``approval`` node announces itself from the very
+    stream the test drains; the tests that check those notices install their
+    own recorder over this one.
+    """
+    from apowerb.core import decision_notices
+
+    async def _nowhere(**kwargs):
+        return None
+
+    monkeypatch.setattr(decision_notices, "_send_mail", _nowhere)
+    monkeypatch.setattr(decision_notices, "_send_teams", _nowhere)

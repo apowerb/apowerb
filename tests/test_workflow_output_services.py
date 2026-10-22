@@ -84,6 +84,23 @@ def test_save_file_service_caps_files_per_run(monkeypatch):
     _run(rt.services_for(ALICE).save_file("g.csv", CSV, b"a\n"))
 
 
+def test_a_resumed_run_counts_the_files_it_already_made(monkeypatch):
+    monkeypatch.setattr(rt, "MAX_RUN_FILES", 2)
+    state = {
+        "artifacts": [
+            {"file_ref": "att_" + "a" * 32, "file_name": "a.csv"},
+            {"type": "chart"},
+        ]
+    }
+    assert rt.files_produced(state) == 1
+    assert rt.files_produced(None) == 0
+    services = rt.services_for(ALICE, files_already=rt.files_produced(state))
+    _run(services.save_file("b.csv", CSV, b"a\n"))
+    with pytest.raises(GraphError) as exc:
+        _run(services.save_file("c.csv", CSV, b"a\n"))
+    assert exc.value.code == "file_run_limit"
+
+
 # --- pièces jointes du mail -----------------------------------------------------
 
 

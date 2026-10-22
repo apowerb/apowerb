@@ -31,8 +31,7 @@ produit :
 * un email peut porter des pièces jointes : des refs (``workflow_attachments``)
   résolues pour le **propriétaire du run** seulement, bornées en taille ;
 * un nœud file stocke son fichier comme une ref du propriétaire
-  (``store_generated``), au plus ``MAX_RUN_FILES`` par exécution (une reprise
-  repart de zéro) ; un nœud file_save la dépose sur son OneDrive via son
+  (``store_generated``), au plus ``MAX_RUN_FILES`` par run, reprises comprises ; un nœud file_save la dépose sur son OneDrive via son
   intégration Microsoft
   (``onedrive_write.tool_upload_file``, sous son identité) : le chemin local
   vient de la ref résolue, jamais du graphe.
@@ -936,15 +935,24 @@ def _upload_to_onedrive(owner_email: str, path: str, dest: str, conflict: str) -
     )
 
 
-def services_for(owner_email: str) -> NodeServices:
+def files_produced(state: Optional[dict]) -> int:
+    """Fichiers déjà produits par le run que reprend ``state`` (instantané
+    dune pause ou dun échec) : les nœuds file rejoués ne les reproduisent
+    pas, mais ils comptent dans ``MAX_RUN_FILES``."""
+    artifacts = (state or {}).get("artifacts") or []
+    return sum(1 for a in artifacts if isinstance(a, dict) and a.get("file_ref"))
+
+
+def services_for(owner_email: str, files_already: int = 0) -> NodeServices:
     """Services des nœuds document / classifier Jev / db_write / file /
     file_save pour ``owner_email`` ; appels bloquants exécutés dans un thread.
 
-    Construit pour UN run : le compteur de fichiers produits lui est propre.
+    Construit pour UN run : le compteur de fichiers produits lui est propre ;
+    une reprise lui passe ``files_already`` (``files_produced``).
     """
     from apowerb.core import workflow_attachments
 
-    produced = 0
+    produced = files_already
 
     async def document(ref: str) -> dict:
         return await asyncio.to_thread(_read_document, ref, owner_email)
