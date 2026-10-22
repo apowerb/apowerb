@@ -56,6 +56,7 @@ class RunStore(BaseModel):
     engine: Any = None
     metadata: Any = None
     run_table: Any = None
+    failure_alert_table: Any = None
 
     def __init__(self, **data: Any):
         super().__init__(**data)
@@ -109,6 +110,19 @@ class RunStore(BaseModel):
             # Échéance de la décision en attente (même format que
             # ``created_at``) : passé ce moment, le run est clos en ``error``.
             Column("expires_at", String),
+            # Alerte d'échec (``workflow_alerts``) : réservée avant l'envoi,
+            # puis son issue (sent, grouped, off, failed). Une seule par run.
+            Column("failure_alert", String),
+        )
+        # Dernière alerte d'échec par workflow et échecs regroupés depuis :
+        # au plus une alerte par heure pour un workflow qui échoue en boucle.
+        self.failure_alert_table = Table(
+            "workflow_failure_alerts",
+            self.metadata,
+            Column("workflow_id", String, primary_key=True),
+            Column("owner_id", String, nullable=False),
+            Column("last_sent_at", String, nullable=False),
+            Column("grouped", Integer, nullable=False, default=0),
         )
 
     def create_table(self):
@@ -147,6 +161,7 @@ class RunStore(BaseModel):
             "decision": "VARCHAR",
             "resumed_at": "VARCHAR",
             "expires_at": "VARCHAR",
+            "failure_alert": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         # Deux réplicas qui démarrent ensemble : sur Postgres, le second

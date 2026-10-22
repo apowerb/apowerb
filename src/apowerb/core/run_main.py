@@ -699,6 +699,12 @@ def _expire_due(conn) -> None:
     )
 
 
+def expire_due_decisions() -> None:
+    """Applique les échéances sans autre lecture (boucle du planificateur)."""
+    with run_store.engine.begin() as conn:
+        _expire_due(conn)
+
+
 def _release_dead_resumptions(conn) -> None:
     """Remet en attente les reprises mortes avant d'avoir pris la décision.
 

@@ -1002,6 +1002,20 @@ async def notify_run_finished(
     if config.get("until"):
         return
 
+    if status == run_main.STATUS_ERROR:
+        # « Me prévenir en cas d'échec » : jamais au prix des écouteurs.
+        try:
+            from apowerb.core import workflow_alerts
+
+            await workflow_alerts.alert_run_failed(
+                run_id=run_id,
+                owner_id=owner_id,
+                workflow_id=source_workflow_id,
+                error_message=error_message,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("[triggers] alerte d'échec non traitée (run_id=%s)", run_id)
+
     prior_chain: list[str] = []
     try:
         own_trigger = json.loads(d.get("trigger") or "{}")

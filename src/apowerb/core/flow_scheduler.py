@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Optional
 
+from apowerb.core import workflow_alerts
 from apowerb.core import workflow_file_triggers as wft
 from apowerb.core import workflow_mail_subscriptions
 from apowerb.core import workflow_triggers as wt
@@ -122,6 +123,11 @@ async def _loop() -> None:
             await workflow_mail_subscriptions.reconcile_outlook_subscriptions()
         except Exception:  # noqa: BLE001 - idem : jamais la boucle
             logger.exception("[flow_scheduler] réconciliation des abonnements mail en échec")
+        try:
+            # Une décision humaine expirée ne passe par aucune fin de flux.
+            await workflow_alerts.alert_expired_decisions()
+        except Exception:  # noqa: BLE001 - idem : jamais la boucle
+            logger.exception("[flow_scheduler] alertes de décisions expirées en échec")
         await asyncio.sleep(TICK_SECONDS)
 
 
