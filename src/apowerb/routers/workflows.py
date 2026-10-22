@@ -28,6 +28,12 @@ runs a workflow with an attached file:
   stream replays the nodes already done, flagged ``replayed``), or closing
   it unanswered.
 
+* ``POST /runs/{run_id}/retry-from-failure`` — « Reprendre ici » : a graph
+  run that failed on a node is run again from that node, as a new run that
+  cites the original. The nodes done before are replayed from the snapshot
+  kept at the failure (``replayed``, never executed again), against the
+  workflow's latest saved version as long as they did not change.
+
 * ``GET /api/workflows/tools/schema?tool=<tool_ref>`` — the argument schema
   of one tool (types, required, defaults, per-arg description), so the
   studio's node inspector can build its form without hardcoding it per tool.
@@ -221,6 +227,11 @@ def pause_saver(run_id: str) -> Callable[[dict], None]:
     return lambda snapshot: run_main.pause_run(run_id, snapshot)
 
 
+def failure_saver(run_id: str) -> Callable[[dict], None]:
+    """Le ``on_fail`` de ``run_graph`` : de quoi reprendre au nœud en échec."""
+    return lambda snapshot: run_main.save_failure(run_id, snapshot)
+
+
 async def _graph_replay_runner(
     owner: str,
     config: dict[str, Any],
@@ -271,6 +282,51 @@ async def _graph_replay_runner(
         # Un « Tester jusqu'ici » se rejoue tel quel, sans son aval.
         until=config.get("until"),
         on_await=pause_saver(run_id) if run_id else None,
+        on_fail=failure_saver(run_id) if run_id else None,
+        run_id=run_id,
+    ):
+        yield chunk
+
+
+async def _retry_runner(
+    owner: str, retry: dict[str, Any], cancel_event: asyncio.Event
+) -> AsyncGenerator[str, None]:
+    """« Reprendre ici » : le graphe de la dernière sauvegarde, l'amont rejoué."""
+    from apowerb.core import workflow_graph, workflow_runtime
+    from apowerb.core.run_gate import resolve_owner_plan
+
+    run_id, state, config = retry["run_id"], retry["state"], retry["config"]
+    try:
+        run_agent, run_tool, run_rag, run_notify = workflow_runtime.bindings_for(
+            owner, await resolve_owner_plan(owner)
+        )
+    except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
+        yield (
+            "data: "
+            + json.dumps({"event": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            + "\n\n"
+        )
+        return
+    # Dit au client que les nœuds ``replayed`` qui suivent étaient faits
+    # avant l'échec (et non avant une décision).
+    started = {"event": "retry_started", "replay_of": retry["replay_of"], "node_id": config["retry_from"]}
+    yield "data: " + json.dumps(started) + "\n\n"
+    async for chunk in workflow_graph.run_graph(
+        retry["graph"],
+        payload=state.get("payload"),
+        run_agent=run_agent,
+        run_tool=run_tool,
+        run_rag=run_rag,
+        run_subworkflow=workflow_runtime.resolve_workflow_for(owner),
+        workflow_id=config["workflow_id"],
+        cancel_event=cancel_event,
+        run_notify=run_notify,
+        services=workflow_runtime.services_for(owner),
+        until=state.get("until"),
+        # Sans ``answer`` : rien à décider, seulement l'amont à rejouer.
+        resume={k: state.get(k) for k in ("outputs", "routes", "artifacts")},
+        on_await=pause_saver(run_id),
+        on_fail=failure_saver(run_id),
         run_id=run_id,
     ):
         yield chunk
@@ -385,6 +441,7 @@ async def _decision_resume_stream(
         run_notify=run_notify,
         services=workflow_runtime.services_for(owner),
         on_await=pause_saver(run_id),
+        on_fail=failure_saver(run_id),
         resume={**state, "answer": claimed["answer"]},
         run_id=run_id,
         on_answered=_decision_taken(run_id, claimed),
@@ -933,6 +990,30 @@ async def resume_run(
         runner=lambda cancel: _decision_resume_runner(run_id, claimed, cancel, trace),
         resume_guard=claimed,
         trace=trace,
+    )
+
+
+@router.post("/runs/{run_id}/retry-from-failure")
+async def retry_from_failure(
+    run_id: str,
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """« Reprendre ici » : relance un run en échec à partir du nœud fautif (SSE).
+
+    Nouveau run (``replay_of``) sur la dernière sauvegarde du workflow : les
+    nœuds faits avant l'échec sont rejoués (``replayed``) sans être exécutés,
+    le nœud en échec et la suite s'exécutent vraiment. Réservé au
+    propriétaire (404 sinon), une seule fois par échec (409) ; les codes de
+    refus sont ceux de ``run_main.prepare_retry``.
+    """
+    retry = run_main.prepare_retry(run_id, current_user.email)
+    owner = current_user.email
+    return _streaming_run(
+        run_id=retry["run_id"],
+        agent_ids=[],
+        file_bytes=None,
+        owner=owner,
+        runner=lambda cancel: _retry_runner(owner, retry, cancel),
     )
 
 

@@ -128,9 +128,15 @@ class RunStore(BaseModel):
             # indexé avec ``created_at`` (voir ``Index`` plus bas).
             Column("workflow_id", String),
             # L'échec sous forme structurée, en JSON : ``code`` (traduit par
-            # l'interface), ``params``, ``ref`` et ``node_id`` (le nœud fautif).
-            # ``error_message`` garde le texte, pour les lecteurs existants.
+            # l'interface), ``params`` et ``ref``. Le nœud fautif est dans
+            # ``failure_node``. ``error_message`` garde le texte, pour les
+            # lecteurs existants.
             Column("error_info", String),
+            # Run de graphe en ``error`` : l'instantané scellé de ce qui était
+            # fait (sorties, routes), relu par « Reprendre ici », et le nœud
+            # en échec, qui reste lisible une fois l'instantané purgé.
+            Column("failure_state", String),
+            Column("failure_node", String),
             # L'historique d'un workflow : filtré par workflow, trié par date.
             Index(f"ix_{self.table_name}_workflow_created", "workflow_id", "created_at"),
         )
@@ -187,6 +193,8 @@ class RunStore(BaseModel):
             "end_notice": "VARCHAR",
             "workflow_id": "VARCHAR",
             "error_info": "VARCHAR",
+            "failure_state": "VARCHAR",
+            "failure_node": "VARCHAR",
         }
         schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
         # Deux réplicas qui démarrent ensemble : sur Postgres, le second

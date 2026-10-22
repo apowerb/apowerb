@@ -186,22 +186,29 @@ def test_a_failure_keeps_its_code_params_and_node(store):
     run_main.finish_run(run_id, status="error", error_message="agent2 : réponse non JSON")
     run_main.record_failure(
         run_id,
-        {"code": "output_type_mismatch", "params": {"node": "agent2"}, "node_id": "agent2"},
+        {"code": "output_type_mismatch", "params": {"node": "agent2"}, "failed_node": "agent2"},
     )
 
     run = run_main.get_run(run_id, owner_id=OWNER)
     assert run["error_message"] == "agent2 : réponse non JSON"
-    assert run["error"] == {
-        "code": "output_type_mismatch",
-        "params": {"node": "agent2"},
-        "node_id": "agent2",
-    }
+    assert run["error"] == {"code": "output_type_mismatch", "params": {"node": "agent2"}}
+    assert run["failure_node"] == "agent2"
+
+
+def test_the_node_saved_with_the_retry_snapshot_is_not_overwritten(store):
+    """``failure_node`` n'a qu'un auteur, le moteur : ``save_failure`` l'écrit le premier."""
+    run_id = _graph_run()
+    run_main.save_failure(run_id, {"failed_node": "writer", "graph": {}, "outputs": {}})
+    run_main.finish_run(run_id, status="error", error_message="quota")
+    run_main.record_failure(run_id, {"code": "workflow_error", "failed_node": "autre"})
+
+    assert run_main.get_run(run_id, owner_id=OWNER)["failure_node"] == "writer"
 
 
 def test_a_success_has_no_structured_error(store):
     run_id = _graph_run()
     run_main.finish_run(run_id, status="success")
-    run_main.record_failure(run_id, {"code": "internal", "node_id": None})
+    run_main.record_failure(run_id, {"code": "internal", "failed_node": "n1"})
     assert run_main.get_run(run_id, owner_id=OWNER)["error"] is None
 
 
@@ -209,7 +216,7 @@ def test_a_replayed_run_does_not_inherit_a_stale_failure(store):
     """``finish_run`` remet l'échec structuré à zéro : il n'appartient qu'à l'issue écrite."""
     run_id = _graph_run()
     run_main.finish_run(run_id, status="error", error_message="a")
-    run_main.record_failure(run_id, {"code": "internal", "node_id": "n1"})
+    run_main.record_failure(run_id, {"code": "internal"})
     with run_main.run_store.engine.begin() as conn:
         t = run_main.run_store.run_table
         conn.execute(t.update().where(t.c.run_id == run_id).values(status="running"))
@@ -231,41 +238,27 @@ def _trace(*events):
     return trace
 
 
-def test_the_faulty_node_is_found_by_its_reference():
+def test_the_faulty_node_is_the_one_the_engine_names():
+    """Contre-exemple : le dernier ``node_error`` (rattrapé par un ``try``) n'est
+    pas le fautif ; seul le ``failed_node`` du moteur compte."""
     trace = _trace(
-        {"event": "node_error", "node_id": "http1", "code": "http_error", "detail": "x", "ref": "aaa"},
-        {"event": "error", "code": "http_error", "detail": "x", "ref": "aaa"},
+        {"event": "node_error", "node_id": "agent3", "code": "output_type_mismatch", "detail": "b"},
+        {"event": "node_error", "node_id": "try2.agent4", "attempt": 0, "code": "internal", "detail": "c"},
+        {"event": "error", "code": "output_type_mismatch", "detail": "b", "params": {"node": "agent3"}, "failed_node": "agent3", "retryable": True},
     )
-    assert trace.failure()["node_id"] == "http1"
-    assert trace.failure()["code"] == "http_error"
-
-
-def test_an_error_caught_by_a_try_is_not_blamed_for_a_later_failure():
-    """Contre-exemple : le dernier ``node_error`` n'est pas forcément le fautif."""
-    trace = _trace(
-        {"event": "node_error", "node_id": "try1.agent1", "attempt": 0, "code": "internal", "detail": "a", "ref": "r1"},
-        {"event": "node_complete", "node_id": "try1", "output": {}},
-        {"event": "node_error", "node_id": "agent3", "code": "output_type_mismatch", "detail": "b", "params": {"node": "agent3"}},
-        {"event": "node_error", "node_id": "try2.agent4", "attempt": 0, "code": "internal", "detail": "c", "ref": "r9"},
-        {"event": "error", "code": "output_type_mismatch", "detail": "b", "params": {"node": "agent3"}},
-    )
-    failure = trace.failure()
-    assert failure["node_id"] == "agent3"
-    assert failure["params"] == {"node": "agent3"}
-
-
-def test_a_failure_inside_a_loop_names_the_inner_node():
-    trace = _trace(
-        {"event": "node_error", "node_id": "loop1.agent2", "iteration": 1, "code": "internal", "detail": "d", "ref": "zz"},
-        {"event": "node_error", "node_id": "loop1", "code": "internal", "detail": "d", "ref": "zz"},
-        {"event": "error", "code": "internal", "detail": "d", "ref": "zz"},
-    )
-    assert trace.failure()["node_id"] == "loop1.agent2"
+    assert trace.failure() == {
+        "code": "output_type_mismatch",
+        "params": {"node": "agent3"},
+        "failed_node": "agent3",
+    }
 
 
 def test_a_run_level_error_names_no_node():
-    trace = _trace({"event": "error", "code": "invalid_graph", "detail": "bad"})
-    assert trace.failure() == {"code": "invalid_graph", "node_id": None}
+    trace = _trace(
+        {"event": "node_error", "node_id": "agent9", "code": "invalid_graph", "detail": "bad"},
+        {"event": "error", "code": "invalid_graph", "detail": "bad"},
+    )
+    assert trace.failure() == {"code": "invalid_graph"}
 
 
 def test_a_run_that_did_not_fail_has_no_failure():
@@ -474,15 +467,6 @@ def test_the_trace_retention_is_read_from_the_environment(monkeypatch, raw, days
 # --- mutations survivantes de la première revue ---------------------------------
 
 
-def test_a_node_error_without_the_reference_is_not_the_faulty_one():
-    trace = _trace(
-        {"event": "node_error", "node_id": "http1", "code": "http_error", "detail": "x", "ref": "aaa"},
-        {"event": "node_error", "node_id": "agent9", "code": "internal", "detail": "y"},
-        {"event": "error", "code": "http_error", "detail": "x", "ref": "aaa"},
-    )
-    assert trace.failure()["node_id"] == "http1"
-
-
 def test_runs_started_in_the_same_instant_keep_a_stable_order(store, monkeypatch):
     monkeypatch.setattr(run_main, "_now", lambda: "2026-10-22 10:00:00.000000")
     ids = [_graph_run() for _ in range(6)]
@@ -550,7 +534,7 @@ async def test_a_failed_graph_run_is_recorded_with_its_faulty_node_and_trace(wor
     async def _runner(_cancel):
         yield _sse({"event": "node_start", "node_id": "agent1", "type": "agent"})
         yield _sse({"event": "node_error", "node_id": "agent1", "code": "output_type_mismatch", "detail": "pas du JSON", "params": {"node": "agent1"}})
-        yield _sse({"event": "error", "code": "output_type_mismatch", "detail": "pas du JSON", "params": {"node": "agent1"}})
+        yield _sse({"event": "error", "code": "output_type_mismatch", "detail": "pas du JSON", "params": {"node": "agent1"}, "failed_node": "agent1", "retryable": False})
 
     response = workflows._streaming_run(
         run_id=run_id, agent_ids=[], file_bytes=None, owner=OWNER, runner=_runner
@@ -560,9 +544,8 @@ async def test_a_failed_graph_run_is_recorded_with_its_faulty_node_and_trace(wor
     run = run_main.get_run(run_id, owner_id=OWNER)
     assert run["status"] == "error"
     assert run["error_message"] == "pas du JSON"
-    assert run["error"]["code"] == "output_type_mismatch"
-    assert run["error"]["node_id"] == "agent1"
-    assert run["error"]["params"] == {"node": "agent1"}
+    assert run["error"] == {"code": "output_type_mismatch", "params": {"node": "agent1"}}
+    assert run["failure_node"] == "agent1"
     events = run_main.get_trace(run_id, owner_id=OWNER)["events"]
     assert [e["event"] for e in events] == ["run_started", "node_start", "node_error", "error"]
 
