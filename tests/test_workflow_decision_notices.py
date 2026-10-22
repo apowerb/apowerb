@@ -664,13 +664,15 @@ async def test_a_pause_with_an_unreadable_deadline_is_skipped_not_fatal(api, out
 
 
 @pytest.mark.asyncio
-async def test_concurrent_passes_send_each_notice_once(api, outbox, monkeypatch):
+async def test_repeated_passes_send_each_notice_once(api, outbox, monkeypatch):
     _, events = await _paused(api, assignee=ASSIGNEE)
     run_id = events[0]["wid"]
     outbox.mails.clear()
     _set(run_id, notified_at=None)
-    # Deux réplicas qui passent au même moment, avant et après l'échéance du
-    # rappel puis après l'échéance tout court.
+    # Cinq passages lancés ensemble, avant et après l'échéance du rappel puis
+    # après l'échéance tout court. Ils ne s'entrelacent pas entre lecture et
+    # réservation : les lectures périmées d'un autre réplica sont jouées par
+    # les tests ``test_a_stale_read_*``.
     deadline = _deadline(run_id)
     for moment in (
         None,
@@ -847,3 +849,194 @@ async def test_a_teams_failure_does_not_stop_the_mail(api, outbox, monkeypatch):
     monkeypatch.setattr(decision_notices, "_send_teams", _down)
     await _paused(api, assignee=ASSIGNEE)
     assert [m["to"] for m in outbox.mails] == [ASSIGNEE]
+
+
+# --- Revue post-merge ---------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_question_cannot_hide_a_link_in_the_teams_card(api, outbox):
+    graph = _graph(ASSIGNEE)
+    graph["nodes"][1]["config"]["question"] = "Valider {{t.x}} ?"
+    wf = workflow_main.create_workflow(
+        owner_id=OWNER, name="Devis *urgent*", graph=graph
+    )
+    trap = "[Ouvrir la décision](https://phish.example/login)"
+    await _drain(
+        await api.defs.run_workflow(
+            wf["workflow_id"],
+            api.defs.RunBody(payload={"x": trap}),
+            current_user=_user(),
+        )
+    )
+    [card] = outbox.teams
+    # La carte Teams lit du Markdown : rien du run n'y devient un lien.
+    assert trap not in card["body"]
+    assert r"\[Ouvrir la décision\]\(https://phish.example/login\)" in card["body"]
+    assert card["subject"] == r"Décision attendue — Devis \*urgent\*"
+    # Le seul lien est celui de la page Workflows, intact.
+    link = f"https://app.example.com/workflows?decision={_last_run()}"
+    assert card["body"].endswith("\n" + link)
+    # Le mail, lui, garde le texte tel quel (échappé pour le HTML seulement).
+    [mail] = outbox.mails
+    assert (
+        trap in mail["text"] and mail["subject"] == "Décision attendue — Devis *urgent*"
+    )
+
+
+def _held_mail(monkeypatch, outbox):
+    """Un envoi de mail qui attend qu'on le libère."""
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def _slow(**kwargs):
+        started.set()
+        await release.wait()
+        await outbox.mail(**kwargs)
+
+    monkeypatch.setattr(decision_notices, "_send_mail", _slow)
+    return started, release
+
+
+@pytest.mark.asyncio
+async def test_a_notice_cut_by_a_departing_client_still_goes_out(
+    api, outbox, monkeypatch
+):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    outbox.mails.clear()
+    _set(run_id, notified_at=None)
+    started, release = _held_mail(monkeypatch, outbox)
+    # Le flux qui s'arrête attend ``deliver`` ; le client part pendant l'envoi.
+    stream_end = asyncio.create_task(decision_notices.deliver(run_id))
+    await asyncio.wait_for(started.wait(), 5)
+    stream_end.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stream_end
+    release.set()
+    await asyncio.wait_for(asyncio.gather(*list(decision_notices._inflight)), 5)
+    assert [m["to"] for m in outbox.mails] == [ASSIGNEE]
+    await decision_notices.tick()
+    assert len(outbox.mails) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_pass_cut_mid_send_leaves_the_notice_to_the_next_one(
+    api, outbox, monkeypatch
+):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    outbox.mails.clear()
+    _set(run_id, notified_at=None)
+    started, _ = _held_mail(monkeypatch, outbox)
+    # Le planificateur arrêté (extinction) au milieu d'un envoi.
+    scheduler_pass = asyncio.create_task(decision_notices.tick())
+    await asyncio.wait_for(started.wait(), 5)
+    scheduler_pass.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler_pass
+    assert _row(run_id)["notified_at"] is None
+    monkeypatch.setattr(decision_notices, "_send_mail", outbox.mail)
+    await decision_notices.tick()
+    assert [m["to"] for m in outbox.mails] == [ASSIGNEE]
+
+
+@pytest.mark.asyncio
+async def test_the_end_reaches_the_triggers_even_if_its_notice_fails(
+    api, outbox, monkeypatch
+):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    _set(
+        run_id,
+        status=run_main.STATUS_CANCELLED,
+        error_message=run_main.ABANDONED_MESSAGE,
+        end_notice=run_main.END_NOTICE_PENDING,
+    )
+
+    def _down(*args, **kwargs):
+        raise RuntimeError("base des workflows indisponible")
+
+    monkeypatch.setattr(workflow_main, "get_workflow", _down)
+    await decision_notices.tick()
+    assert [f["run_id"] for f in api.finished] == [run_id]
+
+
+# Chaque réservation est un ``UPDATE ... WHERE`` qui rejoue ses conditions :
+# un réplica qui a lu les lignes avant qu'un autre les réserve (lecture
+# périmée) ne renvoie rien. Les passages d'un même process ne s'entrelacent
+# pas entre lecture et réservation ; la lecture périmée est donc simulée.
+
+
+def _stale(monkeypatch, *, asks=(), reminders=(), ends=()):
+    reads = iter([list(asks), list(reminders), list(ends)])
+    monkeypatch.setattr(decision_notices, "_rows", lambda *where, run_id: next(reads))
+
+
+@pytest.mark.asyncio
+async def test_a_stale_read_does_not_send_the_notice_again(api, outbox, monkeypatch):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    _stale(monkeypatch, asks=decision_notices._rows(run_id=run_id))
+    await decision_notices.tick()
+    assert len(outbox.mails) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_stale_read_does_not_ask_about_a_closed_decision(
+    api, outbox, monkeypatch
+):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    outbox.mails.clear()
+    _set(run_id, notified_at=None)
+    read = decision_notices._rows(run_id=run_id)
+    _set(run_id, status=run_main.STATUS_CANCELLED)
+    _stale(monkeypatch, asks=read)
+    await decision_notices.tick()
+    assert outbox.mails == []
+
+
+@pytest.mark.asyncio
+async def test_a_stale_read_does_not_remind_twice(api, outbox, monkeypatch):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    late = _deadline(run_id) - timedelta(hours=1)
+    await decision_notices.tick(now=late)
+    _stale(monkeypatch, reminders=decision_notices._rows(run_id=run_id))
+    await decision_notices.tick(now=late)
+    assert ["Rappel" in m["subject"] for m in outbox.mails] == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_a_stale_read_does_not_remind_a_closed_decision(api, outbox, monkeypatch):
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+    late = _deadline(run_id) - timedelta(hours=1)
+    read = decision_notices._rows(run_id=run_id)
+    _set(run_id, status=run_main.STATUS_CANCELLED)
+    _stale(monkeypatch, reminders=read)
+    await decision_notices.tick(now=late)
+    assert not any("Rappel" in m["subject"] for m in outbox.mails)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_read_does_not_announce_the_end_twice(api, outbox, monkeypatch):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    await api.runs.abandon_run(run_id, current_user=_user())
+    _stale(monkeypatch, ends=decision_notices._rows(run_id=run_id))
+    await decision_notices.tick()
+    assert sum("abandon" in m["subject"].lower() for m in outbox.mails) == 1
+    assert [f["run_id"] for f in api.finished] == [run_id]
+
+
+@pytest.mark.asyncio
+async def test_stopping_does_not_close_a_resume_taken_elsewhere(api):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    held = "2026-10-22T10:00:00+00:00"
+    _set(run_id, status=run_main.STATUS_RUNNING, resumed_at=held)
+    # L'arrêt vient d'une reprise plus ancienne : la ligne n'est plus la sienne.
+    assert run_main.stop_unanswered_resume(run_id, "2026-10-22T09:59:00+00:00") is False
+    assert _row(run_id)["status"] == run_main.STATUS_RUNNING
+    assert run_main.stop_unanswered_resume(run_id, held) is True

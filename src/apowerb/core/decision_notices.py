@@ -26,7 +26,9 @@ lien, aucune autre donnée du run.
 
 from __future__ import annotations
 
+import asyncio
 import html
+import re
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, Optional
@@ -34,6 +36,14 @@ from typing import Any, Optional
 logger = getLogger(__name__)
 
 _DEADLINE_FORMAT = "%d/%m/%Y à %H:%M UTC"
+
+# Ce qui fait un lien, une emphase ou un titre dans le Markdown d'une carte
+# Adaptive : « [texte](url) » venu d'un run deviendrait un lien déguisé.
+_MARKDOWN = re.compile(r"([\\`*_~>#\[\]()])")
+
+# Envois lancés par ``deliver`` : ils finissent même si le flux qui les a
+# demandés est annulé (client parti).
+_inflight: set[asyncio.Task] = set()
 
 
 def _app_url() -> str:
@@ -137,6 +147,10 @@ def _workflow_name(row: dict) -> str:
     return (wf or {}).get("name") or "Workflow"
 
 
+def _markdown_text(text: str) -> str:
+    return _MARKDOWN.sub(r"\\\1", text)
+
+
 def _deadline(stamp: Optional[str]) -> Optional[str]:
     if not stamp:
         return None
@@ -150,7 +164,8 @@ async def _send(to: str, subject: str, lines: list[str], link: str) -> None:
     """Mail et Teams ; un canal en panne n'éteint pas l'autre.
 
     ``lines`` sont du texte (la question vient du run) : échappées pour le
-    HTML, jamais injectées telles quelles.
+    HTML du mail et pour le Markdown de la carte Teams, jamais injectées
+    telles quelles. Seul ``link`` reste un lien.
     """
     from apowerb.helpers.system_mailer import render_branded_email
 
@@ -166,8 +181,9 @@ async def _send(to: str, subject: str, lines: list[str], link: str) -> None:
         await _send_mail(to=to, subject=subject, html=page, text=text)
     except Exception:  # noqa: BLE001 - l'autre canal part quand même
         logger.exception("[decisions] mail non envoyé à %s (%s)", to, subject)
+    card = "\n".join([*(_markdown_text(line) for line in lines), "", link])
     try:
-        await _send_teams(to=to, subject=subject, body=text)
+        await _send_teams(to=to, subject=_markdown_text(subject), body=card)
     except Exception:  # noqa: BLE001
         logger.exception("[decisions] carte Teams non envoyée à %s (%s)", to, subject)
 
@@ -189,19 +205,7 @@ async def _ask(row: dict, *, reminder: bool) -> None:
     await _send(row.get("assignee") or row["owner_id"], subject, lines, link)
 
 
-def _end_wording(row: dict) -> tuple[str, str]:
-    from apowerb.core import run_main
-
-    if row["status"] == run_main.STATUS_CANCELLED:
-        return "abandonnée", "La décision a été abandonnée : le run est arrêté."
-    if row.get("error_message") == run_main.EXPIRED_MESSAGE:
-        return "expirée", "Personne n'a répondu avant l'échéance : le run est arrêté."
-    return "illisible", "La décision ne peut plus être reprise : le run est arrêté."
-
-
-async def _announce_end(row: dict) -> None:
-    from apowerb.core import workflow_triggers
-
+async def _tell_end(row: dict) -> None:
     name = _workflow_name(row)
     word, sentence = _end_wording(row)
     subject, link = f"Décision {word} — {name}", f"{_app_url()}/workflows"
@@ -216,6 +220,27 @@ async def _announce_end(row: dict) -> None:
             [f"Le workflow « {name} » n'attend plus ta décision.", sentence],
             link,
         )
+
+
+def _end_wording(row: dict) -> tuple[str, str]:
+    from apowerb.core import run_main
+
+    if row["status"] == run_main.STATUS_CANCELLED:
+        return "abandonnée", "La décision a été abandonnée : le run est arrêté."
+    if row.get("error_message") == run_main.EXPIRED_MESSAGE:
+        return "expirée", "Personne n'a répondu avant l'échéance : le run est arrêté."
+    return "illisible", "La décision ne peut plus être reprise : le run est arrêté."
+
+
+async def _announce_end(row: dict) -> None:
+    """Avis de fin, puis la fin elle-même aux déclencheurs, quoi qu'il
+    arrive à l'avis (workflow introuvable, envoi en panne)."""
+    from apowerb.core import workflow_triggers
+
+    try:
+        await _tell_end(row)
+    except Exception:  # noqa: BLE001 - les déclencheurs doivent voir la fin
+        logger.exception("[decisions] avis de fin en échec (run_id=%s)", row["run_id"])
     await workflow_triggers.notify_run_finished(
         run_id=row["run_id"],
         owner_id=row["owner_id"],
@@ -278,7 +303,12 @@ async def tick(now: Optional[datetime] = None, *, run_id: Optional[str] = None) 
             row["run_id"], awaiting, t.c.notified_at.is_(None), notified_at=stamp
         ):
             count += 1
-            await _guarded(_ask(row, reminder=False), row)
+            await _sending(
+                _ask(row, reminder=False),
+                row,
+                t.c.notified_at == stamp,
+                notified_at=None,
+            )
 
     for row in _rows(
         awaiting,
@@ -293,19 +323,46 @@ async def tick(now: Optional[datetime] = None, *, run_id: Optional[str] = None) 
             row["run_id"], awaiting, t.c.reminded_at.is_(None), reminded_at=stamp
         ):
             count += 1
-            await _guarded(_ask(row, reminder=True), row)
+            await _sending(
+                _ask(row, reminder=True),
+                row,
+                t.c.reminded_at == stamp,
+                reminded_at=None,
+            )
 
     pending = t.c.end_notice == run_main.END_NOTICE_PENDING
     for row in _rows(pending, run_id=run_id):
         if _reserve(row["run_id"], pending, end_notice="sent"):
             count += 1
-            await _guarded(_announce_end(row), row)
+            await _sending(
+                _announce_end(row),
+                row,
+                t.c.end_notice == "sent",
+                end_notice=run_main.END_NOTICE_PENDING,
+            )
     return count
 
 
 async def deliver(run_id: str) -> int:
-    """Ce qui est dû pour ce run, tout de suite (pause, abandon, arrêt)."""
-    return await tick(run_id=run_id)
+    """Ce qui est dû pour ce run, tout de suite (pause, abandon, arrêt).
+
+    Appelé dans le ``finally`` d'un flux : si le client part pendant l'envoi,
+    l'annulation n'atteint pas l'envoi, qui finit dans sa propre tâche.
+    """
+    task = asyncio.create_task(tick(run_id=run_id))
+    _inflight.add(task)
+    task.add_done_callback(_inflight.discard)
+    return await asyncio.shield(task)
+
+
+async def _sending(job: Any, row: dict, *still_mine, **release) -> None:
+    """Envoie un avis réservé ; s'il est annulé en route (extinction), la
+    réservation est rendue pour que le passage suivant l'envoie."""
+    try:
+        await _guarded(job, row)
+    except asyncio.CancelledError:
+        _reserve(row["run_id"], *still_mine, **release)
+        raise
 
 
 async def _guarded(job: Any, row: dict) -> None:
