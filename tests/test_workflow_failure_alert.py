@@ -4,8 +4,8 @@ Active par défaut sur un workflow publié, coupée par
 ``settings.notify_on_failure: false``, allumée sur un brouillon par ``true``.
 Une seule alerte par run (réservation en base, valable entre réplicas) ; au
 plus une par workflow et par heure, la suivante dit combien d'échecs ont été
-regroupés. Ni « Tester jusqu'ici » (``config.until``), ni run annulé. Une
-décision humaine expirée alerte aussi, depuis la boucle du planificateur.
+regroupés. Ni « Tester jusqu'ici » (``config.until``), ni run annulé, ni la
+fin d'une décision humaine, que ``decision_notices`` annonce déjà.
 """
 
 from datetime import datetime, timedelta
@@ -67,6 +67,7 @@ def outbox(monkeypatch):
     box = _Outbox()
     monkeypatch.setattr(wa, "_send_mail", box.mail)
     monkeypatch.setattr(wa, "_send_teams", box.team)
+
     # Les écouteurs workflow_done ne sont pas l'objet de ce fichier.
     async def _no_listeners(**_kw):
         return []
@@ -82,7 +83,10 @@ def _workflow(*, published=True, notify=None, name="Relances"):
     wf = wm.create_workflow(owner_id=ALICE, name=name, graph=graph)
     if published:
         wm.update_workflow(
-            wf["workflow_id"], owner_id=ALICE, expected_version=wf["version"], status="published"
+            wf["workflow_id"],
+            owner_id=ALICE,
+            expected_version=wf["version"],
+            status="published",
         )
     return wf["workflow_id"]
 
@@ -92,7 +96,9 @@ def _failed_run(workflow_id, *, status="error", until=None, message="ToolError: 
     if until:
         config["until"] = until
     run_id = run_main.start_run(trigger="workflow", owner_id=ALICE, config=config)
-    run_main.finish_run(run_id, status=status, error_message=message if status == "error" else None)
+    run_main.finish_run(
+        run_id, status=status, error_message=message if status == "error" else None
+    )
     return run_id
 
 
@@ -132,9 +138,12 @@ async def test_the_per_run_claim_is_kept_in_the_database(outbox):
     with run_main.run_store.engine.begin() as conn:
         row = conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()
     assert row._mapping["failure_alert"] == wa.SENT
-    assert await wa.alert_run_failed(
-        run_id=run_id, owner_id=ALICE, workflow_id=wid, error_message="x"
-    ) is None
+    assert (
+        await wa.alert_run_failed(
+            run_id=run_id, owner_id=ALICE, workflow_id=wid, error_message="x"
+        )
+        is None
+    )
 
 
 async def test_draft_is_silent_by_default_but_can_opt_in(outbox):
@@ -211,50 +220,88 @@ async def test_a_broken_mail_server_does_not_break_the_run_end(outbox, monkeypat
     assert len(calls) == 1
 
 
-# --- décision humaine expirée ------------------------------------------------
+# --- fin d'une décision humaine -----------------------------------------------
+# ``decision_notices`` annonce déjà au propriétaire une décision expirée,
+# abandonnée ou illisible, puis passe par ``notify_run_finished`` : l'alerte
+# d'échec s'efface devant cette annonce, sans priver les écouteurs de la fin.
 
 
-def _expired_run(workflow_id, *, expired_since=timedelta(minutes=1)):
+class _DecisionOutbox:
+    def __init__(self):
+        self.mails = []
+
+    async def mail(self, *, to, subject, html, text):
+        self.mails.append({"to": to, "subject": subject})
+
+    async def teams(self, *, to, subject, body):
+        return None
+
+
+@pytest.fixture()
+def decision_outbox(monkeypatch):
+    from apowerb.core import decision_notices as dn
+
+    box = _DecisionOutbox()
+    monkeypatch.setattr(dn, "_send_mail", box.mail)
+    monkeypatch.setattr(dn, "_send_teams", box.teams)
+    monkeypatch.setattr(dn, "_app_url", lambda: "https://app.example.com")
+    return box
+
+
+def _expired_run(workflow_id):
     run_id = run_main.start_run(
         trigger="workflow", owner_id=ALICE, config={"workflow_id": workflow_id}
     )
-    stamp = (datetime.now() - expired_since).strftime("%Y-%m-%d %H:%M:%S.%f")
     t = run_main.run_store.run_table
     with run_main.run_store.engine.begin() as conn:
         conn.execute(
             t.update()
             .where(t.c.run_id == run_id)
-            .values(status=run_main.STATUS_AWAITING, expires_at=stamp)
+            .values(
+                status=run_main.STATUS_AWAITING,
+                expires_at="2026-01-01 00:00:00.000000",
+                notified_at="2025-12-31T00:00:00+00:00",
+                reminded_at="2025-12-31T12:00:00+00:00",
+            )
         )
     return run_id
 
 
-async def test_an_expired_decision_alerts_once(outbox, monkeypatch):
+async def test_an_expired_decision_is_announced_once_without_a_second_alert(
+    outbox, decision_outbox, monkeypatch
+):
+    from apowerb.core import decision_notices as dn
+
+    ends = []
+
+    async def _listeners(**kw):
+        ends.append(kw)
+        return []
+
+    monkeypatch.setattr(wt, "fire_workflow_done_triggers", _listeners)
     run_id = _expired_run(_workflow())
-    await wa.alert_expired_decisions()
-    monkeypatch.setattr(wa, "ALERT_COOLDOWN", timedelta(0))
-    await wa.alert_expired_decisions()
-    assert len(outbox.mails) == 1
-    assert run_id in outbox.mails[0]["body"]
-    assert run_main.EXPIRED_MESSAGE in outbox.mails[0]["body"]
+    await dn.tick()
+    await dn.tick()
+    assert [m["subject"] for m in decision_outbox.mails] == [
+        "Décision expirée — Relances"
+    ]
+    assert outbox.mails == [] and outbox.teams == []
+    assert (
+        len(ends) == 1
+    )  # la fin passe quand même aux déclencheurs « End of a workflow »
+    assert run_main.get_run(run_id, ALICE)["status"] == run_main.STATUS_ERROR
 
 
-async def test_an_old_expiry_found_late_is_not_alerted(outbox):
-    # Déploiement : les décisions closes depuis longtemps ne réveillent personne.
-    run_id = _expired_run(_workflow())
-    await wa.alert_expired_decisions()
-    outbox.mails.clear()
+async def test_a_decision_end_never_alerts_even_when_finished_again(outbox):
+    # Contre-exemple : même fin, même message, mais annoncée par la décision.
+    run_id = _failed_run(_workflow(), message=run_main.EXPIRED_MESSAGE)
     t = run_main.run_store.run_table
-    old = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S.%f")
     with run_main.run_store.engine.begin() as conn:
-        conn.execute(
-            t.update().where(t.c.run_id == run_id).values(failure_alert=None, finished_at=old)
-        )
-    await wa.alert_expired_decisions()
+        conn.execute(t.update().where(t.c.run_id == run_id).values(end_notice="sent"))
+    await _finish(run_id, message=run_main.EXPIRED_MESSAGE)
     assert outbox.mails == []
-
-
-async def test_a_waiting_decision_is_not_alerted(outbox):
-    _expired_run(_workflow(), expired_since=timedelta(hours=-5))  # échéance future
-    await wa.alert_expired_decisions()
-    assert outbox.mails == []
+    # Le même échec sans décision, lui, alerte.
+    await _finish(
+        _failed_run(_workflow(name="Autre")), message=run_main.EXPIRED_MESSAGE
+    )
+    assert len(outbox.mails) == 1

@@ -542,15 +542,27 @@ def _streaming_run(
             # Pas de ``return`` dans ce ``finally`` : il avalerait le
             # ``CancelledError`` d'un client parti.
             settles = True
+            # Une décision à annoncer (pause) ou une fin sans réponse.
+            notice = False
             if resume_guard is not None and resume_guard.get("lost"):
                 # Une autre reprise tient la ligne : ni fin, ni remise en attente.
                 settles = False
             elif resume_guard is not None and not resume_guard.get("decided"):
                 settles = False
-                if outcome != run_main.STATUS_AWAITING:
+                if outcome != run_main.STATUS_AWAITING and entry.get("stopped"):
+                    # Arrêt demandé avant que la réponse soit prise : le run
+                    # s'arrête comme un abandon, le flux et la ligne disent
+                    # « annulé » tous les deux.
+                    try:
+                        notice = run_main.stop_unanswered_resume(
+                            run_id, resume_guard.get("resumed_at")
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception("[workflows] run_id=%s non clos", run_id)
+                elif outcome != run_main.STATUS_AWAITING:
                     # La reprise n'a pas atteint la décision (client parti,
-                    # panne au démarrage) : rien n'a été fait, le run attend
-                    # toujours sa réponse.
+                    # panne au démarrage, extinction) : rien n'a été fait, le
+                    # run attend toujours sa réponse.
                     try:
                         run_main.release_paused_run(run_id)
                     except Exception:  # noqa: BLE001
@@ -561,6 +573,18 @@ def _streaming_run(
                 # Une pause n'est pas une fin : ni ``finished_at``, ni
                 # notification ``workflow_done``. La reprise finira le run.
                 settles = False
+                notice = True
+            if notice:
+                # Aussitôt, sans attendre le passage du planificateur ; chaque
+                # avis est réservé avant l'envoi, il ne part qu'une fois.
+                try:
+                    from apowerb.core import decision_notices
+
+                    await decision_notices.deliver(run_id)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "[workflows] avis de décision non envoyé (run_id=%s)", run_id
+                    )
             if settles:
                 try:
                     run_main.finish_run(run_id, status=outcome, error_message=error_message)
@@ -618,6 +642,7 @@ def _detached(
     (``entry["task"]``) pour interrompre le nœud en cours.
     """
     queue: asyncio.Queue = asyncio.Queue()
+    entry["queue"] = queue
     relayed = True
 
     async def _pump() -> None:
@@ -854,7 +879,15 @@ async def abandon_run(
     current_user: user_schemas.User = Depends(get_current_user),
 ):
     """Clôt sans réponse un run en attente d'une décision (``cancelled``)."""
+    from apowerb.core import decision_notices
+
     run_main.abandon_paused_run(run_id, current_user.email)
+    # Le propriétaire est prévenu et ``workflow_done`` voit la fin ; un échec
+    # ici est repris par le planificateur, il ne change pas la réponse.
+    try:
+        await decision_notices.deliver(run_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("[workflows] fin de décision non annoncée (run_id=%s)", run_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1019,6 +1052,9 @@ async def cancel_workflow(
             detail="Not the owner of this workflow run",
         )
 
+    # Un arrêt voulu, pas une coupure : une reprise arrêtée avant de prendre
+    # sa réponse est close au lieu d'être remise en attente.
+    entry["stopped"] = True
     entry["cancel_event"].set()
     # ``cancel_event`` n'est lu qu'entre deux nœuds. Une reprise détachée n'a
     # plus de client dont le départ annulerait sa tâche : on l'annule ici,

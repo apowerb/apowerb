@@ -11,15 +11,16 @@ Quand :
 * un run de graphe persisté finit en ``error`` (``notify_run_finished``,
   point d'accroche commun à toutes les origines) — jamais un « Tester
   jusqu'ici » (``config.until``) ni un run annulé ;
-* une décision humaine expire (``alert_expired_decisions``, appelé par la
-  boucle du planificateur : l'échéance est appliquée à la lecture et ne
-  passe pas par la fin d'un flux).
+* jamais non plus à la fin d'une décision humaine (expirée, abandonnée,
+  illisible) : ``decision_notices`` l'annonce déjà au propriétaire, puis la
+  fait passer par ``notify_run_finished`` — ``agent_runs.end_notice`` la
+  distingue et l'alerte s'efface pour ne pas doubler cette annonce.
 
 Anti-tempête :
 
 * une alerte par run : ``agent_runs.failure_alert`` est réservé par un
   ``UPDATE … WHERE failure_alert IS NULL`` avant tout envoi, ce qui tient
-  entre réplicas et entre les deux chemins ci-dessus ;
+  entre réplicas ;
 * une alerte par workflow et par heure (``ALERT_COOLDOWN``) : les échecs
   suivants sont comptés (``workflow_failure_alerts.grouped``) et la
   prochaine alerte dit combien ont été regroupés. Un workflow planifié qui
@@ -28,10 +29,9 @@ Anti-tempête :
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -43,7 +43,6 @@ logger = logging.getLogger(__name__)
 ALERT_COOLDOWN = timedelta(hours=1)
 # Une décision close depuis plus longtemps (découverte après un arrêt du
 # serveur, ou au déploiement de cette alerte) ne réveille plus personne.
-EXPIRED_LOOKBACK = timedelta(days=1)
 _MAX_ERROR_CHARS = 500
 _TEAMS_NODE_ID = "failure_alert"
 _STAMP = "%Y-%m-%d %H:%M:%S.%f"  # celui de run_main._now : triable
@@ -69,7 +68,12 @@ def _claim(run_id: str) -> bool:
     with run_main.run_store.engine.begin() as conn:
         taken = conn.execute(
             t.update()
-            .where(t.c.run_id == run_id, t.c.failure_alert.is_(None))
+            .where(
+                t.c.run_id == run_id,
+                t.c.failure_alert.is_(None),
+                # Fin de décision : déjà annoncée par ``decision_notices``.
+                t.c.end_notice.is_(None),
+            )
             .values(failure_alert=CLAIMED)
         )
     return taken.rowcount == 1
@@ -78,7 +82,9 @@ def _claim(run_id: str) -> bool:
 def _settle(run_id: str, outcome: str) -> None:
     t = run_main.run_store.run_table
     with run_main.run_store.engine.begin() as conn:
-        conn.execute(t.update().where(t.c.run_id == run_id).values(failure_alert=outcome))
+        conn.execute(
+            t.update().where(t.c.run_id == run_id).values(failure_alert=outcome)
+        )
 
 
 def _take_slot(workflow_id: str, owner_id: str) -> Optional[int]:
@@ -95,7 +101,9 @@ def _take_slot(workflow_id: str, owner_id: str) -> Optional[int]:
     stamp, cutoff = now.strftime(_STAMP), (now - ALERT_COOLDOWN).strftime(_STAMP)
     for _ in range(3):
         with engine.begin() as conn:
-            row = conn.execute(select(t).where(t.c.workflow_id == workflow_id)).fetchone()
+            row = conn.execute(
+                select(t).where(t.c.workflow_id == workflow_id)
+            ).fetchone()
         if row is None:
             try:
                 with engine.begin() as conn:
@@ -145,7 +153,9 @@ async def _send_teams(owner_id: str, subject: str, body: str) -> None:
     await _notify_teams(owner_id, _TEAMS_NODE_ID, subject, body)
 
 
-def _message(workflow: dict, run_id: str, error_message: str, grouped: int) -> tuple[str, str]:
+def _message(
+    workflow: dict, run_id: str, error_message: str, grouped: int
+) -> tuple[str, str]:
     name = workflow.get("name") or workflow.get("workflow_id")
     error = (error_message or "erreur sans message").strip()[:_MAX_ERROR_CHARS]
     lines = [
@@ -195,43 +205,3 @@ async def alert_run_failed(
             logger.exception("[alerts] alerte Teams non envoyée (run_id=%s)", run_id)
     _settle(run_id, outcome)
     return outcome
-
-
-async def alert_expired_decisions() -> int:
-    """Alerte pour chaque décision expirée récemment ; renvoie le nombre traité."""
-    run_main.expire_due_decisions()
-    t = run_main.run_store.run_table
-    since = (_clock() - EXPIRED_LOOKBACK).strftime(_STAMP)
-    with run_main.run_store.engine.begin() as conn:
-        rows = conn.execute(
-            select(t.c.run_id, t.c.owner_id, t.c.config).where(
-                t.c.status == run_main.STATUS_ERROR,
-                t.c.error_message == run_main.EXPIRED_MESSAGE,
-                t.c.failure_alert.is_(None),
-                t.c.finished_at >= since,
-            )
-        ).fetchall()
-    done = 0
-    for row in rows:
-        config = _config(row.config)
-        if not config.get("workflow_id") or config.get("until"):
-            continue
-        try:
-            await alert_run_failed(
-                run_id=row.run_id,
-                owner_id=row.owner_id,
-                workflow_id=config["workflow_id"],
-                error_message=run_main.EXPIRED_MESSAGE,
-            )
-            done += 1
-        except Exception:  # noqa: BLE001 - un run en panne n'arrête pas les autres
-            logger.exception("[alerts] décision expirée non signalée (run_id=%s)", row.run_id)
-    return done
-
-
-def _config(raw: Any) -> dict:
-    try:
-        value = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}

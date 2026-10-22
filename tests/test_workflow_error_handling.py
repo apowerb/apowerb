@@ -93,7 +93,9 @@ ROUTED_EDGES = [
 
 
 def _started(events, node_id):
-    return any(e["event"] == "node_start" and e.get("node_id") == node_id for e in events)
+    return any(
+        e["event"] == "node_start" and e.get("node_id") == node_id for e in events
+    )
 
 
 def _complete(events, node_id):
@@ -120,12 +122,26 @@ def test_unknown_on_error_value_is_refused_on_any_supported_node():
 
 
 def test_on_error_on_a_node_that_cannot_fail_is_refused():
-    nodes = [T, {"id": "s", "type": "set", "config": {"fields": [{"key": "k", "value": "v"}], "on_error": "continue"}}]
+    nodes = [
+        T,
+        {
+            "id": "s",
+            "type": "set",
+            "config": {"fields": [{"key": "k", "value": "v"}], "on_error": "continue"},
+        },
+    ]
     assert _code(nodes, [{"source": "t", "target": "s"}]) == "on_error_unsupported"
 
 
 def test_fail_is_accepted_everywhere_as_the_default():
-    nodes = [T, {"id": "s", "type": "set", "config": {"fields": [{"key": "k", "value": "v"}], "on_error": "fail"}}]
+    nodes = [
+        T,
+        {
+            "id": "s",
+            "type": "set",
+            "config": {"fields": [{"key": "k", "value": "v"}], "on_error": "fail"},
+        },
+    ]
     wg.validate_graph(_graph(nodes, [{"source": "t", "target": "s"}]))
 
 
@@ -147,9 +163,19 @@ def test_classifier_cannot_continue_but_can_route():
     cls = {
         "id": "c",
         "type": "classifier",
-        "config": {"agent_id": "a1", "routes": [{"route": "x"}, {"route": "y"}], "on_error": "continue"},
+        "config": {
+            "agent_id": "a1",
+            "routes": [{"route": "x"}, {"route": "y"}],
+            "on_error": "continue",
+        },
     }
-    nodes = [T, cls, {"id": "x", "type": "output"}, {"id": "y", "type": "output"}, {"id": "e", "type": "output"}]
+    nodes = [
+        T,
+        cls,
+        {"id": "x", "type": "output"},
+        {"id": "y", "type": "output"},
+        {"id": "e", "type": "output"},
+    ]
     edges = [
         {"source": "t", "target": "c"},
         {"source": "c", "target": "x", "route": "x"},
@@ -158,14 +184,20 @@ def test_classifier_cannot_continue_but_can_route():
     assert _code(nodes, edges) == "on_error_unknown"
     cls["config"]["on_error"] = "route"
     assert _code(nodes, edges) == "on_error_route_missing"
-    wg.validate_graph(_graph(nodes, edges + [{"source": "c", "target": "e", "route": "error"}]))
+    wg.validate_graph(
+        _graph(nodes, edges + [{"source": "c", "target": "e", "route": "error"}])
+    )
 
 
 def test_classifier_route_named_error_conflicts_with_the_error_output():
     cls = {
         "id": "c",
         "type": "classifier",
-        "config": {"agent_id": "a1", "routes": [{"route": "error"}, {"route": "y"}], "on_error": "route"},
+        "config": {
+            "agent_id": "a1",
+            "routes": [{"route": "error"}, {"route": "y"}],
+            "on_error": "route",
+        },
     }
     nodes = [T, cls, {"id": "y", "type": "output"}, {"id": "e", "type": "output"}]
     edges = [
@@ -178,22 +210,45 @@ def test_classifier_route_named_error_conflicts_with_the_error_output():
 
 @pytest.mark.parametrize("value", [0, 3601, True, "10", 1.5])
 def test_timeout_out_of_bounds_is_refused(value):
-    assert _code([T, _agent(timeout_s=value)], [{"source": "t", "target": "a"}]) == "node_timeout_invalid"
+    assert (
+        _code([T, _agent(timeout_s=value)], [{"source": "t", "target": "a"}])
+        == "node_timeout_invalid"
+    )
 
 
 def test_timeout_on_a_node_without_one_is_refused():
-    nodes = [T, {"id": "s", "type": "set", "config": {"fields": [{"key": "k", "value": "v"}], "timeout_s": 5}}]
+    nodes = [
+        T,
+        {
+            "id": "s",
+            "type": "set",
+            "config": {"fields": [{"key": "k", "value": "v"}], "timeout_s": 5},
+        },
+    ]
     assert _code(nodes, [{"source": "t", "target": "s"}]) == "node_timeout_unsupported"
 
 
 def test_error_fields_are_readable_downstream_of_a_handled_node():
-    out = {"id": "ko", "type": "output", "config": {"value": "{{h.code}} {{h.params.status}}"}}
-    http = {"id": "h", "type": "http", "config": {"method": "GET", "url": "https://x.example", "on_error": "route"}}
-    edges = [{"source": "t", "target": "h"}, {"source": "h", "target": "ko", "route": "error"}]
+    out = {
+        "id": "ko",
+        "type": "output",
+        "config": {"value": "{{h.code}} {{h.params.status}}"},
+    }
+    http = {
+        "id": "h",
+        "type": "http",
+        "config": {"method": "GET", "url": "https://x.example", "on_error": "route"},
+    }
+    edges = [
+        {"source": "t", "target": "h"},
+        {"source": "h", "target": "ko", "route": "error"},
+    ]
     wg.validate_graph(_graph([T, http, out], edges))
     http["config"]["on_error"] = "fail"
     with pytest.raises(wg.GraphError, match="pas de champ"):
-        wg.validate_graph(_graph([T, http, out], [edges[0], {"source": "h", "target": "ko"}]))
+        wg.validate_graph(
+            _graph([T, http, out], [edges[0], {"source": "h", "target": "ko"}])
+        )
 
 
 # --- fail : inchangé ------------------------------------------------------------
@@ -211,7 +266,13 @@ def test_fail_still_stops_the_run():
 
 def test_continue_goes_on_and_keeps_the_error_in_the_trace():
     env = _Env(agents={"a1": _boom})
-    events = _run(_graph([T, _agent("continue"), KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env)
+    events = _run(
+        _graph(
+            [T, _agent("continue"), KO],
+            [ROUTED_EDGES[0], {"source": "a", "target": "ko"}],
+        ),
+        env,
+    )
     assert events[-1]["event"] == "done"
     done = _complete(events, "a")
     # Le contre-exemple : sans handled_error, le panneau Test montrerait un
@@ -232,8 +293,14 @@ def test_continue_on_a_tool_that_raises_now_goes_on():
         raise wg.GraphError("panne", code="tool_down")
 
     env = _Env(tools={"x.y": raising})
-    tool = {"id": "a", "type": "tool", "config": {"tool": "x.y", "args": {}, "on_error": "continue"}}
-    events = _run(_graph([T, tool, KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env)
+    tool = {
+        "id": "a",
+        "type": "tool",
+        "config": {"tool": "x.y", "args": {}, "on_error": "continue"},
+    }
+    events = _run(
+        _graph([T, tool, KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env
+    )
     assert events[-1]["event"] == "done"
     assert _complete(events, "a")["handled_error"]["code"] == "tool_down"
 
@@ -241,8 +308,14 @@ def test_continue_on_a_tool_that_raises_now_goes_on():
 def test_continue_on_a_reported_tool_error_keeps_the_tool_result():
     result = {"status": "error", "message": "boom"}
     env = _Env(tools={"x.y": result})
-    tool = {"id": "a", "type": "tool", "config": {"tool": "x.y", "args": {}, "on_error": "continue"}}
-    events = _run(_graph([T, tool, KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env)
+    tool = {
+        "id": "a",
+        "type": "tool",
+        "config": {"tool": "x.y", "args": {}, "on_error": "continue"},
+    }
+    events = _run(
+        _graph([T, tool, KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env
+    )
     assert events[-1] == {"event": "done", "output": result}
     done = _complete(events, "a")
     assert done["handled_error"]["code"] == "tool_reported_error"
@@ -254,8 +327,14 @@ def test_continue_never_swallows_a_cancellation():
         raise WorkflowCancelled()
 
     env = _Env(tools={"x.y": cancelled})
-    tool = {"id": "a", "type": "tool", "config": {"tool": "x.y", "args": {}, "on_error": "continue"}}
-    events = _run(_graph([T, tool, KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env)
+    tool = {
+        "id": "a",
+        "type": "tool",
+        "config": {"tool": "x.y", "args": {}, "on_error": "continue"},
+    }
+    events = _run(
+        _graph([T, tool, KO], [ROUTED_EDGES[0], {"source": "a", "target": "ko"}]), env
+    )
     assert events[-1]["event"] != "done"
     assert not _started(events, "ko")
 
@@ -289,14 +368,22 @@ def test_route_on_success_takes_the_success_output_only():
 
 def test_route_never_stops_the_run_even_with_a_dead_end_error_branch():
     env = _Env(agents={"a1": _boom})
-    end = {"id": "ko", "type": "set", "config": {"fields": [{"key": "seen", "value": "{{a.code}}"}]}}
+    end = {
+        "id": "ko",
+        "type": "set",
+        "config": {"fields": [{"key": "seen", "value": "{{a.code}}"}]},
+    }
     events = _run(_graph([T, _agent("route"), OK, end], ROUTED_EDGES), env)
     assert events[-1] == {"event": "done", "output": {"seen": "agent_boom"}}
 
 
 def test_route_on_a_reported_tool_error():
     env = _Env(tools={"x.y": {"success": False, "error": "refusé"}})
-    tool = {"id": "a", "type": "tool", "config": {"tool": "x.y", "args": {}, "on_error": "route"}}
+    tool = {
+        "id": "a",
+        "type": "tool",
+        "config": {"tool": "x.y", "args": {}, "on_error": "route"},
+    }
     events = _run(_graph([T, tool, OK, KO], ROUTED_EDGES), env)
     assert events[-1]["output"]["code"] == "tool_reported_error"
     assert not _started(events, "ok")
@@ -307,7 +394,11 @@ def test_classifier_route_on_error():
     cls = {
         "id": "a",
         "type": "classifier",
-        "config": {"agent_id": "a1", "routes": [{"route": "x"}, {"route": "y"}], "on_error": "route"},
+        "config": {
+            "agent_id": "a1",
+            "routes": [{"route": "x"}, {"route": "y"}],
+            "on_error": "route",
+        },
     }
     nodes = [T, cls, {"id": "x", "type": "output"}, {"id": "y", "type": "output"}, KO]
     edges = [
@@ -324,11 +415,18 @@ def test_classifier_route_on_error():
 def test_subworkflow_error_names_the_inner_node():
     inner = {
         "version": 1,
-        "nodes": [{"id": "it", "type": "trigger"}, {"id": "deep", "type": "agent", "config": {"agent_id": "a1"}}],
+        "nodes": [
+            {"id": "it", "type": "trigger"},
+            {"id": "deep", "type": "agent", "config": {"agent_id": "a1"}},
+        ],
         "edges": [{"source": "it", "target": "deep"}],
     }
     env = _Env(agents={"a1": _boom}, workflows={"w2": inner})
-    sub = {"id": "a", "type": "subworkflow", "config": {"workflow_id": "w2", "on_error": "route"}}
+    sub = {
+        "id": "a",
+        "type": "subworkflow",
+        "config": {"workflow_id": "w2", "on_error": "route"},
+    }
     events = _run(_graph([T, sub, OK, KO], ROUTED_EDGES), env)
     assert events[-1]["output"]["node"] == "deep"
     assert events[-1]["output"]["code"] == "agent_boom"
@@ -409,10 +507,17 @@ def test_subworkflow_timeout_stops_the_inner_run():
             {"id": "slow", "type": "agent", "config": {"agent_id": "a1"}},
             {"id": "after", "type": "agent", "config": {"agent_id": "a2"}},
         ],
-        "edges": [{"source": "it", "target": "slow"}, {"source": "slow", "target": "after"}],
+        "edges": [
+            {"source": "it", "target": "slow"},
+            {"source": "slow", "target": "after"},
+        ],
     }
     env = _Env(agents={"a1": slow}, workflows={"w2": inner})
-    sub = {"id": "a", "type": "subworkflow", "config": {"workflow_id": "w2", "timeout_s": 1}}
+    sub = {
+        "id": "a",
+        "type": "subworkflow",
+        "config": {"workflow_id": "w2", "timeout_s": 1},
+    }
 
     async def _go():
         out = []
@@ -430,7 +535,9 @@ def test_subworkflow_timeout_stops_the_inner_run():
         return out
 
     events = asyncio.run(_go())
-    assert next(e for e in events if e["event"] == "node_error")["code"] == "node_timeout"
+    assert (
+        next(e for e in events if e["event"] == "node_error")["code"] == "node_timeout"
+    )
     assert slow.cancelled
     assert ("agent", "a2") not in env.calls
 
@@ -473,7 +580,13 @@ def test_resume_replays_a_route_node_on_its_success_output():
         return out
 
     asyncio.run(_go())
-    answer = {"node_id": "d", "choice": None, "text": "vu", "answered_by": "u", "answered_at": "x"}
+    answer = {
+        "node_id": "d",
+        "choice": None,
+        "text": "vu",
+        "answered_by": "u",
+        "answered_at": "x",
+    }
     events = asyncio.run(_go({**saved[0], "answer": answer}))
     assert events[-1] == {"event": "done", "output": "ok:vu"}
     assert not _started(events, "ko")
