@@ -117,8 +117,23 @@ def test_on_error_route_with_its_error_output_wired_is_valid():
     wg.validate_graph(_graph([T, _agent("route"), OK, KO], ROUTED_EDGES))
 
 
-def test_unknown_on_error_value_is_refused_on_any_supported_node():
-    assert _code([T, _agent("ignore"), OK], ROUTED_EDGES[:2]) == "on_error_unknown"
+def test_unknown_on_error_value_is_ignored_with_a_warning(caplog):
+    # Un graphe enregistré doit continuer de s'exécuter ; le Studio le signale.
+    graph = _graph([T, _agent("ignore"), OK], ROUTED_EDGES[:2])
+    with caplog.at_level("WARNING"):
+        wg.validate_graph(graph)
+    assert "on_error" in caplog.text
+    events = _run(graph, _Env(agents={"a1": _boom}))
+    assert events[-1]["event"] == "error"
+
+
+def test_a_null_time_limit_means_none_like_a_null_on_error():
+    sub = {
+        "id": "a",
+        "type": "subworkflow",
+        "config": {"workflow_id": "w2", "timeout_s": None},
+    }
+    wg.validate_graph(_graph([T, sub], [{"source": "t", "target": "a"}]))
 
 
 def test_a_null_on_error_means_fail_like_in_the_studio():
@@ -178,7 +193,7 @@ def test_classifier_cannot_continue_but_can_route():
         {"source": "c", "target": "x", "route": "x"},
         {"source": "c", "target": "y", "route": "y"},
     ]
-    assert _code(nodes, edges) == "on_error_unknown"
+    wg.validate_graph(_graph(nodes, edges))  # continue ignoré : vaut fail
     cls["config"]["on_error"] = "route"
     assert _code(nodes, edges) == "on_error_route_missing"
     wg.validate_graph(
@@ -484,6 +499,37 @@ def test_a_handled_failure_is_never_the_node_to_retry_from():
     env = _Env(agents={"a1": _boom, "b1": _boom})
     saved = _snapshots(_graph([T, _agent("route"), OK, after], edges), env)
     assert [s["failed_node"] for s in saved] == ["b"]
+
+
+def test_a_retry_still_shows_the_handled_error_of_a_replayed_node():
+    # « Reprendre ici » rejoue l'amont : le nœud absorbé reste marqué.
+    after = {"id": "b", "type": "agent", "config": {"agent_id": "b1"}}
+    graph = _graph(
+        [T, _agent("continue"), after],
+        [*ROUTED_EDGES[:1], {"source": "a", "target": "b"}],
+    )
+    saved = _snapshots(graph, _Env(agents={"a1": _boom, "b1": _boom}))
+    assert [s["failed_node"] for s in saved] == ["b"]
+    resume = {k: saved[0].get(k) for k in wg.RESUME_KEYS}
+
+    async def _go():
+        env = _Env(agents={"b1": _boom})
+        return [
+            json.loads(c[len("data: ") :])
+            async for c in wg.run_graph(
+                graph,
+                payload={},
+                run_agent=env.run_agent,
+                run_tool=env.run_tool,
+                run_subworkflow=env.run_subworkflow,
+                cancel_event=asyncio.Event(),
+                resume=resume,
+            )
+        ]
+
+    replayed = _complete(asyncio.run(_go()), "a")
+    assert replayed["replayed"] is True
+    assert replayed["handled_error"]["on_error"] == "continue"
 
 
 # --- timeout_s ----------------------------------------------------------------------

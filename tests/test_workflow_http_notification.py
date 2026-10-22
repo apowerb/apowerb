@@ -687,11 +687,17 @@ def test_error_status_with_route_takes_the_error_output(monkeypatch):
     assert events[-1] == {"event": "done", "output": "422"}
 
 
-def test_accept_error_status_must_be_a_boolean():
+def test_a_non_boolean_accept_error_status_is_ignored_with_a_warning(
+    caplog, monkeypatch
+):
+    # Graphe enregistré : on exécute avec le défaut (accepter) plutôt que refuser.
+    _patch_transport(monkeypatch, _status_handler(500))
     nodes, edges = _http_graph(
-        {"method": "GET", "url": "https://api.example.com/x", "accept_error_status": "no"}
+        {"method": "GET", "url": "https://api.example.com/x", "accept_error_status": 0}
     )
-    with pytest.raises(wg.GraphError, match="accept_error_status"):
+    with caplog.at_level("WARNING"):
         wg.validate_graph(
             wg.WorkflowGraph.model_validate({"version": 1, "nodes": nodes, "edges": edges})
         )
+    assert "accept_error_status" in caplog.text
+    assert _run(nodes, edges)[-1]["event"] == "done"

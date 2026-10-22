@@ -10,6 +10,8 @@ l'erreur, sortie) ; il passe à l'identique sur main et sur cette branche.
   le graphe s'exécute (main ne les vérifiait pas).
 * ``timeout_s`` sur un agent ou un outil : ignoré, comme sur main — ni l'un
   ni l'autre ne peut être vraiment interrompu.
+* Valeur inconnue de ``on_error`` ou ``accept_error_status`` : ignorée (le
+  défaut s'applique), pas refusée — main ne lisait pas ces réglages.
 """
 
 from __future__ import annotations
@@ -86,6 +88,16 @@ def test_continue_on_a_reported_tool_error_passes_the_tool_result():
     assert end == {"event": "done", "output": result}
 
 
+def test_continue_on_a_reported_error_still_checks_the_contract():
+    # main : le contrat passait avant l'erreur signalée.
+    end = _run(
+        [T, _tool(on_error="continue", output_type="text")],
+        EDGE,
+        tools={"x.y": {"status": "error", "message": "boom"}},
+    )
+    assert (end["event"], end.get("code")) == ("error", "output_type_mismatch")
+
+
 def test_a_reported_tool_error_stops_the_run_by_default():
     end = _run([T, _tool()], EDGE, tools={"x.y": {"status": "error", "message": "x"}})
     assert (end["event"], end.get("code")) == ("error", "tool_reported_error")
@@ -102,6 +114,47 @@ def test_settings_on_a_node_without_them_are_ignored():
         },
     }
     assert _run([T, node], EDGE) == {"event": "done", "output": {"k": "v"}}
+
+
+def test_invalid_values_on_a_node_without_them_are_ignored():
+    node = {
+        "id": "a",
+        "type": "set",
+        "config": {
+            "fields": [{"key": "k", "value": "v"}],
+            "on_error": "bogus",
+            "timeout_s": "abc",
+        },
+    }
+    assert _run([T, node], EDGE) == {"event": "done", "output": {"k": "v"}}
+
+
+def test_an_unknown_on_error_behaves_as_the_default():
+    # main ne lisait on_error que sur un outil (où il refusait déjà l'inconnu).
+    async def boom():
+        raise wg.GraphError("panne", code="agent_down")
+
+    agent = {"id": "a", "type": "agent", "config": {"agent_id": "a1", "on_error": "x"}}
+    assert _run([T, agent], EDGE)["event"] == "done"
+    end = _run([T, agent], EDGE, agents={"a1": boom})
+    assert (end["event"], end.get("code")) == ("error", "agent_down")
+
+
+def test_an_invalid_accept_error_status_does_not_refuse_the_graph():
+    http = {
+        "id": "a",
+        "type": "http",
+        "config": {
+            "method": "GET",
+            "url": "https://example.com/",
+            "accept_error_status": "oui",
+        },
+    }
+    wg.validate_graph(
+        wg.WorkflowGraph.model_validate(
+            {"version": 1, "nodes": [T, http], "edges": EDGE}
+        )
+    )
 
 
 def test_a_time_limit_on_an_agent_or_a_tool_is_ignored():

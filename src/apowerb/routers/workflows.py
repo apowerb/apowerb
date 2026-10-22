@@ -324,7 +324,7 @@ async def _retry_runner(
         services=workflow_runtime.services_for(owner),
         until=state.get("until"),
         # Sans ``answer`` : rien à décider, seulement l'amont à rejouer.
-        resume={k: state.get(k) for k in ("outputs", "routes", "artifacts")},
+        resume={k: state.get(k) for k in workflow_graph.RESUME_KEYS},
         on_await=pause_saver(run_id),
         on_fail=failure_saver(run_id),
         run_id=run_id,
