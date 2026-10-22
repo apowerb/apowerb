@@ -1095,6 +1095,21 @@ def to_agent(agent_name: str) -> LlmAgent:
             if _observateur is not None:
                 after_model_cb = chain_after_model_callbacks(_observateur, after_model_cb)
 
+        # Feature: case bank -- show the agent its closest past runs, good and
+        # bad, before it acts (apowerb.memory.case_bank). Last in the chain so
+        # guardrails judge the user's own words, and it never returns content.
+        case_bank_enabled = str(agent_details.get("case_bank_enabled") or "false").lower() == "true"
+        if case_bank_enabled:
+            from apowerb.memory.case_bank import make_case_bank_before_model_callback
+
+            _case_cb = make_case_bank_before_model_callback(agent_id=agent_id)
+            if isinstance(before_model_cb, list):
+                before_model_cb = [*before_model_cb, _case_cb]
+            elif before_model_cb:
+                before_model_cb = [before_model_cb, _case_cb]
+            else:
+                before_model_cb = _case_cb
+
         if before_model_cb:
             agent_kwargs["before_model_callback"] = before_model_cb
         if after_model_cb:

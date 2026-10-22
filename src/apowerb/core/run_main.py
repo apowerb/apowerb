@@ -222,6 +222,30 @@ def settle_run(
         record_tools_executed(run_id, tools_executed)
     except Exception:  # la trace ne doit pas masquer l'issue
         logger.exception("[RUNS] issue du run_id=%s non consignee", run_id)
+        return
+    _learn_case(run_id)
+
+
+def _learn_case(run_id: str) -> None:
+    """Range dans la banque de cas ce que ce run apprend (agent volontaire seulement)."""
+    from apowerb.memory.case_bank import (
+        default_case_bank,
+        record_run_case,
+        resolve_agent_from_store,
+    )
+
+    try:
+        with run_store.engine.begin() as conn:
+            row = conn.execute(
+                run_store.run_table.select().where(run_store.run_table.c.run_id == run_id)
+            ).fetchone()
+        if row is None:
+            return
+        record_run_case(
+            _row_to_dict(row), bank=default_case_bank(), resolve_agent=resolve_agent_from_store
+        )
+    except Exception:  # un cas perdu ne doit pas coûter l'issue du run
+        logger.warning("[RUNS] cas du run_id=%s non range", run_id, exc_info=True)
 
 
 def failure_cause(exc: BaseException) -> str:
