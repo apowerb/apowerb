@@ -756,3 +756,49 @@ def test_plain_text_in_a_json_file_stays_valid_json():
     nodes, edges = _chain(_file({"format": "json", "content": "{{t.v}}"}))
     _run(nodes, edges, {"v": "bonjour"}, svc)
     assert json.loads(svc.saved[0]["data"]) == "bonjour"
+
+
+# --- caractères de contrôle et fins de ligne : bornes comptées sur le texte rendu ---
+
+
+@pytest.mark.parametrize("ctrl", ["\x1c", "\x0b", "\x0c", "\x1f"])
+def test_a_control_character_in_the_separator_does_not_hide_a_table(monkeypatch, ctrl):
+    monkeypatch.setattr(wg, "MAX_DOC_TABLE_CELLS", 5)
+    _no_build(monkeypatch)
+    text = f"| a | b | c |\n|-{ctrl}-|---|---|\n| 1 | 2 | 3 |"
+    nodes, edges = _chain(_file({"format": "docx", "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": text}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_many_cells"
+
+
+def test_carriage_returns_count_as_lines(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_FILE_TEXT_LINES", 3)
+    _no_build(monkeypatch)
+    nodes, edges = _chain(_file({"format": "docx", "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": "- a\r- b\r- c\r- d"}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_many_lines"
+
+
+def test_the_widest_table_counts_even_when_it_comes_second(monkeypatch):
+    monkeypatch.setattr(wg, "MAX_DOC_TABLE_COLUMNS", 2)
+    _no_build(monkeypatch)
+    narrow = "| a | b |\n|---|---|"
+    wide = "| a | b | c |\n|---|---|---|"
+    nodes, edges = _chain(_file({"format": "docx", "content": "{{t.v}}"}))
+    events = _run(nodes, edges, {"v": narrow + "\n\n" + wide}, FakeServices())
+    assert _error(events, "f")["code"] == "file_too_many_columns"
+
+
+def test_the_text_checked_is_the_text_rendered(monkeypatch):
+    seen = {}
+    real = wg.workflow_files.build
+
+    def spy(fmt, value, sheet=None, table=None, text=None):
+        seen["text"] = text
+        return real(fmt, value, sheet, table=table, text=text)
+
+    monkeypatch.setattr(wg.workflow_files, "build", spy)
+    svc = FakeServices()
+    nodes, edges = _chain(_file({"format": "docx", "content": "{{t.v}}"}))
+    _run(nodes, edges, {"v": "titre\x1c suite"}, svc)
+    assert seen["text"] == "titre suite"

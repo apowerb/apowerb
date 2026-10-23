@@ -53,6 +53,11 @@ class RowsError(ValueError):
     """La valeur ne se lit pas comme des lignes de tableau."""
 
 
+def strip_control(text: str) -> str:
+    """``text`` sans ses caractères de contrôle, tel que Word et PDF le rendent."""
+    return _CONTROL.sub("", text)
+
+
 def _as_text(value: Any) -> str:
     if isinstance(value, str):
         return value

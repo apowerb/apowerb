@@ -2087,7 +2087,11 @@ def _bounded_file_text(node_id: str, fmt: str, value: Any) -> str:
         ) from None
     if not rich:
         return text
-    if text.count("\n") + 1 > MAX_FILE_TEXT_LINES:
+    # Compté sur le texte même que le rendu reçoit : sans caractères de
+    # contrôle (l'un d'eux couperait une ligne pour ``splitlines`` et cacherait
+    # un tableau), lignes découpées comme ``_docx`` (\r, \x0b… comptent).
+    text = workflow_files.strip_control(text)
+    if len(text.splitlines()) > MAX_FILE_TEXT_LINES:
         raise GraphError(
             f"{node_id} : plus de {MAX_FILE_TEXT_LINES} lignes de texte",
             code="file_too_many_lines",
