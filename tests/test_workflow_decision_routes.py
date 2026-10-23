@@ -599,6 +599,59 @@ def test_the_assignee_does_not_receive_the_error_detail():
     assert event == {"event": "error", "code": "x"}
 
 
+def test_the_assignee_gets_only_the_structural_params_of_an_error():
+    chunk = "data: " + json.dumps({
+        "event": "error",
+        "code": "agent_asked_question",
+        "params": {"node": "yes", "question": "sortie du proprio ?"},
+    }) + "\n\n"
+    event = json.loads(api_runs()._for_assignee(chunk, ASSIGNEE)[len("data: "):])
+    assert event["params"] == {"node": "yes", "question": "…"}
+
+
+@pytest.mark.asyncio
+async def test_a_failure_after_the_assignees_answer_is_told_in_full_to_the_owner(api, monkeypatch):
+    """Le flux de l'assigné est expurgé ; l'issue du propriétaire et son alerte ne le sont pas."""
+    from apowerb.core import workflow_runtime
+
+    async def _agent(agent_id, message):
+        return "Quel est le MARQUEUR-SORTIE ?"
+
+    async def _tool(tool, args):
+        return {}
+
+    monkeypatch.setattr(
+        workflow_runtime, "bindings_for", lambda owner, plan: (_agent, _tool, None, None)
+    )
+    graph = _graph(ASSIGNEE)
+    graph["nodes"][2] = {
+        "id": "yes",
+        "type": "agent",
+        "config": {"agent_id": "agent1", "on_question": "fail"},
+    }
+    wf = workflow_main.create_workflow(owner_id=OWNER, name="Devis", graph=graph)
+    events = await _drain(
+        await api.defs.run_workflow(wf["workflow_id"], api.defs.RunBody(payload={"x": 1}), current_user=_user())
+    )
+    run_id = events[0]["wid"]
+
+    resumed = await _drain(await _resume(api, run_id, user=ASSIGNEE, choice="oui"))
+
+    assert resumed[-1]["event"] == "error" and resumed[-1]["code"] == "agent_asked_question"
+    assert "MARQUEUR-SORTIE" not in json.dumps(resumed)
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["status"] == "error"
+    assert run["error_message"] == "yes : l'agent a posé une question au lieu de répondre"
+    assert run["error"]["failed_node"] == "yes"
+    [alert] = [f for f in api.finished if f["status"] == "error"]
+    assert alert["error_message"] == run["error_message"]
+    assert alert["error_code"] == "agent_asked_question" and alert["error_node"] == "yes"
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        row = conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()._asdict()
+    assert not [k for k, v in row.items() if isinstance(v, str) and "MARQUEUR-SORTIE" in v]
+
+
 def api_runs():
     from apowerb.routers import workflows
 

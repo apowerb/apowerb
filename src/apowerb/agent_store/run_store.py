@@ -129,9 +129,9 @@ class RunStore(BaseModel):
             # indexé avec ``created_at`` (voir ``Index`` plus bas).
             Column("workflow_id", String),
             # L'échec sous forme structurée, en JSON : ``code`` (traduit par
-            # l'interface), ``params`` et ``ref``. Le nœud fautif est dans
-            # ``failure_node``. ``error_message`` garde le texte, pour les
-            # lecteurs existants.
+            # l'interface), ``params`` structurels, ``ref`` et le nœud
+            # fautif (``failed_node``). ``error_message`` garde le texte,
+            # pour les lecteurs existants.
             Column("error_info", String),
             # Alerte d'échec (``workflow_alerts``) : réservée avant l'envoi,
             # puis son issue (sent, grouped, off, failed). Une seule par run.

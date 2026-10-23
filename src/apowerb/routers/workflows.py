@@ -361,6 +361,9 @@ def _for_assignee(chunk: str, user: str) -> str:
         return chunk
     for field in _OWNER_ONLY_FIELDS:
         event.pop(field, None)
+    if "params" in event:
+        # La question d'un agent, un destinataire… : seule la structure part.
+        event["params"] = run_main.safe_error_params(event["params"])
     if event.get("event") == "awaiting_input" and (event.get("assignee") or "").lower() != user.lower():
         # Une décision suivante qui ne lui revient pas : il sait seulement
         # que le run attend.
@@ -585,10 +588,18 @@ def _streaming_run(
                 if not fed_by_runner:
                     run_trace.add(chunk)
                 if terminal is not None and terminal["event"] == "error":
+                    if fed_by_runner:
+                        # Le flux cédé a pu être expurgé pour l'assigné ;
+                        # l'issue du propriétaire se lit dans le flux brut.
+                        terminal = next(
+                            (e for e in reversed(run_trace.events) if e["event"] == "error"),
+                            terminal,
+                        )
                     outcome = run_main.STATUS_ERROR
                     error_message = str(terminal.get("detail") or "")
                     error_code = terminal.get("code")
-                    error_node = (terminal.get("params") or {}).get("node")
+                    # Le même nœud que l'historique (``error_info.failed_node``).
+                    error_node = terminal.get("failed_node")
                 elif terminal is not None and terminal["event"] == "awaiting_input":
                     # Déjà consigné par ``run_main.pause_run`` (on_await).
                     outcome = run_main.STATUS_AWAITING

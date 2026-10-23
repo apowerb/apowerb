@@ -709,7 +709,16 @@ async def test_an_oversized_state_is_not_saved(api, monkeypatch):
     monkeypatch.setattr(workflow_graph, "MAX_PAUSED_STATE_BYTES", 10)
     _, events = await _failed(api)
     assert events[-1]["event"] == "error" and events[-1]["retryable"] is False
-    assert run_main.get_run(events[0]["wid"], owner_id=OWNER)["retry_available"] is False
+    run_id = events[0]["wid"]
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["retry_available"] is False
+    # L'historique dit où, sans prétendre qu'une reprise a été enregistrée.
+    assert run["error"]["failed_node"] == "a2" and run["failure_node"] is None
+    refused = await _refused(api, run_id)
+    assert refused.status_code == 409 and refused.detail["code"] == "retry_unavailable"
+    # Ni « déjà repris » maintenant, ni « expiré » plus tard.
+    _set(run_id, finished_at=_old(run_main.RETRY_STATE_TTL))
+    assert (await _refused(api, run_id)).detail["code"] == "retry_unavailable"
 
 
 @pytest.mark.asyncio

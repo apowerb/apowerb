@@ -297,38 +297,55 @@ def finish_run(run_id: str, status: str, error_message: str | None = None) -> No
         )
 
 
+# Les paramètres d'erreur qui ne disent que la structure du graphe ou de sa
+# configuration. Les autres (question d'un agent, destinataire, recherche…)
+# portent des données du run : ils ne sont ni gardés en clair en base, ni
+# envoyés à l'assigné d'une décision.
+_STRUCTURAL_PARAMS = frozenset({
+    "node", "field", "max", "seconds", "limit", "status", "days", "run_id",
+    "tool", "tool_name", "agent", "workflow", "workflow_id", "connection",
+    "service", "provider", "transport", "table", "sqlstate", "header",
+    "format", "type", "kind", "mode", "route", "routes", "triggers", "to",
+    "expected", "actual", "value", "options", "problem", "reason", "ref",
+})
+# Valeur d'un paramètre masqué : la clé reste, pour que le message se traduise.
+MASKED_PARAM = "…"
+
+
+def safe_error_params(params: object) -> dict | None:
+    """Les paramètres d'une erreur, ceux qui portent des données du run masqués."""
+    if not isinstance(params, dict):
+        return None
+    return {
+        k: v if k in _STRUCTURAL_PARAMS else MASKED_PARAM for k, v in params.items()
+    }
+
+
 def record_failure(run_id: str, error: dict | None) -> None:
     """Ajoute à un run échoué son échec structuré.
 
     ``error`` : ce que :meth:`RunTrace.failure` lit dans l'événement ``error``
-    du moteur. ``code``, ``params`` et ``ref`` vont dans ``error_info`` ; le
-    nœud en échec n'a qu'une colonne, ``failure_node``, écrite par
-    :func:`save_failure` avec l'instantané de reprise. Si l'instantané n'a pas
-    pu l'être (trop lourd, panne), le nœud nommé par le moteur y est reporté.
-    Écrit après :func:`finish_run`, qui remet ``error_info`` à zéro.
+    du moteur. ``error_info`` n'en garde, en clair, que ``code``, ``ref``, le
+    nœud en échec (``failed_node``) et les paramètres structurels
+    (:func:`safe_error_params`). ``failure_node`` n'est pas écrit ici : il dit
+    qu'un instantané de reprise a été enregistré, et seul :func:`save_failure`
+    le sait. Écrit après :func:`finish_run`, qui remet ``error_info`` à zéro.
     """
     if not error:
         return
-    info = {k: v for k, v in error.items() if k != "failed_node"}
-    failed_node = error.get("failed_node")
+    info = {k: error[k] for k in ("code", "ref", "failed_node") if error.get(k) is not None}
+    params = safe_error_params(error.get("params"))
+    if params:
+        info["params"] = params
+    if not info:
+        return
     t = run_store.run_table
     with run_store.engine.begin() as conn:
-        if info:
-            conn.execute(
-                t.update()
-                .where(t.c.run_id == run_id, t.c.status == STATUS_ERROR)
-                .values(error_info=json.dumps(info, ensure_ascii=False, default=str))
-            )
-        if failed_node:
-            conn.execute(
-                t.update()
-                .where(
-                    t.c.run_id == run_id,
-                    t.c.status == STATUS_ERROR,
-                    t.c.failure_node.is_(None),
-                )
-                .values(failure_node=str(failed_node))
-            )
+        conn.execute(
+            t.update()
+            .where(t.c.run_id == run_id, t.c.status == STATUS_ERROR)
+            .values(error_info=json.dumps(info, ensure_ascii=False, default=str))
+        )
 
 
 def record_tools_executed(run_id: str, tools: list[str] | None) -> None:
@@ -813,8 +830,8 @@ def _open_trace(raw: str | None) -> list | None:
     if not raw:
         return []
     try:
-        # Traces écrites en clair avant le chiffrement : un JSON, pas un jeton.
-        return json.loads(raw if raw.lstrip().startswith("[") else decrypt_value(raw))
+        # Jamais en clair : une trace qui n'est pas un jeton est illisible.
+        return json.loads(decrypt_value(raw))
     except (InvalidToken, RuntimeError, ValueError) as exc:
         logger.warning("[RUNS] déroulé illisible (%s)", type(exc).__name__)
         return None

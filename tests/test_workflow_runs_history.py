@@ -21,6 +21,7 @@ Ce que ces tests figent :
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -191,8 +192,40 @@ def test_a_failure_keeps_its_code_params_and_node(store):
 
     run = run_main.get_run(run_id, owner_id=OWNER)
     assert run["error_message"] == "agent2 : réponse non JSON"
-    assert run["error"] == {"code": "output_type_mismatch", "params": {"node": "agent2"}}
-    assert run["failure_node"] == "agent2"
+    assert run["error"] == {
+        "code": "output_type_mismatch",
+        "params": {"node": "agent2"},
+        "failed_node": "agent2",
+    }
+    # Sans instantané de reprise, ``failure_node`` reste vide : il dit
+    # « reprise enregistrée », pas seulement « où ».
+    assert run["failure_node"] is None
+
+
+def _text_columns(run_id) -> str:
+    t = run_main.run_store.run_table
+    with run_main.run_store.engine.begin() as conn:
+        row = conn.execute(t.select().where(t.c.run_id == run_id)).fetchone()._asdict()
+    return " ".join(str(v) for v in row.values() if isinstance(v, str))
+
+
+def test_a_failure_keeps_only_the_structural_params_in_clear(store):
+    """La question d'un agent est une sortie du run : elle ne reste pas en clair en base."""
+    run_id = _graph_run()
+    run_main.finish_run(run_id, status="error", error_message="agent2 : question")
+    run_main.record_failure(
+        run_id,
+        {
+            "code": "agent_asked_question",
+            "params": {"node": "agent2", "question": "MARQUEUR-SORTIE ?", "max": 3},
+            "failed_node": "agent2",
+        },
+    )
+
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    # La clé reste, pour que le message se traduise ; sa valeur est masquée.
+    assert run["error"]["params"] == {"node": "agent2", "question": "…", "max": 3}
+    assert "MARQUEUR-SORTIE" not in _text_columns(run_id)
 
 
 def test_the_node_saved_with_the_retry_snapshot_is_not_overwritten(store):
@@ -400,6 +433,22 @@ def test_a_trace_that_can_no_longer_be_read_says_so(store):
     }
 
 
+def test_a_trace_stored_in_clear_is_not_served(store):
+    """Une trace se lit déchiffrée ou pas du tout : un JSON en clair n'est pas relu."""
+    run_id = _graph_run()
+    with store.engine.begin() as conn:
+        conn.execute(
+            store.trace_table.insert().values(
+                run_id=run_id,
+                events=json.dumps([{"event": "done", "output": "en clair"}]),
+                truncated=0,
+                updated_at=run_main._now(),
+            )
+        )
+
+    assert run_main.get_trace(run_id, owner_id=OWNER)["available"] is False
+
+
 def test_forgetting_a_workflow_drops_its_traces_only(store):
     mine = _graph_run("wf-1")
     sibling = _graph_run("wf-2")
@@ -480,7 +529,17 @@ def test_runs_started_in_the_same_instant_keep_a_stable_order(store, monkeypatch
 # --- heures : ISO UTC pour le navigateur ----------------------------------------
 
 
-def test_run_times_are_sent_as_utc_iso(store, monkeypatch):
+@pytest.fixture
+def paris_time(monkeypatch):
+    """Un serveur hors UTC : sur une machine en UTC, le test ne prouverait rien."""
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_run_times_are_sent_as_utc_iso(store, paris_time):
     from datetime import datetime, timezone
 
     run_id = _graph_run()
@@ -544,10 +603,38 @@ async def test_a_failed_graph_run_is_recorded_with_its_faulty_node_and_trace(wor
     run = run_main.get_run(run_id, owner_id=OWNER)
     assert run["status"] == "error"
     assert run["error_message"] == "pas du JSON"
-    assert run["error"] == {"code": "output_type_mismatch", "params": {"node": "agent1"}}
-    assert run["failure_node"] == "agent1"
+    assert run["error"] == {
+        "code": "output_type_mismatch",
+        "params": {"node": "agent1"},
+        "failed_node": "agent1",
+    }
     events = run_main.get_trace(run_id, owner_id=OWNER)["events"]
     assert [e["event"] for e in events] == ["run_started", "node_start", "node_error", "error"]
+
+
+@pytest.mark.asyncio
+async def test_the_failure_alert_names_the_node_the_history_shows(workflows, monkeypatch):
+    """Un seul nœud fautif : celui du moteur (``failed_node``), pas ``params.node``."""
+    from apowerb.core import workflow_triggers
+
+    sent = []
+
+    async def _notify(**kwargs):
+        sent.append(kwargs)
+
+    monkeypatch.setattr(workflow_triggers, "notify_run_finished", _notify)
+    run_id = _graph_run("wf-7")
+
+    async def _runner(_cancel):
+        # Échec dans un sous-workflow : ``params.node`` nomme le nœud interne.
+        yield _sse({"event": "error", "code": "output_type_mismatch", "detail": "x", "params": {"node": "interne"}, "failed_node": "sous1"})
+
+    await _drain(workflows._streaming_run(
+        run_id=run_id, agent_ids=[], file_bytes=None, owner=OWNER, runner=_runner
+    ))
+
+    assert run_main.get_run(run_id, owner_id=OWNER)["error"]["failed_node"] == "sous1"
+    assert sent[-1]["error_node"] == "sous1"
 
 
 @pytest.mark.asyncio
