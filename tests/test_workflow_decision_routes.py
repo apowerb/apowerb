@@ -733,3 +733,46 @@ async def test_only_the_owner_can_stop_a_resumed_run(api):
     resumed = await _drain(response)
     assert resumed[-1]["event"] == "done"
     assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "success"
+
+
+# --- Déroulé gardé pour l'historique (``/runs/{id}/trace``) -------------------
+
+
+@pytest.mark.asyncio
+async def test_a_resume_by_the_assignee_keeps_the_owners_full_trace(api):
+    """Le flux de l'assigné est expurgé ; la trace du propriétaire ne l'est pas."""
+    _, events = await _paused(api, assignee=ASSIGNEE)
+    run_id = events[0]["wid"]
+
+    resumed = await _drain(await _resume(api, run_id, user=ASSIGNEE, choice="oui"))
+
+    assert not [e for e in resumed if "output" in e]
+    trace = run_main.get_trace(run_id, owner_id=OWNER)
+    assert trace["events"][-1] == {"event": "done", "output": "ok:oui"}
+    decided = next(e for e in trace["events"] if e["event"] == "node_complete" and e["node_id"] == "d")
+    assert decided["output"]["answered_by"] == ASSIGNEE
+
+
+@pytest.mark.asyncio
+async def test_a_resume_that_did_not_take_the_decision_keeps_the_pause_trace(api, monkeypatch):
+    _, events = await _paused(api)
+    run_id = events[0]["wid"]
+    paused = run_main.get_trace(run_id, owner_id=OWNER)["events"]
+    assert paused[-1]["event"] == "awaiting_input"
+
+    async def _down(owner):
+        raise RuntimeError("plans indisponibles")
+
+    monkeypatch.setattr(run_gate, "resolve_owner_plan", _down)
+    await _drain(await _resume(api, run_id, choice="oui"))
+
+    assert run_main.get_trace(run_id, owner_id=OWNER)["events"] == paused
+
+
+@pytest.mark.asyncio
+async def test_the_pause_trace_is_encrypted_at_rest(api):
+    _, events = await _paused(api)
+    t = run_main.run_store.trace_table
+    with run_main.run_store.engine.begin() as conn:
+        raw = conn.execute(t.select().where(t.c.run_id == events[0]["wid"])).fetchone()._asdict()["events"]
+    assert raw and "devis" not in raw and "Valider" not in raw

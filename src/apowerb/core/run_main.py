@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -171,6 +172,7 @@ def start_run(
         attempts=1,
         created_at=_now(),
         replay_of=replay_of,
+        workflow_id=str(cfg["workflow_id"]) if cfg.get("workflow_id") else None,
     )
     try:
         with run_store.engine.begin() as conn:
@@ -279,6 +281,7 @@ def finish_run(run_id: str, status: str, error_message: str | None = None) -> No
             .values(
                 status=status,
                 error_message=error_message,
+                error_info=None,
                 finished_at=_now(),
                 paused_state=None,
                 assignee=None,
@@ -292,6 +295,40 @@ def finish_run(run_id: str, status: str, error_message: str | None = None) -> No
                 ),
             )
         )
+
+
+def record_failure(run_id: str, error: dict | None) -> None:
+    """Ajoute à un run échoué son échec structuré.
+
+    ``error`` : ce que :meth:`RunTrace.failure` lit dans l'événement ``error``
+    du moteur. ``code``, ``params`` et ``ref`` vont dans ``error_info`` ; le
+    nœud en échec n'a qu'une colonne, ``failure_node``, écrite par
+    :func:`save_failure` avec l'instantané de reprise. Si l'instantané n'a pas
+    pu l'être (trop lourd, panne), le nœud nommé par le moteur y est reporté.
+    Écrit après :func:`finish_run`, qui remet ``error_info`` à zéro.
+    """
+    if not error:
+        return
+    info = {k: v for k, v in error.items() if k != "failed_node"}
+    failed_node = error.get("failed_node")
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        if info:
+            conn.execute(
+                t.update()
+                .where(t.c.run_id == run_id, t.c.status == STATUS_ERROR)
+                .values(error_info=json.dumps(info, ensure_ascii=False, default=str))
+            )
+        if failed_node:
+            conn.execute(
+                t.update()
+                .where(
+                    t.c.run_id == run_id,
+                    t.c.status == STATUS_ERROR,
+                    t.c.failure_node.is_(None),
+                )
+                .values(failure_node=str(failed_node))
+            )
 
 
 def record_tools_executed(run_id: str, tools: list[str] | None) -> None:
@@ -511,6 +548,38 @@ def _reconcile_if_orphaned(conn, row):
     ).fetchone()
 
 
+# Le déclencheur consigné est soit un nom (``workflow``, ``schedule``…), soit
+# le JSON ``{"kind", "detail"}`` d'un trigger de workflow : l'interface reçoit
+# un nom stable, sans rien avoir à analyser.
+_TRIGGER_ALIASES = {
+    "workflow": "manual",
+    "workflow_simulated_email": "simulated_email",
+}
+
+
+def _trigger_kind(trigger: str | None) -> tuple[str | None, dict | None]:
+    if trigger and trigger.startswith("{"):
+        try:
+            parsed = json.loads(trigger)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("kind"):
+            detail = parsed.get("detail")
+            return str(parsed["kind"]), detail if isinstance(detail, dict) else None
+    return _TRIGGER_ALIASES.get(trigger, trigger), None
+
+
+def _duration_ms(created_at: str | None, finished_at: str | None) -> int | None:
+    """Durée d'un run fini. Pour un run repris après une décision, l'attente compte."""
+    if not created_at or not finished_at:
+        return None
+    try:
+        delta = datetime.fromisoformat(finished_at) - datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    return max(0, round(delta.total_seconds() * 1000))
+
+
 def _row_to_dict(row) -> dict:
     run = row._asdict()
     # L'instantané d'une pause peut peser plusieurs Mio et ne regarde que la
@@ -526,6 +595,17 @@ def _row_to_dict(row) -> dict:
     if run.get("status") == STATUS_AWAITING and decision:
         run["decision"] = json.loads(decision)
     run["agent_ids"] = json.loads(run.get("agent_ids") or "[]")
+    error_info = run.pop("error_info", None)
+    try:
+        run["error"] = json.loads(error_info) if error_info else None
+    except json.JSONDecodeError:
+        run["error"] = None
+    run["trigger_kind"], run["trigger_detail"] = _trigger_kind(run.get("trigger"))
+    run["duration_ms"] = _duration_ms(run.get("created_at"), run.get("finished_at"))
+    # Stockées en heure locale du serveur, sans fuseau : le navigateur les
+    # lirait dans le sien. Il reçoit l'instant en UTC.
+    for field in ("created_at", "finished_at"):
+        run[field] = _utc_iso(run.get(field))
     tools = run.get("tools_executed")
     run["tools_executed"] = json.loads(tools) if tools else None
     try:
@@ -570,19 +650,265 @@ def get_run(run_id: str, owner_id: str) -> dict | None:
     return _row_to_dict(row) if row else None
 
 
-def list_runs(owner_id: str, limit: int = 50) -> list[dict]:
-    """Les runs d'un propriétaire, du plus récent au plus ancien."""
+RUN_STATUSES = (
+    STATUS_RUNNING,
+    STATUS_SUCCESS,
+    STATUS_ERROR,
+    STATUS_CANCELLED,
+    STATUS_AWAITING,
+)
+
+
+def list_runs(
+    owner_id: str,
+    limit: int = 50,
+    *,
+    offset: int = 0,
+    workflow_id: str | None = None,
+    statuses: list[str] | None = None,
+) -> list[dict]:
+    """Les runs d'un propriétaire, du plus récent au plus ancien.
+
+    ``workflow_id`` et ``statuses`` restreignent la liste (l'historique d'un
+    workflow, ses seuls échecs) ; ``offset`` la pagine. Un statut inconnu
+    lève ``ValueError`` plutôt que de rendre une liste vide trompeuse.
+
+    Limite : le filtre de statut porte sur ce qui est écrit. Un run tué en vol
+    reste ``running`` jusqu'à ce qu'une lecture le réconcilie
+    (``_reconcile_if_orphaned``) — il n'apparaît parmi les échecs qu'après.
+    """
+    unknown = [s for s in statuses or [] if s not in RUN_STATUSES]
+    if unknown:
+        raise ValueError(f"unknown run status: {', '.join(unknown)}")
+    t = run_store.run_table
+    conds = [t.c.owner_id == owner_id]
+    if workflow_id is not None:
+        conds.append(t.c.workflow_id == workflow_id)
+    if statuses:
+        conds.append(t.c.status.in_(statuses))
     with run_store.engine.begin() as conn:
         _expire_due(conn)
         _purge_failure_states(conn)
         rows = conn.execute(
-            run_store.run_table.select()
-            .where(run_store.run_table.c.owner_id == owner_id)
-            .order_by(run_store.run_table.c.created_at.desc())
+            t.select()
+            .where(*conds)
+            .order_by(t.c.created_at.desc(), t.c.run_id.desc())
             .limit(limit)
+            .offset(offset)
         ).fetchall()
         rows = [_reconcile_if_orphaned(conn, row) for row in rows]
     return [_row_to_dict(row) for row in rows]
+
+
+# --- Le déroulé d'un run, pour le rouvrir plus tard ---------------------------
+#
+# Le panneau Test rejoue un run à partir de ses événements SSE ; l'historique
+# rouvre un run passé de la même façon. Les événements sont ceux que le
+# propriétaire a déjà vus en direct (entrées, sorties, appels d'outils) : rien
+# de plus n'est exposé, mais ils sont plafonnés pour qu'un run bavard ne pèse
+# pas des mégaoctets en base.
+
+# Au-delà, un champ volumineux (sortie, entrée, appels d'outils) est remplacé
+# par un aperçu dans la trace — jamais dans le run lui-même.
+TRACE_FIELD_MAX_CHARS = 8_000
+# Budget de la trace entière. Passé ce cap, seuls les événements qui disent
+# l'issue (terminaux, erreurs de nœud) sont encore retenus, sans leurs champs
+# volumineux.
+TRACE_MAX_BYTES = 512 * 1024
+_TRACE_BULKY_FIELDS = ("output", "input", "tool_calls")
+_TRACE_ENDINGS = ("node_error", "error", "done", "cancelled", "awaiting_input")
+
+
+def _parse_sse(chunk) -> dict | None:
+    text = chunk.decode() if isinstance(chunk, bytes) else chunk
+    if not isinstance(text, str) or not text.startswith("data: "):
+        return None
+    try:
+        payload = json.loads(text[len("data: ") :])
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) and payload.get("event") else None
+
+
+def _clip(value) -> tuple[object, bool]:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= TRACE_FIELD_MAX_CHARS:
+        return value, False
+    return text[:TRACE_FIELD_MAX_CHARS] + "…", True
+
+
+class RunTrace:
+    """Les événements d'un run, plafonnés, et le nœud qui l'a fait échouer."""
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+        self.truncated = False
+        self._size = 0
+
+    def add(self, chunk) -> None:
+        event = _parse_sse(chunk)
+        if event is None:
+            return
+        event = dict(event)
+        for field in _TRACE_BULKY_FIELDS:
+            if field in event:
+                event[field], cut = _clip(event[field])
+                if cut:
+                    event[f"{field}_truncated"] = True
+                    self.truncated = True
+        size = len(json.dumps(event, ensure_ascii=False, default=str))
+        if self._size + size > TRACE_MAX_BYTES:
+            self.truncated = True
+            if event["event"] not in _TRACE_ENDINGS:
+                return
+            event = {k: v for k, v in event.items() if k not in _TRACE_BULKY_FIELDS}
+            size = len(json.dumps(event, ensure_ascii=False, default=str))
+        self.events.append(event)
+        self._size += size
+
+    def failure(self) -> dict | None:
+        """L'échec du run tel que le moteur le dit : ``code``, ``params``,
+        ``ref`` et ``failed_node``, le nœud en échec calculé par ``run_graph``
+        (« Reprendre ici »). Rien n'est recalculé depuis les ``node_error``.
+        """
+        terminal = next(
+            (e for e in reversed(self.events) if e["event"] == "error"), None
+        )
+        if terminal is None:
+            return None
+        return {
+            k: terminal[k]
+            for k in ("code", "params", "ref", "failed_node")
+            if terminal.get(k) is not None
+        }
+
+
+def save_trace(run_id: str, trace: RunTrace) -> None:
+    """Remplace la trace d'un run (une reprise réémet tout le déroulé).
+
+    Elle porte les entrées, sorties et appels d'outils du run : chiffrée
+    comme l'instantané d'une pause (``_seal``). Sans ``ENCRYPT_KEY`` le
+    chiffrement lève et rien n'est écrit : jamais de repli en clair.
+    """
+    from apowerb.helpers.encryptor import encrypt_value
+
+    t = run_store.trace_table
+    values = dict(
+        events=encrypt_value(json.dumps(trace.events, ensure_ascii=False, default=str)),
+        truncated=1 if trace.truncated else 0,
+        updated_at=_now(),
+    )
+    with run_store.engine.begin() as conn:
+        updated = conn.execute(t.update().where(t.c.run_id == run_id).values(**values))
+        if not updated.rowcount:
+            conn.execute(t.insert().values(run_id=run_id, **values))
+
+
+def _open_trace(raw: str | None) -> list | None:
+    """Les événements d'une trace stockée ; ``None`` si elle n'est plus lisible."""
+    from cryptography.fernet import InvalidToken
+
+    from apowerb.helpers.encryptor import decrypt_value
+
+    if not raw:
+        return []
+    try:
+        # Traces écrites en clair avant le chiffrement : un JSON, pas un jeton.
+        return json.loads(raw if raw.lstrip().startswith("[") else decrypt_value(raw))
+    except (InvalidToken, RuntimeError, ValueError) as exc:
+        logger.warning("[RUNS] déroulé illisible (%s)", type(exc).__name__)
+        return None
+
+
+def get_trace(run_id: str, owner_id: str) -> dict | None:
+    """La trace d'un run, à son seul propriétaire. ``None`` : run inconnu ou d'autrui.
+
+    Une trace absente (run d'avant la trace, purgée) ou illisible (clé
+    changée) est dite indisponible.
+    """
+    runs, traces = run_store.run_table, run_store.trace_table
+    with run_store.engine.begin() as conn:
+        owned = conn.execute(
+            runs.select()
+            .with_only_columns(runs.c.run_id)
+            .where(runs.c.run_id == run_id, runs.c.owner_id == owner_id)
+        ).fetchone()
+        if owned is None:
+            return None
+        row = conn.execute(
+            traces.select().where(traces.c.run_id == run_id)
+        ).fetchone()
+    events = _open_trace(row.events) if row is not None else None
+    if events is None:
+        return {"events": [], "truncated": False, "available": False}
+    return {"events": events, "truncated": bool(row.truncated), "available": True}
+
+
+def forget_workflow_traces(workflow_id: str, owner_id: str) -> int:
+    """Oublie les traces des runs d'un workflow supprimé. Rend leur nombre.
+
+    Les runs eux-mêmes restent (statut, erreur, rejeu refusé faute de
+    graphe) ; leurs sorties n'ont plus de raison d'être gardées.
+    """
+    runs, traces = run_store.run_table, run_store.trace_table
+    owned = (
+        runs.select()
+        .with_only_columns(runs.c.run_id)
+        .where(runs.c.workflow_id == workflow_id, runs.c.owner_id == owner_id)
+    )
+    with run_store.engine.begin() as conn:
+        result = conn.execute(traces.delete().where(traces.c.run_id.in_(owned)))
+    return result.rowcount or 0
+
+
+TRACE_RETENTION_DEFAULT_DAYS = 30
+
+
+def trace_retention_days() -> int:
+    """Durée de vie d'une trace, de ``RUN_TRACE_RETENTION_DAYS`` (30 jours par défaut)."""
+    raw = os.environ.get("RUN_TRACE_RETENTION_DAYS")
+    if raw is None:
+        return TRACE_RETENTION_DEFAULT_DAYS
+    try:
+        days = int(raw)
+    except ValueError:
+        days = 0
+    if days < 1:
+        logger.warning(
+            "[RUNS] RUN_TRACE_RETENTION_DAYS=%r invalide, %d jours retenus",
+            raw,
+            TRACE_RETENTION_DEFAULT_DAYS,
+        )
+        return TRACE_RETENTION_DEFAULT_DAYS
+    return days
+
+
+def purge_old_traces(days: int | None = None) -> int:
+    """Supprime les traces plus vieilles que la rétention. Rend leur nombre.
+
+    Un run en attente d'une décision garde la sienne : sa reprise la
+    remplacera, et son échéance borne déjà son âge.
+    """
+    days = days or trace_retention_days()
+    # ``updated_at`` suit le format de ``_now`` : la comparaison de chaînes
+    # vaut comparaison de dates.
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S.%f")
+    runs, traces = run_store.run_table, run_store.trace_table
+    waiting = (
+        runs.select()
+        .with_only_columns(runs.c.run_id)
+        .where(runs.c.status == STATUS_AWAITING)
+    )
+    with run_store.engine.begin() as conn:
+        result = conn.execute(
+            traces.delete().where(
+                traces.c.updated_at < cutoff, traces.c.run_id.not_in(waiting)
+            )
+        )
+    deleted = result.rowcount or 0
+    if deleted:
+        logger.info("[RUNS] %d déroulé(s) de plus de %d jours purgé(s)", deleted, days)
+    return deleted
 
 
 def _refuse_if_side_effects(tools_executed: str | None) -> None:
@@ -750,6 +1076,16 @@ def _iso(stamp: str | None) -> str | None:
     if not stamp:
         return stamp
     return _instant(stamp).isoformat()
+
+
+def _utc_iso(stamp: str | None) -> str | None:
+    """Un horodatage stocké, en ISO UTC à la milliseconde pour le navigateur."""
+    if not stamp:
+        return stamp
+    try:
+        return _instant(stamp).astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    except ValueError:
+        return stamp
 
 
 def _decision_of(state: dict) -> dict:

@@ -934,6 +934,27 @@ def list_active_triggers(kind: str, *, owner_id: Optional[str] = None) -> list[d
     return [dict(r._mapping) for r in rows]
 
 
+def failure_listeners(workflow_id: str, owner_id: str) -> list[dict]:
+    """Les workflows publiés de ``owner_id`` qu'un échec de ``workflow_id`` lance.
+
+    Même filtre que :func:`fire_workflow_done_triggers` pour un statut
+    ``error`` : trigger ``workflow_done`` actif, ``config.workflow_id`` égal,
+    ``on`` à ``error`` ou ``any``.
+    """
+    from apowerb.core import workflow_main
+
+    listeners = []
+    for row in list_active_triggers("workflow_done", owner_id=owner_id):
+        cfg = json.loads(row["config"] or "{}")
+        if cfg.get("workflow_id") != workflow_id or cfg.get("on", "any") not in ("any", "error"):
+            continue
+        wf = workflow_main.get_workflow(row["workflow_id"], owner_id=owner_id)
+        if wf is None or wf.get("status") != "published":
+            continue
+        listeners.append({"workflow_id": row["workflow_id"], "name": wf.get("name")})
+    return listeners
+
+
 def next_trigger_chain(prior_chain: list[str], workflow_id: str) -> Optional[list[str]]:
     """``None`` si ajouter ``workflow_id`` créerait un cycle ou dépasserait
     ``MAX_TRIGGER_CHAIN`` ; sinon la chaîne étendue.

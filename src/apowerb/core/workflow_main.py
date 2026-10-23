@@ -15,8 +15,11 @@ from nanoid import generate as nanoid_generate
 from pydantic import ValidationError
 
 from apowerb.agent_store.workflow_store import WorkflowStore
+from apowerb.configs.th2logger import setup_logging
 from apowerb.core.workflow_graph import GraphError, WorkflowGraph, validate_graph
 from apowerb.helpers.emails import get_domain_from_email
+
+logger = setup_logging(__name__)
 
 workflow_store = WorkflowStore()
 
@@ -336,9 +339,15 @@ def delete_workflow(workflow_id: str, *, owner_id: str) -> None:
             t.delete().where(t.c.workflow_id == workflow_id, t.c.owner_id == owner_id)
         )
         workflow_shapes.forget_unused_tool_shapes(conn, owner_id, tools)
-    from apowerb.core import workflow_triggers
+    from apowerb.core import run_main, workflow_triggers
 
     workflow_triggers.remove_trigger_for_workflow(workflow_id)
+    # Les sorties de ses runs (déroulés gardés pour l'historique) partent avec
+    # lui. Un échec ici ne rétablit pas le workflow : la rétention les purgera.
+    try:
+        run_main.forget_workflow_traces(workflow_id, owner_id=owner_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Déroulés du workflow %s non purgés", workflow_id)
 
 
 def list_revisions(workflow_id: str, *, owner_id: str) -> list[dict]:

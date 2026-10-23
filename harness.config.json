@@ -1,0 +1,15 @@
+{
+  "roots": ["src"],
+  "extensions": [".py"],
+  "baseline": "harness.baseline.json",
+  "rules": [
+    { "id": "core-never-imports-extensions", "pattern": "^\\s*(?:from|import)\\s+th2agent_", "message": "the open-source core never imports a commercial extension: expose a hook or a feature flag instead" },
+    { "id": "no-debugger", "pattern": "breakpoint\\(\\)|import pdb|pdb\\.set_trace", "message": "remove the debugger call" },
+    { "id": "no-bare-except", "pattern": "^\\s*except\\s*:", "message": "catch a named exception (a bare except also swallows KeyboardInterrupt and SystemExit)" },
+    { "id": "no-naive-utcnow", "pattern": "datetime\\.utcnow\\(", "message": "use datetime.now(timezone.utc): utcnow() is naive and deprecated" },
+    { "id": "layers-no-router-import", "mode": "ratchet", "onlyFiles": ["/(core|helpers|storage|schema)/", "models\\.py$"], "pattern": "^\\s*(?:from|import)\\s+(?:apowerb\\.routers|\\.+routers)", "message": "core, helpers, storage and schema sit below the HTTP layer: move the shared code down, never import a router" },
+    { "id": "config-through-settings", "mode": "ratchet", "excludeFiles": ["/configs/"], "pattern": "os\\.environ|os\\.getenv\\(", "message": "read configuration through apowerb.configs.settings, not os.environ" },
+    { "id": "no-print", "mode": "ratchet", "excludeFiles": ["/cli/"], "pattern": "^\\s*print\\(", "message": "log through apowerb.configs.th2logger; print() is for the CLI only" },
+    { "id": "type-ignore-is-debt", "mode": "ratchet", "pattern": "#\\s*type:\\s*ignore", "message": "fix the type instead of silencing mypy" }
+  ]
+}
