@@ -1,6 +1,6 @@
 ---
 name: rag-search
-description: "Search and retrieve information from knowledge bases and documents using RAG (Retrieval-Augmented Generation). Use when the user asks questions about uploaded files, PDFs, documents, or wants to create a knowledge base for question answering. Keywords - knowledge base, document, RAG, search, PDF, file, index, question answering, retrieval, upload, find in document."
+description: "Search and retrieve information from knowledge bases and documents using RAG (Retrieval-Augmented Generation). Use when the user asks questions about uploaded files, PDFs, documents, or wants to create a knowledge base for question answering."
 ---
 
 # RAG Search — Knowledge Base Interaction
