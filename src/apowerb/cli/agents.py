@@ -1,3 +1,4 @@
+import json
 import typer
 from typing import Optional
 from apowerb.agent_store.agent_manager import AgentStore
@@ -10,7 +11,7 @@ from apowerb.core.agent_main import (
 from apowerb.schema.agent_schema import AgentCreateSchema
 from apowerb.core.agent_helpers.llm_model_builder import validate_agent_model
 from apowerb.cli.runtime_config import require_runtime_config
-import json
+
 
 app = typer.Typer()
 
@@ -44,6 +45,8 @@ def list_agents(
     Pass ``--owner user@example.com`` to scope to a single owner.
     """
     require_runtime_config()
+    # Touch the store once so the table is created if the CLI is the
+    # very first thing run against a fresh database.
     get_agent_store()
     agents = fetch_agents(user_id=owner)
 
@@ -225,3 +228,4 @@ def import_agents_cmd(
     except Exception as e:
         typer.echo(f"Error importing agents: {e}", err=True)
         raise typer.Exit(1)
+    

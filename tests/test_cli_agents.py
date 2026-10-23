@@ -10,6 +10,7 @@ coming back, and exercise the new ``--owner`` flag.
 from __future__ import annotations
 
 import inspect
+import json
 from unittest.mock import patch
 
 import pytest
@@ -18,7 +19,6 @@ from typer.testing import CliRunner
 from apowerb.cli.agents import app
 from apowerb.core.agent_main import fetch_agents
 
-import json
 
 @pytest.fixture(autouse=True)
 def configured(monkeypatch):
