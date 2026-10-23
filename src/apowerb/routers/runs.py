@@ -3,11 +3,14 @@ from apowerb.core.agent_main import get_agent
 from apowerb.agent_store.agent_manager import AgentStore
 from apowerb.auth.dependencies import get_current_user
 from apowerb.users import schemas as user_schemas
+from logging import getLogger
 from typing import Dict
 
 # import asyncio
 # from concurrent.futures import ThreadPoolExecutor
 import threading
+
+logger = getLogger(__name__)
 
 # Global dict to track running agents
 running_agents: Dict[str, threading.Thread] = {}
@@ -23,7 +26,11 @@ router = APIRouter()
 
 
 @router.post("/agents/{agent_id}/run")
-async def run_adk_agent(agent_id: str, agent_store=Depends(get_agent_store), _current_user: user_schemas.User = Depends(get_current_user)):
+async def run_adk_agent(
+    agent_id: str,
+    agent_store=Depends(get_agent_store),
+    _current_user: user_schemas.User = Depends(get_current_user),
+):
     """Start running an agent in the background."""
     if agent_id in running_agents:
         raise HTTPException(status_code=400, detail="Agent is already running")
@@ -37,8 +44,8 @@ async def run_adk_agent(agent_id: str, agent_store=Depends(get_agent_store), _cu
         try:
             # Assuming the agent has a run method
             agent.run()
-        except Exception as e:
-            print(f"Error running agent {agent_id}: {e}")
+        except Exception:
+            logger.exception("Error running agent %s", agent_id)
 
     thread = threading.Thread(target=run_agent_thread, daemon=True)
     running_agents[agent_id] = thread
@@ -48,7 +55,9 @@ async def run_adk_agent(agent_id: str, agent_store=Depends(get_agent_store), _cu
 
 
 @router.get("/agents/{agent_id}/status")
-async def get_agent_status(agent_id: str, _current_user: user_schemas.User = Depends(get_current_user)):
+async def get_agent_status(
+    agent_id: str, _current_user: user_schemas.User = Depends(get_current_user)
+):
     """Get the run status of an agent."""
     if agent_id in running_agents:
         thread = running_agents[agent_id]
