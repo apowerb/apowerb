@@ -41,7 +41,9 @@ def test_generated_file_is_resolved_for_its_owner_only(att_root):
     entry = wa.store_generated(ALICE, "ventes.csv", CSV, b"a,b\n1,2\n")
     assert entry["ref"].startswith("att_") and entry["size"] == 8
     meta = wa.resolve(entry["ref"], ALICE)
-    assert open(meta["path"], "rb").read() == b"a,b\n1,2\n"
+    with open(meta["path"], "rb") as stored:
+        data = stored.read()
+    assert data == b"a,b\n1,2\n"
     assert "workflow_generated" in meta["path"]
     with pytest.raises(wa.AttachmentError):
         wa.resolve(entry["ref"], BOB)
