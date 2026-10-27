@@ -83,17 +83,19 @@ class TestFallbackSTT:
                 assert "model=nova-2" in parse_qs(parsed.query).get("model", []) or                     parsed.query.count("model=nova-2") == 1
 
     @pytest.mark.asyncio
-    async def test_start_without_deepgram_key_uses_fallback(self) -> None:
+    async def test_start_without_deepgram_key_raises(self) -> None:
         callback = AsyncMock()
 
         env_copy = dict(__import__("os").environ)
         env_copy.pop("DEEPGRAM_API_KEY", None)
         with patch.dict("os.environ", env_copy, clear=True):
-            stt = FallbackSTT()
-            await stt.start(language="en", on_transcript_callback=callback)
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                stt = FallbackSTT()
+                with pytest.raises(EnvironmentError, match="DEEPGRAM_API_KEY"):
+                    await stt.start(language="en", on_transcript_callback=callback)
 
-            assert stt._running is True
-            assert stt._fallback_mode is True
+                mock_connect.assert_not_called()
+                assert stt._ws is None
 
     @pytest.mark.asyncio
     async def test_send_audio_forwards_to_deepgram(self) -> None:
@@ -109,16 +111,14 @@ class TestFallbackSTT:
         mock_ws.send.assert_called_once_with(chunk)
 
     @pytest.mark.asyncio
-    async def test_send_audio_accumulates_in_fallback_mode(self) -> None:
+    async def test_send_audio_without_a_connection_is_dropped(self) -> None:
         stt = FallbackSTT()
         stt._running = True
-        stt._fallback_mode = True
-        stt._fallback_buffer = bytearray()
 
         chunk = b"\x00\x01\x02\x03"
         await stt.send_audio(chunk)
 
-        assert bytes(stt._fallback_buffer) == chunk
+        assert stt._ws is None
 
     @pytest.mark.asyncio
     async def test_stop_sends_close_and_resets(self) -> None:
