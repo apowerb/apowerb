@@ -75,7 +75,6 @@ jobs:
           uv run pytest -q -m "not integration" \
             --ignore=tests/test_integration_auth.py \
             --ignore=tests/test_integration_token_encryption.py \
-            --ignore=tests/test_template_drift.py \
             --ignore=tests/test_callback_wiring.py \
             --ignore=tests/test_webhook_retrigger.py \
             --ignore=tests/test_superagent_template_visibility.py \
@@ -94,7 +93,6 @@ jobs:
         run: |
           uv run pytest -q -m "not integration" \
             tests/test_integration_token_encryption.py \
-            tests/test_template_drift.py \
             tests/test_callback_wiring.py \
             tests/test_webhook_retrigger.py \
             tests/test_superagent_template_visibility.py \

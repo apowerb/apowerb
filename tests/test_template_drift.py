@@ -9,8 +9,10 @@ backend; here we test the pure logic without spinning up FastAPI.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.sql.dml import Insert, Update
 
 from apowerb.core.superagents import (
     _TEMPLATE_HASH_FIELDS,
@@ -222,7 +224,8 @@ def test_resync_preserves_user_tool_configs(monkeypatch, tmp_path):
     )
 
     # Simulate the prod agent6 row state before resync.
-    captured_update: dict = {}
+    written: dict = {}
+    order: list[str] = []
     original_agent_tools = [
         "tool_config14",                     # user attachment
         "tool_config15",                     # user attachment
@@ -241,10 +244,30 @@ def test_resync_preserves_user_tool_configs(monkeypatch, tmp_path):
             "agent_model": "m",
         }
 
+    stored_row = {
+        "agent_id": 6,
+        "agent_name": "agent6",
+        "owner_id": "ops@acme.example",
+        "agent_instruction": "(stale)",
+        "agent_tools": json.dumps(original_agent_tools),
+    }
+
+    class FakeResult:
+        def fetchone(self):
+            return SimpleNamespace(_asdict=lambda: dict(stored_row))
+
     class FakeConn:
+        # resync reads the stored row and archives it before the UPDATE.
         def execute(self, stmt):
-            captured_update["values"] = stmt.compile().params
-            return None
+            if isinstance(stmt, Update):
+                order.append("update")
+                written["update"] = stmt.compile().params
+            elif isinstance(stmt, Insert):
+                order.append("archive")
+                written["archive"] = stmt.compile().params
+            else:
+                order.append("read")
+            return FakeResult()
 
     class FakeEngineCtx:
         def __enter__(self):
@@ -269,11 +292,18 @@ def test_resync_preserves_user_tool_configs(monkeypatch, tmp_path):
 
     # The UPDATE should have written agent_tools containing BOTH the user
     # tool_config* entries AND the template natives.
-    new_tools = json.loads(captured_update["values"]["agent_tools"])
+    new_tools = json.loads(written["update"]["agent_tools"])
     assert "tool_config14" in new_tools, "tool_config14 dropped during resync"
     assert "tool_config15" in new_tools, "tool_config15 dropped during resync"
     # Template natives should also be present
     assert any(t.startswith("outlook_mail.") for t in new_tools)
+    # The definition the resync overwrites is read and archived before the
+    # UPDATE replaces it, and the archive holds that stale row.
+    assert order == ["read", "archive", "update"]
+    archived = written["archive"]
+    assert archived["reason"] == "resync"
+    assert archived["revised_by"] == "ops@acme.example"
+    assert json.loads(archived["payload"])["agent_instruction"] == "(stale)"
 
 
 # --------------------------------------------------------------------------- #
