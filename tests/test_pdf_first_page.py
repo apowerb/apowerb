@@ -1,6 +1,6 @@
 """Tests for tool_pdf_first_page — first-page TEXT extraction
-(SCEI intake redesign, Option A). No image conversion: the tool returns
-the page's native text layer (the SCEI AR corpus is 100% text-native)."""
+(intake redesign, Option A). No image conversion: the tool returns
+the page's native text layer (the order-acknowledgement corpus is 100% text-native)."""
 
 from __future__ import annotations
 

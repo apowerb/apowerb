@@ -41,10 +41,10 @@ class TestPortier:
         registre_vierge.register_run_guard(garde)
 
         await run_gate.apply_run_guards(
-            agent_name="agent6", owner_id="com@scei88.fr", plan="pro"
+            agent_name="agent6", owner_id="ops@acme.example", plan="pro"
         )
 
-        assert vus == [("agent6", "com@scei88.fr", "pro")]
+        assert vus == [("agent6", "ops@acme.example", "pro")]
 
     @pytest.mark.asyncio
     async def test_refus_de_garde_remonte(self, registre_vierge):
@@ -96,8 +96,8 @@ async def sqlite_avec_utilisateur(sqlite_engine, bind_sessionmanager):
             User(
                 user_id=3,
                 first_name="Commerciale",
-                last_name="SCEI",
-                email="com@scei88.fr",
+                last_name="Client",
+                email="ops@acme.example",
                 password="x",
                 role="USER",
                 plan="free",
@@ -179,7 +179,7 @@ class TestPorteWebhook:
             message_text="bonjour",
         )
 
-        assert vus == [("agent6", "com@scei88.fr", "free")], (
+        assert vus == [("agent6", "ops@acme.example", "free")], (
             "la garde doit connaitre le proprietaire reel et son plan, sinon "
             "elle plafonne le mauvais compte"
         )

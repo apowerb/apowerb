@@ -1,6 +1,6 @@
 """Tests for the ``apowerb agents`` CLI.
 
-Live regression 2026-05-12 on SCEI_PROD: ``agents list`` crashed with
+Live regression 2026-05-12 on a client's production server: ``agents list`` crashed with
 ``psycopg2.ProgrammingError: can't adapt type 'AgentStore'`` because
 the CLI was passing the *store instance* into ``fetch_agents()`` which
 expected a ``user_id`` string. These tests guard against that pattern
@@ -70,11 +70,11 @@ def fake_agents():
     return [
         {
             "agent_id": 6,
-            "agent_name": "scei_ar_assistant",
-            "owner_id": "com@scei88.fr",
+            "agent_name": "demo_client_assistant",
+            "owner_id": "ops@acme.example",
             "agent_model": "anthropic/claude-sonnet-4-5-20250929",
-            "superagent_template_id": "scei_ar_assistant",
-            "agent_description": "SCEI ARs Assistant",
+            "superagent_template_id": "demo_client_assistant",
+            "agent_description": "Client ARs Assistant",
         },
         {
             "agent_id": 7,
@@ -106,10 +106,10 @@ class TestCliAgentsList:
         runner = CliRunner()
         with patch("apowerb.cli.agents.fetch_agents", return_value=fake_agents[:1]) as mock_fetch, \
              patch("apowerb.cli.agents.get_agent_store"):
-            result = runner.invoke(app, ["list", "--owner", "com@scei88.fr"])
+            result = runner.invoke(app, ["list", "--owner", "ops@acme.example"])
         assert result.exit_code == 0, result.output
-        mock_fetch.assert_called_once_with(user_id="com@scei88.fr")
-        assert "com@scei88.fr" in result.output
+        mock_fetch.assert_called_once_with(user_id="ops@acme.example")
+        assert "ops@acme.example" in result.output
 
     def test_list_prints_real_field_names_not_stale_aliases(self, fake_agents):
         """The previous CLI printed ``agent.get('id', 'N/A')`` /
@@ -124,8 +124,8 @@ class TestCliAgentsList:
         out = result.output
         # If the aliases regressed, every line would print N/A.
         # Asserting on the real values catches that.
-        assert "6" in out and "scei_ar_assistant" in out
-        assert "com@scei88.fr" in out
+        assert "6" in out and "demo_client_assistant" in out
+        assert "ops@acme.example" in out
         assert "anthropic/claude-sonnet-4-5-20250929" in out
         # Owner header line must be present (it is the new info this PR adds)
         assert "Owner:" in out

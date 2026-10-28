@@ -14,8 +14,8 @@ Key learning from 2026-05-13 incident & subsequent reviewer feedback:
 * ``{4,6}``, ``{a, b, c}``, ``{"k": v}`` were ALREADY safe at runtime
   (content not isidentifier → ADK leaves literal). Doubling them is a
   no-op (also from PR #172).
-* The actual runtime bug was the single ``{keyword}`` in ``scei.py``
-  line 287, then re-broken as ``{{keyword}}`` by PR #172.
+* The actual runtime bug was the single ``{keyword}`` in a client
+  template, then re-broken as ``{{keyword}}`` by PR #172.
 """
 
 from __future__ import annotations
@@ -170,7 +170,7 @@ class TestValidateTemplates:
         from apowerb.core.validation.prompt_safety import validate_templates
 
         templates = [
-            {"name": "scei_like", "agent_instruction": "Reply: '({{keyword}})'"},
+            {"name": "client_like", "agent_instruction": "Reply: '({{keyword}})'"},
         ]
         results = validate_templates(templates)
         assert len(results) == 1
@@ -187,7 +187,7 @@ class TestValidateTemplates:
 
     def test_shipped_templates_are_clean(self):
         """Smoke: after fixing the real ``{{keyword}}`` runtime bug in
-        scei.py, no shipped template should trigger ADK at runtime.
+        a client template, no shipped template should trigger ADK at runtime.
 
         This test is the regression guard. It would have failed on
         2026-05-13 (when ``{keyword}`` first shipped) and would have
@@ -224,7 +224,7 @@ class TestAssertTemplatesSafe:
         """The PR #172 case: must still raise."""
         from apowerb.core.validation.prompt_safety import assert_templates_safe
 
-        templates = [{"name": "scei_like", "agent_instruction": "({{keyword}})"}]
+        templates = [{"name": "client_like", "agent_instruction": "({{keyword}})"}]
         with pytest.raises(ValueError):
             assert_templates_safe(templates)
 

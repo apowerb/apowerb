@@ -561,7 +561,7 @@ async def test_process_once_resumes_after_cooldown_window(sqlite_session_factory
 
 
 # ---------------------------------------------------------------------------
-# start_in_background — visibility for SCEI-prod-style "did the worker
+# start_in_background — visibility for prod-style "did the worker
 # actually start?" forensics. Without these logs, a silent
 # asyncio.create_task crash leaves journalctl empty and the queue
 # stalls without any breadcrumb.

@@ -7,7 +7,7 @@ added to `AgentCreateSchema` (PR #174 + #176) and to the
 were never updated to include them. Result: agents created via
 `POST /api/agents` (UI Agent Factory) or via `register_agent()`
 directly would have NULL values for these 3 fields, even when the
-caller passed them — silently breaking the entire scei_ar_assistant_v2
+caller passed them — silently breaking the entire client_pipeline_v2
 sub-agent pipeline.
 
 These tests guard against the regression by source-inspecting the two
@@ -29,7 +29,7 @@ class TestRegisterAgentPersistsV2Fields:
         src = inspect.getsource(agent_main.register_agent)
         assert "output_key=" in src, (
             "register_agent INSERT must include `output_key=` in .values(...) "
-            "— otherwise downstream sub-agents in scei_ar_assistant_v2 won't "
+            "— otherwise downstream sub-agents in client_pipeline_v2 won't "
             "see upstream payload (NULL → ADK skips output_key plumbing)."
         )
 

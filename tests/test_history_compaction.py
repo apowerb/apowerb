@@ -191,7 +191,7 @@ def test_callback_strips_base64_inherited_from_upstream_subagent():
     strip callback on matcher, Gemini would receive the full base64 blobs
     of every PDF page and overflow its context window.
 
-    Regression: this is the bug observed on SCEI agent12 ``SequentialAgent``
+    Regression: this is the bug observed on a client's agent12 ``SequentialAgent``
     pipeline (intake → matcher → recorder → notifier) where matcher
     crashed with ``ContextWindowExceededError`` because the strip callback
     was previously gated behind a ``tool_pdf_to_images`` presence check.

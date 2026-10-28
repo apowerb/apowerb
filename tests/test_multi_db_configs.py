@@ -2,8 +2,8 @@
 
 Previously an agent could only attach a single ``database`` tool_config —
 ``rebind_database`` looped through ``tools_ids`` and broke at the first one
-with ``DB_NAME``. The SCEI agent needs **two** DBs (PMI for SELECTs on
-``ECOMFOU/LCOMFOU``, SuiviAR for INSERT/UPDATE on the diagnostic table),
+with ``DB_NAME``. A client agent needs **two** DBs (its ERP for SELECTs on
+order tables, a tracking DB for INSERT/UPDATE on the diagnostic table),
 so the binder now emits one pair of tools per DB with a slugified suffix
 when N>=2 configs are present.
 

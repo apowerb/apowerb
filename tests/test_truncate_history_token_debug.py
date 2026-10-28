@@ -171,13 +171,13 @@ class TestTokenDebugEnabled:
         cb = mod.create_truncate_history_callback(keep_recent=14)
         contents = _build_long_history(keep_recent=14)
         req = _mk_request(contents)
-        ctx = _mk_ctx("scei_agent_42")
+        ctx = _mk_ctx("client_agent_42")
 
         with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
             cb(callback_context=ctx, llm_request=req)
 
         data = _extract_debug_data(caplog.records)
-        assert data.get("agent") == "scei_agent_42", f"Champ agent incorrect : {data}"
+        assert data.get("agent") == "client_agent_42", f"Champ agent incorrect : {data}"
 
     def test_log_contains_per_message_list_v2_schema(self, monkeypatch, caplog):
         """v2 : per_message contient {role, text_chars, fc_chars, fr_chars, total_chars}."""
@@ -233,7 +233,7 @@ class TestTokenDebugEnabled:
         mod = _load_callbacks()
         cb = mod.create_truncate_history_callback(keep_recent=14)
         contents = _build_long_history(keep_recent=14)
-        si = "Tu es un assistant specialise SCEI."
+        si = "Tu es un assistant specialise client."
         req = _mk_request(contents, system_instruction=si)
 
         with caplog.at_level(logging.INFO, logger="apowerb.truncate_history"):
@@ -592,7 +592,7 @@ class TestRgpdNoTextInLog:
         monkeypatch.setenv("TH2_TOKEN_DEBUG", "1")
         mod = _load_callbacks()
         cb = mod.create_truncate_history_callback(keep_recent=14)
-        secret_data = "CONFIDENTIEL_NDA_SCEI_2026"
+        secret_data = "CONFIDENTIEL_NDA_CLIENT_2026"
         contents = [_mk_content("user", ["payload"])]
         for _ in range(14):
             contents.append(_mk_content("model", ["rep"]))

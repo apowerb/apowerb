@@ -1,6 +1,6 @@
 """Tests for ``apowerb.scheduler.webhook_renewal``.
 
-Live regression 2026-05-10 04:33 UTC on SCEI_PROD: the renewal pass
+Live regression 2026-05-10 04:33 UTC on a client's production server: the renewal pass
 crashed with ``greenlet_spawn has not been called; can't call
 await_only() here. Was IO attempted in an unexpected place?`` and the
 subscription was left with its old expiration date in DB. Microsoft
@@ -42,7 +42,7 @@ async def sqlite_session_factory(sqlite_engine, bind_sessionmanager):
 
     ``expire_on_commit`` is left at the SQLAlchemy default (``True``)
     so the test reproduces the exact post-commit ORM expiration that
-    triggers the greenlet crash on SCEI_PROD. Don't lower the bar to
+    triggers the greenlet crash on a client's production server. Don't lower the bar to
     ``False`` here — that would mask the bug we're guarding against.
     """
     # async_sessionmaker mirrors the prod ``sessionmaker(class_=AsyncSession)``
@@ -63,8 +63,8 @@ async def _seed_expiring_outlook_sub(factory) -> int:
         user = User(
             user_id=1,
             first_name="Com",
-            last_name="SCEI",
-            email="com@scei88.fr",
+            last_name="Client",
+            email="ops@acme.example",
             password="x",
             role="USER",
         )

@@ -392,7 +392,7 @@ class TestAbsentIntegration:
 # ---------------------------------------------------------------------------
 #
 # These tests exercise the defense-in-depth introduced after the 2026-05-07
-# SCEI incident, where a manual SQL INSERT bypassed save_integration_tokens()
+# Client incident, where a manual SQL INSERT bypassed save_integration_tokens()
 # and stored an OAuth token in plaintext.
 #
 # Two layers are validated:

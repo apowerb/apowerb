@@ -2,7 +2,7 @@
 
 Tests ecrits AVANT l'implementation. Objectif : limiter les appels LLM
 a 25 par defaut (configurable via LLM_MAX_CALLS) pour adapter le
-pipeline SCEI au contexte OVHcloud.
+pipeline client au contexte OVHcloud.
 
 Architecture : le serveur ADK est patche au demarrage dans main.py via
 un monkey-patch sur AdkWebServer._run_sse_core (ou equivalent) pour

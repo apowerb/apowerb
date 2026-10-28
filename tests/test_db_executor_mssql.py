@@ -25,7 +25,7 @@ pyodbc = pytest.importorskip("pyodbc", exc_type=ImportError)
 
 @pytest.fixture
 def exec_inst():
-    return DatabaseQueryExecutor(tool_config_id="15", owner_id="com@scei88.fr")
+    return DatabaseQueryExecutor(tool_config_id="15", owner_id="ops@acme.example")
 
 
 @pytest.fixture

@@ -3,7 +3,7 @@ variable is declared multiple times in ``.env``.
 
 Background
 ----------
-On 2026-05-07, the SCEI ``.env`` ended up with duplicate ``JWT_SECRET_KEY``
+On 2026-05-07, a client deployment's ``.env`` ended up with duplicate ``JWT_SECRET_KEY``
 declarations after a series of hot patches. pydantic-settings / python-dotenv
 silently keep the *last* definition, so the wrong value was loaded without
 any warning. This helper makes such mistakes loud at boot.

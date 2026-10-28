@@ -5,20 +5,12 @@ for integration tests only. The second gives unit tests an in-memory SQLite
 database shaped like the Postgres one, without touching the models.
 """
 
-import importlib.util
 import os
 import sys
 from contextlib import asynccontextmanager
 
 import httpx
 import pytest
-
-# The SCEI suites import `th2customers`, the client overlay that lives outside
-# this repository. Without it they cannot even be collected: skip them here
-# rather than through flags every local run has to remember.
-if importlib.util.find_spec("th2customers") is None:
-    collect_ignore = ["unit_scei"]
-    collect_ignore_glob = ["test_scei*"]
 
 TEST_EMAIL = os.environ.get("E2E_TEST_EMAIL", "e2e-test@th2ai.com")
 # E2E_TEST_PASSWORD is only required for the integration fixtures below.
@@ -169,3 +161,32 @@ def _no_decision_notice_leaves(monkeypatch):
 
     monkeypatch.setattr(decision_notices, "_send_mail", _nowhere)
     monkeypatch.setattr(decision_notices, "_send_teams", _nowhere)
+
+
+@pytest.fixture
+def demo_client_template(monkeypatch):
+    """A client-restricted SuperAgent template, registered as an overlay would.
+
+    The core ships no client template. Tests that need one (per-org
+    visibility, drift detection) get this fake, visible to the ``acme`` org
+    only. It is returned as the very dict the catalog serves, so a test can
+    mutate it with ``monkeypatch.setitem``.
+    """
+    from apowerb.core.extensions.registry import registry
+
+    template = {
+        "template_id": "demo_client_assistant",
+        "name": "demo_client_assistant",
+        "display_name": "Demo client assistant",
+        "agent_description": "Reads supplier acknowledgements for one client.",
+        "agent_instruction": "Read each acknowledgement and record it.",
+        "agent_tools": [
+            "outlook_mail.tool_list_emails",
+            "basic.tool_pdf_to_images",
+        ],
+        "tags": ["demo"],
+        "visible_to_orgs": ["acme"],
+    }
+    registered = registry.templates
+    monkeypatch.setattr(registry, "templates", lambda: [*registered(), template])
+    return template

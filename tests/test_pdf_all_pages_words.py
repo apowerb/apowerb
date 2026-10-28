@@ -1,7 +1,7 @@
 """Tests for extract_all_pages_words — word-level coordinate extraction across
-ALL pages of a PDF (SCEI coord-based line reconstruction, _load_pdf_rows).
+ALL pages of a PDF (coord-based line reconstruction, _load_pdf_rows).
 
-The scei overlay's ``_load_pdf_rows`` imports this from the core and feeds each
+A client overlay's ``_load_pdf_rows`` imports this from the core and feeds each
 returned word into ``reconstruct_rows``. The contract it relies on:
 
   * success -> {"words": [ {"page": int, "x0": float, "y0": float,
