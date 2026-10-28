@@ -103,7 +103,6 @@ class TestFallbackSTT:
         mock_ws = AsyncMock()
         stt._ws = mock_ws
         stt._running = True
-        stt._fallback_mode = False
 
         chunk = b"\x00\x01\x02\x03"
         await stt.send_audio(chunk)
@@ -126,7 +125,6 @@ class TestFallbackSTT:
         mock_ws = AsyncMock()
         stt._ws = mock_ws
         stt._running = True
-        stt._fallback_mode = False
         stt._listen_task = None
 
         await stt.stop()
