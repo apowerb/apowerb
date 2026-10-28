@@ -194,6 +194,7 @@ class TestSettingsGmailWebhookBoot:
             db_password="x",
             test_token="x",
             encrypt_key="x",
+            rag_webhook_secret="test-only-rag-webhook-secret",
         )
         base.update(overrides)
         return Settings(**base)
