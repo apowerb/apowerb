@@ -14,11 +14,6 @@ it exists to remove. To add one:
 
 Every tracked file is read, path included, and split into words, identifiers
 too: ``fooBar_baz88`` and ``FOOBar`` yield their words.
-
-One occurrence is frozen rather than fixed, and deliberately so: a scheduled
-job outside this repository reads that path, and moving it would orphan the
-files already written. That is an operations change, not a rewording. The set
-may shrink; a new entry means a name went back into the repository.
 """
 
 from __future__ import annotations
@@ -35,8 +30,9 @@ CUSTOMER_NAME_DIGESTS = {
 }
 WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+")
 
-# Frozen on 2026-08-31. May shrink, never grow.
-_DEBT = {"src/apowerb/storage/webhook_attachments.py"}
+# Files allowed to name a customer. Emptied on 2026-10-28; an entry needs a
+# reason in review, and is close to never the right answer.
+_DEBT: set[str] = set()
 
 
 def _names_a_customer(text: str) -> bool:

@@ -28,16 +28,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
 
+from apowerb.configs.paths import runtime_root
 from apowerb.storage.filename import sanitize_filename
 
 
-# Webhook attachment storage root. Env-driven (TH2_ATTACHMENT_ROOT) so the
-# core stays client-agnostic. The legacy default preserves the existing
-# prod location (the cron pj_archiver relies on it) — deployments override
-# it via env. When S3 arrives, replace here.
-ATTACHMENT_ROOT: Final[Path] = Path(
-    os.environ.get("TH2_ATTACHMENT_ROOT", "/home/ubuntu/scei_webhook_attachments")
-)
+# Webhook attachment storage root. ``TH2_ATTACHMENT_ROOT`` when set, otherwise
+# ``webhook_attachments`` under the runtime root, like the other runtime
+# directories (see ``apowerb.configs.paths``). A deployment that kept its
+# attachments elsewhere sets the variable to that path. When S3 arrives,
+# replace here.
+def _attachment_root() -> Path:
+    configured = os.environ.get("TH2_ATTACHMENT_ROOT")
+    if configured:
+        return Path(configured).expanduser()
+    return runtime_root() / "webhook_attachments"
+
+
+ATTACHMENT_ROOT: Final[Path] = _attachment_root()
 
 
 @dataclass(frozen=True)
