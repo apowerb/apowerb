@@ -31,6 +31,7 @@ import subprocess
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 CUSTOMER_NAME_DIGESTS = {
+    "fd824bd742314b9a8102dc55b62f14016e7205b24441c1bbefa9dbb0c7bd347f",
     "05d418fee5ccf2a01a0c339e7859bdc9ebb6a5b8401c1320ba8b76958260ee76",
 }
 WORD = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+")

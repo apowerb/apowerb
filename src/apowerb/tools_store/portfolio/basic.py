@@ -452,10 +452,10 @@ def tool_available_data() -> dict:
 
 def tool_data_loader(data_table: str) -> dict:
     """
-    Tool to retrieve data from Belgatrans S3 storage.
+    Tool to retrieve a data table from the organisation's S3 data pool.
 
     Args:
-        limit (int): Number of items to retrieve (default: 100)
+        data_table (str): Name of the table (pin) to load
     Returns:
         dict: Success status with data or error message
     """
@@ -494,7 +494,6 @@ def tool_data_loader(data_table: str) -> dict:
         raw_data.to_parquet(raw_data_file)
         # Convert to absolute path
         raw_data_file = str(Path(raw_data_file).resolve())
-        # Filter pins related to Belgatrans and limit the results
         return {
             "success": True,
             "bucket": bucket_name,
@@ -504,5 +503,5 @@ def tool_data_loader(data_table: str) -> dict:
         return {
             "success": False,
             "error": str(e),
-            "message": "Failed to retrieve data from Belgatrans S3 storage.",
+            "message": "Failed to retrieve data from S3 storage.",
         }
