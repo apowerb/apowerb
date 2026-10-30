@@ -1,3 +1,4 @@
+import json
 import typer
 from typing import Optional
 from apowerb.agent_store.agent_manager import AgentStore
@@ -10,7 +11,7 @@ from apowerb.core.agent_main import (
 from apowerb.schema.agent_schema import AgentCreateSchema
 from apowerb.core.agent_helpers.llm_model_builder import validate_agent_model
 from apowerb.cli.runtime_config import require_runtime_config
-import json
+
 
 app = typer.Typer()
 
@@ -33,6 +34,9 @@ def list_agents(
             "every owner (admin mode — intended for CLI/ops only)."
         ),
     ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Print output as a JSON array."
+    ),
 ):
     """List registered agents.
 
@@ -47,8 +51,25 @@ def list_agents(
     agents = fetch_agents(user_id=owner)
 
     if not agents:
+        if output_json:
+            typer.echo("[]")
+            return
         scope = f"for owner '{owner}'" if owner else "in the store"
         typer.echo(f"No agents found {scope}.")
+        return
+
+    if output_json:
+        typer.echo(json.dumps([
+            {
+                "agent_id": a.get("agent_id"),
+                "agent_name": a.get("agent_name"),
+                "owner_id": a.get("owner_id"),
+                "agent_model": a.get("agent_model"),
+                "superagent_template_id": a.get("superagent_template_id"),
+                "agent_description": a.get("agent_description"),
+            }
+            for a in agents
+        ], indent=2))
         return
 
     header = (
@@ -207,3 +228,4 @@ def import_agents_cmd(
     except Exception as e:
         typer.echo(f"Error importing agents: {e}", err=True)
         raise typer.Exit(1)
+    
