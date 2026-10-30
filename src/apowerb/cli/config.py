@@ -22,7 +22,7 @@ from pathlib import Path
 
 import typer
 
-app = typer.Typer(help="Configuration posée depuis l'écran d'administration")
+app = typer.Typer(help="Configuration set from the admin screen")
 
 
 @app.command("export-env")
@@ -31,7 +31,7 @@ def export_env(
         ...,
         "--out",
         "-o",
-        help="Fichier à écrire (créé en 0600). Obligatoire.",
+        help="Output file to write (created with 0600 permissions). Required.",
     ),
 ) -> None:
     """Écrit les variables posées que l'environnement n'impose pas déjà.
