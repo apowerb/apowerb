@@ -32,6 +32,7 @@ real ``integrations`` table.  They do not hit the network or a live DB.
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -169,6 +170,39 @@ def _raw_insert_plain(
                 meta={},
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# 0. Which schema the ``integrations`` table is looked up in
+# ---------------------------------------------------------------------------
+
+
+class TestIntegrationsTableSchema:
+    """``DB_SCHEMA`` is empty in one CI leg and "public" in the other. Neither
+    is a schema to qualify the table with: both mean the default search_path,
+    like the stores' ``db_schema or None``."""
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("", None), ("public", None), ("tenant_a", "tenant_a")],
+    )
+    def test_schema_handed_to_the_table_lookup(
+        self, helpers_module, sqlite_engine, monkeypatch, configured, expected
+    ):
+        seen: dict[str, Any] = {}
+
+        def fake_table(name, metadata, **kwargs):
+            seen.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(
+            helpers_module, "_settings", SimpleNamespace(db_schema=configured)
+        )
+        monkeypatch.setattr(helpers_module, "Table", fake_table)
+
+        helpers_module._integrations_table(sqlite_engine)
+
+        assert seen["schema"] == expected
 
 
 # ---------------------------------------------------------------------------
