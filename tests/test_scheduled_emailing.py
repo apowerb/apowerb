@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import base64
 import logging
+from contextlib import contextmanager
 from email.parser import BytesParser
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -55,6 +57,8 @@ from sqlalchemy.engine import Engine
 USER_ID = 42
 USER_EMAIL = "elda@thaink2.com"
 AGENT_ID = "agent99"
+ACCESS_TOKEN = "adk-access-token"
+RUN_ID = "run-1"
 
 
 def _fake_user():
@@ -115,6 +119,45 @@ def integration_helpers(active_fernet, sqlite_engine, monkeypatch):
 
     monkeypatch.setattr(mod, "_build_engine", lambda *a, **k: sqlite_engine)
     return mod
+
+
+@contextmanager
+def _refresh_token_runner(token_data: dict, folder: str, run_adk: AsyncMock):
+    """Patch what ``run_agent_from_refresh_token`` calls around the ADK runner.
+
+    The runner decodes the refresh token, mints an access token from it, passes
+    the run guards and records the run in the run store. None of that is under
+    test here, and none of it may reach a database or a server.
+    """
+    from apowerb.scheduler import run_agent_background as rab
+
+    with (
+        patch.object(rab, "decode_agent_refresh_token", return_value=token_data),
+        patch.object(rab, "get_agent_folder_name", return_value=folder),
+        patch(
+            "apowerb.helpers.security.refresh_access_token_from_agent_refresh",
+            return_value=ACCESS_TOKEN,
+        ) as mint,
+        patch(
+            "apowerb.core.run_gate.resolve_owner_plan", new=AsyncMock(return_value=None)
+        ),
+        patch("apowerb.core.run_gate.apply_run_guards", new=AsyncMock()),
+        patch("apowerb.core.run_main.start_run_safely", return_value=RUN_ID),
+        patch("apowerb.core.run_main.settle_run") as settle,
+        patch(
+            "apowerb.core.run_main.executed_tools_in_session",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "apowerb.core.adk_runner.get_adk_session", new=AsyncMock(return_value={})
+        ),
+        patch(
+            "apowerb.core.adk_runner.create_adk_agent_session",
+            new=AsyncMock(return_value={}),
+        ),
+        patch.object(rab, "run_adk_agent", new=run_adk),
+    ):
+        yield SimpleNamespace(mint=mint, settle=settle)
 
 
 def _build_scheduler_app(mage_client):
@@ -215,6 +258,7 @@ class TestSchedulerRunsAgentWithContext:
 
     @pytest.mark.asyncio
     async def test_refresh_token_flow_forwards_context_to_adk_runner(self):
+        from apowerb.core import run_main
         from apowerb.scheduler import run_agent_background as rab
 
         fake_token_data = {
@@ -227,12 +271,10 @@ class TestSchedulerRunsAgentWithContext:
             "agent_metadata": {"owner_id": USER_EMAIL},
         }
 
-        with patch.object(rab, "decode_agent_refresh_token", return_value=fake_token_data), \
-             patch.object(rab, "get_agent_folder_name", return_value="emailing_agent_folder"), \
-             patch("apowerb.core.adk_runner.get_adk_session", new=AsyncMock(return_value={})), \
-             patch("apowerb.core.adk_runner.create_adk_agent_session", new=AsyncMock(return_value={})), \
-             patch.object(rab, "run_adk_agent", new=AsyncMock(return_value={"ok": True})) as adk_mock:
-
+        adk_mock = AsyncMock(return_value={"ok": True})
+        with _refresh_token_runner(
+            fake_token_data, "emailing_agent_folder", adk_mock
+        ) as run:
             result = await rab.run_agent_from_refresh_token("fake-refresh-token")
 
         assert result["success"] is True
@@ -247,7 +289,13 @@ class TestSchedulerRunsAgentWithContext:
         assert kwargs["session_id"].startswith("sess-1_")
         assert kwargs["new_message"]["role"] == "user"
         assert kwargs["new_message"]["parts"][0]["text"] == "Send daily report"
-        assert kwargs["token"] == "fake-refresh-token"
+        # ADKAuthMiddleware only accepts access tokens: the runner exchanges the
+        # long-lived refresh token for one and sends that to the ADK.
+        run.mint.assert_called_once_with("fake-refresh-token")
+        assert kwargs["token"] == ACCESS_TOKEN
+        # The run is recorded when it starts and settled as a success.
+        run.settle.assert_called_once()
+        assert run.settle.call_args.args[:2] == (RUN_ID, run_main.STATUS_SUCCESS)
 
     @pytest.mark.asyncio
     async def test_refresh_token_flow_rejects_invalid_token(self):
@@ -410,7 +458,11 @@ class TestRefreshTokenDecryptedAtRuntime:
         # Force the tool to re-run the integration loader
         monkeypatch.setattr(google_auth, "_integration_loaded_for", {})
         monkeypatch.setenv("AGENT_OWNER", str(USER_ID))
-        monkeypatch.delenv("GOOGLE_GMAIL_REFRESH_TOKEN", raising=False)
+        # The loader writes this variable into os.environ. delenv(raising=False)
+        # records no undo when the variable is absent, so set it first: the
+        # teardown then removes what the loader wrote.
+        monkeypatch.setenv("GOOGLE_GMAIL_REFRESH_TOKEN", "")
+        monkeypatch.delenv("GOOGLE_GMAIL_REFRESH_TOKEN")
 
         integration_helpers.save_integration_tokens(
             user_id=USER_ID,
@@ -506,6 +558,7 @@ class TestProviderErrorsAreSurfaced:
     async def test_scheduler_runtime_logs_adk_failure(self, caplog):
         """If the downstream ADK call blows up, the scheduler runtime must
         log it (no silent swallow) and re-raise for the caller."""
+        from apowerb.core import run_main
         from apowerb.scheduler import run_agent_background as rab
 
         fake_token_data = {
@@ -517,12 +570,9 @@ class TestProviderErrorsAreSurfaced:
             "streaming": False,
         }
 
-        with patch.object(rab, "decode_agent_refresh_token", return_value=fake_token_data), \
-             patch.object(rab, "get_agent_folder_name", return_value="folder"), \
-             patch("apowerb.core.adk_runner.get_adk_session", new=AsyncMock(return_value={})), \
-             patch("apowerb.core.adk_runner.create_adk_agent_session", new=AsyncMock(return_value={})), \
-             patch.object(rab, "run_adk_agent", new=AsyncMock(side_effect=RuntimeError("boom"))):
-
+        with _refresh_token_runner(
+            fake_token_data, "folder", AsyncMock(side_effect=RuntimeError("boom"))
+        ) as run:
             caplog.set_level(logging.ERROR, logger="apowerb.scheduler.run_agent_background")
             with pytest.raises(RuntimeError, match="boom"):
                 await rab.run_agent_from_refresh_token("fake-token")
@@ -532,6 +582,9 @@ class TestProviderErrorsAreSurfaced:
             r.message for r in caplog.records if r.levelno >= logging.ERROR
         ]
         assert any("boom" in msg or "failed" in msg.lower() for msg in error_messages)
+        # ... and the run is settled as an error instead of being left open.
+        run.settle.assert_called_once()
+        assert run.settle.call_args.args[:2] == (RUN_ID, run_main.STATUS_ERROR)
 
 
 # ---------------------------------------------------------------------------
