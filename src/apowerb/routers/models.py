@@ -1,3 +1,10 @@
+"""Catalogue of the LLM models the UI can offer, served under ``/api/models``.
+
+``GET /models`` groups the models declared in ``apowerb.configs.models`` by
+provider. When the server has a shared default LLM configured, that one is put
+first with ``requires_api_key`` set to false, so the UI can hide the key field.
+"""
+
 from fastapi import APIRouter
 from apowerb.configs.models import MODELS
 from apowerb.core.agent_helpers.default_llm import (

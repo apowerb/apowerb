@@ -1,3 +1,10 @@
+"""Start and inspect agent runs, under ``/api/agents/{agent_id}``.
+
+``POST /agents/{agent_id}/run`` starts the agent in a background thread and
+``GET /agents/{agent_id}/status`` reports whether that thread is still alive.
+The running threads are tracked in memory, so the status is per server process.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from apowerb.core.agent_main import get_agent
 from apowerb.agent_store.agent_manager import AgentStore

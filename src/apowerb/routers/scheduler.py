@@ -1,3 +1,12 @@
+"""Pipelines, schedules and runs of the external orchestrator, under ``/api/pipelines``.
+
+The router lists pipelines, registers agent triggers
+(``POST /pipelines/agents/triggers``), lists and updates the schedules of the
+caller's own agents, and lists, reads, cancels and fetches the logs of runs. The
+work is done by the orchestrator client; when it is unreachable the endpoints
+answer with the shared outage response from ``apowerb.scheduler.outage``.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 

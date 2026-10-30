@@ -1,3 +1,11 @@
+"""Skills catalogue and management, under ``/api/skills``.
+
+It lists all skills, meaning the built-in portfolio plus the custom skills of the
+caller's organisation, and the portfolio alone (``/skills/portfolio``). Skills can
+be exported as JSON or as an ADK ZIP, imported (``POST /skills/import``), and
+created, read, updated and deleted by id.
+"""
+
 import io
 import json
 import re
