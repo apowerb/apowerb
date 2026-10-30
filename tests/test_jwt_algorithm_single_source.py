@@ -69,7 +69,7 @@ class TestFamilleHMACSeulement:
     @pytest.mark.parametrize("algorithme", ["none", "None", "RS256", "ES256", "", "HS128"])
     def test_les_algorithmes_hors_famille_sont_refusés(self, monkeypatch, algorithme):
         monkeypatch.setattr(get_settings(), "algorithm", algorithme, raising=False)
-        with pytest.raises(RuntimeError, match="n'est pas supporté"):
+        with pytest.raises(RuntimeError, match="is not supported"):
             get_algorithm()
 
     @pytest.mark.parametrize("algorithme", ["HS256", "HS384", "HS512"])
