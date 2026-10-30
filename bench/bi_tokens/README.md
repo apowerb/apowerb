@@ -52,6 +52,9 @@ banc, et le test CI exige qu'il échoue encore (à retirer une fois corrigé).
 - `tool_ok` : aucun outil LIVE ne répond `success: false` / `status: error` ;
 - `grounded` : chaque nombre et lien `/bi/…` de la réponse finale d'un tour
   figure dans ce que le modèle voit en l'écrivant ;
+- `empty_reply` : le tour se termine sans aucun texte (budget épuisé en raisonnement,
+  par exemple) ; en échec, compté dans `quality.empty_replies`, et `grounded` n'est pas
+  évalué sur du vide, où il passerait faute de nombre à vérifier ;
 - `facts` : les expressions du scénario y figurent aussi ;
 - `undeclared_in_instruction` : outils cités par la consigne mais non déclarés.
   `--compare` marque ❌ un scénario où cette liste s'allonge.

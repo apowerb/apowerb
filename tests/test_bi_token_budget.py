@@ -125,3 +125,54 @@ def test_compare_does_not_fail_on_a_known_failure(replay):
     table, ok = module.compare(before, known)
     assert ok and "❌ connu" in table
     assert module.compare(before, broken)[1] is False
+
+
+def _summary(module, live, sc):
+    return module.summarize(sc, asyncio.run(module.run_scenario(sc, live)))
+
+
+def _dashboard_chat_ending_with(module, text):
+    """Le scénario dashboard_chat dont la réponse finale est remplacée par ``text``."""
+    sc = json.loads(json.dumps(module.load_scenarios()["dashboard_chat"]))
+    sc["turns"][-1]["steps"][-1]["text"] = text
+    return sc
+
+
+@pytest.mark.parametrize("text", ["", "  \n"])
+def test_a_final_reply_without_text_is_its_own_failed_outcome(replay, text):
+    """Un modèle qui épuise son budget en raisonnement ne rend aucun texte : sans
+    nombre ni lien à vérifier, « grounded » le laissait passer."""
+    module, live = replay
+    quality = _summary(module, live, _dashboard_chat_ending_with(module, text))["quality"]
+    empty = [c for c in quality["checks"] if c["check"] == "empty_reply"]
+    grounded = [c for c in quality["checks"] if c["check"] == "grounded"]
+    assert quality["ok"] is False
+    assert quality["empty_replies"] == 1 and len(empty) == 1 and empty[0]["ok"] is False
+    assert all(c["call"] != empty[0]["call"] for c in grounded)
+
+
+def test_a_final_reply_with_text_is_still_checked_for_grounding(replay):
+    module, live = replay
+    quality = _summary(module, live, module.load_scenarios()["dashboard_chat"])["quality"]
+    assert quality["ok"] and quality["empty_replies"] == 0
+    assert "grounded" in [c["check"] for c in quality["checks"]]
+
+
+def test_a_turn_paused_on_a_tool_call_is_not_an_empty_reply(replay):
+    """L'action-card met le tour en pause sur un appel d'outil sans texte : le
+    modèle n'a pas rendu une réponse vide."""
+    module, live = replay
+    turn = json.loads(json.dumps(module.SCENARIO["creation"]))
+    assert turn["steps"][-1]["calls"]
+    turn["steps"][-1]["text"] = ""
+    quality = _summary(module, live, {"turns": [{**turn, "facts": []}]})["quality"]
+    assert quality["ok"] and quality["empty_replies"] == 0
+
+
+def test_the_report_names_an_empty_reply(replay, capsys):
+    module, live = replay
+    summary = _summary(module, live, _dashboard_chat_ending_with(module, ""))
+    module.print_report({"dashboard_chat": summary})
+    out = capsys.readouterr().out
+    assert "quality FAIL" in out and "✗ empty_reply" in out
+    assert "réponses vides : 1" in out

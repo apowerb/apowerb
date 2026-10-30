@@ -22,6 +22,8 @@ Qualité, vérifiée à chaque appel du modèle (sortie non nulle si un contrôl
 - tool_ok : aucun outil LIVE ne renvoie d'erreur ;
 - grounded : chaque nombre et lien /bi/ de la réponse finale d'un tour figure
   dans ce que le modèle voit au moment de l'écrire ;
+- empty_reply : le tour se termine sans aucun texte (budget épuisé en raisonnement, par
+  exemple) ; en échec et compté à part, « grounded » ne jugeant pas du vide ;
 - facts : expressions propres au scénario, cherchées au même endroit.
 Le modèle étant scripté, ces contrôles disent si l'information nécessaire reste
 disponible, pas si un vrai modèle ferait les mêmes choix : seul le mode réel
@@ -219,7 +221,8 @@ _BI_LINK = re.compile(r"/bi/[0-9a-f-]{36}")
 
 
 def grounding_misses(answer: str, seen: str) -> list[str]:
-    """Nombres et liens de la réponse finale absents de ce que le modèle a vu."""
+    """Nombres et liens de la réponse finale absents de ce que le modèle a vu.
+    Une réponse vide n'en contient aucun et passerait : la traiter avant (empty_reply)."""
     wanted = set(_BI_LINK.findall(answer)) | {n for n in _NUMBER.findall(answer) if len(n) > 1}
     def found(w: str) -> bool:  # nombre entier : « 32.8 » ne se trouve pas dans « 132.85 »
         return any(re.search(rf"(?<![\d.]){re.escape(v)}(?![\d])", seen) for v in (w, w.replace(",", "")))
@@ -272,7 +275,10 @@ def scripted_llm(script: Script):
             if facts:
                 absent = [f for f in facts if not re.search(f, seen)]
                 script.checks.append({"check": "facts", "call": n, "ok": not absent, "detail": absent})
-            if final:
+            if not step["text"].strip() and not step["calls"]:  # le modèle clôt le tour sans texte
+                script.checks.append({"check": "empty_reply", "call": n, "ok": False,
+                                      "detail": ["réponse finale sans texte"]})
+            elif final:
                 misses = grounding_misses(step["text"], seen)
                 script.checks.append({"check": "grounded", "call": n, "ok": not misses, "detail": misses})
             parts = [types.Part(text=x, thought=True) for x in step["thoughts"]]
@@ -410,6 +416,7 @@ def summarize(sc: dict, script: Script) -> dict:
         "n_tools": log[0]["n_tools"] if log else 0,
         "measured": sum(r["measured"] for r in log) if log and all(r["measured"] for r in log) else None,
         "quality": {"ok": all(c["ok"] for c in script.checks), "checks": script.checks,
+                    "empty_replies": sum(c["check"] == "empty_reply" for c in script.checks),
                     "undeclared_in_instruction": sorted(script.undeclared)},
     }
 
@@ -462,6 +469,8 @@ def print_report(report: dict) -> None:
         bad = [c for c in s["quality"]["checks"] if not c["ok"]]
         print(f"     total chars {s['chars']}  tokens {s['tokens']}  measured on DEV {s['measured'] or '-'}"
               f"  quality {'OK' if not bad else 'FAIL'} ({len(s['quality']['checks'])} checks)")
+        if s["quality"].get("empty_replies"):
+            print(f"     réponses vides : {s['quality']['empty_replies']}")
         if s["quality"]["undeclared_in_instruction"]:
             print(f"     consigne : outils cités non déclarés {s['quality']['undeclared_in_instruction']}")
         for c in bad:
