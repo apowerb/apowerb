@@ -30,6 +30,13 @@ Un tour vient de `scenario.json` (`"recorded"`) ou décrit ses `steps` : les
 appels d'outils du modèle, sa réponse, et `measured_input_tokens` quand le tour
 a été mesuré en DEV. `facts` (expressions régulières) doivent figurer dans ce
 que le modèle voit : au dernier appel du tour, ou à une étape précise.
+`support_items` associe un `id` et une expression régulière `pattern` à chaque fait :
+`retrieved` le cherche dans les réponses d'outils, `in_context` dans le dernier appel
+envoyé au modèle, et `used` dans la réponse finale scriptée. Le rapport donne les
+réussites et les absences par étape. `--compare` montre leur évolution avant/après.
+Les contrôles `facts` restent inchangés. Comme les réponses sont scriptées, `used`
+mesure la réponse enregistrée, pas le comportement d'un modèle en direct.
+
 `env` pose des variables le temps du rejeu (`AGENT_DASHBOARD_ID`) ; `known_failure`
 décrit un défaut connu : le scénario est affiché en échec sans faire échouer le
 banc, et le test CI exige qu'il échoue encore (à retirer une fois corrigé).

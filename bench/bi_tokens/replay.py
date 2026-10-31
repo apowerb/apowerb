@@ -230,6 +230,55 @@ def grounding_misses(answer: str, seen: str) -> list[str]:
     return sorted(w for w in wanted if not found(w))
 
 
+def support_stage_checks(
+    items: list[dict],
+    retrieved: set[str],
+    seen: str,
+    answer: str,
+    *,
+    turn: int,
+    call: int,
+) -> list[dict]:
+    """Record whether each declared support item was retrieved, retained, and used."""
+    if not items:
+        return []
+    in_context = {item["id"] for item in items if re.search(item["pattern"], seen)}
+    used = {item["id"] for item in items if re.search(item["pattern"], answer)}
+    present = {"retrieved": retrieved, "in_context": in_context, "used": used}
+    checks = []
+    for stage, matched in present.items():
+        missing = [item["id"] for item in items if item["id"] not in matched]
+        checks.append(
+            {
+                "check": f"support_{stage}",
+                "call": call,
+                "turn": turn,
+                "ok": not missing,
+                "total": len(items),
+                "passed": len(items) - len(missing),
+                "detail": missing,
+            }
+        )
+    return checks
+
+
+def support_stage_summary(checks: list[dict]) -> dict:
+    """Aggregate support-stage checks for reports and saved JSON."""
+    summary = {}
+    for stage in ("retrieved", "in_context", "used"):
+        stage_checks = [c for c in checks if c["check"] == f"support_{stage}"]
+        summary[stage] = {
+            "passed": sum(c["passed"] for c in stage_checks),
+            "total": sum(c["total"] for c in stage_checks),
+            "misses": [
+                {"turn": c["turn"], "id": item}
+                for c in stage_checks
+                for item in c["detail"]
+            ],
+        }
+    return summary
+
+
 # --- modèle scripté ---------------------------------------------------------
 class Script:
     """File d'étapes du tour en cours ; le banc la remplit tour par tour."""
@@ -240,6 +289,8 @@ class Script:
         self.log: list[dict] = []
         self.checks: list[dict] = []
         self.facts: list[str] = []
+        self.support_items: list[dict] = []
+        self.retrieved_support: set[str] = set()
         self.undeclared: set[str] = set()
 
 
@@ -275,6 +326,15 @@ def scripted_llm(script: Script):
             if facts:
                 absent = [f for f in facts if not re.search(f, seen)]
                 script.checks.append({"check": "facts", "call": n, "ok": not absent, "detail": absent})
+            if final:
+                script.checks.extend(support_stage_checks(
+                    script.support_items,
+                    script.retrieved_support,
+                    seen,
+                    step["text"],
+                    turn=script.turn,
+                    call=n,
+                ))
             if not step["text"].strip() and not step["calls"]:  # le modèle clôt le tour sans texte
                 script.checks.append({"check": "empty_reply", "call": n, "ok": False,
                                       "detail": ["réponse finale sans texte"]})
@@ -332,6 +392,7 @@ def load_scenarios(estimates: bool = False) -> dict[str, dict]:
                 for step in turn["steps"]:
                     step["measured_input_tokens"] = None
             turn["facts"] = t.get("facts", [])
+            turn["support_items"] = t.get("support_items", [])
             turns.append(turn)
         out[path.stem] = {**sc, "turns": turns}
     return out
@@ -361,17 +422,28 @@ async def _run_scenario(sc: dict, live: set[str]) -> Script:
     agent.model = scripted_llm(script)
     recorded: list[dict] = []
 
+    def track_support_response(tool_response):
+        if script.support_items:
+            response = json.dumps(tool_response, ensure_ascii=False, default=str)
+            script.retrieved_support.update(
+                item["id"] for item in script.support_items
+                if re.search(item["pattern"], response)
+            )
+
     def replay_tool(tool, args, tool_context):
         if tool.name in live:
             return None
         for i, r in enumerate(recorded):
             if r["name"] == tool.name:
-                return recorded.pop(i)["response"]
+                response = recorded.pop(i)["response"]
+                track_support_response(response)
+                return response
         script.checks.append({"check": "tool_ok", "call": len(script.log), "ok": False,
                               "detail": [f"{tool.name}: no recorded response"]})
         return {"error": "not recorded"}
 
     def check_live(tool, args, tool_context, tool_response):
+        track_support_response(tool_response)
         if tool.name in live and isinstance(tool_response, dict):
             failed = tool_response.get("success") is False or tool_response.get("status") == "error"
             script.checks.append({"check": "tool_ok", "call": len(script.log), "ok": not failed,
@@ -386,7 +458,11 @@ async def _run_scenario(sc: dict, live: set[str]) -> Script:
     await svc.create_session(app_name="bench", user_id=OWNER, session_id="bench")
     runner = Runner(app_name="bench", agent=agent, session_service=svc)
     for i, turn in enumerate(sc["turns"], 1):
-        script.turn, script.steps, script.facts = i, list(turn["steps"]), turn["facts"]
+        script.turn = i
+        script.steps = list(turn["steps"])
+        script.facts = turn.get("facts", [])
+        script.support_items = turn.get("support_items", [])
+        script.retrieved_support = set()
         recorded[:] = [r for s in turn["steps"] for r in s["responses"]]
         msg = types.Content(role="user", parts=[types.Part(text=turn["user"])])
         async for _ in runner.run_async(user_id=OWNER, session_id="bench", new_message=msg):
@@ -415,6 +491,7 @@ def summarize(sc: dict, script: Script) -> dict:
         "first_call_tokens": log[0]["tokens"] if log else None,
         "n_tools": log[0]["n_tools"] if log else 0,
         "measured": sum(r["measured"] for r in log) if log and all(r["measured"] for r in log) else None,
+        "support_items": support_stage_summary(script.checks),
         "quality": {"ok": all(c["ok"] for c in script.checks), "checks": script.checks,
                     "empty_replies": sum(c["check"] == "empty_reply" for c in script.checks),
                     "undeclared_in_instruction": sorted(script.undeclared)},
@@ -474,7 +551,13 @@ def print_report(report: dict) -> None:
         if s["quality"]["undeclared_in_instruction"]:
             print(f"     consigne : outils cités non déclarés {s['quality']['undeclared_in_instruction']}")
         for c in bad:
+            if c["check"].startswith("support_"):
+                continue
             print(f"     ✗ {c['check']} @call {c['call']}: {c['detail']}")
+        for stage, counts in s.get("support_items", {}).items():
+            if counts["total"]:
+                print(f"     support {stage}: {counts['passed']}/{counts['total']}"
+                      f"; misses {counts['misses']}")
 
 
 def _pct(before, after) -> str:
@@ -485,13 +568,26 @@ def _n(v) -> str:
     return "–" if v is None else f"{v:,}"
 
 
+def _support_progress(scenario: dict | None) -> str:
+    if not scenario or not scenario.get("support_items"):
+        return "–"
+    stages = scenario["support_items"]
+    if not any(counts.get("total", 0) for counts in stages.values()):
+        return "–"
+    return " ".join(
+        f"{short} {stages.get(stage, {}).get('passed', 0)}"
+        f"/{stages.get(stage, {}).get('total', 0)}"
+        for short, stage in (("R", "retrieved"), ("C", "in_context"), ("U", "used"))
+    )
+
+
 def compare(before: dict, after: dict) -> tuple[str, bool]:
     """Tableau Markdown avant/après (tokens = tokenizer Gemini local)."""
     b_meta, a_meta = before.get("meta", {}), after.get("meta", {})
     lines = [f"Avant `{b_meta.get('label', '?')}` ({b_meta.get('git_sha', '?')}) → après "
              f"`{a_meta.get('label', '?')}` ({a_meta.get('git_sha', '?')})", "",
-             "| Scénario | Appels | Outils | 1er appel (tok) | Total avant | Total après | Δ | Qualité |",
-             "|---|---|---|---|---|---|---|---|"]
+             "| Scénario | Appels | Outils | 1er appel (tok) | Total avant | Total après | Δ | Support R/C/U | Qualité |",
+             "|---|---|---|---|---|---|---|---|---|"]
     ok = True
     for name, a in after["scenarios"].items():
         b = before["scenarios"].get(name)
@@ -505,12 +601,12 @@ def compare(before: dict, after: dict) -> tuple[str, bool]:
         ok &= a["quality"]["ok"] or bool(a.get("known_failure"))
         if not b:
             lines.append(f"| {name}{est} | {len(a['calls'])} | {a['n_tools']} | {_n(a['first_call_tokens'])} | – | "
-                         f"{_n(a['tokens'])} | nouveau | {mark} |")
+                         f"{_n(a['tokens'])} | nouveau | – → {_support_progress(a)} | {mark} |")
             continue
         lines.append(
             f"| {name}{est} | {len(b['calls'])}→{len(a['calls'])} | {b['n_tools']}→{a['n_tools']} | "
             f"{_n(b['first_call_tokens'])}→{_n(a['first_call_tokens'])} | {_n(b['tokens'])} | {_n(a['tokens'])} | "
-            f"{_pct(b['tokens'], a['tokens'])} | {mark} |")
+            f"{_pct(b['tokens'], a['tokens'])} | {_support_progress(b)} → {_support_progress(a)} | {mark} |")
     return "\n".join(lines).replace(",", " "), ok
 
 

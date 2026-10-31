@@ -82,6 +82,77 @@ def test_every_bench_scenario_keeps_its_quality_checks_green(replay):
     assert still_failing == {}
 
 
+def test_support_items_are_tracked_from_tool_response_to_scripted_answer(replay):
+    module, live = replay
+    summary = _summary(module, live, module.load_scenarios()["question"])
+
+    assert summary["quality"]["ok"]
+    assert summary["support_items"] == {
+        "retrieved": {"passed": 3, "total": 3, "misses": []},
+        "in_context": {"passed": 3, "total": 3, "misses": []},
+        "used": {"passed": 3, "total": 3, "misses": []},
+    }
+
+
+def test_support_item_lost_after_retrieval_fails_context_and_compare(replay, capsys):
+    module, _ = replay
+    checks = module.support_stage_checks(
+        [
+            {"id": "email_roas", "pattern": "32\\.8"},
+            {"id": "instagram_roas", "pattern": "3\\.0"},
+        ],
+        {"email_roas", "instagram_roas"},
+        "ROAS 32.8",
+        "Email had a ROAS of 32.8",
+        turn=1,
+        call=2,
+    )
+    stages = module.support_stage_summary(checks)
+    assert stages["retrieved"] == {"passed": 2, "total": 2, "misses": []}
+    assert stages["in_context"] == {
+        "passed": 1, "total": 2, "misses": [{"turn": 1, "id": "instagram_roas"}],
+    }
+    assert stages["used"] == {
+        "passed": 1, "total": 2, "misses": [{"turn": 1, "id": "instagram_roas"}],
+    }
+
+    script = module.Script()
+    script.checks = checks
+    script.log = [{"tokens": 1, "system": 1, "tools": 1, "history": 1,
+                   "n_tools": 1, "measured": None}]
+    summary = module.summarize({"turns": [{}]}, script)
+    assert not summary["quality"]["ok"]
+    module.print_report({"question": summary})
+    assert "support in_context: 1/2" in capsys.readouterr().out
+
+    before = {"meta": {}, "scenarios": {"question": {
+        "estimate": False, "calls": [{}], "n_tools": 1, "first_call_tokens": 1,
+        "tokens": 10, "quality": {"ok": True, "undeclared_in_instruction": []},
+        "support_items": {stage: {"passed": 2, "total": 2, "misses": []}
+                          for stage in ("retrieved", "in_context", "used")},
+    }}}
+    after = {"meta": {}, "scenarios": {"question": {
+        "estimate": False, "calls": [{}], "n_tools": 1, "first_call_tokens": 1,
+        "tokens": 10, "quality": summary["quality"],
+        "support_items": summary["support_items"],
+    }}}
+    table, ok = module.compare(before, after)
+    assert not ok
+    assert "R 2/2 C 2/2 U 2/2 → R 2/2 C 1/2 U 1/2" in table
+
+
+def test_compare_accepts_saved_results_without_support_stages(replay):
+    module, _ = replay
+    scenario = {"estimate": False, "calls": [{}], "n_tools": 1,
+                "first_call_tokens": 1, "tokens": 10,
+                "quality": {"ok": True, "undeclared_in_instruction": []}}
+    table, ok = module.compare(
+        {"meta": {}, "scenarios": {"a": scenario}},
+        {"meta": {}, "scenarios": {"a": scenario}},
+    )
+    assert ok and "– → –" in table
+
+
 def test_group_by_gives_the_same_roas_as_one_query_per_channel(replay):
     """group_by="canal" en un appel = les quatre requêtes filtrées de la démo."""
     module, _ = replay
