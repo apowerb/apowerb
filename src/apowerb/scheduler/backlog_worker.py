@@ -260,7 +260,9 @@ async def process_once(processor: ProcessorFn) -> bool:
     started = datetime.now(timezone.utc)
     try:
         agent_response = await processor(log_id)
-        duration_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        duration_ms = int(
+            (datetime.now(timezone.utc) - started).total_seconds() * 1000
+        )
         await _mark_success(log_id, agent_response, duration_ms)
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
@@ -335,7 +337,8 @@ def start_in_background(processor: ProcessorFn) -> asyncio.Task:
         return _WORKER_TASK
 
     logger.info(
-        "[BACKLOG] start_in_background: spawning worker task (processor=%s)",
+        "[BACKLOG] start_in_background: spawning worker task "
+        "(processor=%s)",
         getattr(processor, "__name__", repr(processor)),
     )
 
@@ -348,7 +351,6 @@ def start_in_background(processor: ProcessorFn) -> asyncio.Task:
         from apowerb.scheduler.backlog_migrations import (
             ensure_webhook_logs_schema,
         )
-
         await ensure_webhook_logs_schema()
         await run_worker(processor)
 

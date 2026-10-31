@@ -117,10 +117,7 @@ async def test_claim_marks_in_progress_and_increments_attempts(
 ):
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
-        sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-1",
+        sqlite_session_factory, sub_id=sub_id, user_id=user_id, resource_id="msg-1",
     )
 
     claimed = await backlog_worker._claim_one()
@@ -195,10 +192,7 @@ async def test_process_once_marks_success_on_processor_completion(
 ):
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
-        sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-ok",
+        sqlite_session_factory, sub_id=sub_id, user_id=user_id, resource_id="msg-ok",
     )
     seen: list[int] = []
 
@@ -260,9 +254,7 @@ async def test_rate_limit_error_marks_retrying_with_provider_delay(
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-429",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-429",
     )
 
     async def processor(log_id_arg: int):
@@ -279,9 +271,9 @@ async def test_rate_limit_error_marks_retrying_with_provider_delay(
         assert row.next_attempt_at is not None
         # Provider says 47s — worker schedules ~47s + small jitter
         delta = _seconds_between(row.next_attempt_at, before)
-        assert (
-            46 <= delta <= 60
-        ), f"next_attempt_at should respect retryDelay, got delta={delta}"
+        assert 46 <= delta <= 60, (
+            f"next_attempt_at should respect retryDelay, got delta={delta}"
+        )
         assert "RESOURCE_EXHAUSTED" in (row.error_message or "")
 
 
@@ -292,9 +284,7 @@ async def test_rate_limit_without_explicit_delay_uses_fallback(
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-429-nodelay",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-429-nodelay",
     )
 
     async def processor(log_id_arg: int):
@@ -323,9 +313,7 @@ async def test_generic_error_uses_exponential_backoff(sqlite_session_factory):
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-boom",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-boom",
     )
 
     async def processor(log_id_arg: int):
@@ -344,16 +332,13 @@ async def test_generic_error_uses_exponential_backoff(sqlite_session_factory):
 
 @pytest.mark.asyncio
 async def test_giveup_after_max_attempts_marks_error(
-    sqlite_session_factory,
-    monkeypatch,
+    sqlite_session_factory, monkeypatch,
 ):
     monkeypatch.setattr(backlog_worker, "_MAX_ATTEMPTS", 2)
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-doomed",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-doomed",
     )
 
     async def processor(log_id_arg: int):
@@ -366,9 +351,7 @@ async def test_giveup_after_max_attempts_marks_error(
             async with sqlite_session_factory() as db:
                 row = await db.get(WebhookLog, log_id)
                 if row.status == WebhookLog.STATUS_RETRYING:
-                    row.next_attempt_at = datetime.now(timezone.utc) - timedelta(
-                        seconds=1
-                    )
+                    row.next_attempt_at = datetime.now(timezone.utc) - timedelta(seconds=1)
                     await db.commit()
 
     await _drive()
@@ -442,9 +425,7 @@ async def test_unique_constraint_blocks_duplicate_resource_id(
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-dedup",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-dedup",
     )
 
     from sqlalchemy.exc import IntegrityError
@@ -452,9 +433,7 @@ async def test_unique_constraint_blocks_duplicate_resource_id(
     with pytest.raises(IntegrityError):
         await _enqueue_log(
             sqlite_session_factory,
-            sub_id=sub_id,
-            user_id=user_id,
-            resource_id="msg-dedup",
+            sub_id=sub_id, user_id=user_id, resource_id="msg-dedup",
         )
 
 
@@ -507,9 +486,7 @@ async def test_rate_limit_sets_global_cooldown(sqlite_session_factory):
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-rl",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-rl",
     )
 
     async def processor(log_id_arg):
@@ -532,9 +509,7 @@ async def test_process_once_skips_during_cooldown(sqlite_session_factory):
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-during-cooldown",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-during-cooldown",
     )
 
     backlog_worker._QUOTA_COOLDOWNS.defer(
@@ -565,9 +540,7 @@ async def test_process_once_resumes_after_cooldown_window(sqlite_session_factory
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-after-cooldown",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-after-cooldown",
     )
 
     # Cooldown already elapsed.
@@ -798,8 +771,7 @@ async def test_start_in_background_logs_spawn(caplog):
     try:
         assert task is not None
         spawn_msgs = [
-            r.getMessage()
-            for r in caplog.records
+            r.getMessage() for r in caplog.records
             if "spawning worker task" in r.getMessage()
         ]
         assert spawn_msgs, "start_in_background must log the spawn at INFO"
@@ -833,8 +805,9 @@ async def test_start_in_background_logs_silent_crash(caplog, monkeypatch):
 
     monkeypatch.setattr(backlog_worker, "run_worker", crashing_run_worker)
     from apowerb.scheduler import backlog_migrations
-
-    monkeypatch.setattr(backlog_migrations, "ensure_webhook_logs_schema", _noop_schema)
+    monkeypatch.setattr(
+        backlog_migrations, "ensure_webhook_logs_schema", _noop_schema
+    )
 
     caplog.set_level("ERROR", logger="apowerb.scheduler.backlog_worker")
 
@@ -852,8 +825,7 @@ async def test_start_in_background_logs_silent_crash(caplog, monkeypatch):
             pass
 
     crash_logs = [
-        r
-        for r in caplog.records
+        r for r in caplog.records
         if "worker task crashed unexpectedly" in r.getMessage()
     ]
     assert crash_logs, (
@@ -886,8 +858,7 @@ async def test_ensure_schema_skips_on_sqlite(sqlite_session_factory, caplog):
 
     assert result is True
     skip_logs = [
-        r.getMessage()
-        for r in caplog.records
+        r.getMessage() for r in caplog.records
         if "schema migration skipped on sqlite" in r.getMessage()
     ]
     assert skip_logs, "sqlite path must announce the skip in INFO"
@@ -911,14 +882,17 @@ async def test_ensure_schema_returns_false_on_failure(monkeypatch, caplog):
     def _broken_session():
         return _ExplodingSession()
 
-    monkeypatch.setattr(backlog_migrations.sessionmanager, "session", _broken_session)
+    monkeypatch.setattr(
+        backlog_migrations.sessionmanager, "session", _broken_session
+    )
     caplog.set_level("ERROR", logger="apowerb.scheduler.backlog_migrations")
 
     result = await backlog_migrations.ensure_webhook_logs_schema()
 
     assert result is False
     err_logs = [
-        r for r in caplog.records if "schema migration failed" in r.getMessage()
+        r for r in caplog.records
+        if "schema migration failed" in r.getMessage()
     ]
     assert err_logs, "DDL failures must log at ERROR with recovery hint"
 
@@ -938,8 +912,7 @@ async def test_start_in_background_is_idempotent(caplog):
     try:
         assert first is second
         already_msgs = [
-            r.getMessage()
-            for r in caplog.records
+            r.getMessage() for r in caplog.records
             if "already running" in r.getMessage()
         ]
         assert already_msgs, "second call must log the no-op"
@@ -962,9 +935,7 @@ async def test_success_after_retry_clears_stale_error_message(
     user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
     log_id = await _enqueue_log(
         sqlite_session_factory,
-        sub_id=sub_id,
-        user_id=user_id,
-        resource_id="msg-retry-ok",
+        sub_id=sub_id, user_id=user_id, resource_id="msg-retry-ok",
     )
     async with sqlite_session_factory() as db:
         row = await db.get(WebhookLog, log_id)
@@ -980,6 +951,6 @@ async def test_success_after_retry_clears_stale_error_message(
     async with sqlite_session_factory() as db:
         row = await db.get(WebhookLog, log_id)
         assert row.status == WebhookLog.STATUS_SUCCESS
-        assert (
-            row.error_message is None
-        ), "a successful retry must clear the stale error_message"
+        assert row.error_message is None, (
+            "a successful retry must clear the stale error_message"
+        )
