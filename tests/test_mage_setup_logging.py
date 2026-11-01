@@ -2,13 +2,16 @@
 
 Messages written with ``print()`` bypass log levels and the log pipeline. These
 tests pin where the pipeline and block checks of ``AgentOrchestrator`` report,
-and that a failure keeps its traceback.
+that a failure keeps its traceback, and that the startup line of
+``MageAPIClient`` says whether the secrets are set and never what they are.
 """
 
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from apowerb.scheduler.mage import AgentOrchestrator
+from apowerb.scheduler import mage
+from apowerb.scheduler.mage import AgentOrchestrator, MageAPIClient
 
 LOGGER_NAME = "apowerb.scheduler.mage"
 
@@ -101,3 +104,44 @@ class TestBlockCheck:
         assert len(errors) == 1
         assert errors[0].exc_info is not None
         assert errors[0].exc_info[0] is RuntimeError
+
+
+class TestClientStartup:
+    API_KEY = "sentinel-api-key-6d1f"
+    OAUTH_TOKEN = "sentinel-oauth-token-9c2e"
+
+    def _client(self, monkeypatch, oauth_token: str | None) -> MageAPIClient:
+        monkeypatch.setattr(MageAPIClient, "_instance", None)
+        monkeypatch.setattr(
+            mage,
+            "settings",
+            SimpleNamespace(
+                base_url="http://mage.invalid",
+                project_name="bench",
+                api_key=self.API_KEY,
+                oauth_token=oauth_token,
+            ),
+        )
+        return MageAPIClient()
+
+    def test_the_startup_line_says_the_secrets_are_set_never_their_values(
+        self, caplog, capsys, monkeypatch
+    ):
+        caplog.set_level(logging.DEBUG, logger=LOGGER_NAME)
+
+        self._client(monkeypatch, self.OAUTH_TOKEN)
+
+        logged = "\n".join(r.getMessage() for r in caplog.records)
+        written = capsys.readouterr()
+        assert "api_key=set" in logged
+        assert "oauth_token=set" in logged
+        for secret in (self.API_KEY, self.OAUTH_TOKEN):
+            assert secret not in logged
+            assert secret not in written.out + written.err
+
+    def test_an_unset_oauth_token_is_reported_as_not_set(self, caplog, monkeypatch):
+        caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+        self._client(monkeypatch, None)
+
+        assert any("oauth_token=not set" in r.getMessage() for r in _records(caplog))
