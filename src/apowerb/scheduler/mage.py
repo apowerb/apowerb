@@ -34,10 +34,16 @@ class MageAPIClient:
         self.project_name = settings.project_name
 
         # Validate critical settings
+        # Raise OrchestratorUnavailable (not ValueError) so routers can
+        # translate this into a clean 503 instead of a bare 500 (see #95)
         if not self.base_url:
-            raise ValueError("Mage base_url is not configured in settings")
+            raise OrchestratorUnavailable(
+                "Mage base_url is not configured in settings", unreachable=False
+            )
         if not self.api_key:
-            raise ValueError("Mage api_key is not configured in settings")
+            raise OrchestratorUnavailable(
+                "Mage api_key is not configured in settings", unreachable=False
+            )
 
         print("[Mage] API Client initialized:")
         print(f"   Base URL: {self.base_url}")
