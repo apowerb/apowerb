@@ -29,6 +29,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.pool import StaticPool
 
+from apowerb.configs.settings import Settings
 from apowerb.core import run_main
 
 OWNER = "u@example.com"
@@ -506,6 +507,8 @@ def test_old_traces_are_purged_but_a_waiting_run_keeps_its_own(store):
     [(None, 30), ("7", 7), ("0", 30), ("abc", 30)],
 )
 def test_the_trace_retention_is_read_from_the_environment(monkeypatch, raw, days):
+    # Through Settings, read fresh: the cached instance belongs to other suites.
+    monkeypatch.setattr(run_main, "get_settings", lambda: Settings())
     if raw is None:
         monkeypatch.delenv("RUN_TRACE_RETENTION_DAYS", raising=False)
     else:

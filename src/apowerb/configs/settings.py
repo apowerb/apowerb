@@ -445,6 +445,12 @@ class Settings(BaseSettings):
     workflow_suggest_model: str = ""
     workflow_suggest_timeout_s: float = 4.0
 
+    # Days a workflow run's stored trace is kept (RUN_TRACE_RETENTION_DAYS).
+    # Kept as text on purpose: `core.run_main.trace_retention_days` parses it
+    # and falls back to 30 days with a warning, rather than a bad value
+    # refusing to boot the whole app.
+    run_trace_retention_days: str | None = None
+
     # ── Contexte d'une prévision dit en français (th2forecast : events/scenarios) ──
     # Éteint par défaut : le modèle mutualisé traduit le texte en événements
     # datés, sous le même plafond que les runs. Le délai est plus long que pour
