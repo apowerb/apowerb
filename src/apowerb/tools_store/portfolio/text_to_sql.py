@@ -1200,7 +1200,10 @@ def _agent_llm_endpoint(agent_id: int) -> tuple:
 
     from apowerb.helpers.model_names import default_api_base
 
+    from apowerb.helpers.gemini_models import effective_gemini_model
+
     model, model_params = load_agent_model_params(agent_id)
+    model = effective_gemini_model(model)  # meme nom que l agent (alias 2.5-flash)
     api_base = model_params.get("model_api_base") or default_api_base(model)
     api_version = model_params.get("model_api_version") or model_params.get("api_version")
     return model, api_base, model_params.get("model_api_key"), api_version

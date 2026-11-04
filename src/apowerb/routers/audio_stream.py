@@ -252,7 +252,7 @@ async def transcribe_audio(file: UploadFile = File(...)) -> dict:
         client = genai.Client(api_key=api_key)
         response = await asyncio.to_thread(
             client.models.generate_content,
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash-lite",
             contents=[
                 types.Part.from_bytes(data=raw, mime_type=mime_type),
                 "Transcribe this audio verbatim in the same language as spoken. "

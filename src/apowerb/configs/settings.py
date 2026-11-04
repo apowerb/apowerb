@@ -496,7 +496,7 @@ class Settings(BaseSettings):
     # core owns the configuration surface and the brick reads it.
     evaluation_enabled: bool = False
     # Judge model for the LLM-judge evaluator (litellm model string, e.g.
-    # "gemini/gemini-2.5-flash"). Must differ from the model being judged —
+    # "gemini/gemini-3.5-flash-lite"). Must differ from the model being judged —
     # `evaluate_task_completion` refuses to run otherwise (self-preference
     # bias). No default: an unconfigured judge must fail loudly, not silently
     # score everything with whatever happens to be `default_llm_model`.
