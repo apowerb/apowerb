@@ -16,7 +16,7 @@
 #                    le calcul ajoute donc thoughts_tokens à output.
 #
 # La clé est la valeur exacte de `llm_usage.model` telle qu'écrite par le
-# usage_recorder (préfixe litellm compris, ex. `gemini/gemini-2.5-flash`).
+# usage_recorder (préfixe litellm compris, ex. `gemini/gemini-3.5-flash-lite`).
 #
 # ⚠️ Ce fichier est lu UNE FOIS par process (lru_cache sur load_pricing).
 # Modifier un tarif n'a aucun effet sur l'app en cours : il faut
@@ -58,6 +58,11 @@ models:
     input: 1.3113
     cached_input: 0.1311
     output: 7.8678
+
+  gemini/gemini-3.5-flash-lite:      # 0.30 / 2.50 / 0.03 USD (remplace 2.5-flash le 01/12/2026)
+    input: 0.2623
+    cached_input: 0.0262
+    output: 2.1855
 
   gemini/gemini-2.5-flash:           # 0.30 / 2.50 / 0.03 USD
     input: 0.2623

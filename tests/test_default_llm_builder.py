@@ -21,7 +21,7 @@ class _FakeSettings:
 @pytest.fixture
 def configured(monkeypatch):
     monkeypatch.setattr(
-        dl, "get_settings", lambda: _FakeSettings("gemini/gemini-2.5-flash", "sk-shared")
+        dl, "get_settings", lambda: _FakeSettings("gemini/gemini-3.5-flash-lite", "sk-shared")
     )
 
 
@@ -52,7 +52,7 @@ def test_builder_uses_env_model_and_key(configured, monkeypatch):
     builder.build_litellm_model(
         {"agent_model": "thaink2/default", "agent_model_params": {}}, temperature=None
     )
-    assert captured["model"] == "gemini/gemini-2.5-flash"
+    assert captured["model"] == "gemini/gemini-3.5-flash-lite"
     # The shared key now travels as the api_key PARAM, never through os.environ:
     # writing it there leaked it to other cached agents in the worker
     # (cross-customer, fixed 2026-09-29).
@@ -82,7 +82,7 @@ def test_agent_carried_credentials_are_ignored(configured, monkeypatch):
         },
         temperature=None,
     )
-    assert captured["model"] == "gemini/gemini-2.5-flash"
+    assert captured["model"] == "gemini/gemini-3.5-flash-lite"
     assert "evil.example" not in str(captured.get("api_base", "") or "")
     # The shared thaink2 key is used, never the agent-carried attacker key, and
     # it does not leak through os.environ (fixed 2026-09-29).
