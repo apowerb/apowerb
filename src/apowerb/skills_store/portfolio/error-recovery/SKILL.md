@@ -1,6 +1,6 @@
 ---
 name: error-recovery
-description: "Handle tool errors and failures gracefully. Use when a tool call returns an error, a query fails, a connection times out, or any operation does not succeed. Provides retry strategies and user-friendly error communication. Keywords - error, failure, retry, troubleshoot, fix, problem, issue, failed tool, timeout, connection error, permission denied."
+description: "Handle tool errors and failures gracefully. Use when a tool call returns an error, a query fails, a connection times out, or any operation does not succeed. Provides retry strategies and user-friendly error communication."
 ---
 
 # Error Recovery
@@ -15,7 +15,7 @@ Extract the key information from the error:
 - **Error details**: What specific message or code was returned?
 - **Context**: Which tool failed? What arguments were passed?
 
-Never expose raw error messages, stack traces, or technical dumps to the user. Always translate into plain language.
+Explain errors in plain language, based on the message the tool actually returned: quote its key part (never a raw stack trace or dump) so the user can act on it or report it.
 
 ## Step 2: Classify and Act
 
@@ -99,6 +99,6 @@ If the error cannot be resolved after one retry:
 
 - **NEVER retry more than once** for the same error.
 - **NEVER retry authentication or permission errors** — these require user action.
-- **NEVER expose raw error messages** — always translate to plain language.
+- **Plain language, real cause** — explain the error the tool actually returned; quote its key part rather than dumping raw traces.
 - **NEVER silently ignore errors** — always inform the user about what happened.
 - **NEVER guess at fixes** — if you are unsure why an error occurred, say so and ask the user.
