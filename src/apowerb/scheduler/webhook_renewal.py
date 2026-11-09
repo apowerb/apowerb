@@ -12,7 +12,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 
 from apowerb.configs.settings import get_settings
 from apowerb.helpers.database import sessionmanager
@@ -102,25 +102,28 @@ async def _renew_expiring_subscriptions() -> None:
                 )
 
             except LookupError:
-                # 404 — subscription gone from Microsoft Graph; delete locally.
+                # 404 — subscription gone from Microsoft Graph. Keep the row,
+                # marked expired: webhook_logs cascades on it, so deleting it
+                # wipes the agent's whole execution history (live incident
+                # 2026-11-09).
                 logger.warning(
                     "[WEBHOOK CRON] sub_db_id=%s (graph_id=%s) not found on "
-                    "Microsoft Graph — deleting local record.",
+                    "Microsoft Graph — marking it expired, history kept.",
                     sub_db_id,
                     sub_graph_id,
                 )
                 try:
                     await db.execute(
-                        delete(WebhookSubscription).where(
-                            WebhookSubscription.id == sub_db_id
-                        )
+                        update(WebhookSubscription)
+                        .where(WebhookSubscription.id == sub_db_id)
+                        .values(status="expired")
                     )
                     await db.commit()
-                except Exception as del_exc:
+                except Exception as mark_exc:
                     logger.warning(
-                        "[WEBHOOK CRON] Failed to delete missing Outlook subscription sub_db_id=%s: %s",
+                        "[WEBHOOK CRON] Failed to mark missing Outlook subscription expired sub_db_id=%s: %s",
                         sub_db_id,
-                        del_exc,
+                        mark_exc,
                         exc_info=True,
                     )
 
