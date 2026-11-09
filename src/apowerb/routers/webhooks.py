@@ -557,24 +557,27 @@ async def renew_subscription(
             access_token, graph_sub_id
         )
     except LookupError:
-        # 404 — subscription no longer exists on Microsoft Graph; clean up.
+        # 404 — subscription no longer exists on Microsoft Graph. Keep the
+        # row (marked expired) instead of deleting it: webhook_logs cascades
+        # on webhook_subscriptions, so a delete wipes the agent's whole
+        # execution history (live incident 2026-11-09).
         logger.warning(
             "[WEBHOOK] Subscription db_id=%s (graph_id=%s) not found on "
-            "Microsoft Graph — deleting local record.",
+            "Microsoft Graph — marking it expired, history kept.",
             subscription_db_id,
             graph_sub_id,
         )
         await db.execute(
-            delete(WebhookSubscription).where(
-                WebhookSubscription.id == subscription_db_id
-            )
+            update(WebhookSubscription)
+            .where(WebhookSubscription.id == subscription_db_id)
+            .values(status="expired")
         )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail=(
                 "The webhook subscription no longer exists on Microsoft Graph "
-                "and has been deleted. Please create a new one."
+                "and has been marked expired. Please create a new one."
             ),
         )
     except (RuntimeError, httpx.HTTPError) as exc:
