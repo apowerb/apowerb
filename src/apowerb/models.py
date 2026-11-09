@@ -392,8 +392,10 @@ class WebhookLog(Base):
     user_id = Column(Integer, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False)
     subscription_id = Column(
         Integer,
-        ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"),
-        nullable=False,
+        # SET NULL, not CASCADE: the execution history outlives its
+        # subscription (incident 2026-11-09, 11 179 logs deleted with one row).
+        ForeignKey("webhook_subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
     )
     # Copied from the subscription at reception: who handled this mail.
     consumer = Column(
