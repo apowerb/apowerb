@@ -95,6 +95,63 @@ def _ddl_statements(schema: str) -> Iterable[tuple[str, str]]:
     )
 
 
+def _history_fk_statements(schema: str) -> Iterable[tuple[str, str]]:
+    """Make ``webhook_logs.subscription_id`` outlive its subscription.
+
+    Older tables were created ``NOT NULL`` + ``ON DELETE CASCADE``: deleting
+    one subscription row deleted its whole execution history (incident
+    2026-11-09, 11 179 logs restored from a backup). Converge on a nullable
+    column whose foreign key is ``ON DELETE SET NULL``. Idempotent: a foreign
+    key already in ``SET NULL`` is left untouched.
+    """
+    qualified = f"{schema}.webhook_logs" if schema else "webhook_logs"
+    parent = f"{schema}.webhook_subscriptions" if schema else "webhook_subscriptions"
+    nsp = f"'{schema}'" if schema else "current_schema()"
+    fk_on_subscription = (
+        "FROM pg_constraint con "
+        "JOIN pg_class t ON t.oid = con.conrelid "
+        "JOIN pg_namespace n ON n.oid = t.relnamespace "
+        "JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (con.conkey) "
+        f"WHERE con.contype = 'f' AND n.nspname = {nsp} "
+        "AND t.relname = 'webhook_logs' AND a.attname = 'subscription_id'"
+    )
+    return (
+        (
+            "subscription_id nullable",
+            f"ALTER TABLE {qualified} ALTER COLUMN subscription_id DROP NOT NULL;",
+        ),
+        (
+            "subscription_id foreign key ON DELETE SET NULL",
+            "DO $fk$ DECLARE c record; BEGIN "
+            f"FOR c IN SELECT con.conname {fk_on_subscription} AND con.confdeltype <> 'n' LOOP "
+            f"EXECUTE format('ALTER TABLE {qualified} DROP CONSTRAINT %I', c.conname); "
+            "END LOOP; "
+            f"IF NOT EXISTS (SELECT 1 {fk_on_subscription} AND con.confdeltype = 'n') THEN "
+            f"ALTER TABLE {qualified} ADD CONSTRAINT webhook_logs_subscription_id_fkey "
+            f"FOREIGN KEY (subscription_id) REFERENCES {parent}(id) ON DELETE SET NULL; "
+            "END IF; END $fk$;",
+        ),
+    )
+
+
+async def _ensure_history_fk(schema: str) -> bool:
+    """Run :func:`_history_fk_statements` in its own transaction, so a failure
+    here never rolls back the queue columns applied before it."""
+    try:
+        async with sessionmanager.session() as db:
+            for label, statement in _history_fk_statements(schema):
+                logger.info("[BACKLOG] applying %s", label)
+                await db.execute(text(statement))
+            await db.commit()
+        return True
+    except Exception:
+        logger.exception(
+            "[BACKLOG] webhook_logs.subscription_id is still CASCADE or NOT NULL: "
+            "deleting a subscription may delete its history."
+        )
+        return False
+
+
 async def ensure_webhook_logs_schema() -> bool:
     """Apply the queue/backlog DDL to ``webhook_logs``.
 
@@ -129,7 +186,7 @@ async def ensure_webhook_logs_schema() -> bool:
                 "[BACKLOG] webhook_logs schema ensured (schema=%r, dialect=%s)",
                 schema, dialect_name,
             )
-            return True
+        return await _ensure_history_fk(schema)
     except Exception:
         # We never want a DDL hiccup to crash the worker — the
         # standalone scripts/add_webhook_logs_backlog_columns.py is

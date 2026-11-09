@@ -47,9 +47,11 @@ class _FakeSession:
         self._scalar_one = scalar_one
         self._added: list = []
         self._deleted: list = []
+        self._statements: list = []
         self.committed = False
 
     async def execute(self, stmt):
+        self._statements.append(stmt)
         res = MagicMock()
         res.scalar_one_or_none = MagicMock(
             return_value=self._scalar_one_or_none
@@ -257,6 +259,43 @@ class TestCrossOwnerDelete:
 
         resp = client.delete("/api/webhooks/subscriptions/5")
         assert resp.status_code == 403, resp.text
+
+
+# ---------------------------------------------------------------------------
+# 3c. Delete happy path — child logs are detached, never deleted, before the
+#     subscription goes (roadmap#105: a delete relying on a DB FK cascade
+#     returned 500 on older instances; incident 2026-11-09: the cascade, or
+#     the explicit DELETE that replaced it, erased the client's history).
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteSubscriptionHappyPath:
+    def test_delete_detaches_child_logs_before_subscription(self):
+        sub = MagicMock()
+        sub.id = 11
+        sub.user_id = USER_A_ID
+        # Neither provider branch runs: not gmail, and no external id -> the
+        # test isolates the DB statements, which is what the regression is about.
+        sub.provider = "microsoft_outlook"
+        sub.subscription_id = None
+
+        session = _FakeSession(scalar_one_or_none=sub)
+        app = _build_app(session)  # alice owns it
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.delete("/api/webhooks/subscriptions/11")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json().get("success") is True
+        assert session.committed is True
+        assert sub in session._deleted
+        seen = [str(s).lower() for s in session._statements]
+        assert any(s.startswith("update") and "webhook_logs" in s for s in seen), (
+            f"expected the logs to be detached by an UPDATE; statements seen: {seen}"
+        )
+        assert not any("delete from" in s and "webhook_logs" in s for s in seen), (
+            f"the execution history must never be deleted; statements seen: {seen}"
+        )
 
 
 # ---------------------------------------------------------------------------

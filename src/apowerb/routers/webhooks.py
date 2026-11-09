@@ -432,6 +432,19 @@ async def delete_subscription(
     sub_provider = subscription.provider
     sub_external_id = subscription.subscription_id
 
+    # Detach the child webhook_logs first, in the same transaction: the
+    # execution history outlives its subscription (incident 2026-11-09, the
+    # 11 179 logs of a client were deleted with one subscription row). The
+    # model declares ON DELETE SET NULL, but an instance whose FK predates it
+    # may still have CASCADE (history lost) or no action (ForeignKeyViolation
+    # at commit -> HTTP 500, roadmap#105). Detaching explicitly is independent
+    # of the live constraint. Bulk UPDATE, no row is loaded.
+    await db.execute(
+        update(WebhookLog)
+        .where(WebhookLog.subscription_id == subscription_db_id)
+        .values(subscription_id=None)
+    )
+
     # Delete from database
     await db.delete(subscription)
     await db.commit()

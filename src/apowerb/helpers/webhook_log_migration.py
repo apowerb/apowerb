@@ -33,9 +33,9 @@ def ensure_webhook_logs_table() -> None:
                         user_id             INTEGER NOT NULL
                                                 REFERENCES {settings.db_schema}."user"(user_id)
                                                 ON DELETE CASCADE,
-                        subscription_id     INTEGER NOT NULL
+                        subscription_id     INTEGER
                                                 REFERENCES {settings.db_schema}.webhook_subscriptions(id)
-                                                ON DELETE CASCADE,
+                                                ON DELETE SET NULL,
                         agent_id            INTEGER NOT NULL,
                         trigger_event       VARCHAR(50) NOT NULL,
                         email_subject       VARCHAR(500),
