@@ -40,6 +40,46 @@ def _is_past(expiry: datetime | None) -> bool:
 
 
 async def _renew_expiring_subscriptions() -> None:
+    """Single renewal pass, then alert on every subscription it left inactive.
+
+    Flipping a subscription out of ``active`` means mail stops reaching the
+    agent (incident 2026-11-02 -> 09: seven silent days). The alert is decided
+    here, around the pass, whichever branch of the pass flipped the row.
+    """
+    async with sessionmanager.session() as db:
+        before = dict((await db.execute(
+            select(WebhookSubscription.id, WebhookSubscription.provider)
+            .where(WebhookSubscription.status == "active")
+        )).all())
+
+    await _renewal_pass()
+
+    if not before:
+        return
+    async with sessionmanager.session() as db:
+        still_active = set((await db.execute(
+            select(WebhookSubscription.id).where(
+                WebhookSubscription.id.in_(list(before)),
+                WebhookSubscription.status == "active",
+            )
+        )).scalars().all())
+    for sub_db_id, provider in before.items():
+        if sub_db_id in still_active:
+            continue
+        logger.error(
+            "[WEBHOOK CRON] sub_db_id=%s (%s) is no longer active: incoming mail "
+            "will not reach the agent until a subscription is recreated.",
+            sub_db_id, provider,
+        )
+        await notify_etl.notify_job_failure(
+            "webhook-expired",
+            f"La souscription {provider} n'est plus active : les mails "
+            "n'arrivent plus à l'agent. Recréez-la dans Webhooks.",
+            context=f"sub_db_id={sub_db_id}",
+        )
+
+
+async def _renewal_pass() -> None:
     """Single renewal pass -- find and renew subscriptions close to expiry."""
     threshold = datetime.now(timezone.utc) + timedelta(hours=RENEW_THRESHOLD_HOURS)
     settings = get_settings()
