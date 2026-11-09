@@ -30,6 +30,15 @@ CHECK_INTERVAL_SECONDS = 6 * 3600  # every 6 hours
 RENEW_THRESHOLD_HOURS = 12
 
 
+def _is_past(expiry: datetime | None) -> bool:
+    """True when *expiry* is known and already reached (naive = UTC)."""
+    if expiry is None:
+        return False
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    return expiry <= datetime.now(timezone.utc)
+
+
 async def _renew_expiring_subscriptions() -> None:
     """Single renewal pass -- find and renew subscriptions close to expiry."""
     threshold = datetime.now(timezone.utc) + timedelta(hours=RENEW_THRESHOLD_HOURS)
@@ -65,6 +74,7 @@ async def _renew_expiring_subscriptions() -> None:
             sub_db_id = sub.id
             sub_graph_id = sub.subscription_id
             sub_user_id = sub.user_id
+            sub_expiry = sub.expiration_datetime
             try:
                 access_token = await OutlookWebhookService.get_access_token_for_user(
                     db, sub_user_id
@@ -135,10 +145,19 @@ async def _renew_expiring_subscriptions() -> None:
                     "webhook-renewal", f"{type(exc).__name__}: {exc}",
                     context=f"sub_db_id={sub_db_id}",
                 )
-                # Mark as expired so the operator notices it in the UI.
-                # Same UPDATE-by-id pattern — the ORM instance may be
-                # expired from the mid-pass token-refresh commit, so
-                # ``sub.status = ...`` would re-raise the greenlet error.
+                # While Microsoft Graph still holds the subscription, keep
+                # the row 'active' so the next pass retries it: the query
+                # above only selects 'active' rows. Live incident
+                # 2026-11-02: one failed token refresh 10h before expiry
+                # flipped the row to 'expired', no pass ever retried, and
+                # the subscription died at its Graph expiry.
+                if not _is_past(sub_expiry):
+                    continue
+                # Expiry passed: Graph has dropped it. Mark as expired so
+                # the operator notices it in the UI. Same UPDATE-by-id
+                # pattern — the ORM instance may be expired from the
+                # mid-pass token-refresh commit, so ``sub.status = ...``
+                # would re-raise the greenlet error.
                 try:
                     await db.execute(
                         update(WebhookSubscription)
