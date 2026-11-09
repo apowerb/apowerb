@@ -85,9 +85,12 @@ async def sqlite_session_factory(monkeypatch):
     await engine.dispose()
 
 
-async def _seed_expiring_outlook_sub(factory) -> int:
+async def _seed_expiring_outlook_sub(
+    factory, expires_in: timedelta = timedelta(hours=6)
+) -> int:
     """Insert one Outlook subscription whose expiration is well inside
-    the 12h renewal threshold. Returns the sub's primary key."""
+    the 12h renewal threshold (or already past, with a negative
+    *expires_in*). Returns the sub's primary key."""
     async with factory() as db:
         user = User(
             user_id=1,
@@ -111,8 +114,8 @@ async def _seed_expiring_outlook_sub(factory) -> int:
             notification_url="https://example.com/cb",
             status="active",
             agent_id=6,
-            # 6h ahead — well inside the 12h renewal window.
-            expiration_datetime=datetime.now(timezone.utc) + timedelta(hours=6),
+            # Default 6h ahead — well inside the 12h renewal window.
+            expiration_datetime=datetime.now(timezone.utc) + expires_in,
         )
         db.add(sub)
         # Capture the autoincrement PK via flush BEFORE the commit so
@@ -198,51 +201,107 @@ class TestOutlookRenewalSurvivesMidPassCommit:
             )
 
 
-class TestOutlookRenewalFailureMarksExpired:
-    """On a renewal error, the row must transition to
-    ``status='expired'`` so the operator can spot it in the UI. The
-    original code's ``except`` block tries ``sub.status = 'expired'``
-    which crashes for the same lazy-load reason — leaving the row in
-    a misleading ``'active'`` state."""
+async def _read_sub(factory, sub_id: int) -> WebhookSubscription:
+    async with factory() as db:
+        return (
+            await db.execute(
+                select(WebhookSubscription).where(WebhookSubscription.id == sub_id)
+            )
+        ).scalar_one()
+
+
+def _patch_graph(monkeypatch, *, token, renew) -> None:
+    monkeypatch.setattr(
+        webhook_renewal.OutlookWebhookService, "get_access_token_for_user", token
+    )
+    monkeypatch.setattr(
+        webhook_renewal.OutlookWebhookService, "renew_subscription", renew
+    )
+
+
+async def _token_ok(db, user_id):
+    await db.commit()  # same mid-pass commit as the real helper
+    return "fake-access-token"
+
+
+async def _token_401(db, user_id):
+    # Live incident 2026-11-02 (client production): the Azure app client
+    # secret expired, every token refresh answered 401 AADSTS7000222.
+    raise RuntimeError("Failed to refresh Outlook access token (HTTP 401).")
+
+
+async def _graph_500(access_token, graph_sub_id):
+    raise RuntimeError("Microsoft Graph 500 — service unavailable")
+
+
+class TestOutlookRenewalFailureKeepsRetrying:
+    """A failed renewal must not abandon a subscription that Microsoft
+    Graph still holds.
+
+    Live incident 2026-11-02 (client production): a token refresh failed
+    10h before the Graph expiry; the pass flipped the row to
+    ``status='expired'``, the query only selects ``'active'`` rows, so no
+    later pass ever retried. The row may only be marked ``'expired'``
+    once its expiration date is actually past."""
 
     @pytest.mark.asyncio
-    async def test_renewal_marks_expired_when_graph_call_fails(
+    async def test_failure_before_expiry_keeps_row_active(
         self, sqlite_session_factory, monkeypatch
     ):
         sub_id = await _seed_expiring_outlook_sub(sqlite_session_factory)
-
-        async def fake_get_access_token(db, user_id):
-            await db.commit()  # same mid-pass commit
-            return "fake-access-token"
-
-        async def fake_renew_raises(access_token, graph_sub_id):
-            raise RuntimeError("Microsoft Graph 500 — service unavailable")
-
-        monkeypatch.setattr(
-            webhook_renewal.OutlookWebhookService,
-            "get_access_token_for_user",
-            fake_get_access_token,
-        )
-        monkeypatch.setattr(
-            webhook_renewal.OutlookWebhookService,
-            "renew_subscription",
-            fake_renew_raises,
-        )
+        _patch_graph(monkeypatch, token=_token_ok, renew=_graph_500)
 
         await webhook_renewal._renew_expiring_subscriptions()
 
-        async with sqlite_session_factory() as db:
-            row = (
-                await db.execute(
-                    select(WebhookSubscription).where(
-                        WebhookSubscription.id == sub_id
-                    )
-                )
-            ).scalar_one()
-            assert row.status == "expired", (
-                "failed renewal must flip status to 'expired' so the "
-                "operator sees the subscription as needing attention"
-            )
+        row = await _read_sub(sqlite_session_factory, sub_id)
+        assert row.status == "active", (
+            "the Graph subscription is still alive: the row must stay "
+            "'active' so the next pass retries it"
+        )
+
+    @pytest.mark.asyncio
+    async def test_next_pass_retries_after_a_token_failure(
+        self, sqlite_session_factory, monkeypatch
+    ):
+        sub_id = await _seed_expiring_outlook_sub(sqlite_session_factory)
+        new_expiry = datetime.now(timezone.utc) + timedelta(days=3)
+        renew_calls: list[str] = []
+
+        async def fake_renew(access_token, graph_sub_id):
+            renew_calls.append(graph_sub_id)
+            return {"expirationDateTime": new_expiry.isoformat()}
+
+        _patch_graph(monkeypatch, token=_token_401, renew=fake_renew)
+        await webhook_renewal._renew_expiring_subscriptions()
+
+        # Credentials fixed between two passes (secret rotated).
+        _patch_graph(monkeypatch, token=_token_ok, renew=fake_renew)
+        await webhook_renewal._renew_expiring_subscriptions()
+
+        assert len(renew_calls) == 1, "the second pass must retry the renewal"
+        row = await _read_sub(sqlite_session_factory, sub_id)
+        assert row.status == "active"
+        persisted = row.expiration_datetime
+        if persisted.tzinfo is not None:
+            persisted = persisted.astimezone(timezone.utc).replace(tzinfo=None)
+        expected = new_expiry.replace(tzinfo=None)
+        assert abs((persisted - expected).total_seconds()) < 2
+
+    @pytest.mark.asyncio
+    async def test_failure_after_expiry_marks_expired(
+        self, sqlite_session_factory, monkeypatch
+    ):
+        """Once the expiry is past, Graph has dropped the subscription:
+        flip to ``'expired'`` so the operator sees it in the UI."""
+        sub_id = await _seed_expiring_outlook_sub(
+            sqlite_session_factory, expires_in=timedelta(hours=-1)
+        )
+        _patch_graph(monkeypatch, token=_token_ok, renew=_graph_500)
+
+        await webhook_renewal._renew_expiring_subscriptions()
+
+        row = await _read_sub(sqlite_session_factory, sub_id)
+        assert row.status == "expired"
 
 
 # ---------------------------------------------------------------------------
