@@ -18,6 +18,7 @@ from apowerb.core.agent_helpers.default_llm import (
 )
 from apowerb.core.agent_helpers.reasoning_strip import CleaningLiteLLMClient
 from apowerb.helpers.encryptor import decrypt_value_in_dict
+from apowerb.helpers.gemini_models import effective_gemini_model, is_gemini_3_or_newer
 from apowerb.helpers.model_names import (
     default_api_base,
     is_edenai_model,
@@ -35,6 +36,7 @@ def litellm_call_kwargs(model: str, params: dict) -> dict:
     (session title, JSON repair): ``params`` are the agent's resolved model
     params (key decrypted, thaink2 default model already substituted).
     """
+    model = effective_gemini_model(model)  # meme nom que l agent (alias 2.5-flash)
     api_base = params.get("model_api_base") or default_api_base(model)
     kwargs: dict = {"model": openai_compat_model_name(model) if api_base else model}
     if api_base:
@@ -75,6 +77,15 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
         )
         agent_details = {**agent_details, "agent_model": agent_model}
         logger.info(f"[TO_AGENT] Using thaink2 default model -> {agent_model}")
+
+    # Modeles Gemini deprecies renommes ici (cf helpers/gemini_models) ; Gemini 3
+    # ignore puis refuse temperature/top_p/top_k.
+    _effective_model = effective_gemini_model(agent_details["agent_model"])
+    if _effective_model != agent_details["agent_model"]:
+        logger.info(f"[TO_AGENT] {agent_details['agent_model']} deprecie -> {_effective_model}")
+        agent_details = {**agent_details, "agent_model": _effective_model}
+    if is_gemini_3_or_newer(agent_details["agent_model"]):
+        _litellm_kwargs.pop("temperature", None)
 
     model_api_base = agent_model_params.get("model_api_base")
     model_api_key = agent_model_params.get("model_api_key")
@@ -123,12 +134,15 @@ def build_litellm_model(agent_details: dict, temperature: float | None) -> LiteL
     # (incident 03/06, PR #196, thinking={"type":"disabled"}) etait une
     # regression google-adk 1.26.0 (#4650), corrigee >=1.27 : la signature
     # voyage desormais dans Part.thought_signature (round-trip complet).
-    # reasoning_effort="low" borne le cout ; les strips de litellm_config
-    # restent en filet anti-orphelins. Kill-switch sans redeploiement :
-    # GEMINI_REASONING_EFFORT=none (efficace sur gemini-2.5.x uniquement).
+    # reasoning_effort="low" borne le cout sur gemini-2.5 ; sur Gemini 3 le guide
+    # Google demande medium/high pour les agents a outils (sinon arret premature
+    # des appels d'outils). Les strips de litellm_config restent en filet
+    # anti-orphelins. Kill-switch sans redeploiement : GEMINI_REASONING_EFFORT
+    # (none n'eteint le thinking que sur gemini-2.5.x).
     if agent_details["agent_model"].startswith("gemini/"):
+        _default_effort = "medium" if is_gemini_3_or_newer(agent_details["agent_model"]) else "low"
         _litellm_kwargs["reasoning_effort"] = os.environ.get(
-            "GEMINI_REASONING_EFFORT", "low"
+            "GEMINI_REASONING_EFFORT", _default_effort
         )
     return LiteLlm(
         model=agent_details["agent_model"],
@@ -201,7 +215,7 @@ def validate_agent_model(agent_model: str, agent_model_params=None, agent_type: 
         raise ValueError(
             f"Modele '{model or '(vide)'}' invalide : litellm ne reconnait pas le "
             "provider. Prefixe le modele par un provider connu (ex "
-            "'gemini/gemini-2.5-flash', "
+            "'gemini/gemini-3.5-flash-lite', "
             "'mistral/Mistral-Small-3.2-24B-Instruct-2506', 'anthropic/claude-...', "
             "'openai/...'), ou renseigne un model_api_base pour un endpoint "
             "OpenAI-compat."

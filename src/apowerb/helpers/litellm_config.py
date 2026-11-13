@@ -11,6 +11,8 @@ from logging import getLogger
 import litellm
 from litellm import ModelResponse
 
+from apowerb.helpers.gemini_models import drop_gemini3_sampling_params
+
 def _strip_thought_signatures(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Retire les signatures de *thinking* Gemini (``...__thought__<sig>``) des
     identifiants de tool call. Ces signatures, injectees par Gemini 2.5 sur les
@@ -497,6 +499,7 @@ def configure_litellm_for_ovhcloud():
         kwargs = _strip_extra_tool_calls_for_ovh(kwargs)
         kwargs = _strip_thought_signatures(kwargs)  # Gemini __thought__ fix (multi-tours)
         kwargs = _drop_orphan_tool_results(kwargs)
+        kwargs = drop_gemini3_sampling_params(kwargs)  # alias 2.5-flash + params refuses par Gemini 3
         # OVH Mistral streaming is broken for tool calls — force non-streaming
         model = kwargs.get("model", "")
         if model.startswith("openai/Mistral") or model.startswith("ovhcloud/"):
@@ -548,6 +551,7 @@ def configure_litellm_for_ovhcloud():
                 kwargs = _strip_extra_tool_calls_for_ovh(kwargs)
                 kwargs = _strip_thought_signatures(kwargs)  # Gemini __thought__ fix (multi-tours)
                 kwargs = _drop_orphan_tool_results(kwargs)
+                kwargs = drop_gemini3_sampling_params(kwargs)  # alias 2.5-flash + params refuses par Gemini 3
                 # OVH Mistral streaming is broken for tool calls — force non-streaming
                 model = kwargs.get("model", "")
                 if model.startswith("openai/Mistral") or model.startswith("ovhcloud/"):

@@ -39,11 +39,14 @@ class MageAPIClient:
         if not self.api_key:
             raise ValueError("Mage api_key is not configured in settings")
 
-        print("[Mage] API Client initialized:")
-        print(f"   Base URL: {self.base_url}")
-        print(f"   Project: {self.project_name}")
-        print(f"   OAuth Token: {'Set' if self.oauth_token else 'Not Set'}")
-        print(f"   API Key: {'Set' if self.api_key else 'Not Set'}")
+        logger.info(
+            "[Mage] API client initialized: base_url=%s project=%s "
+            "oauth_token=%s api_key=%s",
+            self.base_url,
+            self.project_name,
+            "set" if self.oauth_token else "not set",
+            "set" if self.api_key else "not set",
+        )
 
         self._initialized = True
 
@@ -508,20 +511,23 @@ class AgentOrchestrator:
 
     def _ensure_pipeline_exists(self) -> bool:
         """Ensure the agents pipeline exists."""
-        print(f"\n[1/2] Checking pipeline '{self.PIPELINE_UUID}'...")
+        logger.info("[1/2] Checking pipeline '%s'...", self.PIPELINE_UUID)
         try:
             if self.client.pipeline_exists(self.PIPELINE_UUID):
-                print(f"   ✓ Pipeline '{self.PIPELINE_UUID}' already exists.")
+                logger.info("Pipeline '%s' already exists.", self.PIPELINE_UUID)
                 return True
 
-            print(f"   Pipeline not found. Creating '{self.PIPELINE_UUID}'...")
+            logger.info("Pipeline '%s' not found, creating it...", self.PIPELINE_UUID)
             result = self.client.create_pipeline(self.PIPELINE_UUID)
             if result:
-                print(f"   ✓ Pipeline '{self.PIPELINE_UUID}' created successfully!")
+                logger.info("Pipeline '%s' created.", self.PIPELINE_UUID)
                 return True
 
-            print(f"   ✗ Failed to create pipeline '{self.PIPELINE_UUID}'")
-            print(f"   Debug: create_pipeline returned: {result}")
+            logger.warning(
+                "Failed to create pipeline '%s': create_pipeline returned %r",
+                self.PIPELINE_UUID,
+                result,
+            )
             return False
         except OrchestratorUnavailable:
             # `return False` below becomes a bare "failed to initialize pipeline
@@ -531,22 +537,19 @@ class AgentOrchestrator:
             # `POST /pipelines/agents/triggers`, which is the very thing that
             # commit set out to remove.
             raise
-        except Exception as e:
-            print(f"   ✗ Exception in _ensure_pipeline_exists: {e}")
-            import traceback
-
-            traceback.print_exc()
+        except Exception:
+            logger.exception("Exception in _ensure_pipeline_exists")
             return False
 
     def _ensure_block_exists(self) -> bool:
         """Ensure the agent_exe block exists in the pipeline."""
-        print(f"\n[2/2] Checking block '{self.BLOCK_UUID}'...")
+        logger.info("[2/2] Checking block '%s'...", self.BLOCK_UUID)
         try:
             if self.client.block_exists(self.PIPELINE_UUID, self.BLOCK_UUID):
-                print(f"   ✓ Block '{self.BLOCK_UUID}' already exists.")
+                logger.info("Block '%s' already exists.", self.BLOCK_UUID)
                 return True
 
-            print(f"   Block not found. Creating '{self.BLOCK_UUID}'...")
+            logger.info("Block '%s' not found, creating it...", self.BLOCK_UUID)
 
             # Create the block content that calls your API
             block_content = """import pandas as pd
@@ -628,11 +631,14 @@ def load_agent_data(*args, **kwargs):
             )
 
             if result:
-                print(f"   ✓ Block '{self.BLOCK_UUID}' created successfully!")
+                logger.info("Block '%s' created.", self.BLOCK_UUID)
                 return True
 
-            print(f"   ✗ Failed to create block '{self.BLOCK_UUID}'")
-            print(f"   Debug: create_block returned: {result}")
+            logger.warning(
+                "Failed to create block '%s': create_block returned %r",
+                self.BLOCK_UUID,
+                result,
+            )
             return False
         except OrchestratorUnavailable:
             # `return False` below becomes a bare "failed to initialize pipeline
@@ -642,11 +648,8 @@ def load_agent_data(*args, **kwargs):
             # `POST /pipelines/agents/triggers`, which is the very thing that
             # commit set out to remove.
             raise
-        except Exception as e:
-            print(f"   ✗ Exception in _ensure_block_exists: {e}")
-            import traceback
-
-            traceback.print_exc()
+        except Exception:
+            logger.exception("Exception in _ensure_block_exists")
             return False
 
     def _initialize_pipeline(self) -> bool:
