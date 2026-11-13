@@ -1,3 +1,5 @@
+"""API keys router — save, list and delete provider API keys under ``/api/saved-api-keys``."""
+
 from fastapi import APIRouter, Depends, HTTPException
 from apowerb.core.api_key_main import (
     register_api_key,

@@ -78,8 +78,14 @@ class StorageService:
     """
 
     def __init__(self) -> None:
-        self.storage_mode = get_settings().storage_mode
-        self._use_s3 = self.storage_mode == "S3"
+        from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+
+        settings = get_settings()
+        self.storage_mode = settings.storage_mode
+        # S3 only when selected AND fully configured, like the artifact store
+        # and the /files route: a blank endpoint made boto3 fail on install
+        # without S3 (storage_mode defaults to "S3").
+        self._use_s3 = is_s3_artifact_storage_configured(settings)
 
     # ── writes ────────────────────────────────────────────────────────────
     def upload_bytes_to_storage(

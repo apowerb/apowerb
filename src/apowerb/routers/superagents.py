@@ -1,3 +1,11 @@
+"""SuperAgent templates, under ``/api/superagents``.
+
+``GET /superagents`` lists the templates visible to the caller and
+``GET /superagents/{template_id}`` returns one. Templates restricted to other
+organisations are hidden, and each template goes through ``offer_default_llm``
+before it is returned.
+"""
+
 from fastapi import APIRouter, Depends
 from apowerb.core.superagents import (
     get_superagent_template,

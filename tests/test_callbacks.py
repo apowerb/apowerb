@@ -1,4 +1,4 @@
-"""Tests for SCEI sub-agent communication callbacks.
+"""Tests for sub-agent communication callbacks.
 
 The factory ``build_validating_state_writer(schema_class, state_key)``
 returns an ADK ``after_agent_callback`` that:
@@ -337,7 +337,7 @@ class TestSkipShortCircuitOnAbsentOrError:
         assert "ar_match" not in ctx.state
 
     async def test_cascade_from_llm_not_ar_classification(self):
-        """Intake LLM classifies not_ar (SCEIIntakePayload) -> matcher
+        """Intake LLM classifies not_ar (intake payload) -> matcher
         short-circuits -> recorder short-circuits (full v2 cascade)."""
         from apowerb.core.agent_helpers.callbacks import (
             build_skip_short_circuit_callback,
@@ -447,53 +447,3 @@ class TestAttachmentPdfGate:
         assert _is_pdf_attachment({}) is False
         assert _is_pdf_attachment("not a dict") is False
         assert _is_pdf_attachment({"content_type": None, "filename": None}) is False
-
-    def test_no_pdf_short_circuits_to_not_ar(self):
-        from th2customers.scei.gates import build_attachment_pdf_gate_callback
-
-        cb = build_attachment_pdf_gate_callback("ar_intake")
-        ctx = MagicMock()
-        ctx.state = {"attachments": [
-            {"content_type": "image/png", "filename": "logo.png"},
-        ]}
-        res = cb(callback_context=ctx)
-        payload = json.loads(ctx.state["ar_intake"])
-        assert payload["email_classification"] == "not_ar"
-        assert payload["raison"] == "no_pdf_attachment"
-        assert payload["extraction_results"] == {}
-        assert res is not None  # short-circuit content returned (skips LLM)
-
-    def test_with_pdf_proceeds_to_llm(self):
-        from th2customers.scei.gates import build_attachment_pdf_gate_callback
-
-        cb = build_attachment_pdf_gate_callback("ar_intake")
-        ctx = MagicMock()
-        ctx.state = {"attachments": [
-            {"content_type": "image/png", "filename": "sig.png"},
-            {"content_type": "application/pdf", "filename": "ar.pdf"},
-        ]}
-        res = cb(callback_context=ctx)
-        assert res is None  # PDF present -> let the LLM run
-        assert "ar_intake" not in ctx.state
-
-    def test_no_attachments_key_is_not_ar(self):
-        from th2customers.scei.gates import build_attachment_pdf_gate_callback
-
-        cb = build_attachment_pdf_gate_callback("ar_intake")
-        ctx = MagicMock()
-        ctx.state = {}
-        cb(callback_context=ctx)
-        assert json.loads(ctx.state["ar_intake"])["email_classification"] == "not_ar"
-
-    def test_written_payload_revalidates(self):
-        """The short-circuit JSON must be a valid SCEIIntakePayload (the
-        downstream contract)."""
-        from th2customers.scei.gates import build_attachment_pdf_gate_callback
-        from th2customers.scei.schemas import SCEIIntakePayload
-
-        cb = build_attachment_pdf_gate_callback("ar_intake")
-        ctx = MagicMock()
-        ctx.state = {"attachments": []}
-        cb(callback_context=ctx)
-        p = SCEIIntakePayload.model_validate(json.loads(ctx.state["ar_intake"]))
-        assert p.email_classification == "not_ar"

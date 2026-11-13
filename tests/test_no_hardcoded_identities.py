@@ -15,11 +15,12 @@ Two rules, deliberately different in strictness:
 
 * A personal mailbox provider (gmail, outlook, yahoo, ...) is never legitimate
   here. No exemption list — use ``user@example.com``.
-* A company or customer domain is often *functional* in this codebase: the SCEI
-  tests exercise supplier filtering on real domains, and removing them would
-  remove what they test. So that rule ratchets: the files that carry such an
-  address today are frozen in ``_DOMAIN_DEBT``, and no new file may join them.
-  Adding a file to that set is a conscious act, visible in review.
+* A company domain is sometimes *functional* in this codebase, so that rule
+  ratchets: the files that carry such an address today are frozen in
+  ``_DOMAIN_DEBT``, and no new file may join them. Adding a file to that set
+  is a conscious act, visible in review.
+
+A customer's bare name is guarded by ``test_no_customer_name_in_the_source.py``.
 
 The model id ``thaink2/default`` is not an identity — it is the public name of
 the shared-model provider, and renaming it would break every agent using it.
@@ -67,7 +68,6 @@ INTERNAL_DOMAINS = (
     "th2ai.com",
     # The GCP service accounts of our own project.
     "th2ai.iam.gserviceaccount.com",
-    "scei88.fr",
 )
 
 # Files that already carry an internal or customer address, frozen on
@@ -76,27 +76,10 @@ INTERNAL_DOMAINS = (
 _DOMAIN_DEBT = {
     "tests/conftest.py",
     "tests/test_artifact_library.py",
-    "tests/test_cli_agents.py",
-    "tests/test_db_executor_mssql.py",
     "tests/test_notifier_health.py",
-    "tests/test_run_gate_portes.py",
-    "tests/test_scei_ar_assistant_template.py",
-    "tests/test_scei_mail.py",
-    "tests/test_scei_pmi_match.py",
-    "tests/test_scei_schemas.py",
     "tests/test_scheduled_emailing.py",
-    "tests/test_superagent_template_visibility.py",
     "tests/test_system_mailer.py",
-    "tests/test_template_drift.py",
     "tests/test_webhook_gmail_signature.py",
-    "tests/test_webhook_renewal.py",
-    "tests/test_webhook_retrigger.py",
-    "tests/test_webhook_serve_endpoints.py",
-    "tests/test_webhook_user_id.py",
-    "tests/unit_scei/test_ar_gate.py",
-    "tests/unit_scei/test_excluded_scei88.py",
-    "tests/unit_scei/test_pmi_gate_recovery.py",
-    "tests/unit_scei/test_scei_mail_split_suppress.py",
 }
 
 

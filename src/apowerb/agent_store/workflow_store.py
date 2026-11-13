@@ -40,6 +40,7 @@ class WorkflowStore(BaseModel):
     workflow_table: Any = None
     revision_table: Any = None
     suggest_table: Any = None
+    tool_shape_table: Any = None
 
     def __init__(self, **data: Any):
         super().__init__(**data)
@@ -94,6 +95,17 @@ class WorkflowStore(BaseModel):
             Column("steps", Integer, nullable=False),
             Column("shown", Integer, nullable=False),
             Column("accepted", Integer, nullable=False),
+        )
+        # Studio proactif : la FORME (clés et types, jamais les valeurs) de la
+        # dernière réponse de chaque outil, par utilisateur, pour proposer ses
+        # champs au nœud suivant. Plafonnée par ``core.workflow_shapes``.
+        self.tool_shape_table = Table(
+            "workflow_tool_shapes",
+            self.metadata,
+            Column("owner_id", String, primary_key=True),
+            Column("tool_ref", String, primary_key=True),
+            Column("shape", String, nullable=False),
+            Column("updated_at", String),
         )
 
     def create_table(self):

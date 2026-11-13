@@ -118,3 +118,24 @@ async def test_crossing_the_limit_flips_exceeded(db):
     assert not (await uq.get_quota_status(db, owner_id="dave@example.com", plan="free")).exceeded
     await _add(db, total_tokens=1)
     assert (await uq.get_quota_status(db, owner_id="dave@example.com", plan="free")).exceeded
+
+
+@pytest.mark.asyncio
+async def test_cached_input_counts_at_a_quarter_by_default(db, monkeypatch):
+    """Cached input tokens are billed 75-90 % cheaper by every provider we
+    run; counting them in full made a cached prefix eat the quota as if it
+    were new input."""
+    monkeypatch.delenv(uq.CACHED_TOKEN_PERCENT_ENV, raising=False)
+    await _add(db, total_tokens=1000, cached_tokens=800)
+    await _add(db, total_tokens=100, cached_tokens=0)
+    st = await uq.get_quota_status(db, owner_id="dave@example.com", plan="free")
+    assert st.used_tokens == 1100 - 600  # 800 cached counted as 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw, expected", [("100", 1000), ("0", 200), ("10", 280), ("bogus", 400), ("250", 1000)])
+async def test_cached_weight_is_configurable(db, monkeypatch, raw, expected):
+    monkeypatch.setenv(uq.CACHED_TOKEN_PERCENT_ENV, raw)
+    await _add(db, total_tokens=1000, cached_tokens=800)
+    st = await uq.get_quota_status(db, owner_id="dave@example.com", plan="free")
+    assert st.used_tokens == expected

@@ -3,8 +3,8 @@
 Live regression 2026-05-11: webhook ADK sessions were stored under
 ``users/3/sessions/webhook_1`` (stringified user_id int) while the
 frontend queries ADK with the authenticated user's email
-(``users/com@scei88.fr/sessions/webhook_1``). Result: the operator
-sees the "Webhook — scei_ar_assistant" conversation appear in the
+(``users/ops@acme.example/sessions/webhook_1``). Result: the operator
+sees the "Webhook — demo_client_assistant" conversation appear in the
 sidebar but its content is empty, because ADK returns 404 on the
 email-keyed lookup and the UI creates a new empty session in its
 place.
@@ -16,61 +16,35 @@ MUST be the User row's ``email`` field, not ``str(user_id)``.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
-
 import pytest
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from apowerb.helpers.database import Base
 from apowerb.models import User
 from apowerb.routers.webhook_handlers import _common
 
 
 @pytest.fixture
-async def sqlite_with_user(monkeypatch):
+async def sqlite_with_user(sqlite_engine, bind_sessionmanager):
     """sqlite + seeded User; sessionmanager.session() patched onto the
     ``_common`` module so ``run_agent_for_webhook`` reads from our DB."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    # Strip Postgres schema for sqlite compatibility (cross-schema CREATE
-    # TABLE is unsupported).
-    for t in Base.metadata.tables.values():
-        t.schema = None
-    Base.metadata.schema = None
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
     async with factory() as db:
         db.add(
             User(
                 user_id=3,
                 first_name="Commerciale",
-                last_name="SCEI",
-                email="com@scei88.fr",
+                last_name="Client",
+                email="ops@acme.example",
                 password="x",
                 role="USER",
             )
         )
         await db.commit()
 
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        session = factory()
-        try:
-            yield session
-        finally:
-            await session.close()
-
-    monkeypatch.setattr(_common.sessionmanager, "session", _session, raising=False)
+    bind_sessionmanager(factory)
 
     yield factory
-    await engine.dispose()
 
 
 class TestAdkUserIdIsEmail:
@@ -114,12 +88,12 @@ class TestAdkUserIdIsEmail:
 
         # All three ADK calls must be keyed by the email, not by the
         # stringified user_id integer.
-        assert captured["get_user_id"] == "com@scei88.fr", (
+        assert captured["get_user_id"] == "ops@acme.example", (
             f"get_adk_session received user_id={captured['get_user_id']!r}; "
             "expected the User.email so the UI can find the session"
         )
-        assert captured["create_user_id"] == "com@scei88.fr"
-        assert captured["run_user_id"] == "com@scei88.fr"
+        assert captured["create_user_id"] == "ops@acme.example"
+        assert captured["run_user_id"] == "ops@acme.example"
         # And specifically NOT the stringified int — that was the bug.
         assert captured["run_user_id"] != "3"
 
@@ -127,7 +101,7 @@ class TestAdkUserIdIsEmail:
     async def test_fresh_session_deletes_then_creates(
         self, sqlite_with_user, monkeypatch
     ):
-        """fresh_session=True (Outlook/SCEI, session unique par webhook) ->
+        """fresh_session=True (Outlook, session unique par webhook) ->
         delete_adk_agent_session AVANT create, get_adk_session JAMAIS
         (session fraiche par run -> anti accumulation historique -> 500)."""
         calls: list[str] = []

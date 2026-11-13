@@ -348,3 +348,11 @@ def test_the_route_is_mounted_and_authenticated():
     route = next(r for r in cfg.router.routes if r.path == "/config/default-llm/usage")
     assert get_current_user in [d.call for d in route.dependant.dependencies]
     assert route.response_model is du.DefaultLlmUsage
+
+
+async def test_cached_input_counts_at_a_quarter(db, monkeypatch):
+    from apowerb.core import usage_quota as uq
+
+    monkeypatch.delenv(uq.CACHED_TOKEN_PERCENT_ENV, raising=False)
+    await _add(db, total_tokens=1000, cached_tokens=800)
+    assert await du.used_tokens_this_month(db, "dave@example.com") == 400

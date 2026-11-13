@@ -38,7 +38,7 @@ def test_structured_output_agents_never_get_it():
     """Same reasoning as the chat action-card tools.
 
     A pipeline agent with an output schema must emit its JSON, not a tool call.
-    Handing it a saving tool is how the SCEI intake was broken in 2026-05-22.
+    Handing it a saving tool is how a client intake agent was broken in 2026-05-22.
     """
     assert (
         _should_inject_artifact_tool(

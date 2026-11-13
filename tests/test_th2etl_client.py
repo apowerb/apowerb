@@ -166,7 +166,13 @@ def test_trigger_pipeline_runs_scheduler_and_maps_run_id(fake, client):
     call = fake.calls[-1]
     assert call["url"] == "http://th2etl:8009/schedulers/42/run"
     assert call["json"] == {"variables": {"jwt_token": "t"}}
-    assert out["id"] == 7 and out["run_id"] == 7 and out["status"] == "pending"
+    assert out == {
+        "pipeline_run": {
+            "id": 7,
+            "run_id": 7,
+            "status": "pending",
+        }
+    }
 
 
 # --- listing ---

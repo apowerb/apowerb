@@ -165,7 +165,8 @@ def tool_jev_classify(
     Returns:
         dict: {"status": "success", "total", "counts": {label: n, ...,
             "uncertain": n[, "failed": n]}, "results": [{"index", "label",
-            "confidence", "uncertain", "best_guess", "item" | "row"}, ...],
+            "confidence", "uncertain", "best_guess", "usage", "item" | "row"},
+            ...],
             "truncated": bool, "skipped_empty": n} — results capped at 50,
             counts cover every item; empty or NULL texts are skipped, not sent.
             On failure: {"status": "error", "message": "..."}.
@@ -200,11 +201,16 @@ def tool_jev_classify(
     }
 
     def ask(c: JevClient, text: str) -> dict:
-        answer = c.decide({"item": text}, question)["answers"]["label"]
+        payload = c.decide({"item": text}, question)
+        answer = payload["answers"]["label"]
         probs = answer.get("probabilities") or {}
         best = answer.get("choice") or (max(probs, key=probs.get) if probs else None)
         conf = float(probs.get(best, answer.get("confidence", 0.0))) if best else 0.0
-        return {"best_guess": best, "confidence": round(conf, 3)}
+        return {
+            "best_guess": best,
+            "confidence": round(conf, 3),
+            "usage": payload.get("usage"),
+        }
 
     answers = _run_all(client, [t for t, _ in sourced], ask)
     fatal = next((a for a in answers if a.get("fatal")), None)
@@ -227,6 +233,7 @@ def tool_jev_classify(
                 confidence=a["confidence"],
                 uncertain=uncertain,
                 best_guess=a["best_guess"],
+                usage=a["usage"],
             )
             counts["uncertain" if uncertain else a["best_guess"]] += 1
         entry["row" if row is not None else "item"] = (

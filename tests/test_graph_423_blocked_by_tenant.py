@@ -4,7 +4,7 @@ reconnect — only the Microsoft 365 admin can resolve it.
 
 Background
 ----------
-On 2026-05-07 the SCEI tenant blocked the app via SharePoint App Access
+On 2026-05-07 a client tenant blocked the app via SharePoint App Access
 Policy. ``/me`` kept returning 200 (identity OK) but every ``/me/drive/*``
 call returned ``HTTP 423 resourceLocked``. The previous fallback returned
 a generic ``"Graph API error"`` dict, which made the LLM ask the user to

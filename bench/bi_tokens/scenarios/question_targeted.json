@@ -1,0 +1,16 @@
+{
+ "description": "La même question si le modèle ne demande que le KPI ROAS par canal (component_ids)",
+ "source": "variante scriptée de question",
+ "estimate": true,
+ "turns": [
+  {
+   "recorded": "question",
+   "transform": "targeted",
+   "facts": [
+    "ROAS[^{}]{0,60}32\\.8",
+    "ROAS[^{}]{0,60}3\\.6",
+    "ROAS[^{}]{0,60}3\\.0"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "description": "« Quel canal a le meilleur ROAS ? » depuis le mini-chat du tableau (1 + 4 requêtes)",
+ "source": "DEV 14/10, enregistré",
+ "turns": [
+  {
+   "recorded": "question",
+   "facts": [
+    "ROAS[^{}]{0,60}32\\.8",
+    "ROAS[^{}]{0,60}3\\.6",
+    "ROAS[^{}]{0,60}3\\.0"
+   ]
+  }
+ ]
+}

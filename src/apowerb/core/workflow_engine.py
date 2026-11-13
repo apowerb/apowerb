@@ -33,9 +33,11 @@ passe par le même chemin que le builder (quotas, session ADK, ``/run``), voir
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import re
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from logging import getLogger
 from typing import Any, AsyncGenerator, Awaitable, Callable, Optional
@@ -48,6 +50,26 @@ logger = getLogger(__name__)
 
 _FALLBACK_MESSAGE = "Execute your task now and perform the required action."
 _COMPOSITES = {"sequential", "parallel", "loop"}
+
+# Les identifiants qu'un outil rend et que le texte final de l'agent perd
+# (« J'ai généré le graphique » sans le graphique).
+_ARTIFACT_KEYS = ("chart_id", "forecast_chart_id", "dashboard_id", "dataset_id")
+# Au-delà, l'agent a balayé des datasets plutôt que produit des objets.
+_MAX_ARTIFACTS = 20
+
+
+@dataclass
+class AgentReply:
+    """La réponse d'un agent exécuté par un workflow.
+
+    ``output`` : le texte final, relu comme JSON s'il en contient — c'est la
+    sortie du nœud, lue par ``{{agent1}}``. ``artifacts`` : les identifiants
+    rendus par ses outils (voir ``tool_artifacts``), exposés à côté de la
+    sortie pour ne pas en changer la forme.
+    """
+
+    output: Any
+    artifacts: list[dict] = field(default_factory=list)
 
 
 class WorkflowUserError(ValueError):
@@ -227,6 +249,143 @@ def extract_response_text(response: Any) -> str:
         if content is not None:
             return content if isinstance(content, str) else json.dumps(content)
     return json.dumps(response)
+
+
+def _function_responses(response: Any):
+    events = response if isinstance(response, list) else [response]
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        parts = (ev.get("content") or {}).get("parts") or []
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            fr = p.get("functionResponse") or p.get("function_response")
+            if isinstance(fr, dict) and isinstance(fr.get("response"), dict):
+                yield fr.get("name") or "", fr["response"]
+
+
+def tool_artifacts(response: Any) -> list[dict]:
+    """Les identifiants (graphique, tableau de bord, dataset) rendus par les
+    outils au cours d'un run ADK, dans l'ordre, sans doublon.
+
+    Seules les clés de ``_ARTIFACT_KEYS`` d'une réponse d'outil sont gardées,
+    avec le nom de l'outil : ``tool_describe_dataset`` rend aussi un
+    ``dataset_id``, qu'il n'a pas créé — c'est au lecteur de trier. Une
+    réponse ``success: False`` est ignorée.
+    """
+    found: list[dict] = []
+    for name, resp in _function_responses(response):
+        if resp.get("success") is False:
+            continue
+        ids = {
+            k: resp[k]
+            for k in _ARTIFACT_KEYS
+            if isinstance(resp.get(k), (str, int))
+            and not isinstance(resp.get(k), bool)
+            and resp.get(k) != ""
+        }
+        if not ids:
+            continue
+        item = {"tool": name, **ids}
+        if item not in found:
+            found.append(item)
+        if len(found) >= _MAX_ARTIFACTS:
+            break
+    return found
+
+
+# --- Appels d'outils d'un agent, pour la trace du run ----------------------
+
+# Assez pour lire une liste de datasets ou une erreur d'outil dans le panneau
+# Test, sans gonfler chaque événement de plusieurs centaines de Ko.
+TRACE_TOOL_RESULT_CHARS = 2_000
+
+_tool_calls: contextvars.ContextVar[Optional[list]] = contextvars.ContextVar(
+    "apowerb_workflow_tool_calls", default=None
+)
+
+
+@contextmanager
+def collect_tool_calls():
+    """Recueille, le temps d'un nœud, les appels d'outils de son agent.
+
+    Une variable de contexte plutôt qu'un paramètre de plus à ``run_agent`` :
+    la signature des rappels reste celle qu'utilisent les déclencheurs et les
+    tests, et un ``run_agent`` qui ne rapporte rien laisse simplement la
+    liste vide.
+    """
+    calls: list = []
+    token = _tool_calls.set(calls)
+    try:
+        yield calls
+    finally:
+        _tool_calls.reset(token)
+
+
+def report_tool_calls(calls: list) -> None:
+    """Ajoute ``calls`` au nœud en cours ; sans nœud en cours, ne fait rien."""
+    current = _tool_calls.get()
+    if current is not None:
+        current.extend(calls)
+
+
+def _part_call(part: dict) -> Optional[dict]:
+    return part.get("functionCall") or part.get("function_call")
+
+
+def _part_result(part: dict) -> Optional[dict]:
+    return part.get("functionResponse") or part.get("function_response")
+
+
+def tool_calls_from_response(response: Any) -> list[dict]:
+    """Les appels d'outils d'une réponse ADK ``/run``, dans l'ordre.
+
+    Chaque appel garde ``name`` et ``args`` ; le ``result`` de la réponse de
+    même nom qui le suit y est joint, coupé à ``TRACE_TOOL_RESULT_CHARS``. Un
+    appel resté sans réponse est gardé tel quel : c'est souvent celui qui a
+    échoué.
+    """
+    if not isinstance(response, list):
+        return []
+    calls: list[dict] = []
+    for ev in response:
+        if not isinstance(ev, dict):
+            continue
+        parts = (ev.get("content") or {}).get("parts") or ev.get("parts") or []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            call = _part_call(part)
+            if call:
+                entry = {"name": call.get("name", ""), "args": call.get("args") or {}}
+                # Un agent peut passer un tableau entier en argument : on le
+                # coupe comme le résultat, sinon il gonfle chaque événement.
+                args_text = json.dumps(entry["args"], ensure_ascii=False, default=str)
+                if len(args_text) > TRACE_TOOL_RESULT_CHARS:
+                    entry["args"] = args_text[:TRACE_TOOL_RESULT_CHARS]
+                    entry["args_truncated"] = True
+                calls.append(entry)
+                continue
+            result = _part_result(part)
+            if not result:
+                continue
+            pending = next(
+                (
+                    c
+                    for c in calls
+                    if c["name"] == result.get("name", "") and "result" not in c
+                ),
+                None,
+            )
+            if pending is None:
+                continue
+            body = result.get("response")
+            text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False, default=str)
+            pending["result"] = text[:TRACE_TOOL_RESULT_CHARS]
+            if len(text) > TRACE_TOOL_RESULT_CHARS:
+                pending["result_truncated"] = True
+    return calls
 
 
 # --- Compilation canvas -> google.adk.workflow.Workflow --------------------
@@ -530,7 +689,7 @@ async def run_agent_message(
     owner_email: str,
     plan: Optional[str],
     token_factory: TokenFactory,
-) -> Any:
+) -> AgentReply:
     """Exécute un agent par le même chemin que le builder, message brut.
 
     ``workflowRunner.js`` appelle ``createSession`` puis ``runAgent`` : une
@@ -560,7 +719,11 @@ async def run_agent_message(
         run_mode="run",
         token=token,
     )
-    return try_parse_json(extract_response_text(response))
+    report_tool_calls(tool_calls_from_response(response))
+    return AgentReply(
+        output=try_parse_json(extract_response_text(response)),
+        artifacts=tool_artifacts(response),
+    )
 
 
 def make_http_leaf_runner(
@@ -569,12 +732,13 @@ def make_http_leaf_runner(
     """``run_leaf`` de production pour le canvas : voir ``run_agent_message``."""
 
     async def _run(spec: AgentSpec, node_input: Any) -> Any:
-        return await run_agent_message(
+        reply = await run_agent_message(
             spec.agent_id,
             leaf_message(node_input, spec.description),
             owner_email=owner_email,
             plan=plan,
             token_factory=token_factory,
         )
+        return reply.output
 
     return _run

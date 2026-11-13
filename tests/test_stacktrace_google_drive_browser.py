@@ -110,7 +110,7 @@ class TestToolErrorForwardingSites:
             new_callable=AsyncMock,
             return_value="fake-refresh-token",
         ), patch(
-            "apowerb.routers.google_drive_browser.tool_list_files",
+            "apowerb.routers.google_drive_browser.tool_gdrive_list_files",
             return_value=tool_result,
         ):
             resp = client.get("/api/googledrivebrowser/list")
@@ -133,7 +133,7 @@ class TestToolErrorForwardingSites:
             new_callable=AsyncMock,
             return_value="fake-refresh-token",
         ), patch(
-            "apowerb.routers.google_drive_browser.tool_search_files",
+            "apowerb.routers.google_drive_browser.tool_gdrive_search_files",
             return_value=tool_result,
         ):
             resp = client.get("/api/googledrivebrowser/search", params={"q": "report"})
@@ -151,7 +151,7 @@ class TestToolErrorForwardingSites:
             new_callable=AsyncMock,
             return_value="fake-refresh-token",
         ), patch(
-            "apowerb.routers.google_drive_browser.tool_list_files",
+            "apowerb.routers.google_drive_browser.tool_gdrive_list_files",
             return_value=tool_result,
         ):
             resp = client.get("/api/googledrivebrowser/list")

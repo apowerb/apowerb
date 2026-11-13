@@ -96,13 +96,15 @@ def tool_list_files(
                 or os.path.splitext(i.get("name", "").lower())[1] in allowed_exts
             ]
 
-        return {
+        response = {
             "status": "success",
             "items": items,
             "total": len(items),
             "folder_exists": True,
-            "note": "total=0 means the folder exists but is empty — do NOT create it.",
         }
+        if not items:
+            response["note"] = "total=0 means the folder exists but is empty — do NOT create it."
+        return response
 
     except httpx.TimeoutException:
         return {"status": "error", "message": "Request timed out. You may retry once.", "retry": True}
@@ -125,8 +127,7 @@ def tool_get_file_metadata(
 
     Returns:
         dict with keys: status, id, name, type, size, mimeType,
-        lastModified, createdAt, webUrl, parentPath, childCount,
-        downloadUrl (for files only — pre-authenticated, valid ~1 hour).
+        lastModified, createdAt, webUrl, parentPath, childCount.
     """
     if not item_id and not item_path:
         return {
@@ -154,7 +155,7 @@ def tool_get_file_metadata(
             url,
             headers=headers,
             params={
-                "$select": "id,name,size,file,folder,lastModifiedDateTime,createdDateTime,webUrl,parentReference,@microsoft.graph.downloadUrl",
+                "$select": "id,name,size,file,folder,lastModifiedDateTime,createdDateTime,webUrl,parentReference",
             },
             timeout=20,
         )
@@ -163,9 +164,7 @@ def tool_get_file_metadata(
             return err
 
         item = resp.json()
-        result = _format_item(item)
-        result["downloadUrl"] = item.get("@microsoft.graph.downloadUrl")
-        return {"status": "success", **result}
+        return {"status": "success", **_format_item(item)}
 
     except httpx.TimeoutException:
         return {"status": "error", "message": "Request timed out. You may retry once.", "retry": True}
@@ -513,7 +512,8 @@ def tool_download_file(
         # Also upload to S3 so read_uploaded_file can find it in S3 mode
         try:
             from apowerb.configs.settings import get_settings as _get_settings
-            if _get_settings().storage_mode != "local":
+            from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+            if is_s3_artifact_storage_configured(_get_settings()):
                 s3_key = f"uploads/{agent_folder}/{file_name}"
                 from apowerb.tools_store.portfolio.onedrive_core import upload_bytes_to_s3
                 upload_bytes_to_s3(content, s3_key)

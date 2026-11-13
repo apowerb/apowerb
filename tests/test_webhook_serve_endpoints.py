@@ -275,15 +275,15 @@ def _fake_owner(user_id: int, email: str):
 class TestOrgSharedReadAccess:
     def test_same_org_non_owner_can_read_detail(self):
         log = _make_log(50, user_id=1)               # owner = user 1
-        owner = _fake_owner(1, "alice@scei88.fr")
+        owner = _fake_owner(1, "alice@acme.example")
         session = _SeqSession([log, owner])          # 1) log  2) owner lookup
-        app = _build_app(session, user_id=2, email="bob@scei88.fr")  # same domain
+        app = _build_app(session, user_id=2, email="bob@acme.example")  # same domain
         resp = TestClient(app).get("/api/webhooks/logs/50")
         assert resp.status_code == 200
 
     def test_other_org_non_owner_gets_404(self):
         log = _make_log(50, user_id=1)
-        owner = _fake_owner(1, "alice@scei88.fr")
+        owner = _fake_owner(1, "alice@acme.example")
         session = _SeqSession([log, owner])
         app = _build_app(session, user_id=2, email="carol@rival.com")  # other domain
         resp = TestClient(app).get("/api/webhooks/logs/50")
@@ -292,13 +292,13 @@ class TestOrgSharedReadAccess:
     def test_owner_reads_without_owner_lookup(self):
         log = _make_log(50, user_id=7)
         session = _SeqSession([log])                 # only the log; no 2nd query
-        app = _build_app(session, user_id=7, email="dave@scei88.fr")
+        app = _build_app(session, user_id=7, email="dave@acme.example")
         resp = TestClient(app).get("/api/webhooks/logs/50")
         assert resp.status_code == 200
 
     def test_missing_log_is_404(self):
         session = _SeqSession([None])
-        app = _build_app(session, user_id=2, email="bob@scei88.fr")
+        app = _build_app(session, user_id=2, email="bob@acme.example")
         resp = TestClient(app).get("/api/webhooks/logs/999")
         assert resp.status_code == 404
 
@@ -307,6 +307,6 @@ class TestOrgSharedReadAccess:
         # non-owner must not read the raw email HTML. The owner-strict SQL
         # filter eliminates the row, so the mocked session returns None -> 404.
         session = _FakeSession(scalar_one_or_none=None)
-        app = _build_app(session, user_id=2, email="bob@scei88.fr")
+        app = _build_app(session, user_id=2, email="bob@acme.example")
         resp = TestClient(app).get("/api/webhooks/logs/50/body")
         assert resp.status_code == 404

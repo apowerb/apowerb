@@ -620,6 +620,7 @@ app.include_router(api_router)
 # Start background webhook subscription renewal loop + backlog drain
 from apowerb.scheduler.webhook_renewal import webhook_renewal_loop
 from apowerb.scheduler.events_retention import events_retention_loop
+from apowerb.scheduler.trace_retention import trace_retention_loop
 from apowerb.scheduler import backlog_worker
 from apowerb.scheduler.notifier_watch import notifier_watch_loop
 from apowerb.bug_reports.tracking import bug_report_watch_loop
@@ -700,6 +701,24 @@ async def _start_webhook_renewal():
         print(f"[STARTUP HOOK] events_retention_loop schedule raised: {e!r}", flush=True)
 
     try:
+        trace_task = asyncio.create_task(trace_retention_loop())
+
+        def _on_trace_retention_done(task: asyncio.Task) -> None:
+            if task.cancelled():
+                return
+            exc = task.exception()
+            if exc is not None:
+                print(
+                    f"[STARTUP HOOK] trace_retention_loop crashed: {exc!r}",
+                    flush=True,
+                )
+
+        trace_task.add_done_callback(_on_trace_retention_done)
+        print("[STARTUP HOOK] trace_retention_loop scheduled", flush=True)
+    except Exception as e:
+        print(f"[STARTUP HOOK] trace_retention_loop schedule raised: {e!r}", flush=True)
+
+    try:
         # Drain webhook_logs queue one row at a time. Serialising agent
         # runs here is what keeps the Gemini per-minute input-token
         # quota from saturating when several Graph notifications land
@@ -770,6 +789,14 @@ from apowerb.configs.observability import (  # noqa: E402
     flush_observability,
 )
 
+# Same moment, same reason: Langfuse attaches to the tracer provider ADK
+# installs at server startup. Earlier, it would install its own and ADK's
+# would be refused.
+from apowerb.configs.langfuse_tracing import (  # noqa: E402
+    enable_langfuse_tracing,
+    flush_langfuse_tracing,
+)
+
 _inner_lifespan = getattr(app.router, "lifespan_context", None)
 
 
@@ -805,6 +832,7 @@ async def _wrapped_lifespan(scope_app):
         try:
             async with _inner_lifespan(scope_app):
                 bridge_logs_to_collector()
+                enable_langfuse_tracing()
                 await _start_webhook_renewal()
                 yield
         except TypeError:
@@ -813,15 +841,18 @@ async def _wrapped_lifespan(scope_app):
             # before giving up.
             async with _inner_lifespan():
                 bridge_logs_to_collector()
+                enable_langfuse_tracing()
                 await _start_webhook_renewal()
                 yield
     else:
         bridge_logs_to_collector()
+        enable_langfuse_tracing()
         await _start_webhook_renewal()
         yield
     # Records are batched: without this the last window is lost, and that is
     # exactly the window explaining why the process is going away.
     flush_observability()
+    flush_langfuse_tracing()
     print("[STARTUP HOOK via lifespan wrapper] exited", flush=True)
 
 
@@ -876,8 +907,8 @@ def serve(
         True, "--reload/--no-reload", help="Enable auto-reload"
     ),
 ):
-    """Start the th2agent FastAPI server."""
-    typer.echo(f"Starting th2agent server on {host}:{port}")
+    """Start the apowerb FastAPI server."""
+    typer.echo(f"Starting apowerb server on {host}:{port}")
     uvicorn.run("apowerb.main:app", host=host, port=port, reload=reload)
 
 

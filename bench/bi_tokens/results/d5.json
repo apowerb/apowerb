@@ -1,0 +1,806 @@
+{
+ "meta": {
+  "label": "d5",
+  "git_sha": "4e4fe32",
+  "date": "2026-10-16T08:46Z",
+  "model": "gemini/gemini-2.5-flash"
+ },
+ "scenarios": {
+  "creation": {
+   "description": "Tableau de bord créé depuis un CSV joint (gabarit ecommerce)",
+   "source": "DEV 14/10, enregistré",
+   "estimate": false,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 218,
+     "tokens": 13988,
+     "n_tools": 26,
+     "measured": 14531
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 1831,
+     "tokens": 14476,
+     "n_tools": 26,
+     "measured": 14911
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 19784,
+     "tokens": 19088,
+     "n_tools": 26,
+     "measured": 21783
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 21420,
+     "tokens": 19577,
+     "n_tools": 26,
+     "measured": 22342
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 26788,
+     "tokens": 21746,
+     "n_tools": 26,
+     "measured": 24577
+    }
+   ],
+   "tokens": 88875,
+   "chars": 329886,
+   "first_call_tokens": 13988,
+   "n_tools": 26,
+   "measured": 98144,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": [
+     "tool_add_chart_to_dashboard",
+     "tool_add_kpi_to_dashboard",
+     "tool_create_chart",
+     "tool_get_dashboard_data",
+     "tool_text_to_sql"
+    ]
+   }
+  },
+  "dashboard_chat": {
+   "description": "Mini-chat du tableau : la question ROAS puis une relance sur le CA hebdomadaire",
+   "source": "question DEV 14/10 + relance construite sur les mêmes données",
+   "estimate": false,
+   "turns": 2,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 14031,
+     "n_tools": 26,
+     "measured": 14573
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 18124,
+     "n_tools": 26,
+     "measured": 19282
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 35445,
+     "tokens": 33826,
+     "n_tools": 26,
+     "measured": 37762
+    },
+    {
+     "turn": 2,
+     "system": 11191,
+     "tools": 40778,
+     "history": 36496,
+     "tokens": 34130,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 2,
+     "system": 11191,
+     "tools": 40778,
+     "history": 38849,
+     "tokens": 35656,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 135767,
+   "chars": 378569,
+   "first_call_tokens": 14031,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": [
+     "tool_add_chart_to_dashboard",
+     "tool_add_kpi_to_dashboard",
+     "tool_create_chart",
+     "tool_get_dashboard_data",
+     "tool_text_to_sql"
+    ]
+   }
+  },
+  "forecast": {
+   "description": "Prévision du CA mensuel à 3 mois depuis le CSV joint (coup d'œil à l'en-tête, tableau de prévision, widget)",
+   "source": "synthétique : CSV de la démo régénéré (13 554 lignes, graine fixe), réponse de prévision construite",
+   "estimate": false,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 148,
+     "tokens": 13978,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 2447,
+     "tokens": 15291,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 4086,
+     "tokens": 16017,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 4501,
+     "tokens": 16166,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 61452,
+   "chars": 219058,
+   "first_call_tokens": 13978,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": [
+     "tool_add_chart_to_dashboard",
+     "tool_add_kpi_to_dashboard",
+     "tool_create_chart",
+     "tool_get_dashboard_data",
+     "tool_text_to_sql"
+    ]
+   }
+  },
+  "multi_turn": {
+   "description": "Une même conversation : création depuis le CSV, question ROAS, relance hebdomadaire",
+   "source": "tours DEV 14/10 enchaînés + relance construite",
+   "estimate": false,
+   "turns": 3,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 218,
+     "tokens": 13988,
+     "n_tools": 26,
+     "measured": 14531
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 1831,
+     "tokens": 14476,
+     "n_tools": 26,
+     "measured": 14911
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 19784,
+     "tokens": 19088,
+     "n_tools": 26,
+     "measured": 21783
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 21420,
+     "tokens": 19577,
+     "n_tools": 26,
+     "measured": 22342
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 26788,
+     "tokens": 21746,
+     "n_tools": 26,
+     "measured": 24577
+    },
+    {
+     "turn": 2,
+     "system": 11191,
+     "tools": 40778,
+     "history": 29103,
+     "tokens": 22479,
+     "n_tools": 26,
+     "measured": 14573
+    },
+    {
+     "turn": 2,
+     "system": 11191,
+     "tools": 40778,
+     "history": 36435,
+     "tokens": 26572,
+     "n_tools": 26,
+     "measured": 19282
+    },
+    {
+     "turn": 2,
+     "system": 11191,
+     "tools": 40778,
+     "history": 62634,
+     "tokens": 41785,
+     "n_tools": 26,
+     "measured": 37762
+    },
+    {
+     "turn": 3,
+     "system": 11191,
+     "tools": 40778,
+     "history": 45732,
+     "tokens": 37477,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 3,
+     "system": 11191,
+     "tools": 40778,
+     "history": 46449,
+     "tokens": 38514,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 255702,
+   "chars": 810084,
+   "first_call_tokens": 13988,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 6,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 7,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 8,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 8,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 8,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 9,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 10,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 10,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 10,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": [
+     "tool_add_chart_to_dashboard",
+     "tool_add_kpi_to_dashboard",
+     "tool_create_chart",
+     "tool_get_dashboard_data",
+     "tool_text_to_sql"
+    ]
+   }
+  },
+  "question": {
+   "description": "« Quel canal a le meilleur ROAS ? » depuis le mini-chat du tableau (1 + 4 requêtes)",
+   "source": "DEV 14/10, enregistré",
+   "estimate": false,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 14031,
+     "n_tools": 26,
+     "measured": 14573
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 18124,
+     "n_tools": 26,
+     "measured": 19282
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 35445,
+     "tokens": 33826,
+     "n_tools": 26,
+     "measured": 37762
+    }
+   ],
+   "tokens": 65981,
+   "chars": 199286,
+   "first_call_tokens": 14031,
+   "n_tools": 26,
+   "measured": 71617,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": [
+     "tool_add_chart_to_dashboard",
+     "tool_add_kpi_to_dashboard",
+     "tool_create_chart",
+     "tool_get_dashboard_data",
+     "tool_text_to_sql"
+    ]
+   }
+  },
+  "question_grouped": {
+   "description": "La question ROAS si le modèle compare les canaux en un seul appel (group_by + component_ids)",
+   "source": "variante scriptée de question",
+   "estimate": true,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 14031,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 18124,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 10273,
+     "tokens": 18939,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 51094,
+   "chars": 174114,
+   "first_call_tokens": 14031,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": [
+     "tool_add_chart_to_dashboard",
+     "tool_add_kpi_to_dashboard",
+     "tool_create_chart",
+     "tool_get_dashboard_data",
+     "tool_text_to_sql"
+    ]
+   }
+  },
+  "question_targeted": {
+   "description": "La même question si le modèle ne demande que le KPI ROAS par canal (component_ids)",
+   "source": "variante scriptée de question",
+   "estimate": true,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 14031,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 18124,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 11191,
+     "tools": 40778,
+     "history": 12630,
+     "tokens": 19914,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 52069,
+   "chars": 176471,
+   "first_call_tokens": 14031,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": [
+     "tool_add_chart_to_dashboard",
+     "tool_add_kpi_to_dashboard",
+     "tool_create_chart",
+     "tool_get_dashboard_data",
+     "tool_text_to_sql"
+    ]
+   }
+  }
+ }
+}

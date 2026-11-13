@@ -101,3 +101,25 @@ def test_le_modele_ne_voit_pas_le_parametre_tool_context():
         decl = FunctionTool(fn)._get_declaration()
         props = decl.parameters.properties if decl.parameters else {}
         assert "tool_context" not in props, fn.__name__
+
+
+def test_la_recherche_borne_le_nombre_et_la_taille_des_resultats(uploads):
+    ctx = _ctx("agent1", "alice@ex.com")
+    for i in range(15):
+        SAVE("budget " + "x" * 2000 + str(i), tool_context=ctx)
+
+    out = SEARCH("budget", max_results=500, tool_context=ctx)
+
+    assert out["result_count"] == 10
+    assert all(len(r["content"]) <= 503 for r in out["results"])
+    assert "folder" not in out
+
+
+def test_la_recherche_d_usages_ne_renvoie_pas_le_dossier(uploads):
+    ctx = _ctx("agent1", "alice@ex.com")
+    SAVE_USAGE("ventes du mois", "sql.tool_query", {"q": "select 1"}, result_summary="r" * 900, tool_context=ctx)
+
+    out = SEARCH_USAGE("ventes", tool_context=ctx)
+
+    assert "folder" not in out
+    assert len(out["results"][0]["result_summary"]) <= 503

@@ -73,7 +73,11 @@ class FakeS3Client:
         if not page:
             return {}
 
-        result: dict[str, Any] = {"Contents": [{"Key": k} for k in page]}
+        result: dict[str, Any] = {"Contents": [
+            {"Key": k, "LastModified": self._objects[k]["last_modified"],
+             "Size": len(self._objects[k]["body"])}
+            for k in page
+        ]}
         nxt = start + len(page)
         if nxt < len(keys):
             result["IsTruncated"] = True

@@ -23,7 +23,14 @@ COPY pyproject.toml uv.lock ./
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && /root/.local/bin/uv venv /opt/venv \
-    && VIRTUAL_ENV=/opt/venv /root/.local/bin/uv sync --no-dev --no-install-project \
+    # Dependencies come from uv.lock, never from a fresh resolve. `uv sync`
+    # ignores VIRTUAL_ENV (it warns that it does not match `.venv` and builds
+    # .venv instead); UV_PROJECT_ENVIRONMENT is what points it at /opt/venv.
+    # Without it the install below resolved everything anew: the published
+    # 0.2.86 image shipped google-adk 2.12.0 / litellm 1.105.1 instead of the
+    # locked 2.9.2 / 1.95.0 (CI run 38904092522), and ADK 2.12 streams partial
+    # function-call events the front end counted twice.
+    && UV_PROJECT_ENVIRONMENT=/opt/venv /root/.local/bin/uv sync --locked --no-dev --no-install-project --extra otel \
     # `[otel]` pulls th2pulse, which is what bridges application log records to
     # the collector. Without it apowerb.configs.observability finds no th2pulse,
     # logs a warning naming the missing extra, and the Logging screen stays empty
@@ -35,11 +42,17 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     # pre-existing fsspec conflict between `pins` and `s3fs` that makes plain
     # `pip install apowerb` unresolvable, with or without this extra. uv resolves
     # it. Do not swap this line for pip.
+    #
+    # The extra is installed by `--extra otel` above; `--no-deps` keeps the
+    # package itself from re-resolving what the lock already pinned.
     && if [ -z "${APPOWERB_VERSION}" ]; then \
-        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir "apowerb[otel]"; \
+        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir --no-deps "apowerb"; \
     else \
-        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir "apowerb[otel]==${APPOWERB_VERSION}"; \
-    fi
+        VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip install --no-cache-dir --no-deps "apowerb==${APPOWERB_VERSION}"; \
+    fi \
+    # With --no-deps, a requirement of the published wheel that the lock does
+    # not satisfy would install silently and fail at import in production.
+    && VIRTUAL_ENV=/opt/venv /root/.local/bin/uv pip check
 
 FROM python:3.13-slim AS runtime
 
@@ -91,11 +104,39 @@ WORKDIR /app
 # keep being reported even though the vulnerable code -- the mount helpers --
 # is gone with the binaries above.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends unixodbc \
     && apt-get purge -y --allow-remove-essential perl-base \
     && apt-get purge -y --allow-remove-essential util-linux mount login bsdutils \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# libuuid1 and ncurses (libncursesw6, ncurses-bin, ncurses-base) carry seven of
+# the eleven HIGH advisories left on this image -- util-linux CVE-2026-76642,
+# -78408, -78409, -78410 and ncurses CVE-2025-69720 -- with no fix published
+# for Debian trixie (Trivy 0.68.1, 2026-10-16). Nothing in the runtime needs
+# them: libuuid1 lost its last dependant with util-linux above, and only
+# Python's own `_uuid` and `_curses` extension modules link these libraries.
+# Both are removed with them, so `import uuid` takes its pure-Python path
+# (uuid4 reads os.urandom, uuid1 falls back to a random node) and
+# `import curses` fails with ImportError instead of a dangling .so.
+#
+# dpkg --purge, not `apt-get purge --allow-remove-essential`: dpkg refuses to
+# remove a package another installed package depends on, so if a later change
+# pulls in a consumer the build fails here instead of apt silently cascading.
+# Only ncurses-bin and ncurses-base are Essential and need the force flag.
+#
+# Kept: libtinfo6 (bash, readline), libacl1 (coreutils, tar, passwd),
+# libsystemd0 and libudev1 (apt, PAM) -- the four HIGH that remain.
+#
+# Consequence for anyone extending this image: `docker exec -it ... bash`
+# still works, but without terminfo `clear`/`tput` are gone and full-screen
+# programs fall back to a dumb terminal. `apt-get install ncurses-base` brings
+# it back.
+RUN dpkg --purge libuuid1 libncursesw6 \
+    && dpkg --purge --force-remove-essential ncurses-bin ncurses-base \
+    && rm -f /usr/local/lib/python3.13/lib-dynload/_uuid.* \
+             /usr/local/lib/python3.13/lib-dynload/_curses*
 
 # pip is never used at runtime: the application runs out of /opt/venv, which uv
 # built and which carries no pip of its own. The copy shipped in the base image

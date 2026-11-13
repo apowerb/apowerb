@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from logging import getLogger
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -33,6 +34,42 @@ from apowerb.configs.settings import get_settings
 logger = getLogger(__name__)
 
 BILLING_TZ = ZoneInfo("Europe/Paris")
+
+# Cached input tokens. Every provider we run bills a cache read 75 to 90 %
+# below fresh input (OpenAI/Azure, Anthropic, Gemini), and an agent re-sends
+# the same instruction + tool declarations on every call of a turn: counted in
+# full, that cached prefix ate the quota as if it were new input. They now
+# count at CACHED_TOKEN_PERCENT of a token -- 25 by default, the dearest
+# provider rate, so the quota never counts less than what thaink2 pays.
+CACHED_TOKEN_PERCENT_ENV = "APOWERB_QUOTA_CACHED_TOKEN_PERCENT"
+DEFAULT_CACHED_TOKEN_PERCENT = 25
+
+
+def cached_token_percent() -> int:
+    """Weight of a cached input token in the quota, 0-100 (25 if unset or invalid)."""
+    try:
+        value = int(os.environ.get(CACHED_TOKEN_PERCENT_ENV, "").strip())
+    except ValueError:
+        return DEFAULT_CACHED_TOKEN_PERCENT
+    return min(100, max(0, value))
+
+
+def counted_tokens_sum():
+    """SQL aggregate of the tokens a quota counts over ``llm_usage`` rows.
+
+    ``cached_tokens`` is a subset of ``total_tokens``; only its weighted part
+    stays counted. One expression for every counter (gauge, monthly guard,
+    rolling cap), so they keep showing the same number.
+    """
+    from sqlalchemy import func
+
+    from apowerb.models import LlmUsage
+
+    discount = 100 - cached_token_percent()
+    total = func.coalesce(func.sum(LlmUsage.total_tokens), 0)
+    cached = func.coalesce(func.sum(LlmUsage.cached_tokens), 0)
+    return total - (cached * discount) // 100
+
 
 # Quota top-up providers. The billing extension registers one (purchased
 # credits become tokens); without it the list stays empty and the quota is
@@ -211,7 +248,7 @@ async def get_quota_status(db, owner_id: str, plan: Optional[str]) -> QuotaStatu
     from apowerb.models import LlmUsage
 
     now = datetime.now(timezone.utc)
-    stmt = select(func.coalesce(func.sum(LlmUsage.total_tokens), 0)).where(
+    stmt = select(counted_tokens_sum()).where(
         LlmUsage.owner_id == owner_id,
         LlmUsage.billed_to_thaink2.is_(True),
         LlmUsage.created_at

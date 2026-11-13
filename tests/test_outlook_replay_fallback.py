@@ -130,6 +130,7 @@ class TestReplayPathIntegration:
             subscription_id=1,
             user_id=3,
             agent_id=999,
+            consumer="agent",
             resource_id="res",
             agent_message="Subject: CC n CF101085\n\nbody",
             email_subject="CC n 11077978 V/R:CF101085",
@@ -201,6 +202,7 @@ class TestReplayPathIntegration:
             subscription_id=1,
             user_id=3,
             agent_id=998,
+            consumer="agent",
             resource_id="res",
             agent_message="Subject: CC n CF101085\n\nbody",
             email_subject="CC n 11077978 V/R:CF101085",
@@ -251,7 +253,12 @@ class TestReplayPathIntegration:
 
         @contextlib.asynccontextmanager
         async def _session():
-            yield SimpleNamespace(get=AsyncMock())
+            yield SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(
+                    subscription_id=1, user_id=3, agent_id=5, consumer="agent",
+                    resource_id="res", created_at=None,
+                ))
+            )
 
         monkeypatch.setattr(ol.sessionmanager, "session", _session)
         monkeypatch.setattr(

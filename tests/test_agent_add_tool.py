@@ -28,7 +28,7 @@ from apowerb.core.agent_helpers.tool_catalog import find_tools
 from apowerb.routers import agents as router
 
 OWNER = "u@example.com"
-GMAIL = "google_gmail.tool_list_emails"
+GMAIL = "google_gmail.tool_gmail_list_emails"
 NEEDS_CONFIG = "database.tool_run_sql"
 
 STORED = {

@@ -15,12 +15,12 @@ for a short-lived access token and caches it for ~50 minutes.
 """
 
 import base64
-import re
 from email.mime.text import MIMEText
 from logging import getLogger
 
 import httpx
 
+from apowerb.helpers.email_text import cap_body, html_to_text
 from apowerb.tools_store.portfolio.google_auth import google_auth_headers
 from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
 
@@ -82,7 +82,7 @@ def _extract_body(payload: dict) -> str:
         return _decode_body_part(payload)
     if mime_type == "text/html":
         html = _decode_body_part(payload)
-        return re.sub(r"<[^>]+>", "", html).strip()
+        return html_to_text(html)
 
     # Multipart: walk parts looking for text/plain first, then text/html
     parts = payload.get("parts", [])
@@ -103,7 +103,7 @@ def _extract_body(payload: dict) -> str:
     if plain_text:
         return plain_text
     if html_text:
-        return re.sub(r"<[^>]+>", "", html_text).strip()
+        return html_to_text(html_text)
     return ""
 
 
@@ -132,7 +132,7 @@ def _extract_attachments(payload: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def tool_list_emails(
+def tool_gmail_list_emails(
     max_results: int = 10,
     label: str = "INBOX",
     query: str | None = None,
@@ -221,19 +221,20 @@ def tool_list_emails(
         }
 
 
-def tool_read_email(message_id: str) -> dict:
+def tool_gmail_read_email(message_id: str) -> dict:
     """Read the full content of a specific Gmail message by its ID.
 
-    Use this after tool_list_emails or tool_search_emails to get the complete
+    Use this after tool_gmail_list_emails or tool_gmail_search_emails to get the complete
     body, recipients, and attachment metadata of a particular message.
 
     Args:
-        message_id: The unique ID of the email message (from tool_list_emails
-            or tool_search_emails results).
+        message_id: The unique ID of the email message (from tool_gmail_list_emails
+            or tool_gmail_search_emails results).
 
     Returns:
-        dict with keys: status, id, subject, from, to, date, body,
-        attachments (list of {id, filename, mimeType, size}).
+        dict with keys: status, id, subject, from, to, date, body (at most
+        15000 characters), body_truncated, attachments (list of {id,
+        filename, mimeType, size}).
     """
     if not message_id or not message_id.strip():
         return {
@@ -279,7 +280,7 @@ def tool_read_email(message_id: str) -> dict:
         payload = msg.get("payload", {})
         msg_headers = payload.get("headers", [])
 
-        body = _extract_body(payload)
+        body, body_truncated = cap_body(_extract_body(payload))
         attachments = _extract_attachments(payload)
 
         return {
@@ -290,6 +291,7 @@ def tool_read_email(message_id: str) -> dict:
             "to": _extract_header(msg_headers, "To"),
             "date": _extract_header(msg_headers, "Date"),
             "body": body,
+            "body_truncated": body_truncated,
             "attachments": attachments,
         }
     except httpx.TimeoutException:
@@ -386,7 +388,7 @@ def tool_send_email(to: str, subject: str, body: str) -> dict:
         }
 
 
-def tool_search_emails(query: str, max_results: int = 10) -> dict:
+def tool_gmail_search_emails(query: str, max_results: int = 10) -> dict:
     """Search emails across the entire Gmail mailbox using Gmail search syntax.
 
     Uses the same powerful search syntax available in the Gmail search bar.

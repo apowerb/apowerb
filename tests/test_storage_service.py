@@ -79,7 +79,11 @@ class TestLocal:
 class TestS3Delegation:
     @pytest.fixture(autouse=True)
     def _s3_mode(self, monkeypatch):
+        # S3 is used only when selected AND fully configured.
         monkeypatch.setattr(get_settings(), "storage_mode", "S3", raising=False)
+        for field in ("s3_bucket_name", "s3_access_key", "s3_access_key_secret",
+                      "s3_endpoint", "s3_region"):
+            monkeypatch.setattr(get_settings(), field, "x", raising=False)
 
     def test_upload_bytes_delegates(self, monkeypatch):
         seen = {}

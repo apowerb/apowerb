@@ -1,3 +1,5 @@
+"""Artifacts router — list, retrieve and execute agent-generated artifacts under ``/api/artifacts``."""
+
 import asyncio
 import json
 import os

@@ -51,8 +51,11 @@ jobs:
         with:
           path-to-signatures: 'signatures/cla.json'
           path-to-document: 'https://github.com/apowerb/apowerb/blob/main/CLA.md'
-          branch: 'main'
+          branch: 'cla-signatures'
           allowlist: 'dgnaglo,faridovski,bot*'
+          # L'action ajoute d'elle-meme `custom-pr-sign-comment` entre deux
+          # separateurs a la fin de ce message : ne pas recopier la phrase ici,
+          # sinon elle apparait deux fois.
           custom-notsigned-prcomment: |
             Merci pour cette contribution.
 
@@ -60,13 +63,8 @@ jobs:
             le [Contributor License Agreement](https://github.com/apowerb/apowerb/blob/main/CLA.md).
             Il ne transfère pas la propriété de votre code — vous en gardez le
             droit d'auteur — et il ne change pas la licence du projet.
-
-            Pour signer, répondez à cette pull request avec exactement :
-
-            ```
-            I have read the CLA Document and I hereby sign the CLA
-            ```
-
             Une seule signature couvre toutes vos contributions futures.
+
+            Pour signer, répondez à cette pull request avec exactement la phrase ci-dessous :
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           custom-allsigned-prcomment: 'CLA signé. Merci — la pull request peut suivre son cours.'

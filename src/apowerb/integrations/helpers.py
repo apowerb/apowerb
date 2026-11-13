@@ -42,7 +42,9 @@ def _build_engine() -> Engine:
 def _integrations_table(engine: Engine) -> Table:
     # The table lives in settings.db_schema (e.g. "th2agent_dev"), not the default
     # search_path — we must pass schema= explicitly so SQLAlchemy finds it.
-    schema = _settings.db_schema if _settings.db_schema != "public" else None
+    # "public" and an empty value both mean the default search_path: an empty
+    # string is not a schema name.
+    schema = _settings.db_schema if _settings.db_schema not in ("", "public") else None
     return Table(
         _INTEGRATIONS_TABLE,
         MetaData(),

@@ -1,6 +1,6 @@
 """TDD tests for action-card tool suppression in structured-output agents.
 
-Agents with ``output_schema_name`` set (e.g. SCEI pipeline sub-agents) are
+Agents with ``output_schema_name`` set (e.g. a client pipeline's sub-agents) are
 fully-automatic webhook pipelines with no human in the loop. They MUST NOT
 receive chat-oriented action-card tools (``request_user_input``,
 ``confirm_destructive``, ``request_payment``, ``schedule_followup``,
@@ -66,7 +66,7 @@ class TestShouldInjectChatActionTools:
         )
 
         assert _should_inject_chat_action_tools(
-            {"output_schema_name": "SCEIIntakePayload"}
+            {"output_schema_name": "ClientIntakePayload"}
         ) is False
 
     def test_returns_false_for_any_non_empty_schema_name(self):

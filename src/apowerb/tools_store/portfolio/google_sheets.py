@@ -18,25 +18,17 @@ import httpx
 
 from apowerb.tools_store.bi_source import bi_source
 from apowerb.tools_store.portfolio.google_auth import google_auth_headers
-from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
+from apowerb.tools_store.portfolio.http_errors import google_error_result
 
 logger = getLogger(__name__)
 
 _BASE = "https://sheets.googleapis.com/v4/spreadsheets"
 _SERVICE = "GOOGLE_SHEETS"
+_MAX_ROWS_RETURNED = 200
 
 
-def tool_read_sheet(spreadsheet_id: str, range: str = "Sheet1") -> dict:
-    """Read cell values from a Google Sheets range.
-
-    Args:
-        spreadsheet_id: The ID of the spreadsheet (from the URL).
-        range: A1 notation range to read (e.g. 'Sheet1', 'Sheet1!A1:D10').
-            Defaults to 'Sheet1' (entire first sheet).
-
-    Returns:
-        A dict with status, range, values (2D list), total_rows, and total_cols.
-    """
+def _read_values(spreadsheet_id: str, range: str) -> dict:
+    """Full (uncapped) read; shared by the agent tool and the BI table source."""
     try:
         headers = google_auth_headers(_SERVICE)
         resp = httpx.get(
@@ -54,11 +46,29 @@ def tool_read_sheet(spreadsheet_id: str, range: str = "Sheet1") -> dict:
             "total_rows": len(values),
             "total_cols": max((len(row) for row in values), default=0),
         }
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_read_sheet failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Sheets")
+
+
+def tool_read_sheet(spreadsheet_id: str, range: str = "Sheet1") -> dict:
+    """Read cell values from a Google Sheets range (first 200 rows).
+
+    Args:
+        spreadsheet_id: The ID of the spreadsheet (from the URL).
+        range: A1 notation range to read (e.g. 'Sheet1', 'Sheet1!A1:D10').
+            Defaults to 'Sheet1' (entire first sheet). Use a narrower range
+            (e.g. 'Sheet1!A201:F400') to read further rows.
+
+    Returns:
+        A dict with status, range, values (2D list, at most 200 rows),
+        total_rows (real number of rows in the range), total_cols, and
+        truncated (true when rows were left out).
+    """
+    result = _read_values(spreadsheet_id, range)
+    values = result.get("values")
+    if result.get("status") == "ok" and len(values) > _MAX_ROWS_RETURNED:
+        result = {**result, "values": values[:_MAX_ROWS_RETURNED], "truncated": True}
+    return result
 
 
 def _table_from_values(values: list) -> tuple[list[str], list[dict]]:
@@ -94,7 +104,7 @@ def tool_read_sheet_table(spreadsheet_id: str, range: str = "Sheet1") -> dict:
         {"success": True, "columns": [...], "rows": [{column: value}, ...]},
         or {"success": False, "error": "..."} on failure.
     """
-    result = tool_read_sheet(spreadsheet_id, range)
+    result = _read_values(spreadsheet_id, range)
     if result.get("status") != "ok":
         message = result.get("message") or result.get("error") or "lecture de la feuille impossible"
         return {"success": False, "error": str(message)}
@@ -150,11 +160,8 @@ def tool_write_cells(spreadsheet_id: str, range: str, values: str) -> dict:
             "message": f"Invalid JSON in values parameter: {exc}",
             "retry": False,
         }
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_write_cells failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Sheets")
 
 
 def tool_get_spreadsheet_info(spreadsheet_id: str) -> dict:
@@ -191,8 +198,5 @@ def tool_get_spreadsheet_info(spreadsheet_id: str) -> dict:
             "title": data.get("properties", {}).get("title"),
             "sheets": sheets,
         }
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_get_spreadsheet_info failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Sheets")

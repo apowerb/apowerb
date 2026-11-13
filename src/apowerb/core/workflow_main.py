@@ -15,8 +15,11 @@ from nanoid import generate as nanoid_generate
 from pydantic import ValidationError
 
 from apowerb.agent_store.workflow_store import WorkflowStore
+from apowerb.configs.th2logger import setup_logging
 from apowerb.core.workflow_graph import GraphError, WorkflowGraph, validate_graph
 from apowerb.helpers.emails import get_domain_from_email
+
+logger = setup_logging(__name__)
 
 workflow_store = WorkflowStore()
 
@@ -315,19 +318,36 @@ def _write_if_unchanged(
 
 
 def delete_workflow(workflow_id: str, *, owner_id: str) -> None:
+    from apowerb.core import workflow_shapes
+
     t, r = workflow_store.workflow_table, workflow_store.revision_table
     with workflow_store.engine.begin() as conn:
-        if _fetch(conn, workflow_id, owner_id) is None:
+        row = _fetch(conn, workflow_id, owner_id)
+        if row is None:
             raise WorkflowNotFound(workflow_id)
+        # Les outils de ce workflow, versions passées comprises : leurs formes
+        # apprises partent avec lui si plus rien d'autre ne les appelle.
+        tools = workflow_shapes.tool_refs_in(row._mapping["graph"])
+        for rev in conn.execute(
+            r.select().where(r.c.workflow_id == workflow_id, r.c.owner_id == owner_id)
+        ):
+            tools |= workflow_shapes.tool_refs_in(rev._mapping["graph"])
         conn.execute(
             r.delete().where(r.c.workflow_id == workflow_id, r.c.owner_id == owner_id)
         )
         conn.execute(
             t.delete().where(t.c.workflow_id == workflow_id, t.c.owner_id == owner_id)
         )
-    from apowerb.core import workflow_triggers
+        workflow_shapes.forget_unused_tool_shapes(conn, owner_id, tools)
+    from apowerb.core import run_main, workflow_triggers
 
     workflow_triggers.remove_trigger_for_workflow(workflow_id)
+    # Les sorties de ses runs (déroulés gardés pour l'historique) partent avec
+    # lui. Un échec ici ne rétablit pas le workflow : la rétention les purgera.
+    try:
+        run_main.forget_workflow_traces(workflow_id, owner_id=owner_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Déroulés du workflow %s non purgés", workflow_id)
 
 
 def list_revisions(workflow_id: str, *, owner_id: str) -> list[dict]:

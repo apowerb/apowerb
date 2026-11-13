@@ -29,8 +29,46 @@ Types de nœuds :
   un callback résolu côté routeur (mêmes droits que pour le lancer), profondeur
   3 maximum, cycle détecté à l'exécution via la pile des ``workflow_id``.
 
-``approval`` est reconnu mais refusé à la validation : la validation humaine
-arrive avec l'exécution durable.
+* ``approval`` — décision humaine : le run s'arrête sur ``awaiting_input``
+  (question en gabarit, ``mode`` ``choices``/``text``/``both``) et reprend
+  quand quelqu'un répond. Chaque choix est une route ; en mode ``both`` une
+  réponse libre suit la route réservée ``text``. Sa sortie est
+  ``{choice, text, answered_by, answered_at}``. Le moteur ne sait pas
+  suspendre une tâche ADK : l'arrêt confie l'instantané du run (sorties et
+  routes déjà prises) à ``on_await``, et ``run_graph(resume=...)`` rejoue les
+  nœuds faits sans les réexécuter (``replayed``). Refusé dans le corps d'un
+  ``loop``/``try`` et dans un sous-workflow (``approval_nested``).
+* ``file`` — produit un fichier (csv, xlsx, json, markdown, text, docx, pdf)
+  à partir d'un gabarit (``content``), le confie à ``services.save_file``
+  (référence opaque ``att_`` du propriétaire) et rend
+  ``{name, ref, size, content_type, format, rows}`` ; borné en taille
+  (``MAX_FILE_BYTES``) et en lignes (``MAX_FILE_ROWS``), jamais d'octets dans
+  la sortie ni dans les événements.
+* ``file_save`` — dépose un fichier produit (sa ref) dans le stockage du
+  propriétaire (OneDrive pour l'instant) via ``services.save_to_drive`` et
+  l'intégration déjà connectée : aucun identifiant dans le graphe.
+
+Gestion d'erreur par nœud (``on_error``, sur les nœuds qui peuvent
+échouer : ``_ON_ERROR_TYPES``) : ``fail`` (défaut) arrête le run ;
+``continue`` laisse le flux avancer, l'erreur restant visible dans la trace
+(``handled_error`` du ``node_complete``) ; ``route`` ajoute une sortie
+``error`` qui porte ``{code, detail, params, node}`` comme celle d'un
+``try``, et n'arrête jamais le run. Sur un ``tool``, ``continue`` garde son
+sens d'avant : seule l'erreur que l'outil signale dans son résultat est
+absorbée. ``timeout_s`` borne la durée d'un sous-workflow
+(``_TIMEOUT_TYPES``) : au-delà, son run interne est annulé et l'erreur
+``node_timeout`` suit ``on_error``. Limite : un outil synchrone en cours
+dans ce sous-workflow tourne dans un thread que l'annulation n'arrête pas ;
+il finit son appel (et ses écritures), seul son résultat est perdu. Une
+valeur ``on_error`` inconnue vaut ``fail`` (avertie à la validation), sauf
+sur un ``tool`` qui la refusait déjà.
+Posés sur un nœud qui n'en a pas, ces réglages sont ignorés, comme avant
+leur arrivée : un graphe enregistré s'exécute toujours.
+
+« Reprendre ici » s'appuie sur le même rejeu : un run qui échoue sur un nœud
+de premier niveau confie à ``on_fail`` l'instantané de ce qui était fait, et
+un nouveau run repart avec ``resume=`` sans réexécuter l'amont. Un ``loop``,
+un ``try`` ou un ``subworkflow`` en échec est repris en entier.
 
 Le déclencheur du corps d'une boucle reçoit ``{item, index, previous}`` —
 ``previous`` est la sortie de l'itération précédente, ou l'entrée de la
@@ -66,6 +104,7 @@ import json
 import re
 import socket
 import time
+from contextlib import aclosing
 from datetime import date, datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable, Literal, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -76,14 +115,19 @@ from google.adk.workflow import FunctionNode, JoinNode, Workflow
 from google.genai import types
 from pydantic import BaseModel, Field, model_validator
 
+from apowerb.configs.th2logger import setup_logging
+from apowerb.core import workflow_files
 from apowerb.core.workflow_engine import (
+    AgentReply,
     _Finished,
     WorkflowCancelled,
     WorkflowUserError,
     _sse,
+    collect_tool_calls,
     error_fields,
     drive_workflow,
     leaf_message,
+    tool_artifacts,
     try_parse_json,
 )
 
@@ -106,6 +150,10 @@ NodeType = Literal[
     "rag",
     "http",
     "notification",
+    "document",
+    "db_write",
+    "file",
+    "file_save",
 ]
 CONVERT_TARGETS = ("text", "json", "number", "boolean", "list", "csv", "date")
 EXTRACT_FIELD_TYPES = ("string", "number", "boolean", "list", "object")
@@ -114,11 +162,15 @@ _FALSE = {"false", "no", "non", "0", "faux"}
 _ROUTED = {"router", "classifier", "condition", "try"}
 _CSV_DELIMITERS = ",;\t"
 _DATE_FORMATS = ("%d/%m/%Y",)
-_NOT_YET = {"approval"}
+_NOT_YET: set[str] = set()
+# Route réservée d'une décision en mode ``both`` : la réponse libre.
+_TEXT_ROUTE = "text"
+_DECISION_MODES = ("choices", "text", "both")
 _MAX_LOOP = 100
 _MAX_RETRIES = 3
 _MAX_RETRY_DELAY_MS = 5000
 _MAX_SUBWORKFLOW_DEPTH = 3
+logger = setup_logging(__name__)
 # Conversion csv bornée comme la réponse du nœud http (1 Mio) : le texte
 # vient d'un agent, d'un outil ou d'un payload, donc d'une source non sûre.
 MAX_CSV_BYTES = 1 * 1024 * 1024
@@ -130,6 +182,43 @@ _DEFAULT_RAG_TOP_K = 5
 # dont le corps re-sérialise ``previous`` double de taille à chaque tour
 # (mesuré sur agent-dev le 22/09) et 100 itérations tuent le backend.
 MAX_NODE_OUTPUT_BYTES = 1 * 1024 * 1024
+# Décision humaine : une attente expire (une semaine par défaut, un mois au
+# plus) et son instantané, gardé en base jusqu'à la réponse, est borné au
+# total — chaque sortie l'est déjà, pas leur somme.
+DEFAULT_DECISION_HOURS, MAX_DECISION_HOURS = 168, 720
+MAX_PAUSED_STATE_BYTES = 8 * 1024 * 1024
+# Longueur qu'un rendu de gabarit peut produire (``render``). Un gabarit court
+# peut répéter mille fois la même grande sortie : sans ce plafond, la chaîne
+# entière était construite avant le contrôle de MAX_NODE_OUTPUT_BYTES, qui ne
+# porte que sur la sortie finie. Au double de ce dernier, aucun résultat
+# légitime n'est refusé.
+MAX_RENDERED_CHARS = 2 * MAX_NODE_OUTPUT_BYTES
+
+# Entrée d'un nœud recopiée dans les événements (``node_input``,
+# ``node_complete``, ``node_error``) pour le panneau Test : coupée au-delà,
+# l'agent reçoit toujours le message entier.
+MAX_TRACE_INPUT_CHARS = 20_000
+
+
+class AgentNodeMessage(str):
+    """Le message d'un nœud ``agent``, et de lui seul.
+
+    La liaison de production (``workflow_runtime.bindings_for``) y ajoute la
+    consigne « personne ne répondra » ; un classifieur ou une extraction, qui
+    passent par le même ``run_agent`` avec leur propre format de réponse, ne
+    la reçoivent pas. Une sous-classe de ``str`` garde la signature
+    ``run_agent(agent_id, message)`` inchangée.
+    """
+
+
+def _asks_question(output: Any) -> bool:
+    """Vrai si une réponse texte se termine par une question."""
+    if not isinstance(output, str):
+        return False
+    lines = [line.strip() for line in output.strip().splitlines() if line.strip()]
+    # Markdown, guillemets et parenthèses autour de la question finale.
+    return bool(lines) and lines[-1].rstrip("*_ \u00a0»”\"')").endswith("?")
+
 
 # --- Triggers (T1 : socle + validation des 8 kinds) -------------------------
 #
@@ -197,6 +286,35 @@ MAX_HTTP_REDIRECTS = 5
 # --- Nœud notification --------------------------------------------------------
 _NOTIF_CHANNELS = {"email", "app", "teams"}
 MAX_NOTIFICATION_RECIPIENTS = 10
+# Pièces jointes d'un email : des refs de fichiers produits (nœud file) ou
+# reçus (trigger email), résolues pour le propriétaire seulement.
+MAX_NOTIFICATION_ATTACHMENTS = 5
+
+# --- Nœuds file et file_save --------------------------------------------------
+FILE_FORMATS = tuple(workflow_files.FORMATS)
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_FILE_ROWS = 10_000
+# Word et PDF : texte borné en caractères (et en lignes, plus bas).
+MAX_FILE_TEXT_CHARS = 200_000
+# Bornées avant construction : des objets aux clés toutes différentes
+# multiplient les colonnes, donc les cellules.
+MAX_FILE_COLUMNS = 1_000
+MAX_FILE_CELLS = 500_000
+# Une valeur non textuelle est écrite en JSON indenté : l'indentation croît
+# avec la profondeur, bornée avant toute sérialisation.
+MAX_FILE_DEPTH = 50
+# Word et PDF : tableaux Markdown (Word plafonne à 63 colonnes) et lignes
+# (le rendu PDF coûte surtout à la ligne : ≈ 5 s pour 2 000 lignes).
+MAX_DOC_TABLE_COLUMNS = 63
+MAX_DOC_TABLE_CELLS = 20_000
+MAX_FILE_TEXT_LINES = 2_000
+MAX_FILE_NAME = 120
+# Règles d'Excel pour un nom de feuille.
+_SHEET_FORBIDDEN = re.compile(r"[\[\]:*?/\\]")
+MAX_SHEET_NAME = 31
+FILE_SAVE_PROVIDERS = ("onedrive",)
+_FILE_SAVE_CONFLICTS = ("rename", "replace", "fail")
+MAX_FILE_FOLDER = 200
 
 RunAgent = Callable[[str, str], Awaitable[Any]]
 RunTool = Callable[[str, dict], Awaitable[Any]]
@@ -211,6 +329,33 @@ RunRag = Callable[[str, str, int], Awaitable[dict]]
 # Résolu côté routeur (mêmes droits que pour lancer ce workflow directement) ;
 # ``None`` si l'appelant ne trouve pas — ou ne peut pas voir — ce workflow_id.
 ResolveWorkflow = Callable[[str], Awaitable[Optional["WorkflowGraph"]]]
+
+
+class NodeServices(BaseModel):
+    """Services des nœuds ``document``, ``classifier`` (moteur Jev) et
+    ``db_write``, construits pour UN propriétaire par
+    ``workflow_runtime.services_for`` — ce module ne sait ni lire une pièce
+    jointe, ni joindre Jev, ni ouvrir une connexion.
+
+    * ``document(ref)`` -> ``{"name", "text", "page_count"}`` : ref opaque
+      d'une pièce jointe (``workflow_attachments``), propriétaire contrôlé ;
+    * ``jev_classify(labels, text, instructions, min_confidence)`` ->
+      ``{"label", "confidence", "uncertain", "best_guess"[, "usage"]}`` ;
+    * ``db_write(connection, table, row)`` -> ``{"inserted"}`` : valeurs
+      liées, jamais concaténées dans le SQL ;
+    * ``save_file(name, content_type, data)`` -> ``{"name", "ref", "size",
+      "content_type"}`` : stocke un fichier produit pour le propriétaire ;
+    * ``save_to_drive(provider, ref, folder, conflict)`` -> ``{"name",
+      "path", "web_url"}`` : dépose la ref dans son stockage en ligne.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    document: Optional[Callable[[str], Awaitable[dict]]] = None
+    jev_classify: Optional[Callable[[dict, str, str, float], Awaitable[dict]]] = None
+    db_write: Optional[Callable[[str, str, dict], Awaitable[dict]]] = None
+    save_file: Optional[Callable[[str, str, bytes], Awaitable[dict]]] = None
+    save_to_drive: Optional[Callable[[str, str, str, str], Awaitable[dict]]] = None
 
 
 class UpstreamArgs(dict):
@@ -266,6 +411,14 @@ class WorkflowTestCase(BaseModel):
     expect: TestExpectation
 
 
+class WorkflowSettings(BaseModel):
+    """Réglages du workflow, hors nœuds. ``None`` = valeur par défaut."""
+
+    # « Me prévenir en cas d'échec » (``workflow_alerts``) : par défaut, oui
+    # sur un workflow publié, non sur un brouillon.
+    notify_on_failure: Optional[bool] = None
+
+
 class WorkflowGraph(BaseModel):
     version: Literal[1] = 1
     nodes: list[Node] = Field(default_factory=list)
@@ -273,6 +426,7 @@ class WorkflowGraph(BaseModel):
     # None (et non []) : avec exclude_none, un graphe sans tests reste stocké
     # à l'identique.
     tests: Optional[list[WorkflowTestCase]] = None
+    settings: Optional[WorkflowSettings] = None
 
     @model_validator(mode="after")
     def _unique_test_ids(self):
@@ -308,30 +462,77 @@ def _lookup(outputs: dict, ref: str, path: str, node_id: Optional[str] = None) -
     return value
 
 
-def render(template: Any, outputs: dict, node_id: Optional[str] = None) -> Any:
+class _RenderBudget:
+    """Ce qu'un rendu peut encore produire ; épuisé, il lève render_too_large."""
+
+    def __init__(self, node_id: Optional[str]):
+        self.left = MAX_RENDERED_CHARS
+        self.node_id = node_id
+
+    def spend(self, n: int) -> None:
+        self.left -= n
+        if self.left < 0:
+            raise GraphError(
+                f"{self.node_id} : gabarit trop grand une fois rendu "
+                f"(max {MAX_RENDERED_CHARS} caractères)",
+                code="render_too_large",
+                params={"node": self.node_id or "", "max": str(MAX_RENDERED_CHARS)},
+            )
+
+
+def _value_size(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return 0
+    return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def render(
+    template: Any,
+    outputs: dict,
+    node_id: Optional[str] = None,
+    _budget: Optional[_RenderBudget] = None,
+) -> Any:
     """Résout les gabarits ``{{noeud.chemin}}`` d'une valeur (récursivement).
 
     ``node_id`` est le nœud dont la configuration est rendue : il n'accuse
     personne d'autre si le chemin traverse un scalaire (``template_ref_invalid``,
     voir ``_lookup``).
+
+    Le rendu s'arrête dès qu'il dépasse ``MAX_RENDERED_CHARS``
+    (``render_too_large``) : chaque morceau est compté avant d'être ajouté,
+    la chaîne géante n'est jamais construite.
     """
+    budget = _budget if _budget is not None else _RenderBudget(node_id)
     if isinstance(template, dict):
-        return {k: render(v, outputs, node_id) for k, v in template.items()}
+        return {k: render(v, outputs, node_id, budget) for k, v in template.items()}
     if isinstance(template, list):
-        return [render(v, outputs, node_id) for v in template]
+        return [render(v, outputs, node_id, budget) for v in template]
     if not isinstance(template, str):
         return template
     whole = _TEMPLATE.fullmatch(template.strip())
     if whole:
-        return _lookup(outputs, whole.group(1), whole.group(2), node_id)
+        value = _lookup(outputs, whole.group(1), whole.group(2), node_id)
+        budget.spend(_value_size(value))
+        return value
 
-    def _text(m: re.Match) -> str:
+    parts: list[str] = []
+    last = 0
+    for m in _TEMPLATE.finditer(template):
+        literal = template[last : m.start()]
+        budget.spend(len(literal))
+        parts.append(literal)
         v = _lookup(outputs, m.group(1), m.group(2), node_id)
-        if v is None:
-            return ""
-        return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
-
-    return _TEMPLATE.sub(_text, template)
+        if v is not None:
+            text = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)
+            budget.spend(len(text))
+            parts.append(text)
+        last = m.end()
+    tail = template[last:]
+    budget.spend(len(tail))
+    parts.append(tail)
+    return "".join(parts)
 
 
 def _refs(value: Any) -> set[str]:
@@ -379,6 +580,75 @@ def _rule_subject(rule: dict, scope: dict, node_id: str, default: Any) -> Any:
     return render(field, scope, node_id)
 
 
+_ON_ERROR = ("fail", "continue", "route")
+# Nœuds dont l'échec peut être géré (``on_error``) : ceux qui appellent un
+# agent, un outil, le réseau, la base ou un autre workflow. Un classifieur
+# n'a pas de ``continue`` : sans route, il ne mène nulle part.
+_ON_ERROR_TYPES = {
+    "agent",
+    "tool",
+    "extract",
+    "classifier",
+    "rag",
+    "http",
+    "subworkflow",
+    "notification",
+    "document",
+    "db_write",
+}
+_ERROR_ROUTE = "error"
+# Route interne des arêtes de succès d'un nœud ``on_error: route`` : ADK
+# déclenche toujours une arête sans route, l'échec partirait aussi par là.
+# Jamais stockée dans le graphe ni émise.
+_SUCCESS_ROUTE = "__success__"
+# Ce qu'un « Reprendre ici » reprend de l'instantané d'échec pour rejouer
+# l'amont ; ``handled_errors`` garde un échec absorbé visible au rejeu.
+RESUME_KEYS = ("outputs", "routes", "artifacts", "handled_errors")
+# Sortie d'un échec géré (``route``, ou ``continue`` sans résultat partiel),
+# la même que la route ``error`` d'un ``try``.
+_ERROR_OUTPUT_KEYS = {"code", "detail", "params", "node"}
+# ``timeout_s`` d'un nœud ; ``http`` garde le sien (borne et code propres).
+# Seulement là où l'annulation arrête vraiment le travail : un agent tourne
+# derrière un appel HTTP à ADK (le serveur continue sans le client), un outil
+# synchrone dans un thread qu'on ne peut pas interrompre.
+_TIMEOUT_TYPES = {"subworkflow"}
+MIN_NODE_TIMEOUT, MAX_NODE_TIMEOUT = 1, 3600
+# Ce qu'un nœud agent ou tool promet de rendre. « any » (ou absent) garde le
+# comportement d'avant : la réponse passe telle quelle, texte ou JSON.
+_OUTPUT_TYPES = ("any", "text", "json")
+_ON_QUESTION = ("continue", "fail")
+# Ces outils rendent un identifiant qu'ils n'ont pas créé (lecture seule) :
+# le montrer comme un résultat du run induirait en erreur.
+_READ_ONLY_ARTIFACT_TOOLS = {"tool_describe_dataset"}
+_MAX_RUN_ARTIFACTS = 50
+_CLASSIFIER_ENGINES = ("agent", "jev")
+_UNCERTAIN = "uncertain"
+_DEFAULT_MIN_CONFIDENCE = 0.7
+MAX_DOCUMENT_FILES = 10
+MAX_DB_WRITE_COLUMNS = 50
+_SQL_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+_TOOL_CONFIG_REF = re.compile(r"^tool_config\d+$")
+_MAX_REPORTED_ERROR = 500
+
+
+def tool_reported_error(result: Any) -> Optional[str]:
+    """Le message d'erreur qu'un outil renvoie DANS son résultat, sinon ``None``.
+
+    Les outils du portfolio ne lèvent presque jamais : ils renvoient
+    ``{"status": "error", ...}`` ou ``{"success": False, ...}``. Seules ces deux
+    formes exactes comptent ; tout autre résultat est un succès.
+    """
+    if not isinstance(result, dict):
+        return None
+    if result.get("status") != "error" and result.get("success") is not False:
+        return None
+    for key in ("error_message", "message", "error"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:_MAX_REPORTED_ERROR]
+    return "erreur sans message"
+
+
 def evaluate_rule(rule: dict, value: Any) -> bool:
     op, expected = rule.get("op", "eq"), rule.get("value")
     if op == "exists":
@@ -413,7 +683,96 @@ def _declared_routes(node: Node) -> set[str]:
         return {"ok", "error"}
     if node.type == "condition":
         return {"true", "false"}
-    return {r.get("route") for r in cfg.get("routes") or [] if r.get("route")}
+    if node.type == "approval":
+        routes = {c.get("route") for c in _decision_choices(node)}
+        if node.config.get("mode", "choices") == "both":
+            routes.add(_TEXT_ROUTE)
+        return routes
+    routes = {r.get("route") for r in cfg.get("routes") or [] if r.get("route")}
+    if node.type == "classifier" and cfg.get("engine") == "jev":
+        routes.add(_UNCERTAIN)
+    if _routes_on_error(node):
+        routes.add(_ERROR_ROUTE)
+    return routes
+
+
+def _on_error(node: Node) -> str:
+    """Mode effectif : ``null`` ou une valeur que ce type n'a pas valent
+    ``fail``, comme dans le Studio ; un graphe enregistré reste exécutable."""
+    mode = node.config.get("on_error") or "fail"
+    if (
+        node.type not in _ON_ERROR_TYPES
+        or mode not in _ON_ERROR
+        or (node.type == "classifier" and mode == "continue")
+    ):
+        return "fail"
+    return mode
+
+
+def _routes_on_error(node: Node) -> bool:
+    """Le nœud a-t-il une sortie ``error`` (``on_error: route``) ?"""
+    return node.type in _ON_ERROR_TYPES and _on_error(node) == "route"
+
+
+def _error_output(exc: BaseException, node_id: Optional[str]) -> dict:
+    """Ce qu'un échec rend à la suite du flux : jamais l'exception brute."""
+    fields = error_fields(exc)
+    return {
+        "code": fields.get("code"),
+        "detail": fields.get("detail"),
+        "params": fields.get("params") or {},
+        "node": getattr(exc, "_apowerb_inner_node", None) or node_id,
+    }
+
+
+def _decision_choices(node: Node) -> list[dict]:
+    return [c for c in node.config.get("choices") or [] if isinstance(c, dict)]
+
+
+def _is_routed(node: Node) -> bool:
+    """Les arêtes sortantes portent-elles une route ? Une décision en mode
+    ``text`` n'a qu'une sortie ; ses autres modes routent par choix."""
+    if node.type == "approval":
+        return node.config.get("mode", "choices") != "text"
+    return node.type in _ROUTED
+
+
+def _refuse_nested_decision(node: Node, body: "WorkflowGraph") -> None:
+    """Une décision ne peut pas suspendre un corps de loop/try ni un
+    sous-workflow : la reprise ne sait pas restaurer une itération en cours."""
+    nested = [n.id for n in body.nodes if n.type == "approval"]
+    if nested:
+        raise GraphError(
+            f"{node.id} : décision humaine {nested[0]} impossible ici "
+            "(corps de loop/try ou sous-workflow)",
+            code="approval_nested",
+            params={"node": node.id, "decision": nested[0]},
+        )
+
+
+def check_decision_answer(
+    prompt: dict, choice: Optional[str], text: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """La réponse est-elle permise par la décision ? Renvoie ``(choice, text)``.
+
+    ``choices`` : un choix déclaré ; ``text`` : un texte non vide ; ``both`` :
+    l'un ou l'autre (un choix garde le texte en commentaire).
+    """
+    mode = prompt.get("mode", "choices")
+    routes = {c.get("route") for c in prompt.get("choices") or []}
+    text = text.strip() if isinstance(text, str) and text.strip() else None
+    ok = (
+        (mode == "choices" and choice in routes and text is None)
+        or (mode == "text" and choice is None and text is not None)
+        or (mode == "both" and (choice in routes or (choice is None and text)))
+    )
+    if not ok:
+        raise GraphError(
+            "réponse non permise par cette décision",
+            code="decision_invalid_answer",
+            params={"mode": mode},
+        )
+    return choice, text
 
 
 def _body_graph(
@@ -435,6 +794,7 @@ def _body_graph(
         raise GraphError(f"{node.id} (corps) : {exc}") from exc
     except ValueError as exc:
         raise GraphError(f"{node.id} (corps) : graphe mal formé") from exc
+    _refuse_nested_decision(node, body)
     if [n.type for n in body.nodes].count("trigger") != 1:
         raise GraphError(f"{node.id} (corps) : il faut exactement un déclencheur")
     return body
@@ -946,6 +1306,11 @@ _FIXED_OUTPUT_KEYS = {
     "rag": {"query", "passages"},
     "http": {"status", "headers", "body"},
     "notification": {"channel", "sent"},
+    "document": {"documents", "text", "count"},
+    "db_write": {"table", "inserted"},
+    "file": {"name", "ref", "size", "content_type", "format", "rows"},
+    "file_save": {"provider", "name", "path", "web_url"},
+    "approval": {"choice", "text", "answered_by", "answered_at"},
 }
 
 
@@ -976,7 +1341,11 @@ def _output_form(node: Node, graph: WorkflowGraph) -> tuple[str, Optional[set[st
         fields = node.config.get("fields") or []
         return _KNOWN_DICT, {f.get(name) for f in fields if isinstance(f, dict)}
     if node.type in _FIXED_OUTPUT_KEYS:
-        return _KNOWN_DICT, _FIXED_OUTPUT_KEYS[node.type]
+        keys = _FIXED_OUTPUT_KEYS[node.type]
+        if node.type in _ON_ERROR_TYPES and _on_error(node) != "fail":
+            # Un échec géré rend sa description à la place de la sortie.
+            keys = keys | _ERROR_OUTPUT_KEYS
+        return _KNOWN_DICT, keys
     return _UNKNOWN, None
 
 
@@ -1103,13 +1472,13 @@ async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
         return str(parsed.copy_with(host=str(ips[0]))), host_header, extensions
 
     method = cfg["method"]
-    url = render(cfg["url"], outputs)
+    url = render(cfg["url"], outputs, node_id)
     url = url if isinstance(url, str) else json.dumps(url, ensure_ascii=False)
 
     headers: dict[str, str] = {}
     for h in cfg.get("headers") or []:
-        key = render(h.get("key", ""), outputs)
-        value = render(h.get("value", ""), outputs)
+        key = render(h.get("key", ""), outputs, node_id)
+        value = render(h.get("value", ""), outputs, node_id)
         key = key if isinstance(key, str) else json.dumps(key, ensure_ascii=False)
         value = (
             value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
@@ -1126,7 +1495,7 @@ async def _http_call(node_id: str, cfg: dict, outputs: dict) -> dict:
         headers[key] = value
 
     raw_body = cfg.get("body")
-    raw_body = render(raw_body, outputs) if raw_body is not None else None
+    raw_body = render(raw_body, outputs, node_id) if raw_body is not None else None
     json_body = raw_body if isinstance(raw_body, (dict, list)) else None
     content_body = None
     if json_body is None and raw_body is not None:
@@ -1266,13 +1635,54 @@ def validate_node(
     """
     cfg = n.config
     if n.type in _NOT_YET:
-        raise GraphError(f"{n.id} : le type {n.type} n'est pas encore exécutable")
-    if n.type in ("agent", "classifier", "extract", "rag") and not cfg.get(
-        "agent_id"
+        raise GraphError(
+            f"{n.id} : le type {n.type} n'est pas encore exécutable",
+            code="node_not_runnable",
+            params={"node": n.id, "type": n.type},
+        )
+    if n.type == "approval":
+        _validate_approval(n)
+    if (
+        n.type in ("agent", "tool")
+        and cfg.get("output_type", "any") not in _OUTPUT_TYPES
+    ):
+        raise GraphError(
+            f"{n.id} : type de sortie inconnu {cfg.get('output_type')!r} "
+            f"(attendu : {', '.join(_OUTPUT_TYPES)})",
+            code="output_type_unknown",
+            params={"node": n.id, "value": str(cfg.get("output_type"))},
+        )
+    if n.type == "agent" and cfg.get("on_question", "continue") not in _ON_QUESTION:
+        raise GraphError(
+            f"{n.id} : on_question inconnu {cfg.get('on_question')!r} "
+            f"(attendu : {', '.join(_ON_QUESTION)})",
+            code="on_question_unknown",
+            params={"node": n.id, "value": str(cfg.get("on_question"))},
+        )
+    if n.type == "classifier":
+        _validate_classifier(n)
+    jev_classifier = n.type == "classifier" and cfg.get("engine") == "jev"
+    if (
+        n.type in ("agent", "classifier", "extract", "rag")
+        and not jev_classifier
+        and not cfg.get("agent_id")
     ):
         raise GraphError(f"{n.id} : agent_id manquant")
+    if n.type == "document":
+        files = cfg.get("files")
+        if not isinstance(files, str) or not files.strip():
+            raise GraphError(
+                f"{n.id} : files manquant (ex. {{{{trigger.attachments}}}})"
+            )
+    if n.type == "db_write":
+        _validate_db_write(n)
+    if n.type == "file":
+        _validate_file(n)
+    if n.type == "file_save":
+        _validate_file_save(n)
     if n.type == "tool" and not cfg.get("tool"):
         raise GraphError(f"{n.id} : outil manquant")
+    _validate_error_handling(n)
     if n.type == "router" and not cfg.get("rules"):
         raise GraphError(f"{n.id} : aucune règle de routage")
     if n.type == "classifier" and len(_declared_routes(n)) < 2:
@@ -1367,6 +1777,13 @@ def validate_node(
                 f"{n.id} : timeout_s doit être un entier de {MIN_HTTP_TIMEOUT} à "
                 f"{MAX_HTTP_TIMEOUT}"
             )
+        if not isinstance(cfg.get("accept_error_status", True), bool):
+            # Ignoré (accepté, comme avant ce réglage) plutôt que refusé.
+            logger.warning(
+                "%s : accept_error_status %r ignoré (true ou false attendu)",
+                n.id,
+                cfg["accept_error_status"],
+            )
         if cfg.get("auth") is not None:
             # Pas de stockage de secret encore branché pour ce nœud : voir le
             # docstring du module et le rapport du lot. auth doit rester null
@@ -1382,6 +1799,21 @@ def validate_node(
                 f"(attendu : {', '.join(sorted(_NOTIF_CHANNELS))})"
             )
         to = cfg.get("to") or []
+        attachments = cfg.get("attachments")
+        if attachments not in (None, "", []):
+            if channel != "email":
+                raise GraphError(
+                    f"{n.id} : seules les notifications email ont des pièces jointes",
+                    code="notification_attachments_email_only",
+                    params={"node": n.id},
+                )
+            if not isinstance(attachments, (str, list)):
+                raise GraphError(
+                    f"{n.id} : attachments doit être un gabarit (ex. {{{{file1}}}}) "
+                    "ou une liste de gabarits",
+                    code="notification_attachment_bad_ref",
+                    params={"node": n.id},
+                )
         if channel == "email":
             if (
                 not isinstance(to, list)
@@ -1407,6 +1839,429 @@ def validate_node(
             if not cfg.get("subject"):
                 raise GraphError(f"{n.id} : subject manquant")
 
+
+
+def _validate_error_handling(n: Node) -> None:
+    """``on_error`` et ``timeout_s`` d'un nœud, mêmes règles que le Studio.
+
+    Sur un type qui n'en a pas, ils sont ignorés et non refusés : main ne les
+    vérifiait pas, et un graphe enregistré doit continuer de s'exécuter. Une
+    valeur ``on_error`` inconnue aussi : elle vaut ``fail``, avec un
+    avertissement. Le Studio les signale à l'édition.
+    """
+    cfg = n.config
+    mode = _on_error(n)
+    raw = cfg.get("on_error")
+    if n.type == "tool" and raw is not None and raw not in _ON_ERROR:
+        # Déjà refusé avant la v1 : aucun outil enregistré n'en porte.
+        raise GraphError(
+            f"{n.id} : on_error inconnu {raw!r} (attendu : {', '.join(_ON_ERROR)})",
+            code="on_error_unknown",
+            params={"node": n.id, "value": str(raw)},
+        )
+    if n.type in _ON_ERROR_TYPES and raw is not None and raw != mode:
+        logger.warning("%s : on_error %r ignoré, vaut fail", n.id, raw)
+    if (
+        mode == "route"
+        and n.type == "classifier"
+        and any(r.get("route") == _ERROR_ROUTE for r in cfg.get("routes") or [])
+    ):
+        raise GraphError(
+            f"{n.id} : la route {_ERROR_ROUTE!r} est réservée à la sortie d'erreur",
+            code="on_error_route_conflict",
+            params={"node": n.id},
+        )
+    if cfg.get("timeout_s") is not None and n.type in _TIMEOUT_TYPES:
+        value = cfg["timeout_s"]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not MIN_NODE_TIMEOUT <= value <= MAX_NODE_TIMEOUT
+        ):
+            raise GraphError(
+                f"{n.id} : timeout_s doit être un entier de {MIN_NODE_TIMEOUT} "
+                f"à {MAX_NODE_TIMEOUT} secondes",
+                code="node_timeout_invalid",
+                params={
+                    "node": n.id,
+                    "min": str(MIN_NODE_TIMEOUT),
+                    "max": str(MAX_NODE_TIMEOUT),
+                },
+            )
+
+
+def _validate_approval(n: Node) -> None:
+    cfg = n.config
+    question = cfg.get("question")
+    if not isinstance(question, str) or not question.strip():
+        raise GraphError(
+            f"{n.id} : question manquante",
+            code="approval_question_missing",
+            params={"node": n.id},
+        )
+    mode = cfg.get("mode", "choices")
+    if mode not in _DECISION_MODES:
+        raise GraphError(
+            f"{n.id} : mode de réponse inconnu {mode!r} (choices, text ou both)",
+            code="approval_mode_unknown",
+            params={"node": n.id, "mode": str(mode)},
+        )
+    hours = cfg.get("expires_after_hours", DEFAULT_DECISION_HOURS)
+    if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= MAX_DECISION_HOURS:
+        raise GraphError(
+            f"{n.id} : expires_after_hours doit être un entier de 1 à {MAX_DECISION_HOURS}",
+            code="approval_expiry_invalid",
+            params={"node": n.id, "max": str(MAX_DECISION_HOURS)},
+        )
+    if mode == "text":
+        return
+    routes = [c.get("route") for c in _decision_choices(n)]
+    if not routes or not all(isinstance(r, str) and r.strip() for r in routes):
+        raise GraphError(
+            f"{n.id} : il faut au moins un choix, chacun avec sa route",
+            code="approval_choices_missing",
+            params={"node": n.id},
+        )
+    if _TEXT_ROUTE in routes:
+        raise GraphError(
+            f"{n.id} : la route {_TEXT_ROUTE!r} est réservée à la réponse libre",
+            code="approval_choice_reserved",
+            params={"node": n.id, "route": _TEXT_ROUTE},
+        )
+    dupes = sorted({r for r in routes if routes.count(r) > 1})
+    if dupes:
+        raise GraphError(
+            f"{n.id} : choix en double : {', '.join(dupes)}",
+            code="approval_choice_duplicate",
+            params={"node": n.id, "route": dupes[0]},
+        )
+
+
+def _validate_file(n: Node) -> None:
+    cfg = n.config
+    fmt = cfg.get("format")
+    if fmt not in FILE_FORMATS:
+        raise GraphError(
+            f"{n.id} : format de fichier inconnu {fmt!r} "
+            f"(attendu : {', '.join(FILE_FORMATS)})",
+            code="file_format_unknown",
+            params={"node": n.id, "value": str(fmt)},
+        )
+    content = cfg.get("content")
+    if content is None or (isinstance(content, str) and not content.strip()):
+        raise GraphError(
+            f"{n.id} : contenu du fichier manquant (ex. {{{{agent1}}}})",
+            code="file_content_missing",
+            params={"node": n.id},
+        )
+    name = cfg.get("filename")
+    if name is not None and (not isinstance(name, str) or len(name) > MAX_FILE_NAME):
+        raise GraphError(
+            f"{n.id} : nom de fichier invalide (texte de {MAX_FILE_NAME} caractères au plus)",
+            code="file_filename_invalid",
+            params={"node": n.id, "max": str(MAX_FILE_NAME)},
+        )
+    sheet = cfg.get("sheet_name")
+    if sheet not in (None, "") and (
+        not isinstance(sheet, str)
+        or len(sheet) > MAX_SHEET_NAME
+        or _SHEET_FORBIDDEN.search(sheet)
+    ):
+        raise GraphError(
+            f"{n.id} : nom de feuille invalide (31 caractères au plus, sans [ ] : * ? / \\)",
+            code="file_sheet_invalid",
+            params={"node": n.id},
+        )
+
+
+def _check_folder(node_id: str, folder: Any) -> str:
+    """Le dossier de destination, sans remontée ni chemin absolu détourné."""
+    if folder is None:
+        return ""
+    if not isinstance(folder, str):
+        folder = str(folder)
+    parts = [p for p in folder.strip().strip("/").split("/") if p.strip()]
+    if (
+        len(folder) > MAX_FILE_FOLDER
+        or "\\" in folder
+        or any(p.strip() in (".", "..") for p in parts)
+        or any(ord(c) < 32 for c in folder)
+    ):
+        raise GraphError(
+            f"{node_id} : dossier de destination invalide {folder[:80]!r} "
+            "(chemin relatif, sans .. ni \\)",
+            code="file_save_folder_invalid",
+            params={"node": node_id},
+        )
+    return "/".join(p.strip() for p in parts)
+
+
+def _validate_file_save(n: Node) -> None:
+    cfg = n.config
+    provider = cfg.get("provider")
+    if provider not in FILE_SAVE_PROVIDERS:
+        raise GraphError(
+            f"{n.id} : stockage inconnu {provider!r} "
+            f"(attendu : {', '.join(FILE_SAVE_PROVIDERS)})",
+            code="file_save_provider_unknown",
+            params={"node": n.id, "value": str(provider)},
+        )
+    file = cfg.get("file")
+    if not isinstance(file, str) or not file.strip():
+        raise GraphError(
+            f"{n.id} : fichier à déposer manquant (ex. {{{{file1}}}})",
+            code="file_save_file_missing",
+            params={"node": n.id},
+        )
+    conflict = cfg.get("conflict") or "rename"
+    if conflict not in _FILE_SAVE_CONFLICTS:
+        raise GraphError(
+            f"{n.id} : conflict inconnu {conflict!r} "
+            f"(attendu : {', '.join(_FILE_SAVE_CONFLICTS)})",
+            code="file_save_conflict_unknown",
+            params={"node": n.id, "value": str(conflict)},
+        )
+    folder = cfg.get("folder") or ""
+    if not _TEMPLATE.search(str(folder)):
+        _check_folder(n.id, folder)
+    else:
+        # Rendu à l'exécution, revérifié alors ; la partie écrite en dur ne
+        # peut déjà pas remonter.
+        _check_folder(n.id, _TEMPLATE.sub("x", str(folder)))
+
+
+def _file_refs(node_id: str, value: Any, *, code_prefix: str, limit: int) -> list[str]:
+    """Les refs désignées par ``value`` rendu : une ref, la sortie d'un nœud
+    ``file`` (``{"ref": …}``) ou une liste de l'un ou l'autre."""
+    items = value if isinstance(value, list) else [value]
+    items = [i for i in items if i not in (None, "")]
+    if len(items) > limit:
+        raise GraphError(
+            f"{node_id} : {len(items)} fichiers, max {limit}",
+            code=f"{code_prefix}_too_many_attachments",
+            params={"node": node_id, "max": str(limit)},
+        )
+    refs = []
+    for item in items:
+        ref = item.get("ref") if isinstance(item, dict) else item
+        if not isinstance(ref, str) or not ref.strip():
+            raise GraphError(
+                f"{node_id} : élément qui n'est pas un fichier (attendu : une ref "
+                "ou la sortie d'un nœud Fichier)",
+                code=f"{code_prefix}_attachment_bad_ref",
+                params={"node": node_id},
+            )
+        refs.append(ref.strip())
+    return refs
+
+
+def _bounded_file_text(node_id: str, fmt: str, value: Any) -> str:
+    """Le texte d'un fichier json, markdown, text, docx ou pdf, bornes
+    vérifiées avant de le produire en entier et avant tout rendu."""
+    if fmt == "json":
+        value = workflow_files.json_value(value)
+    if workflow_files.depth(value, MAX_FILE_DEPTH) > MAX_FILE_DEPTH:
+        raise GraphError(
+            f"{node_id} : valeur imbriquée sur plus de {MAX_FILE_DEPTH} niveaux",
+            code="file_too_deep",
+            params={"node": node_id, "max": str(MAX_FILE_DEPTH)},
+        )
+    rich = fmt in workflow_files.RICH_TEXT
+    # Un caractère vaut au moins un octet : la borne en octets reste vérifiée
+    # après coup, celle-ci évite seulement de produire au-delà.
+    limit = MAX_FILE_TEXT_CHARS if rich else MAX_FILE_BYTES
+    try:
+        text = workflow_files.bounded_text(value, limit, as_json=fmt == "json")
+    except workflow_files.TextTooLong:
+        if rich:
+            raise GraphError(
+                f"{node_id} : texte trop long pour un fichier {fmt} "
+                f"(max {MAX_FILE_TEXT_CHARS} caractères)",
+                code="file_text_too_long",
+                params={"node": node_id, "format": fmt, "max": str(MAX_FILE_TEXT_CHARS)},
+            ) from None
+        raise GraphError(
+            f"{node_id} : fichier de plus de {MAX_FILE_BYTES} octets",
+            code="file_too_large",
+            params={"node": node_id, "max": str(MAX_FILE_BYTES)},
+        ) from None
+    if not rich:
+        return text
+    # Compté sur le texte même que le rendu reçoit : sans caractères de
+    # contrôle (l'un d'eux couperait une ligne pour ``splitlines`` et cacherait
+    # un tableau), lignes découpées comme ``_docx`` (\r, \x0b… comptent).
+    text = workflow_files.strip_control(text)
+    if len(text.splitlines()) > MAX_FILE_TEXT_LINES:
+        raise GraphError(
+            f"{node_id} : plus de {MAX_FILE_TEXT_LINES} lignes de texte",
+            code="file_too_many_lines",
+            params={"node": node_id, "max": str(MAX_FILE_TEXT_LINES)},
+        )
+    widest, cells = workflow_files.markdown_tables(text)
+    if widest > MAX_DOC_TABLE_COLUMNS:
+        raise GraphError(
+            f"{node_id} : tableau de {widest} colonnes, max {MAX_DOC_TABLE_COLUMNS}",
+            code="file_too_many_columns",
+            params={"node": node_id, "max": str(MAX_DOC_TABLE_COLUMNS)},
+        )
+    if cells > MAX_DOC_TABLE_CELLS:
+        raise GraphError(
+            f"{node_id} : {cells} cellules de tableau, max {MAX_DOC_TABLE_CELLS}",
+            code="file_too_many_cells",
+            params={"node": node_id, "max": str(MAX_DOC_TABLE_CELLS)},
+        )
+    return text
+
+
+def _build_file(node_id: str, fmt: str, value: Any, sheet: Optional[str]) -> tuple:
+    """(octets, lignes) du fichier, bornes vérifiées avant toute cellule."""
+    table = None
+    if fmt in workflow_files.TABULAR:
+        try:
+            table = workflow_files.parse_table(value)
+        except workflow_files.RowsError as exc:
+            raise GraphError(
+                f"{node_id} : {fmt} attend une liste de lignes "
+                f"(objets, ou listes avec l'en-tête en premier) : {exc}",
+                code="file_bad_rows",
+                params={"node": node_id, "format": fmt},
+            ) from None
+        rows = len(table.records)
+        if rows > MAX_FILE_ROWS:
+            raise GraphError(
+                f"{node_id} : {rows} lignes, max {MAX_FILE_ROWS}",
+                code="file_too_many_rows",
+                params={"node": node_id, "max": str(MAX_FILE_ROWS)},
+            )
+        if table.width > MAX_FILE_COLUMNS:
+            raise GraphError(
+                f"{node_id} : {table.width} colonnes, max {MAX_FILE_COLUMNS}",
+                code="file_too_many_columns",
+                params={"node": node_id, "max": str(MAX_FILE_COLUMNS)},
+            )
+        if rows * table.width > MAX_FILE_CELLS:
+            raise GraphError(
+                f"{node_id} : {rows * table.width} cellules, max {MAX_FILE_CELLS}",
+                code="file_too_many_cells",
+                params={"node": node_id, "max": str(MAX_FILE_CELLS)},
+            )
+    text = None
+    if table is None:
+        text = _bounded_file_text(node_id, fmt, value)
+    try:
+        return workflow_files.build(fmt, value, sheet, table=table, text=text)
+    except Exception as exc:
+        # Type seulement : le message d'une bibliothèque de rendu peut citer
+        # le contenu d'une cellule.
+        logger.warning(
+            "[workflow file] %s : rendu %s impossible (%s)", node_id, fmt, type(exc).__name__
+        )
+        raise GraphError(
+            f"{node_id} : fichier {fmt} impossible à produire depuis ce contenu",
+            code="file_build_failed",
+            params={"node": node_id, "format": fmt},
+        ) from None
+
+
+def _file_name(node: Node, rendered: Any, fmt: str) -> str:
+    from apowerb.storage.filename import sanitize_filename
+
+    ext = workflow_files.FORMATS[fmt][0]
+    raw = rendered if isinstance(rendered, str) and rendered.strip() else node.id
+    name = sanitize_filename(raw.strip())
+    if name.lower().endswith(ext):
+        name = name[: -len(ext)]
+    name = name[: MAX_FILE_NAME - len(ext)].rstrip(" .") or node.id
+    return name + ext
+
+
+def _validate_classifier(n: Node) -> None:
+    cfg = n.config
+    engine = cfg.get("engine", "agent")
+    if engine not in _CLASSIFIER_ENGINES:
+        raise GraphError(
+            f"{n.id} : engine inconnu {engine!r} "
+            f"(attendu : {', '.join(_CLASSIFIER_ENGINES)})"
+        )
+    if engine != "jev":
+        return
+    routes = cfg.get("routes") or []
+    for r in routes:
+        if r.get("route") == _UNCERTAIN:
+            raise GraphError(
+                f"{n.id} : la route {_UNCERTAIN!r} est réservée (cas incertain de Jev)"
+            )
+        desc = r.get("description")
+        if not isinstance(desc, str) or not desc.strip():
+            raise GraphError(
+                f"{n.id} : route {r.get('route')!r} sans description "
+                "(Jev classe d'après les descriptions)"
+            )
+    mc = cfg.get("min_confidence", _DEFAULT_MIN_CONFIDENCE)
+    if isinstance(mc, bool) or not isinstance(mc, (int, float)) or not 0 < mc <= 1:
+        raise GraphError(f"{n.id} : min_confidence doit être un nombre dans ]0, 1]")
+
+
+def _validate_db_write(n: Node) -> None:
+    cfg = n.config
+    conn = cfg.get("connection")
+    if not isinstance(conn, str) or not _TOOL_CONFIG_REF.match(conn):
+        raise GraphError(
+            f"{n.id} : connection doit désigner une connexion base enregistrée "
+            "(tool_config<id>), jamais une URL ou des identifiants"
+        )
+    table = cfg.get("table")
+    parts = table.split(".") if isinstance(table, str) else []
+    if not 1 <= len(parts) <= 2 or not all(_SQL_IDENT.match(p) for p in parts):
+        raise GraphError(
+            f"{n.id} : table invalide {table!r} (nom ou schema.nom, lettres, "
+            "chiffres et _)"
+        )
+    values = cfg.get("values")
+    if not isinstance(values, dict) or not 1 <= len(values) <= MAX_DB_WRITE_COLUMNS:
+        raise GraphError(
+            f"{n.id} : values doit associer de 1 à {MAX_DB_WRITE_COLUMNS} "
+            "colonnes à leur valeur"
+        )
+    for col in values:
+        if not isinstance(col, str) or not _SQL_IDENT.match(col):
+            raise GraphError(f"{n.id} : nom de colonne invalide {col!r}")
+
+
+def _document_refs(node_id: str, files: Any) -> list[str]:
+    """Les refs de pièces jointes désignées par ``files`` une fois rendu :
+    une ref, un objet ``{"ref": …}`` ou une liste de l'un ou l'autre."""
+    items = files if isinstance(files, list) else [files]
+    items = [i for i in items if i not in (None, "")]
+    if not items:
+        raise GraphError(
+            f"{node_id} : aucune pièce jointe à lire",
+            code="document_no_file",
+            params={"node": node_id},
+        )
+    if len(items) > MAX_DOCUMENT_FILES:
+        raise GraphError(
+            f"{node_id} : {len(items)} pièces jointes, max {MAX_DOCUMENT_FILES}",
+            code="document_too_many",
+            params={"node": node_id, "max": str(MAX_DOCUMENT_FILES)},
+        )
+    refs = []
+    for item in items:
+        ref = item.get("ref") if isinstance(item, dict) else item
+        if not isinstance(ref, str) or not ref.strip():
+            raise GraphError(
+                f"{node_id} : élément sans référence de pièce jointe ({str(item)[:80]!r})",
+                code="document_bad_ref",
+                params={"node": node_id},
+            )
+        refs.append(ref.strip())
+    return refs
+
+
+def _db_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def validate_graph(
@@ -1454,17 +2309,51 @@ def validate_graph(
             raise GraphError(
                 f"arête {e.source} -> {e.target} : un nœud output termine le flux"
             )
-        if src.type in _ROUTED:
+        if _is_routed(src):
             if e.route not in _declared_routes(src):
                 raise GraphError(
                     f"arête {e.source} -> {e.target} : route {e.route!r} non déclarée par {e.source}"
                 )
+        elif _routes_on_error(src):
+            # Succès sans route, échec par la route « error ».
+            if e.route not in (None, _ERROR_ROUTE):
+                raise GraphError(
+                    f"arête {e.source} -> {e.target} : {e.source} n'a que la "
+                    f"sortie {_ERROR_ROUTE!r} en plus de son succès",
+                    code="on_error_route_unknown",
+                    params={"node": e.source, "route": str(e.route)},
+                )
+        elif e.route == _ERROR_ROUTE and src.type in _ON_ERROR_TYPES:
+            raise GraphError(
+                f"arête {e.source} -> {e.target} : une sortie d'erreur demande "
+                "on_error: route",
+                code="on_error_route_unexpected",
+                params={"node": e.source},
+            )
         elif e.route is not None:
             raise GraphError(
                 f"arête {e.source} -> {e.target} : route sur un nœud qui ne route pas"
             )
 
     for n in graph.nodes:
+        if _routes_on_error(n) and not any(
+            e.source == n.id and e.route == _ERROR_ROUTE for e in graph.edges
+        ):
+            raise GraphError(
+                f"{n.id} : branchez la sortie {_ERROR_ROUTE!r} (on_error: route)",
+                code="on_error_route_missing",
+                params={"node": n.id},
+            )
+        if (
+            n.type == "approval"
+            and n.config.get("mode", "choices") == "both"
+            and not any(e.source == n.id and e.route == _TEXT_ROUTE for e in graph.edges)
+        ):
+            raise GraphError(
+                f"{n.id} : branchez la route {_TEXT_ROUTE!r} (réponse libre)",
+                code="approval_text_route_missing",
+                params={"node": n.id},
+            )
         if n.type in ("try", "condition"):
             used = [e.route for e in graph.edges if e.source == n.id]
             dupes = sorted({r for r in used if r and used.count(r) > 1})
@@ -1524,6 +2413,26 @@ def validate_graph(
 
 
 # --- Compilation ------------------------------------------------------------
+
+
+class _AwaitingDecision(Exception):
+    """Levée par un nœud ``approval`` sans réponse : le run s'arrête là."""
+
+    def __init__(self, node_id: str, prompt: dict):
+        super().__init__(f"{node_id} : décision humaine attendue")
+        self.node_id = node_id
+        self.prompt = prompt
+
+
+def _awaiting_in(exc: Optional[BaseException]) -> Optional[_AwaitingDecision]:
+    # ADK réemballe l'exception d'un nœud quand le workflow échoue.
+    seen: list[BaseException] = []
+    while exc is not None and exc not in seen:
+        if isinstance(exc, _AwaitingDecision):
+            return exc
+        seen.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    return None
 
 
 def _adk_name(node_id: str) -> str:
@@ -1633,10 +2542,32 @@ class _Compiler:
         run_subworkflow: Optional["ResolveWorkflow"] = None,
         workflow_stack: tuple[str, ...] = (),
         depth: int = 1,
+        services: Optional[NodeServices] = None,
+        resume: Optional[dict] = None,
+        nested: bool = False,
+        on_answered: Optional[Callable[[str], Any]] = None,
     ):
+        self.services = services or NodeServices()
+        # Reprise après une décision : sorties et routes des nœuds déjà
+        # faits (rejoués sans être réexécutés) et la réponse attendue.
+        resume = resume or {}
+        self._replay_outputs: dict[str, Any] = dict(resume.get("outputs") or {})
+        self._replay_routes: dict[str, str] = dict(resume.get("routes") or {})
+        self._replay_handled: dict[str, dict] = dict(
+            resume.get("handled_errors") or {}
+        )
+        # Échecs absorbés par on_error, gardés dans les instantanés.
+        self.handled_errors: dict[str, dict] = {}
+        self.answer: Optional[dict] = resume.get("answer")
+        # Prévenu quand la réponse est prise, avant tout nœud en aval : à
+        # partir de là, une coupure ne doit plus remettre le run en attente.
+        self.on_answered = on_answered
+        # Corps de loop/try ou sous-workflow : une décision n'y peut pas
+        # suspendre le run.
+        self.nested = nested
         self.g = graph
         self.payload = payload
-        self.run_agent = run_agent
+        self._run_agent_raw = run_agent
         self.run_tool = run_tool
         self.run_rag = run_rag
         self.run_notify = run_notify
@@ -1651,6 +2582,254 @@ class _Compiler:
         self.workflow_stack = workflow_stack
         self.depth = depth
         self.outputs: dict[str, Any] = {}
+        # Route prise par chaque nœud routé : une reprise doit refaire la même.
+        self.routes: dict[str, str] = {}
+        # Ce que le nœud a reçu et les outils appelés par son agent, joints à
+        # son node_complete ou node_error (voir _note_input).
+        self._trace: dict[str, dict] = {}
+        # Identifiants rendus par les outils d'un nœud agent, ajoutés à son
+        # node_complete : à côté de la sortie, pour que {{id}} garde sa forme.
+        self._artifacts: dict[str, list[dict]] = {}
+        # Tous les graphiques, tableaux de bord… créés pendant le run, avec
+        # leur nœud : ``done`` les rend, pour qui ne lit pas chaque nœud.
+        self.run_artifacts: list[dict] = list(resume.get("artifacts") or [])
+        # Le dernier nœud de ce niveau qui a échoué : « Reprendre ici » repart de lui.
+        self.failed_node: Optional[str] = None
+
+    def _note_input(self, node: Node, value: Any) -> None:
+        """Montre au panneau Test ce que ``node`` va recevoir, dès maintenant.
+
+        Sans cela, seules les sorties étaient visibles : un agent qui ne
+        recevait que la réponse de l'agent précédent, sans la demande
+        d'origine, semblait « ne pas récupérer les valeurs ».
+        """
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, ensure_ascii=False, default=str)
+        )
+        fields: dict[str, Any] = {"input": value}
+        if len(text) > MAX_TRACE_INPUT_CHARS:
+            fields = {
+                "input": text[:MAX_TRACE_INPUT_CHARS],
+                "input_truncated": True,
+                "input_length": len(text),
+            }
+        self._trace[node.id] = fields
+        self.emit({"event": "node_input", "node_id": node.id, **fields})
+
+    async def _agent_reply(self, agent_id: str, message: str) -> AgentReply:
+        # Un run_agent injecté peut rendre la valeur seule (stubs, anciens
+        # appelants) ou une AgentReply (production, run_agent_message).
+        reply = await self._run_agent_raw(agent_id, message)
+        return reply if isinstance(reply, AgentReply) else AgentReply(output=reply)
+
+    async def run_agent(self, agent_id: str, message: str) -> Any:
+        return (await self._agent_reply(agent_id, message)).output
+
+    def _artifacts_of(self, node_id: str) -> dict:
+        found = [
+            a
+            for a in self._artifacts.pop(node_id, None) or []
+            if a.get("tool") not in _READ_ONLY_ARTIFACT_TOOLS
+        ]
+        self.run_artifacts.extend({"node_id": node_id, **a} for a in found)
+        return {"artifacts": found} if found else {}
+
+    def _check_contract(self, node: Node, result: Any) -> None:
+        """Refuse une sortie qui ne tient pas ce que le nœud promet.
+
+        ``output_type`` : « json » attend un objet ou une liste, « text » une
+        chaîne. ``on_question: fail`` : un agent qui finit par une question
+        arrête le run au lieu de la passer à l'étape suivante, que personne
+        ne lira avant la fin.
+        """
+        cfg = node.config
+        expected = cfg.get("output_type", "any")
+        if isinstance(result, (dict, list)):
+            actual = "json"
+        elif isinstance(result, str):
+            actual = "text"
+        else:
+            # Nombre, booléen, None : ni du texte ni un objet JSON.
+            actual = "none" if result is None else type(result).__name__
+        if expected in ("json", "text") and expected != actual:
+            raise GraphError(
+                f"{node.id} : sortie {actual} alors que {expected} est attendu",
+                code="output_type_mismatch",
+                params={"node": node.id, "expected": expected, "actual": actual},
+            )
+        if (
+            node.type == "agent"
+            and cfg.get("on_question") == "fail"
+            and _asks_question(result)
+        ):
+            last = [line for line in str(result).strip().splitlines() if line.strip()]
+            raise GraphError(
+                f"{node.id} : l'agent a posé une question au lieu de répondre",
+                code="agent_asked_question",
+                params={"node": node.id, "question": last[-1][:300] if last else ""},
+            )
+
+    def _service(self, node: Node, name: str):
+        fn = getattr(self.services, name)
+        if fn is None:
+            raise GraphError(
+                f"{node.id} : service {name} indisponible sur ce serveur",
+                code="service_unavailable",
+                params={"node": node.id, "service": name},
+            )
+        return fn
+
+    async def _read_documents(self, node: Node) -> dict:
+        read = self._service(node, "document")
+        refs = _document_refs(node.id, render(node.config["files"], self.outputs, node.id))
+        documents = []
+        for ref in refs:
+            doc = await read(ref)
+            documents.append(
+                {
+                    "name": doc.get("name"),
+                    "ref": ref,
+                    "text": doc.get("text") or "",
+                    "page_count": doc.get("page_count"),
+                }
+            )
+        return {
+            "documents": documents,
+            "text": "\n\n".join(d["text"] for d in documents),
+            "count": len(documents),
+        }
+
+    async def _classify_jev(self, node: Node, node_input: Any) -> tuple[Any, str]:
+        cfg = node.config
+        classify = self._service(node, "jev_classify")
+        if cfg.get("text") is not None:
+            text = render(cfg["text"], self.outputs, node.id)
+            text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False, default=str)
+        else:
+            text = leaf_message(node_input)
+        if not text or not text.strip():
+            raise GraphError(
+                f"{node.id} : rien à classer (texte d'entrée vide)",
+                code="classifier_empty_input",
+                params={"node": node.id},
+            )
+        routes = cfg["routes"]
+        result = await classify(
+            {r["route"]: r["description"] for r in routes},
+            text,
+            cfg.get("instructions") or "",
+            float(cfg.get("min_confidence", _DEFAULT_MIN_CONFIDENCE)),
+        )
+        # La décision va dans la trace (node_complete, ou node_error si elle
+        # échoue) ; la sortie reste l'entrée, que les nœuds suivants lisent.
+        detail = {
+            "label": result.get("label"),
+            "confidence": result.get("confidence"),
+            "uncertain": bool(result.get("uncertain")),
+        }
+        if detail["uncertain"]:
+            detail["best_guess"] = result.get("best_guess")
+        if result.get("usage") is not None:
+            detail["usage"] = result["usage"]
+        self._trace.setdefault(node.id, {})["classification"] = detail
+        if result.get("uncertain"):
+            if any(e.source == node.id and e.route == _UNCERTAIN for e in self.g.edges):
+                detail["route"] = _UNCERTAIN
+                return node_input, _UNCERTAIN
+            raise GraphError(
+                f"{node.id} : Jev hésite (meilleure route {result.get('best_guess')!r}, "
+                f"confiance {result.get('confidence')}) et aucune route "
+                f"{_UNCERTAIN!r} n'est branchée",
+                code="classifier_uncertain",
+                params={"node": node.id, "best_guess": str(result.get("best_guess"))},
+            )
+        label = result.get("label")
+        if label not in {r["route"] for r in routes}:
+            raise GraphError(
+                f"{node.id} : réponse du classifieur hors routes : {str(label)[:80]!r}",
+                code="classifier_no_route",
+                params={"node": node.id, "routes": ", ".join(r["route"] for r in routes)},
+            )
+        detail["route"] = label
+        return node_input, label
+
+    async def _db_write(self, node: Node) -> dict:
+        cfg = node.config
+        write = self._service(node, "db_write")
+        row = {
+            col: _db_value(render(tpl, self.outputs, node.id))
+            for col, tpl in cfg["values"].items()
+        }
+        result = await write(cfg["connection"], cfg["table"], row)
+        return {"table": cfg["table"], "inserted": result.get("inserted", 0)}
+
+    async def _make_file(self, node: Node) -> dict:
+        cfg = node.config
+        save = self._service(node, "save_file")
+        fmt = cfg["format"]
+        value = render(cfg["content"], self.outputs, node.id)
+        name = _file_name(node, render(cfg.get("filename"), self.outputs, node.id), fmt)
+        # Lecture, bornes et rendu hors de la boucle d'événements.
+        data, rows = await asyncio.to_thread(
+            _build_file, node.id, fmt, value, cfg.get("sheet_name") or None
+        )
+        if not data:
+            raise GraphError(
+                f"{node.id} : contenu vide, aucun fichier produit",
+                code="file_empty",
+                params={"node": node.id},
+            )
+        if len(data) > MAX_FILE_BYTES:
+            raise GraphError(
+                f"{node.id} : fichier de {len(data)} octets, max {MAX_FILE_BYTES}",
+                code="file_too_large",
+                params={"node": node.id, "max": str(MAX_FILE_BYTES)},
+            )
+        content_type = workflow_files.FORMATS[fmt][1]
+        stored = await save(name, content_type, data)
+        out = {
+            "name": stored.get("name", name),
+            "ref": stored["ref"],
+            "size": stored.get("size", len(data)),
+            "content_type": content_type,
+            "format": fmt,
+            "rows": rows,
+        }
+        self._artifacts[node.id] = [
+            {
+                "file_ref": out["ref"],
+                "file_name": out["name"],
+                "content_type": content_type,
+                "size": out["size"],
+            }
+        ]
+        return out
+
+    async def _save_to_drive(self, node: Node) -> dict:
+        cfg = node.config
+        save = self._service(node, "save_to_drive")
+        value = render(cfg["file"], self.outputs, node.id)
+        ref = value.get("ref") if isinstance(value, dict) else value
+        if not isinstance(ref, str) or not ref.strip():
+            raise GraphError(
+                f"{node.id} : ce n'est pas un fichier "
+                "(attendu : la sortie d'un nœud Fichier, ex. {{file1}})",
+                code="file_save_bad_file",
+                params={"node": node.id},
+            )
+        folder = _check_folder(node.id, render(cfg.get("folder") or "", self.outputs, node.id))
+        provider = cfg["provider"]
+        result = await save(
+            provider, ref.strip(), folder, cfg.get("conflict") or "rename"
+        )
+        return {
+            "provider": provider,
+            "name": result.get("name"),
+            "path": result.get("path"),
+            "web_url": result.get("web_url"),
+        }
 
     def _wrap(self, node: Node, body):
         async def _fn(node_input: Any) -> Any:
@@ -1658,19 +2837,32 @@ class _Compiler:
                 raise WorkflowCancelled()
             if isinstance(node_input, types.Content):
                 node_input = None
+            if node.id in self._replay_outputs:
+                return self._replay(node)
             self.emit({"event": "node_start", "node_id": node.id, "type": node.type})
             t0 = time.monotonic()
+            self._trace.pop(node.id, None)
             try:
-                result, route = await body(node_input)
-            except Exception as exc:
-                self.emit(
-                    {
-                        "event": "node_error",
-                        "node_id": node.id,
-                        **error_fields(exc),
-                    }
-                )
+                result, route = await self._timed(node, body, node_input)
+                if node.type in ("agent", "tool"):
+                    self._check_contract(node, result)
+            except _AwaitingDecision:
                 raise
+            except Exception as exc:
+                handled = self._handled(node, exc)
+                if handled is None:
+                    self.failed_node = node.id
+                    self.emit(
+                        {
+                            "event": "node_error",
+                            "node_id": node.id,
+                            **error_fields(exc),
+                            **self._trace.pop(node.id, {}),
+                        }
+                    )
+                    raise
+                result, route = handled
+            trace = self._trace.pop(node.id, {})
             size = len(json.dumps(result, ensure_ascii=False, default=str).encode())
             if size > MAX_NODE_OUTPUT_BYTES:
                 exc = GraphError(
@@ -1679,31 +2871,116 @@ class _Compiler:
                     code="node_output_too_large",
                     params={"node": node.id, "max": str(MAX_NODE_OUTPUT_BYTES)},
                 )
+                self.failed_node = node.id
                 self.emit(
-                    {"event": "node_error", "node_id": node.id, **error_fields(exc)}
+                    {
+                        "event": "node_error",
+                        "node_id": node.id,
+                        **error_fields(exc),
+                        **trace,
+                    }
                 )
                 raise exc
             self.outputs[node.id] = result
-            self.emit(
-                {
-                    "event": "node_complete",
-                    "node_id": node.id,
-                    "output": result,
-                    "duration_ms": round((time.monotonic() - t0) * 1000),
-                }
-            )
+            if route is not None:
+                self.routes[node.id] = route
+            complete = {
+                "event": "node_complete",
+                "node_id": node.id,
+                "output": result,
+                "duration_ms": round((time.monotonic() - t0) * 1000),
+                **trace,
+                **self._artifacts_of(node.id),
+            }
+            if node.type == "agent" and _asks_question(result):
+                complete["asks_question"] = True
+            self.emit(complete)
             if route is not None:
                 self.emit({"event": "route", "node_id": node.id, "route": route})
-            if node.id in self._terminal_ids:
-                # Feuille du graphe : sa valeur est déjà dans self.outputs,
-                # d'où _final_output compose la sortie du run. La remonter à
-                # ADK ferait échouer tout run qui atteint plusieurs feuilles
-                # (« multiple terminal nodes produced output », ADK 2.9) :
-                # un fan-out sans merge, ou plusieurs nœuds output.
-                return None
-            return result if route is None else Event(output=result, route=route)
+            return self._hand_over(node, result, route)
 
         return FunctionNode(func=_fn, name=_adk_name(node.id))
+
+    async def _timed(self, node: Node, body, node_input: Any) -> tuple[Any, Any]:
+        """``body`` borné par ``timeout_s`` : au-delà, sa tâche est annulée."""
+        seconds = node.config.get("timeout_s") if node.type in _TIMEOUT_TYPES else None
+        if seconds is None:
+            return await body(node_input)
+        deadline = asyncio.timeout(seconds)
+        try:
+            async with deadline:
+                return await body(node_input)
+        except TimeoutError:
+            if not deadline.expired():
+                raise  # levée par le nœud lui-même, pas par son délai
+            raise GraphError(
+                f"{node.id} : délai dépassé ({seconds} s)",
+                code="node_timeout",
+                params={"node": node.id, "seconds": str(seconds)},
+            ) from None
+
+    def _handled(self, node: Node, exc: Exception) -> Optional[tuple[Any, Any]]:
+        """``(sortie, route)`` d'un échec que ``on_error`` absorbe, sinon ``None``.
+
+        L'annulation n'est jamais un échec du nœud. L'erreur absorbée reste
+        dans la trace (``handled_error``) : sans elle, le panneau Test
+        montrerait un nœud réussi.
+        """
+        mode = _on_error(node)
+        if (
+            mode == "fail"
+            or node.type not in _ON_ERROR_TYPES
+            or isinstance(exc, WorkflowCancelled)
+        ):
+            return None
+        if (
+            node.type == "tool"
+            and mode == "continue"
+            and not getattr(exc, "_apowerb_reported", False)
+        ):
+            # Sens d'avant : un outil qui lève ou rate son contrat arrête le
+            # run ; seule l'erreur qu'il signale lui-même est absorbée.
+            return None
+        error = _error_output(exc, node.id)
+        ref = error_fields(exc).get("ref")
+        handled = {**error, "on_error": mode, **({"ref": ref} if ref else {})}
+        self._trace.setdefault(node.id, {})["handled_error"] = handled
+        self.handled_errors[node.id] = handled
+        if mode == "route":
+            return error, _ERROR_ROUTE
+        # ``continue`` : un résultat partiel (réponse http, résultat d'outil)
+        # vaut mieux que la description de l'erreur.
+        return getattr(exc, "_apowerb_partial", error), None
+
+    def _replay(self, node: Node) -> Any:
+        """Un nœud fait avant la pause : ses événements, pas son exécution."""
+        result = self._replay_outputs[node.id]
+        route = self._replay_routes.get(node.id)
+        base = {"node_id": node.id, "replayed": True}
+        self.emit({"event": "node_start", "type": node.type, **base})
+        self.outputs[node.id] = result
+        handled = self._replay_handled.get(node.id)
+        if handled is not None:
+            self.handled_errors[node.id] = handled
+            base["handled_error"] = handled
+        self.emit({"event": "node_complete", "output": result, "duration_ms": 0, **base})
+        if route is not None:
+            self.routes[node.id] = route
+            self.emit({"event": "route", "route": route, **base})
+        return self._hand_over(node, result, route)
+
+    def _hand_over(self, node: Node, result: Any, route: Optional[str]) -> Any:
+        """Ce que le nœud rend à ADK."""
+        if node.id in self._terminal_ids:
+            # Feuille du graphe : sa valeur est déjà dans self.outputs,
+            # d'où _final_output compose la sortie du run. La remonter à
+            # ADK ferait échouer tout run qui atteint plusieurs feuilles
+            # (« multiple terminal nodes produced output », ADK 2.9) :
+            # un fan-out sans merge, ou plusieurs nœuds output.
+            return None
+        if route is None and _routes_on_error(node) and not _is_routed(node):
+            route = _SUCCESS_ROUTE
+        return result if route is None else Event(output=result, route=route)
 
     def _body(self, node: Node):
         cfg = node.config
@@ -1715,16 +2992,35 @@ class _Compiler:
         elif node.type == "agent":
 
             async def body(node_input):
-                if cfg.get("input") is not None:
-                    msg = render(cfg["input"], self.outputs, node.id)
+                tpl = cfg.get("input")
+                if isinstance(tpl, str) and not tpl.strip():
+                    # Champ Entrée effacé : comme un champ vide, l'agent lit
+                    # la sortie amont (l'aide du nœud le promet).
+                    tpl = None
+                if tpl is not None:
+                    msg = render(tpl, self.outputs, node.id)
                     msg = (
                         msg
                         if isinstance(msg, str)
                         else json.dumps(msg, ensure_ascii=False)
                     )
+                elif isinstance(node_input, str) and node_input:
+                    # Une réponse texte passe telle quelle : en JSON, elle
+                    # arrivait entre guillemets avec ses retours à la ligne
+                    # échappés.
+                    msg = node_input
                 else:
                     msg = leaf_message(node_input)
-                return await self.run_agent(cfg["agent_id"], msg), None
+                self._note_input(node, msg)
+                with collect_tool_calls() as calls:
+                    try:
+                        reply = await self._agent_reply(
+                            cfg["agent_id"], AgentNodeMessage(msg)
+                        )
+                    finally:
+                        self._trace[node.id]["tool_calls"] = calls
+                self._artifacts[node.id] = reply.artifacts
+                return reply.output, None
         elif node.type == "tool":
 
             async def body(node_input):
@@ -1734,7 +3030,38 @@ class _Compiler:
                     args = UpstreamArgs(
                         node_input if isinstance(node_input, dict) else {}
                     )
-                return await self.run_tool(cfg["tool"], args), None
+                self._note_input(node, dict(args))
+                result = await self.run_tool(cfg["tool"], args)
+                reported = tool_reported_error(result)
+                if isinstance(result, dict) and reported is None:
+                    # Même lecture que pour les outils appelés par un agent.
+                    call = {
+                        "functionResponse": {"name": cfg["tool"], "response": result}
+                    }
+                    self._artifacts[node.id] = tool_artifacts(
+                        [{"content": {"parts": [call]}}]
+                    )
+                if reported is not None:
+                    if _on_error(node) == "continue":
+                        # Comme avant : le résultat passé en aval tient son
+                        # contrat, sinon le run s'arrête (output_type_mismatch).
+                        self._check_contract(node, result)
+                        # Le message tel que l'outil l'a écrit, à côté du code.
+                        self._trace.setdefault(node.id, {})["reported_error"] = reported
+                    exc = GraphError(
+                        f"{node.id} : l'outil a signalé une erreur : {reported}",
+                        code="tool_reported_error",
+                        params={
+                            "node": node.id,
+                            "tool": cfg["tool"],
+                            "message": reported,
+                        },
+                    )
+                    # ``continue`` passe le résultat de l'outil, comme avant.
+                    exc._apowerb_partial = result
+                    exc._apowerb_reported = True
+                    raise exc
+                return result, None
         elif node.type == "router":
 
             async def body(node_input):
@@ -1750,6 +3077,26 @@ class _Compiler:
                     code="no_route",
                     params={"node": node.id},
                 )
+        elif node.type == "classifier" and cfg.get("engine") == "jev":
+
+            async def body(node_input):
+                return await self._classify_jev(node, node_input)
+        elif node.type == "document":
+
+            async def body(node_input):
+                return await self._read_documents(node), None
+        elif node.type == "db_write":
+
+            async def body(node_input):
+                return await self._db_write(node), None
+        elif node.type == "file":
+
+            async def body(node_input):
+                return await self._make_file(node), None
+        elif node.type == "file_save":
+
+            async def body(node_input):
+                return await self._save_to_drive(node), None
         elif node.type == "classifier":
 
             async def body(node_input):
@@ -1807,7 +3154,7 @@ class _Compiler:
 
             async def body(node_input):
                 return {
-                    f["key"]: render(f.get("value"), self.outputs)
+                    f["key"]: render(f.get("value"), self.outputs, node.id)
                     for f in cfg["fields"]
                 }, None
         elif node.type == "condition":
@@ -1818,7 +3165,7 @@ class _Compiler:
                 outcomes = [
                     evaluate_rule(
                         rule,
-                        render(rule["field"], self.outputs)
+                        render(rule["field"], self.outputs, node.id)
                         if (rule.get("field") or "").strip()
                         else node_input,
                     )
@@ -1832,7 +3179,7 @@ class _Compiler:
 
             async def body(node_input):
                 value = (
-                    render(cfg["input"], self.outputs)
+                    render(cfg["input"], self.outputs, node.id)
                     if cfg.get("input") not in (None, "")
                     else node_input
                 )
@@ -1848,7 +3195,7 @@ class _Compiler:
         elif node.type == "rag":
 
             async def body(node_input):
-                query = render(cfg["query"], self.outputs)
+                query = render(cfg["query"], self.outputs, node.id)
                 query = (
                     query
                     if isinstance(query, str)
@@ -1877,23 +3224,35 @@ class _Compiler:
         elif node.type == "http":
 
             async def body(node_input):
-                return await _http_call(node.id, cfg, self.outputs), None
+                response = await _http_call(node.id, cfg, self.outputs)
+                # Absent = accepté : un nœud enregistré avant ce réglage garde
+                # son comportement ; le Studio écrit false sur un nœud neuf.
+                # Une valeur non booléenne vaut l'absence (voir la validation).
+                if response["status"] >= 400 and cfg.get("accept_error_status") is False:
+                    exc = GraphError(
+                        f"{node.id} : réponse HTTP {response['status']}",
+                        code="http_error_status",
+                        params={"node": node.id, "status": str(response["status"])},
+                    )
+                    exc._apowerb_partial = response
+                    raise exc
+                return response, None
         elif node.type == "notification":
 
             async def body(node_input):
                 channel = cfg["channel"]
-                to = [render(t, self.outputs) for t in cfg.get("to") or []]
+                to = [render(t, self.outputs, node.id) for t in cfg.get("to") or []]
                 to = [
                     t if isinstance(t, str) else json.dumps(t, ensure_ascii=False)
                     for t in to
                 ]
-                subject = render(cfg.get("subject", ""), self.outputs)
+                subject = render(cfg.get("subject", ""), self.outputs, node.id)
                 subject = (
                     subject
                     if isinstance(subject, str)
                     else json.dumps(subject, ensure_ascii=False)
                 )
-                message = render(cfg.get("body", ""), self.outputs)
+                message = render(cfg.get("body", ""), self.outputs, node.id)
                 message = (
                     message
                     if isinstance(message, str)
@@ -1905,6 +3264,27 @@ class _Compiler:
                         code="notification_unavailable",
                         params={"node": node.id},
                     )
+                refs = []
+                if cfg.get("attachments") not in (None, "", []):
+                    refs = _file_refs(
+                        node.id,
+                        render(cfg["attachments"], self.outputs, node.id),
+                        code_prefix="notification",
+                        limit=MAX_NOTIFICATION_ATTACHMENTS,
+                    )
+                    if not refs:
+                        raise GraphError(
+                            f"{node.id} : pièces jointes demandées mais aucun fichier reçu",
+                            code="notification_attachment_missing",
+                            params={"node": node.id},
+                        )
+                if refs:
+                    # Mot-clé seulement s'il sert : les run_notify injectés
+                    # avant les pièces jointes gardent leur signature.
+                    sent = await self.run_notify(
+                        node.id, channel, to, subject, message, attachments=refs
+                    )
+                    return {"channel": channel, "sent": sent}, None
                 sent = await self.run_notify(node.id, channel, to, subject, message)
                 return {"channel": channel, "sent": sent}, None
         elif node.type == "loop":
@@ -1921,6 +3301,51 @@ class _Compiler:
 
             async def body(node_input):
                 return await self._subworkflow(node, cfg, node_input), None
+        elif node.type == "approval":
+
+            async def body(node_input):
+                if self.nested:
+                    raise GraphError(
+                        f"{node.id} : décision humaine impossible ici "
+                        "(corps de loop/try ou sous-workflow)",
+                        code="approval_nested",
+                        params={"node": node.id, "decision": node.id},
+                    )
+                answer = self.answer
+                if answer is not None and answer.get("node_id") == node.id:
+                    if self.on_answered is not None:
+                        taken = self.on_answered(node.id)
+                        if asyncio.iscoroutine(taken):
+                            await taken
+                    output = {
+                        k: answer.get(k)
+                        for k in ("choice", "text", "answered_by", "answered_at")
+                    }
+                    if answer.get("choice") is not None:
+                        route = answer["choice"]
+                    elif cfg.get("mode", "choices") == "both":
+                        route = _TEXT_ROUTE
+                    else:
+                        route = None
+                    return output, route
+                question = render(cfg["question"], self.outputs, node.id)
+                if not isinstance(question, str):
+                    question = json.dumps(question, ensure_ascii=False, default=str)
+                raise _AwaitingDecision(
+                    node.id,
+                    {
+                        "question": question,
+                        "mode": cfg.get("mode", "choices"),
+                        "choices": [
+                            {"route": c["route"], "label": c.get("label") or c["route"]}
+                            for c in _decision_choices(node)
+                        ],
+                        "assignee": cfg.get("assignee") or None,
+                        "expires_after_hours": cfg.get(
+                            "expires_after_hours", DEFAULT_DECISION_HOURS
+                        ),
+                    },
+                )
         else:  # pragma: no cover - refusé par validate_graph
             raise GraphError(f"type non pris en charge : {node.type}")
         return body
@@ -2018,28 +3443,36 @@ class _Compiler:
         inner = _Compiler(
             body,
             payload,
-            self.run_agent,
+            self._run_agent_raw,
             self.run_tool,
             queue.put_nowait,
             self.cancel,
             run_rag=self.run_rag,
             run_notify=self.run_notify,
+            services=self.services,
             run_subworkflow=self.run_subworkflow,
             workflow_stack=self.workflow_stack
             if workflow_stack is None
             else workflow_stack,
             depth=self.depth if depth is None else depth,
+            nested=True,
         )
-        async for item in drive_workflow(inner.build(), queue, root_name=_ROOT):
-            if isinstance(item, _Finished):
-                if item.exc is not None:
-                    try:
-                        item.exc._apowerb_inner_node = last_error_node
-                    except (AttributeError, TypeError):
-                        pass
-                    raise item.exc
-                break
-            emit(item)
+        # aclosing : un nœud annulé (délai, arrêt) ferme le générateur dès la
+        # sortie du bloc plutôt qu'au ramasse-miettes. Non discriminé par les
+        # tests : l'annulation de la tâche suffit déjà à arrêter l'interne.
+        async with aclosing(
+            drive_workflow(inner.build(), queue, root_name=_ROOT)
+        ) as items:
+            async for item in items:
+                if isinstance(item, _Finished):
+                    if item.exc is not None:
+                        try:
+                            item.exc._apowerb_inner_node = last_error_node
+                        except (AttributeError, TypeError):
+                            pass
+                        raise item.exc
+                    break
+                emit(item)
         return _final_output(body, inner.outputs)
 
     async def _try(
@@ -2068,13 +3501,7 @@ class _Compiler:
                 raise
             except Exception as exc:  # noqa: BLE001 - épuisé -> route "error", jamais une exception globale
                 last_exc = exc
-        fields = error_fields(last_exc)
-        return {
-            "code": fields.get("code"),
-            "detail": fields.get("detail"),
-            "params": fields.get("params") or {},
-            "node": getattr(last_exc, "_apowerb_inner_node", None),
-        }, "error"
+        return _error_output(last_exc, None), "error"
 
     async def _subworkflow(self, node: Node, cfg: dict, node_input: Any) -> Any:
         """Exécute le workflow ``cfg['workflow_id']`` via ``self.run_subworkflow``.
@@ -2114,8 +3541,9 @@ class _Compiler:
             validate_graph(body, workflow_id=target)
         except GraphError as exc:
             raise GraphError(f"{node.id} (sous-workflow {target}) : {exc}") from exc
+        _refuse_nested_decision(node, body)
         payload = (
-            render(cfg["input"], self.outputs)
+            render(cfg["input"], self.outputs, node.id)
             if cfg.get("input") is not None
             else node_input
         )
@@ -2146,18 +3574,58 @@ class _Compiler:
                 edges.append(("START", entry[n.id]))
             if n.type == "merge":
                 edges.append((entry[n.id], exit_[n.id]))
+        # ADK refuse deux arêtes entre les mêmes nœuds : plusieurs routes
+        # vers une même cible (« non » et la réponse libre d'une décision)
+        # deviennent une arête à liste de routes.
+        routed: dict[tuple[str, str], list[str]] = {}
+        by_id = {n.id: n for n in self.g.nodes}
         for e in self.g.edges:
-            if e.route is None:
+            route = e.route
+            src = by_id[e.source]
+            if route is None and _routes_on_error(src) and not _is_routed(src):
+                route = _SUCCESS_ROUTE
+            if route is None:
                 edges.append((exit_[e.source], entry[e.target]))
             else:
-                edges.append(
-                    AdkEdge(
-                        from_node=exit_[e.source],
-                        to_node=entry[e.target],
-                        route=e.route,
-                    )
+                routed.setdefault((e.source, e.target), []).append(route)
+        for (source, target), routes in routed.items():
+            edges.append(
+                AdkEdge(
+                    from_node=exit_[source],
+                    to_node=entry[target],
+                    route=routes[0] if len(routes) == 1 else routes,
                 )
+            )
         return Workflow(name=_ROOT, edges=edges, max_concurrency=1)
+
+
+def upstream_of(graph: WorkflowGraph, node_id: str) -> set[str]:
+    """``node_id`` et tous ses ancêtres parmi les nœuds de premier niveau."""
+    parents: dict[str, set[str]] = {}
+    for e in graph.edges:
+        parents.setdefault(e.target, set()).add(e.source)
+    seen, stack = {node_id}, [node_id]
+    while stack:
+        for p in parents.get(stack.pop(), ()):
+            if p not in seen:
+                seen.add(p)
+                stack.append(p)
+    return seen
+
+
+def _until_subgraph(graph: WorkflowGraph, until: str) -> WorkflowGraph:
+    """Le graphe réduit à ``until`` et à son amont.
+
+    Les entrées d'un ``merge`` sont ses ancêtres : elles restent toutes, le
+    merge ne les attend donc jamais en vain.
+    """
+    keep = upstream_of(graph, until)
+    return graph.model_copy(
+        update={
+            "nodes": [n for n in graph.nodes if n.id in keep],
+            "edges": [e for e in graph.edges if e.source in keep and e.target in keep],
+        }
+    )
 
 
 def _final_output(graph: WorkflowGraph, outputs: dict) -> Any:
@@ -2185,12 +3653,42 @@ async def run_graph(
     run_subworkflow: Optional[ResolveWorkflow] = None,
     workflow_id: Optional[str] = None,
     run_notify: Optional[RunNotify] = None,
+    services: Optional[NodeServices] = None,
+    until: Optional[str] = None,
+    on_await: Optional[Callable[[dict], Any]] = None,
+    resume: Optional[dict] = None,
+    run_id: Optional[str] = None,
+    on_answered: Optional[Callable[[str], Any]] = None,
+    on_fail: Optional[Callable[[dict], Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """Valide, compile et exécute un graphe ; produit ses événements SSE.
 
-    Événements : ``node_start`` / ``node_complete`` (``output``,
-    ``duration_ms``) / ``node_error`` / ``route``, puis un seul terminal parmi
-    ``done`` (``output``), ``cancelled`` et ``error`` (``detail``).
+    Décision humaine : un nœud ``approval`` sans réponse arrête le run.
+    L'instantané (graphe, payload, ``outputs``, ``routes``, ``artifacts``,
+    ``node_id``, ``prompt``) est confié à ``on_await`` — qui le persiste —
+    puis le terminal ``awaiting_input`` (``run_id``, ``node_id``,
+    ``question`` rendue, ``mode``, ``choices``, ``assignee``) est émis. Sans
+    ``on_await``, ou s'il échoue, le run finit en ``error``
+    (``decision_unavailable`` / ``decision_not_saved``). ``resume`` est cet
+    instantané plus ``answer`` (``node_id``, ``choice``, ``text``,
+    ``answered_by``, ``answered_at``) : les nœuds déjà faits sont réémis avec
+    ``replayed: true`` sans être réexécutés. ``on_answered(node_id)`` est
+    appelé quand la réponse est prise, avant tout nœud en aval.
+
+    « Reprendre ici » : quand un nœud de premier niveau échoue, l'instantané
+    (``failed_node``, graphe, payload, ``outputs``, ``routes``, ``artifacts``,
+    ``until``) est confié à ``on_fail``, borné comme une pause. Le terminal
+    ``error`` porte alors ``failed_node`` et ``retryable`` (vrai seulement si
+    l'instantané est enregistré). Une reprise est un ``resume`` sans
+    ``answer`` : les nœuds de ``outputs`` sont rejoués, le reste s'exécute.
+
+    Événements : ``node_start`` / ``node_input`` (``input``, nœuds agent et
+    tool, dès que l'entrée est rendue) / ``node_complete`` (``output``,
+    ``duration_ms``, et pour agent et tool ``input`` ; pour agent
+    ``tool_calls``) / ``node_error`` (avec ``input`` s'il était connu) /
+    ``route``, puis un seul terminal parmi ``done`` (``output``),
+    ``cancelled`` et ``error`` (``detail``). ``input`` trop long est coupé à
+    ``MAX_TRACE_INPUT_CHARS`` (``input_truncated``, ``input_length``).
 
     ``run_subworkflow`` — callback résolu côté routeur (même contrôle d'accès
     que pour lancer ce workflow directement), voir
@@ -2204,15 +3702,30 @@ async def run_graph(
     encore par ``os.environ`` (``to_agent``, ``dict_to_envvar``) ; deux nœuds
     concurrents pourraient s'échanger leurs secrets. Le fan-out reste correct,
     il est seulement sérialisé.
+
+    ``until`` — « Tester jusqu'ici » du Studio : seuls ce nœud de premier
+    niveau et son amont s'exécutent, et ``done`` porte SA sortie (avec
+    ``until`` et ``partial: true``). Le graphe entier est validé d'abord. Un
+    nœud inconnu est refusé (``invalid_graph``, cause ``until_unknown_node``) ;
+    un nœud qu'un routeur a contourné finit en ``until_not_reached``.
     """
     try:
         validate_graph(graph, workflow_id=workflow_id)
+        if until is not None and until not in {n.id for n in graph.nodes}:
+            raise GraphError(
+                f"nœud inconnu pour un test partiel : {until}",
+                code="until_unknown_node",
+                params={"node": until},
+            )
     except GraphError as exc:
-        yield _sse({"event": "error", "code": "invalid_graph", "detail": str(exc)})
+        event = {"event": "error", "code": "invalid_graph", "detail": str(exc)}
+        if exc.code:
+            event.update(cause=exc.code, params=exc.params)
+        yield _sse(event)
         return
     queue: asyncio.Queue = asyncio.Queue()
     compiler = _Compiler(
-        graph,
+        graph if until is None else _until_subgraph(graph, until),
         payload,
         run_agent,
         run_tool,
@@ -2220,8 +3733,11 @@ async def run_graph(
         cancel_event,
         run_rag=run_rag,
         run_notify=run_notify,
+        services=services,
         run_subworkflow=run_subworkflow,
         workflow_stack=(workflow_id,) if workflow_id else (),
+        resume=resume,
+        on_answered=on_answered,
     )
     workflow = compiler.build()
     exc: Optional[BaseException] = None
@@ -2230,9 +3746,174 @@ async def run_graph(
             exc = item.exc
             break
         yield _sse(item)
+    awaiting = _awaiting_in(exc)
     if cancel_event.is_set() or isinstance(exc, WorkflowCancelled):
         yield _sse({"event": "cancelled"})
+    elif awaiting is not None:
+        yield _sse(
+            await _pause(
+                graph,
+                payload,
+                compiler,
+                awaiting,
+                on_await=on_await,
+                run_id=run_id,
+                until=until,
+            )
+        )
     elif exc is not None:
-        yield _sse({"event": "error", **error_fields(exc)})
+        event = {"event": "error", **error_fields(exc)}
+        if compiler.failed_node is not None:
+            event["failed_node"] = compiler.failed_node
+            event["retryable"] = await _save_failure(
+                graph, payload, compiler, on_fail=on_fail, until=until
+            )
+        yield _sse(event)
+    elif until is not None and until not in compiler.outputs:
+        yield _sse(
+            {
+                "event": "error",
+                "code": "until_not_reached",
+                "detail": f"{until} n'a pas été atteint (une route l'a contourné)",
+                "params": {"node": until},
+            }
+        )
     else:
-        yield _sse({"event": "done", "output": _final_output(graph, compiler.outputs)})
+        if until is None:
+            done = {"event": "done", "output": _final_output(graph, compiler.outputs)}
+        else:
+            done = {
+                "event": "done",
+                "output": compiler.outputs[until],
+                "until": until,
+                "partial": True,
+            }
+        if compiler.run_artifacts:
+            # Une boucle peut créer un graphique par tour : borné comme ceux
+            # d'un nœud.
+            done["artifacts"] = compiler.run_artifacts[:_MAX_RUN_ARTIFACTS]
+        yield _sse(done)
+
+
+async def _save_failure(
+    graph: WorkflowGraph,
+    payload: Any,
+    compiler: _Compiler,
+    *,
+    on_fail: Optional[Callable[[dict], Any]],
+    until: Optional[str],
+) -> bool:
+    """Confie à ``on_fail`` de quoi reprendre au nœud en échec.
+
+    Jamais bloquant : l'erreur du run reste l'erreur du run, l'instantané
+    manquant dit seulement qu'on ne pourra pas reprendre (``retryable``).
+    """
+    if on_fail is None:
+        return False
+    snapshot = {
+        "failed_node": compiler.failed_node,
+        "graph": graph.model_dump(mode="json"),
+        "payload": payload,
+        "outputs": compiler.outputs,
+        "routes": compiler.routes,
+        "artifacts": compiler.run_artifacts,
+        "handled_errors": compiler.handled_errors,
+        "until": until,
+    }
+    size = len(json.dumps(snapshot, ensure_ascii=False, default=str).encode("utf-8"))
+    if size > MAX_PAUSED_STATE_BYTES:
+        logger.warning(
+            "[workflow] échec sur %s : instantané trop lourd (%s octets), reprise impossible",
+            compiler.failed_node,
+            size,
+        )
+        return False
+    try:
+        saved = on_fail(snapshot)
+        if asyncio.iscoroutine(saved):
+            await saved
+    except Exception:  # noqa: BLE001 - l'erreur du run prime
+        logger.exception(
+            "[workflow] échec sur %s : instantané non enregistré", compiler.failed_node
+        )
+        return False
+    return True
+
+
+def retry_mismatch(before: dict, after: WorkflowGraph, done) -> list[str]:
+    """Les nœuds rejoués par « Reprendre ici » qui ont changé depuis l'échec.
+
+    Un nœud ``done`` est rejoué avec sa sortie d'alors : elle ne vaut plus si
+    son type, sa configuration ou ses entrées (arêtes qui y mènent, avec leur
+    route) ont changé, ou s'il a disparu. Libellé et position ne comptent pas.
+    Le nœud en échec et son aval peuvent changer : ils s'exécutent.
+    """
+    old = WorkflowGraph.model_validate(before)
+
+    def signature(graph: WorkflowGraph, node_id: str):
+        node = next((n for n in graph.nodes if n.id == node_id), None)
+        if node is None:
+            return None
+        inputs = sorted((e.source, e.route or "") for e in graph.edges if e.target == node_id)
+        return node.type, json.dumps(node.config, sort_keys=True, default=str), inputs
+
+    return [i for i in sorted(done) if signature(old, i) != signature(after, i)]
+
+
+async def _pause(
+    graph: WorkflowGraph,
+    payload: Any,
+    compiler: _Compiler,
+    awaiting: _AwaitingDecision,
+    *,
+    on_await: Optional[Callable[[dict], Any]],
+    run_id: Optional[str],
+    until: Optional[str] = None,
+) -> dict:
+    """Confie l'instantané du run à ``on_await`` ; l'événement terminal."""
+    if on_await is None:
+        exc = GraphError(
+            f"{awaiting.node_id} : ce run ne peut pas attendre une décision humaine",
+            code="decision_unavailable",
+            params={"node": awaiting.node_id},
+        )
+        return {"event": "error", **error_fields(exc)}
+    snapshot = {
+        "node_id": awaiting.node_id,
+        "prompt": awaiting.prompt,
+        "graph": graph.model_dump(mode="json"),
+        "payload": payload,
+        "outputs": compiler.outputs,
+        "routes": compiler.routes,
+        "artifacts": compiler.run_artifacts,
+        "handled_errors": compiler.handled_errors,
+        # Un « Tester jusqu'ici » repris s'arrête au même nœud.
+        "until": until,
+    }
+    size = len(json.dumps(snapshot, ensure_ascii=False, default=str).encode("utf-8"))
+    if size > MAX_PAUSED_STATE_BYTES:
+        exc = GraphError(
+            f"{awaiting.node_id} : le run est trop lourd pour attendre une décision "
+            f"({size} octets, max {MAX_PAUSED_STATE_BYTES})",
+            code="decision_state_too_large",
+            params={"node": awaiting.node_id, "max": str(MAX_PAUSED_STATE_BYTES)},
+        )
+        return {"event": "error", **error_fields(exc)}
+    try:
+        saved = on_await(snapshot)
+        if asyncio.iscoroutine(saved):
+            await saved
+    except Exception as cause:  # noqa: BLE001 - sans trace, la reprise est perdue
+        exc = GraphError(
+            f"{awaiting.node_id} : la décision en attente n'a pas pu être enregistrée",
+            code="decision_not_saved",
+            params={"node": awaiting.node_id},
+        )
+        exc.__cause__ = cause
+        return {"event": "error", **error_fields(exc)}
+    return {
+        "event": "awaiting_input",
+        "run_id": run_id,
+        "node_id": awaiting.node_id,
+        **awaiting.prompt,
+    }

@@ -1,0 +1,764 @@
+{
+ "meta": {
+  "label": "prompt",
+  "git_sha": "b836389",
+  "date": "2026-10-16T08:49Z",
+  "model": "gemini/gemini-2.5-flash"
+ },
+ "scenarios": {
+  "creation": {
+   "description": "Tableau de bord créé depuis un CSV joint (gabarit ecommerce)",
+   "source": "DEV 14/10, enregistré",
+   "estimate": false,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 218,
+     "tokens": 13598,
+     "n_tools": 26,
+     "measured": 14531
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 1831,
+     "tokens": 14086,
+     "n_tools": 26,
+     "measured": 14911
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 19784,
+     "tokens": 18698,
+     "n_tools": 26,
+     "measured": 21783
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 21420,
+     "tokens": 19187,
+     "n_tools": 26,
+     "measured": 22342
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 26788,
+     "tokens": 21356,
+     "n_tools": 26,
+     "measured": 24577
+    }
+   ],
+   "tokens": 86925,
+   "chars": 322881,
+   "first_call_tokens": 13598,
+   "n_tools": 26,
+   "measured": 98144,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": []
+   }
+  },
+  "dashboard_chat": {
+   "description": "Mini-chat du tableau : la question ROAS puis une relance sur le CA hebdomadaire",
+   "source": "question DEV 14/10 + relance construite sur les mêmes données",
+   "estimate": false,
+   "turns": 2,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 13641,
+     "n_tools": 26,
+     "measured": 14573
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 17734,
+     "n_tools": 26,
+     "measured": 19282
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 35445,
+     "tokens": 33436,
+     "n_tools": 26,
+     "measured": 37762
+    },
+    {
+     "turn": 2,
+     "system": 9790,
+     "tools": 40778,
+     "history": 7760,
+     "tokens": 15992,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 2,
+     "system": 9790,
+     "tools": 40778,
+     "history": 10113,
+     "tokens": 17518,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 98321,
+   "chars": 314092,
+   "first_call_tokens": 13641,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": []
+   }
+  },
+  "forecast": {
+   "description": "Prévision du CA mensuel à 3 mois depuis le CSV joint (coup d'œil à l'en-tête, tableau de prévision, widget)",
+   "source": "synthétique : CSV de la démo régénéré (13 554 lignes, graine fixe), réponse de prévision construite",
+   "estimate": false,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 148,
+     "tokens": 13588,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 2447,
+     "tokens": 14901,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 4086,
+     "tokens": 15627,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 4501,
+     "tokens": 15776,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 59892,
+   "chars": 213454,
+   "first_call_tokens": 13588,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": []
+   }
+  },
+  "multi_turn": {
+   "description": "Une même conversation : création depuis le CSV, question ROAS, relance hebdomadaire",
+   "source": "tours DEV 14/10 enchaînés + relance construite",
+   "estimate": false,
+   "turns": 3,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 218,
+     "tokens": 13598,
+     "n_tools": 26,
+     "measured": 14531
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 1831,
+     "tokens": 14086,
+     "n_tools": 26,
+     "measured": 14911
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 19784,
+     "tokens": 18698,
+     "n_tools": 26,
+     "measured": 21783
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 21420,
+     "tokens": 19187,
+     "n_tools": 26,
+     "measured": 22342
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 26788,
+     "tokens": 21356,
+     "n_tools": 26,
+     "measured": 24577
+    },
+    {
+     "turn": 2,
+     "system": 9790,
+     "tools": 40778,
+     "history": 9678,
+     "tokens": 16506,
+     "n_tools": 26,
+     "measured": 14573
+    },
+    {
+     "turn": 2,
+     "system": 9790,
+     "tools": 40778,
+     "history": 17010,
+     "tokens": 20599,
+     "n_tools": 26,
+     "measured": 19282
+    },
+    {
+     "turn": 2,
+     "system": 9790,
+     "tools": 40778,
+     "history": 43209,
+     "tokens": 35812,
+     "n_tools": 26,
+     "measured": 37762
+    },
+    {
+     "turn": 3,
+     "system": 9790,
+     "tools": 40778,
+     "history": 14511,
+     "tokens": 18052,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 3,
+     "system": 9790,
+     "tools": 40778,
+     "history": 15228,
+     "tokens": 19089,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 196983,
+   "chars": 675357,
+   "first_call_tokens": 13598,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 4,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 5,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 6,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 7,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 8,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 8,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 8,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 9,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 10,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 10,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 10,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": []
+   }
+  },
+  "question": {
+   "description": "« Quel canal a le meilleur ROAS ? » depuis le mini-chat du tableau (1 + 4 requêtes)",
+   "source": "DEV 14/10, enregistré",
+   "estimate": false,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 13641,
+     "n_tools": 26,
+     "measured": 14573
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 17734,
+     "n_tools": 26,
+     "measured": 19282
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 35445,
+     "tokens": 33436,
+     "n_tools": 26,
+     "measured": 37762
+    }
+   ],
+   "tokens": 64811,
+   "chars": 195083,
+   "first_call_tokens": 13641,
+   "n_tools": 26,
+   "measured": 71617,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": []
+   }
+  },
+  "question_grouped": {
+   "description": "La question ROAS si le modèle compare les canaux en un seul appel (group_by + component_ids)",
+   "source": "variante scriptée de question",
+   "estimate": true,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 13641,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 17734,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 10273,
+     "tokens": 18549,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 49924,
+   "chars": 169911,
+   "first_call_tokens": 13641,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": []
+   }
+  },
+  "question_targeted": {
+   "description": "La même question si le modèle ne demande que le KPI ROAS par canal (component_ids)",
+   "source": "variante scriptée de question",
+   "estimate": true,
+   "turns": 1,
+   "calls": [
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 301,
+     "tokens": 13641,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 7633,
+     "tokens": 17734,
+     "n_tools": 26,
+     "measured": null
+    },
+    {
+     "turn": 1,
+     "system": 9790,
+     "tools": 40778,
+     "history": 12630,
+     "tokens": 19524,
+     "n_tools": 26,
+     "measured": null
+    }
+   ],
+   "tokens": 50899,
+   "chars": 172268,
+   "first_call_tokens": 13641,
+   "n_tools": 26,
+   "measured": null,
+   "quality": {
+    "ok": true,
+    "checks": [
+     {
+      "check": "declared",
+      "call": 1,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 2,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "declared",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "facts",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     },
+     {
+      "check": "grounded",
+      "call": 3,
+      "ok": true,
+      "detail": []
+     }
+    ],
+    "undeclared_in_instruction": []
+   }
+  }
+ }
+}

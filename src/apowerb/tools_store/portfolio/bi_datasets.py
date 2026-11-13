@@ -9,6 +9,7 @@ couplage inter-modules (même choix que ``dataset_router._resolve_path_from_id``
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import contextlib
 import csv
 import hashlib
@@ -63,7 +64,9 @@ def _run_async(coro):
             except Exception as e:
                 exception = e
 
-        t = threading.Thread(target=_run)
+        # A new thread starts with an empty context: run in a copy of ours so
+        # the coroutine sees the invocation's agent identity (ContextVars).
+        t = threading.Thread(target=contextvars.copy_context().run, args=(_run,))
         t.start()
         t.join(timeout=30)
         if t.is_alive():
@@ -277,6 +280,76 @@ async def _load_owned_dataset_rows(dataset_id: str, owner: str, limit: int) -> d
     }
 
 
+# Nom sous lequel la requête d'un agent voit le jeu de données.
+DATASET_TABLE = "dataset"
+
+
+def _dataset_frame(rows: list[dict[str, Any]]):
+    """Lignes CSV en DataFrame ; les colonnes de dates deviennent des dates,
+    pour que ``date_trunc('month', order_date)`` marche sans CAST, même au
+    format jj/mm/aaaa."""
+    import pandas as pd
+
+    frame = pd.DataFrame(rows)
+    for col in frame.columns:
+        values = [None if v is None or str(v).strip() == "" else str(v) for v in frame[col]]
+        parsed = [_parse_date(v) if v is not None else None for v in values]
+        # Every filled value must parse: a partial match would turn the
+        # others into NULL and silently drop them from the totals.
+        if any(v is not None for v in values) and all(
+            (p is not None) == (v is not None) for p, v in zip(parsed, values)
+        ):
+            frame[col] = pd.to_datetime(parsed)
+    return frame
+
+
+def _dataset_query_hint(frame, columns: list) -> str:
+    """Comment écrire la requête : nom de la table, colonnes et leur type."""
+    import pandas as pd
+
+    def kind(col):
+        if col not in frame.columns:
+            return "texte"
+        if pd.api.types.is_datetime64_any_dtype(frame[col]):
+            return "date"
+        return "nombre" if pd.api.types.is_numeric_dtype(frame[col]) else "texte"
+
+    described = ", ".join(f"{c} ({kind(c)})" for c in columns)
+    return (
+        f"La table du jeu de données s'appelle « {DATASET_TABLE} » : écrire un seul SELECT "
+        f"… FROM {DATASET_TABLE}. Colonnes : {described}. Une date restée en texte se "
+        "convertit avec CAST(col AS DATE) ou strptime(col, '%d/%m/%Y %H:%M')."
+    )
+
+
+async def _query_owned_dataset(dataset_id: str, sql: str, owner: str) -> dict:
+    """Exécute un SELECT sur un jeu de données de ``owner``, exposé comme la
+    table ``dataset``, dans le DuckDB isolé des tableaux de bord (ni fichier
+    ni réseau). Renvoie ``{"success": True, "rows": [...], "columns": [...]}``
+    ou une erreur qui dit comment écrire la requête."""
+    from apowerb.bi.spec.duck import SqlRunner, to_python
+    from apowerb.bi.spec.errors import SpecError
+    from apowerb.bi.spec.sql_guard import check_query
+
+    loaded = await _load_owned_dataset_rows(dataset_id, owner, MAX_DATA_ROWS)
+    if not loaded["success"]:
+        return loaded
+    if loaded["truncated"]:
+        return {"success": False, "error": (
+            f"Le jeu de données dépasse {MAX_DATA_ROWS} lignes : il ne peut pas être agrégé ici."
+        )}
+    frame = _dataset_frame(loaded["rows"])
+    try:
+        cleaned = check_query(sql, "Requête")
+        with SqlRunner(max_rows=MAX_DATA_ROWS) as runner:
+            result = runner.run(cleaned, {DATASET_TABLE: frame})
+    except SpecError as exc:
+        return {"success": False, "error": f"{exc} {_dataset_query_hint(frame, loaded['columns'])}"}
+    columns = [str(c) for c in result.columns]
+    rows = [{c: to_python(v) for c, v in zip(columns, values)} for values in result.itertuples(index=False)]
+    return {"success": True, "rows": rows, "columns": columns}
+
+
 # ---------------------------------------------------------------------------
 # Pièce jointe du chat (file_id) : lecture limitée à l'agent et à son propriétaire
 # ---------------------------------------------------------------------------
@@ -331,10 +404,9 @@ def _resolve_attachment(file_id: str, owner: str) -> tuple[dict | None, dict | N
 
     folder = f"agent{root}"
     if _is_s3_storage():
-        from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
+        from apowerb.artifacts.file_lookup import read_file_and_names
 
-        content = read_file_bytes(folder, name)
-        available = [] if content is not None else available_filenames(folder)
+        content, available = read_file_and_names(folder, name)
     else:
         base = agent_upload_dir(root).resolve()
         path = (base / name).resolve()
@@ -466,33 +538,55 @@ _NO_CONNECTION_MESSAGE = (
 def _agent_db_connection(owner: str | None = None) -> tuple[str, str] | None:
     """``(tool_config_id, owner)`` of the running agent's database tool, or None.
 
-    The tool_config is looked up for ``owner`` (default: the agent's owner),
-    which also admits ``system`` configs; a foreign tenant's config is never
-    found. Never falls back to the process ``DB_*`` variables, which point at
-    the platform's own database.
+    The agent calling the tool is looked at first, then the run's root agent,
+    then the root's sub-agents, level by level: in a multi-agent run the root
+    is often an orchestrator while the database is attached to the sub-agent
+    that runs the SQL. The tool_config is looked up for ``owner`` (default:
+    the root agent's owner), which also admits ``system`` configs; a foreign
+    tenant's config is never found. Never falls back to the process ``DB_*``
+    variables, which point at the platform's own database.
     """
-    import json
-
-    from apowerb.core.invocation_context import get_root_agent_id
-    agent_id = get_root_agent_id()
-    if not agent_id:
-        return None
     from apowerb.core.agent_helpers import get_agent_details
-    from apowerb.tools_store.tools_helpers import load_tool_config_params
+    from apowerb.core.agent_main import _parse_string_list
+    from apowerb.core.invocation_context import get_current_agent_id, get_root_agent_id
+    from apowerb.tools_store.tools_helpers import load_tool_config_params, normalize_db_params
 
-    details = get_agent_details(int(agent_id))
-    tools_raw = details.get("agent_tools", "[]")
-    tools = json.loads(tools_raw) if isinstance(tools_raw, str) else (tools_raw or [])
-    lookup_owner = owner or details.get("owner_id") or _agent_owner()
+    root = get_root_agent_id()
+    if not root:
+        return None
+    lookup_owner = owner or get_agent_details(int(root)).get("owner_id") or _agent_owner()
     if not lookup_owner:
         return None
-    for tool in tools:
-        if isinstance(tool, str) and tool.startswith("tool_config"):
-            tool_name, _ = load_tool_config_params(tool, owner_id=lookup_owner)
-            if tool_name and "database" in str(tool_name).lower():
-                return tool, lookup_owner
-    return None
 
+    def db_config_of(details: dict) -> str | None:
+        # Same rule as the agent binding its SQL tools: the first tool_config
+        # whose params name a database, whatever tool it was saved for
+        # (text_to_sql stores DB_* keys under "text_to_sql", the BI picker
+        # lowercase keys).
+        for tool in _parse_string_list(details.get("agent_tools")):
+            if isinstance(tool, str) and tool.startswith("tool_config"):
+                _, params = load_tool_config_params(tool, owner_id=lookup_owner)
+                if params and normalize_db_params(params).get("DB_NAME"):
+                    return tool
+        return None
+
+    seen: set[str] = set()
+    queue = [get_current_agent_id(), root]
+    while queue and len(seen) < 20:
+        agent_id = str(queue.pop(0) or "").removeprefix("agent")
+        if not agent_id.isdigit() or agent_id in seen:
+            continue
+        seen.add(agent_id)
+        try:
+            details = get_agent_details(int(agent_id))
+        except Exception:  # a deleted sub-agent must not hide the others
+            logger.warning("[BI_DATASETS] agent %s not loaded for its connection", agent_id)
+            continue
+        found = db_config_of(details)
+        if found:
+            return found, lookup_owner
+        queue.extend(_parse_string_list(details.get("sub_agents")))
+    return None
 
 def _jsonable(value: Any) -> Any:
     """Database value -> JSON value, in the form the CSV path already yields."""

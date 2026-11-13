@@ -5,7 +5,7 @@ agent expects — single ``DB_ALLOWED_OPS=SELECT`` param means the safety gate
 is unchanged for them.
 
 Opt-in: a tool_config can set ``DB_ALLOWED_OPS=SELECT,INSERT,UPDATE`` to
-authorise writes. This is the path used by SuiviAR (where the SCEI agent
+authorise writes. This is the path used by a client's tracking database (where its agent
 must persist its diagnostic).
 
 Hard floor: ``DROP / TRUNCATE / ALTER / CREATE / GRANT / REVOKE / EXEC / EXECUTE``

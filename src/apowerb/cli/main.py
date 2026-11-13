@@ -1,3 +1,6 @@
+import importlib.metadata
+from typing import Optional
+
 import typer
 import uvicorn
 from apowerb.cli.agents import app as agents_app
@@ -9,6 +12,27 @@ app = typer.Typer()
 
 api_host = "127.0.0.1"
 api_port = 8000
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo(importlib.metadata.version("apowerb"))
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        help="Print installed apowerb version and exit.",
+        callback=version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """apowerb CLI."""
+    pass
+
 
 
 @app.command()
@@ -23,8 +47,8 @@ def serve(
         True, "--reload/--no-reload", help="Enable auto-reload"
     ),
 ):
-    """Start the th2agent FastAPI server."""
-    typer.echo(f"Starting th2agent server on {host}:{port}")
+    """Start the apowerb FastAPI server."""
+    typer.echo(f"Starting apowerb server on {host}:{port}")
     uvicorn.run("apowerb.main:app", host=host, port=port, reload=reload)
 
 

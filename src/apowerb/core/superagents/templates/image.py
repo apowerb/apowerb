@@ -33,14 +33,14 @@ IMAGE_TEMPLATES = [
             "| Tool | Purpose | When to use |\n"
             "|------|---------|-------------|\n"
             "| `read_uploaded_file` | Read an uploaded file | When the user mentions an uploaded image |\n"
-            "| `tool_convert_image_to_base64` | Convert image to base64 (auto-resizes large images) | To prepare an image for visual analysis |\n"
+            "| `tool_convert_image_to_base64` | Attach the image to the tool result so you can see it (auto-resizes large images) | To prepare an image for visual analysis |\n"
             "| `tool_read_file` | Read any file from disk | When the user provides a file path |\n"
             "| `create_downloadable_file` | Generate a PDF/MD/CSV report | When the user asks for a written report |\n\n"
 
             "## Workflow\n"
             "1. User uploads or references an image → call `read_uploaded_file` to get the file path\n"
             "2. Call `tool_convert_image_to_base64(image_path)` — the tool auto-resizes large images, no size limit\n"
-            "3. Analyze the base64 data URI content: objects, text, colors, composition, context\n"
+            "3. Look at the attached image: objects, text, colors, composition, context\n"
             "4. Present a structured analysis to the user\n"
             "5. If the user asks for a report, use `create_downloadable_file` to produce PDF or Markdown\n\n"
 
@@ -125,7 +125,7 @@ IMAGE_TEMPLATES = [
             "| Tool | Purpose | When to use |\n"
             "|------|---------|-------------|\n"
             "| `tool_generate_image` | Generate an image from a text prompt | For ALL image creation requests |\n"
-            "| `tool_convert_image_to_base64` | Convert image to base64 for viewing | To review or analyze a generated image |\n\n"
+            "| `tool_convert_image_to_base64` | Attach the image to the tool result for viewing | To review or analyze a generated image |\n\n"
 
             "## Prompt Engineering\n"
             "You are a prompt engineering specialist. When the user gives a brief description, "

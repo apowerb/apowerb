@@ -1,0 +1,147 @@
+{
+ "description": "Prévision du CA mensuel à 3 mois depuis le CSV joint (coup d'œil à l'en-tête, tableau de prévision, widget)",
+ "source": "synthétique : CSV de la démo régénéré (13 554 lignes, graine fixe), réponse de prévision construite",
+ "turns": [
+  {
+   "user": "[Uploaded files: online_store_orders.csv]\n\nForecast my revenue (order_amount) month by month for the next 3 months.",
+   "steps": [
+    {
+     "thoughts": [],
+     "text": "",
+     "calls": [
+      {
+       "name": "read_uploaded_file",
+       "args": {
+        "filename": "online_store_orders.csv"
+       }
+      }
+     ],
+     "responses": [],
+     "measured_input_tokens": null
+    },
+    {
+     "thoughts": [],
+     "text": "",
+     "calls": [
+      {
+       "name": "tool_create_forecast_dashboard",
+       "args": {
+        "date_var": "order_date",
+        "target_var": "order_amount",
+        "horizon": 3,
+        "frequency": "month",
+        "title": "Revenue forecast",
+        "file_id": "online_store_orders.csv"
+       }
+      }
+     ],
+     "responses": [
+      {
+       "name": "tool_create_forecast_dashboard",
+       "response": {
+        "success": true,
+        "dashboard_id": "91c4e2d8-3b7f-4a15-8e62-c0d9f4a7b315",
+        "dashboard_title": "Revenue forecast",
+        "chart_ids": [
+         "5b2f7c1e-8d4a-4e6b-9a3c-2f1d0e9b8a71",
+         "7d1e0b43-55c2-4f9e-b2a8-61c3e9d07f24",
+         "c38a91f5-0e2d-4b7c-a6f4-9d82e1b5c037"
+        ],
+        "forecast_chart_id": "5b2f7c1e-8d4a-4e6b-9a3c-2f1d0e9b8a71",
+        "headline": {
+         "total": 312480.55,
+         "change_pct": 7.8,
+         "reliable": 1,
+         "series": 1,
+         "peak_period": "2026-12",
+         "peak_value": 112137.38
+        },
+        "series": [
+         {
+          "serie": "order_amount",
+          "prevu_total": 312480.55,
+          "meme_periode_n1": 289904.12,
+          "fiabilite": "fiable",
+          "mape_pct": 7.4,
+          "bat_naif": true,
+          "incertitude_80_pct": 9.8
+         }
+        ],
+        "summary": {
+         "status": "success",
+         "frequency": "MS",
+         "warnings": [],
+         "series": [
+          {
+           "serie": "order_amount",
+           "trend": "hausse",
+           "trend_basis": "même période l'an dernier",
+           "change_pct": 7.8,
+           "forecast_min": 98410.77,
+           "forecast_max": 112137.38,
+           "interval_80_width_pct": 9.8,
+           "best_model": "prophet",
+           "beats_naive": true,
+           "periods": [
+            {
+             "periode": "2026-10",
+             "order_amount": 101932.4
+            },
+            {
+             "periode": "2026-11",
+             "order_amount": 98410.77
+            },
+            {
+             "periode": "2026-12",
+             "order_amount": 112137.38
+            }
+           ]
+          }
+         ]
+        }
+       }
+      }
+     ],
+     "measured_input_tokens": null,
+     "facts": [
+      "order_date",
+      "order_amount"
+     ]
+    },
+    {
+     "thoughts": [],
+     "text": "",
+     "calls": [
+      {
+       "name": "embed_chart",
+       "args": {
+        "chart_id": "5b2f7c1e-8d4a-4e6b-9a3c-2f1d0e9b8a71"
+       }
+      }
+     ],
+     "responses": [
+      {
+       "name": "embed_chart",
+       "response": {
+        "status": "displayed",
+        "kind": "chart_embed",
+        "note": "The chart is shown in the conversation. Do not repeat it in your reply."
+       }
+      }
+     ],
+     "measured_input_tokens": null
+    },
+    {
+     "thoughts": [],
+     "text": "Your revenue should reach about 312,480.55 € over October-December 2026, up 7.8% on the same months last year (289,904.12 €). December is the peak month at 112,137.38 €. The model is reliable on this series (error of 7.4% when tested on the past, better than the naive baseline); the 80% band is ±9.8%. The full analysis is in the \"Revenue forecast\" dashboard.",
+     "calls": [],
+     "responses": [],
+     "measured_input_tokens": null
+    }
+   ],
+   "facts": [
+    "forecast_chart_id: 5b2f7c1e"
+   ]
+  }
+ ]
+}

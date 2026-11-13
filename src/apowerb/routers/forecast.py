@@ -53,7 +53,11 @@ from apowerb.integrations.th2forecast_client import (
     Th2forecastTimeout,
     Th2forecastUnavailable,
 )
-from apowerb.schema.forecast_schema import ForecastInterpretSchema, ForecastRequestSchema
+from apowerb.schema.forecast_schema import (
+    ForecastInterpretSchema,
+    ForecastRequestSchema,
+    aggregate_forecast_rows,
+)
 from apowerb.users import schemas as user_schemas
 
 logger = getLogger(__name__)
@@ -147,6 +151,13 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
             content=_error_body("Service de prévision non configuré (TH2FORECAST_URL)"),
         )
 
+    # Le widget réaffiché poste les lignes brutes de sa source : même
+    # agrégation que les outils de l'agent (une date répétée est refusée).
+    rows, aggregation_note = aggregate_forecast_rows(
+        body.data, body.date_var, body.target_var, body.group_var, body.frequency, body.hierarchy,
+    )
+    if aggregation_note:
+        body = body.model_copy(update={"data": rows})
     payload = _relay_payload(body)
     config_hash = None
     if chart is not None:
@@ -176,6 +187,9 @@ async def create_forecast(body: ForecastRequestSchema, current_user: CurrentUser
             status_code=502,
             content=_error_body("Service de prévision indisponible."),
         )
+
+    if aggregation_note and isinstance(result, dict):
+        result = {**result, "warnings": [*(result.get("warnings") or []), aggregation_note]}
 
     if chart is not None:
         try:

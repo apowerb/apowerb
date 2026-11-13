@@ -4,7 +4,7 @@ C'est la condition pour publier le noyau seul : le code commercial ne doit pas
 être présent-mais-désactivé par un drapeau, il doit être **absent** du dépôt et
 se rebrancher en se déclarant dans ``TH2_EXTENSIONS``.
 
-Le mécanisme existait déjà pour l'overlay client SCEI (``TH2_OVERLAY_MODULE``,
+Le mécanisme existait déjà pour les overlays clients (``TH2_OVERLAY_MODULE``,
 un seul module, callbacks/gates/webhooks). Ces tests couvrent ce qui manquait
 pour découper le produit lui-même : plusieurs extensions à la fois, des packs
 d'outils résolus hors du paquet du noyau, et des routeurs HTTP montés sans être
@@ -80,7 +80,7 @@ class TestPlusieursBriques:
         assert vus == ["a", "b"], "l'ordre d'enregistrement doit être déterministe"
 
     def test_l_ancienne_variable_reste_honoree(self, monkeypatch, brique):
-        """L'overlay SCEI tourne en production avec ``init_overlay`` — le renommer
+        """Un overlay client tourne en production avec ``init_overlay`` — le renommer
         le casserait au déploiement, pas en test."""
         brique("overlay_legacy", init_overlay=lambda reg: None)
         monkeypatch.delenv("TH2_EXTENSIONS", raising=False)

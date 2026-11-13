@@ -137,3 +137,126 @@ def test_a_generated_file_lands_in_the_artifact_layout(bucket, monkeypatch):
     keys = list(bucket._objects)
     assert any(k.startswith(f"artifacts/{AGENT}/") and "/output/note.md/" in k for k in keys), keys
     assert not any(k.startswith(f"uploads/{AGENT}/") for k in keys), keys
+
+
+_DAY_14 = datetime.datetime(2026, 10, 14, 9, 0, tzinfo=datetime.timezone.utc)
+_DAY_16 = datetime.datetime(2026, 10, 16, 9, 0, tzinfo=datetime.timezone.utc)
+
+
+def _put_at(fake: FakeS3Client, key: str, body: bytes, when: datetime.datetime) -> None:
+    _put(fake, key, body)
+    fake._objects[key]["last_modified"] = when
+
+
+@pytest.mark.parametrize("old_scope, new_scope", [
+    # Each session numbers its uploads from 0, so both copies are version 0;
+    # the listing is sorted by key and the older session came first.
+    ("session_1760432400000", "session_1760605200000"),
+    # `_shared` sorts before any `session_…`: same failure the other way round.
+    ("session_1760432400000", "_shared"),
+    ("_shared", "session_1760605200000"),
+])
+def test_a_file_reattached_under_the_same_name_is_the_one_read(bucket, old_scope, new_scope):
+    """Seen on dev 16/10: online_store_orders.csv attached again with new
+    content (908 351 bytes) and the agent read the 14/10 copy (901 110)."""
+    name = "online_store_orders.csv"
+    _put_at(bucket, f"artifacts/{AGENT}/{old_scope}/input/{name}/0/{name}", b"14/10", _DAY_14)
+    _put_at(bucket, f"artifacts/{AGENT}/{new_scope}/input/{name}/0/{name}", b"16/10", _DAY_16)
+    assert file_lookup.read_file_bytes(AGENT, name) == b"16/10"
+
+
+def test_a_newer_session_wins_even_with_a_lower_version(bucket):
+    """Version numbers are per session: v3 of an old session is not newer
+    than v0 of today's."""
+    name = "orders.csv"
+    _put_at(bucket, f"artifacts/{AGENT}/session_1760605200000/input/{name}/0/{name}", b"new", _DAY_16)
+    _put_at(bucket, f"artifacts/{AGENT}/session_1760432400000/input/{name}/3/{name}", b"old", _DAY_14)
+    assert file_lookup.read_file_bytes(AGENT, name) == b"new"
+
+
+def test_read_uploaded_file_reports_the_reattached_file(bucket, monkeypatch):
+    """The symptom as the agent saw it: the size of the previous upload."""
+    from apowerb.configs.settings import get_settings
+    from apowerb.core.agent_helpers.read_file_tool import _make_read_uploaded_file
+
+    monkeypatch.setattr(get_settings(), "storage_mode", "S3", raising=False)
+    name = "online_store_orders.csv"
+    old, new = b"day,roas\n14,32.8175\n", b"day,roas\n16,41.0\n16,12.5\n"
+    _put_at(bucket, f"artifacts/{AGENT}/session_1760432400000/input/{name}/0/{name}", old, _DAY_14)
+    _put_at(bucket, f"artifacts/{AGENT}/session_1760605200000/input/{name}/0/{name}", new, _DAY_16)
+
+    result = _make_read_uploaded_file(AGENT)(name)
+    assert result["size"] == len(new), result
+
+
+# -- one listing per read --------------------------------------------------
+#
+# Measured 16/10: a missing file cost two full scans of artifacts/{agent}/
+# (read_file_bytes, then available_filenames for the error message) plus two
+# legacy LISTs -- 4 calls for the 311 objects of the busiest dev agent, 42 at
+# 20 000. The answer and the names come from the same listing.
+
+
+def _paged_bucket(monkeypatch, page_size: int) -> FakeS3Client:
+    fake = FakeS3Client(page_size=page_size)
+    monkeypatch.setattr(s3_storage, "_get_s3_client", lambda: fake)
+    monkeypatch.setattr(s3_storage.get_settings(), "s3_bucket_name", "test-bucket", raising=False)
+    for i in range(311):
+        name = f"f{i:03d}.csv"
+        _put(fake, f"artifacts/{AGENT}/session_{i:05d}/input/{name}/0/{name}", b"x")
+    return fake
+
+
+def test_a_missing_file_lists_the_agent_prefix_once(monkeypatch):
+    fake = _paged_bucket(monkeypatch, page_size=100)  # 311 objects = 4 pages
+    _put(fake, f"uploads/{AGENT}/vieux.csv", b"z")
+
+    content, names = file_lookup.read_file_and_names(AGENT, "absent.csv")
+
+    assert content is None
+    assert "f000.csv" in names and "vieux.csv" in names and len(names) == 312
+    # 4 pages of artifacts/{agent}/ + 1 legacy LIST; was 2 x 4 + 2 = 10.
+    assert fake.list_calls == 5
+
+
+def test_a_found_file_costs_one_scan_and_no_legacy_list(monkeypatch):
+    fake = _paged_bucket(monkeypatch, page_size=100)
+
+    content, names = file_lookup.read_file_and_names(AGENT, "f007.csv")
+
+    assert (content, names) == (b"x", [])
+    assert fake.list_calls == 4
+
+
+def test_a_legacy_file_is_read_without_listing_names(bucket):
+    _put(bucket, f"uploads/{AGENT}/vieux.csv", b"z")
+    _put(bucket, f"uploads/{AGENT}/vieux.csv.bak", b"bak")
+
+    assert file_lookup.read_file_and_names(AGENT, "vieux.csv") == (b"z", [])
+    # Exact membership, as file_exists_in_s3: a longer name does not answer.
+    assert file_lookup.read_file_and_names(AGENT, "vieux")[0] is None
+    assert bucket.list_calls == 4
+
+
+def test_the_newest_upload_still_wins_through_the_single_listing(bucket):
+    name = "online_store_orders.csv"
+    _put_at(bucket, f"artifacts/{AGENT}/session_1760432400000/input/{name}/0/{name}", b"14/10", _DAY_14)
+    _put_at(bucket, f"artifacts/{AGENT}/_shared/input/{name}/0/{name}", b"16/10", _DAY_16)
+    assert file_lookup.read_file_and_names(AGENT, name) == (b"16/10", [])
+
+
+def test_read_uploaded_file_lists_once_for_a_missing_file(monkeypatch):
+    from apowerb.configs.settings import get_settings
+    from apowerb.core.agent_helpers.read_file_tool import _make_read_uploaded_file
+
+    monkeypatch.setattr(get_settings(), "storage_mode", "S3", raising=False)
+    # S3 is used only when selected AND fully configured.
+    for field in ("s3_bucket_name", "s3_access_key", "s3_access_key_secret",
+                  "s3_endpoint", "s3_region"):
+        monkeypatch.setattr(get_settings(), field, "x", raising=False)
+    fake = _paged_bucket(monkeypatch, page_size=100)
+
+    result = _make_read_uploaded_file(AGENT)("absent.csv")
+
+    assert result["status"] == "error" and len(result["available_files"]) == 311
+    assert fake.list_calls == 5

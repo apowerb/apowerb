@@ -1,7 +1,7 @@
 """Production must not publish its own route inventory.
 
 Verified from the outside on 2026-08-06: `/openapi.json` answered 200 with
-no credentials on production and on the SCEI deployment, listing 215 and 216
+no credentials on production and on a client deployment, listing 215 and 216
 routes with their parameters. Counting the `eval-*` routes ADK 2.x drops was
 enough to fingerprint the running ADK version from the internet.
 

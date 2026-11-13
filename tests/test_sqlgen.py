@@ -85,6 +85,23 @@ class TestBuildSchemaPrompt:
         # The single most relevant table is always kept.
         assert "orders(" in out
 
+    def test_same_prompt_whatever_the_question_when_all_tables_fit(self):
+        # A stable prefix is what provider prompt caches reuse across questions.
+        a = build_schema_prompt(_schema(), question="total orders per customer")
+        b = build_schema_prompt(_schema(), question="latest audit_log message")
+        assert a == b == build_schema_prompt(_schema())
+
+    def test_budget_keeps_relevant_tables_but_writes_them_in_name_order(self):
+        schema = _schema()
+        budget = len("Database schema (schema: public, type: postgresql):") + sum(
+            len(compact_table_line(n, schema["tables"][n])) + 1
+            for n in ("orders", "customers")
+        )
+        out = build_schema_prompt(schema, question="total orders per customer", max_chars=budget)
+        assert out.index("customers(") < out.index("orders(")
+        assert "audit_log(" not in out
+        assert out.rstrip().endswith("Other tables (call tool_get_database_schema for their columns): audit_log")
+
     def test_relevant_tables_pulled_together_via_fk(self):
         order = score_and_order_tables(_schema(), "total orders per customer")
         # orders matches (orders, total, customer_id); customers is FK-boosted;

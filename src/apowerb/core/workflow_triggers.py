@@ -126,6 +126,48 @@ def integration_present(owner_id: str, provider: Optional[str]) -> bool:
     return row is not None
 
 
+_webhook_subscription_table = Table(
+    "webhook_subscriptions",
+    _ext_metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_id", Integer),
+    Column("provider", String),
+    Column("status", String),
+)
+
+
+def mail_subscription_active(owner_id: str, provider: str) -> bool:
+    """``True`` si un abonnement ``provider`` actif écoute la boîte de
+    ``owner_id`` — celui des workflows, ou à défaut celui d'un agent, qui lance
+    aussi les workflows tant que le premier n'existe pas."""
+    s = _webhook_subscription_table
+    with workflow_trigger_store.engine.begin() as conn:
+        row = conn.execute(
+            select(s.c.id)
+            .select_from(s.join(_user_table, _user_table.c.user_id == s.c.user_id))
+            .where(
+                _user_table.c.email == owner_id,
+                s.c.provider == provider,
+                s.c.status == "active",
+            )
+        ).fetchone()
+    return row is not None
+
+
+def subscription_reason(cfg: dict, *, owner_id: str) -> Optional[str]:
+    """``"subscription_pending"`` quand un trigger email Outlook armé n'a
+    encore aucun abonnement Graph actif pour l'entendre (création en cours,
+    ou en échec : ``core/workflow_mail_subscriptions.py`` retente). Statut
+    seulement : jamais utilisé pour ``active`` en base, que la réconciliation
+    lit pour savoir quoi créer."""
+    if cfg.get("kind") != "email" or cfg.get("provider") != "outlook":
+        return None
+    provider = EMAIL_INTEGRATION_PROVIDER["outlook"]
+    if not mail_subscription_active(owner_id, provider):
+        return "subscription_pending"
+    return None
+
+
 class TriggerNotActive(LookupError):
     """Le workflow visé n'a pas (ou plus) de trigger armé pour l'exécuter."""
 
@@ -395,6 +437,10 @@ def get_trigger_status(
     kind = d.get("kind", "manual")
     cfg = json.loads(d["config"]) if d.get("config") else {"kind": kind}
     active, reason = compute_active(cfg, workflow_status, owner_id=owner_id)
+    if active:
+        pending = subscription_reason(cfg, owner_id=owner_id)
+        if pending:
+            active, reason = False, pending
 
     webhook_url = form_url = None
     if kind == "webhook" and d.get("token_encrypted"):
@@ -512,7 +558,7 @@ async def launch_triggered_run(
     from apowerb.core import workflow_runtime as rt
     from apowerb.core.run_gate import resolve_owner_plan
     from apowerb.core.workflow_graph import run_graph
-    from apowerb.routers.workflows import _streaming_run
+    from apowerb.routers.workflows import _streaming_run, failure_saver, pause_saver
 
     wf = workflow_main.get_workflow(workflow_id, owner_id=owner_id)
     if wf is None or wf.get("status") != "published":
@@ -546,6 +592,10 @@ async def launch_triggered_run(
             workflow_id=workflow_id,
             cancel_event=cancel_event,
             run_notify=run_notify,
+            services=rt.services_for(owner_id),
+            on_await=pause_saver(run_id),
+            on_fail=failure_saver(run_id),
+            run_id=run_id,
         )
 
     response = _streaming_run(
@@ -574,6 +624,7 @@ async def launch_triggered_run(
                 "done",
                 "error",
                 "cancelled",
+                "awaiting_input",
             ):
                 terminal = payload
         return terminal
@@ -704,6 +755,27 @@ def _running_is_orphaned(row: dict, *, now: datetime) -> bool:
     return (now - started) > _RUNNING_STALE_AFTER
 
 
+def _last_run_still_open(row: dict) -> bool:
+    """``last_status`` est figé à la pause : seule la ligne du run dit s'il
+    attend encore ou tourne de nouveau après sa reprise. ``get_run`` règle
+    d'abord une reprise morte (âge compté depuis la reprise) : ``running``
+    veut donc dire un run réellement en vol. Fini, abandonné ou expiré, il ne
+    bloque plus rien."""
+    from apowerb.core import run_main
+
+    if not row.get("last_run_id"):
+        return False
+    try:
+        run = run_main.get_run(row["last_run_id"], owner_id=row.get("owner_id"))
+    except Exception:
+        logger.warning(
+            "[triggers] get_run indisponible pour run=%s — créneau sauté par prudence",
+            row.get("last_run_id"),
+        )
+        return True
+    return (run or {}).get("status") in (run_main.STATUS_AWAITING, run_main.STATUS_RUNNING)
+
+
 async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
     """Un tick pour UN trigger ``schedule`` échu. Renvoie si un run a démarré.
 
@@ -749,6 +821,21 @@ async def fire_schedule_trigger(row: dict, *, now: datetime) -> bool:
                 workflow_id, next_run_at=_iso_or_none(compute_next_run(cfg, after=now))
             )
             return False
+
+    if row.get("last_status") == "awaiting" and _last_run_still_open(row):
+        # Le run précédent attend une décision humaine, ou tourne de nouveau
+        # depuis qu'on y a répondu : sans ce garde, chaque créneau en
+        # empilerait un nouveau. Le créneau est consommé.
+        logger.info(
+            "[triggers] tick sauté (run précédent en attente de décision ou repris) "
+            "workflow=%s run=%s",
+            workflow_id,
+            row.get("last_run_id"),
+        )
+        _update_trigger_row(
+            workflow_id, next_run_at=_iso_or_none(compute_next_run(cfg, after=now))
+        )
+        return False
 
     next_at = _iso_or_none(compute_next_run(cfg, after=now))
     t = workflow_trigger_store.trigger_table
@@ -847,6 +934,27 @@ def list_active_triggers(kind: str, *, owner_id: Optional[str] = None) -> list[d
     return [dict(r._mapping) for r in rows]
 
 
+def failure_listeners(workflow_id: str, owner_id: str) -> list[dict]:
+    """Les workflows publiés de ``owner_id`` qu'un échec de ``workflow_id`` lance.
+
+    Même filtre que :func:`fire_workflow_done_triggers` pour un statut
+    ``error`` : trigger ``workflow_done`` actif, ``config.workflow_id`` égal,
+    ``on`` à ``error`` ou ``any``.
+    """
+    from apowerb.core import workflow_main
+
+    listeners = []
+    for row in list_active_triggers("workflow_done", owner_id=owner_id):
+        cfg = json.loads(row["config"] or "{}")
+        if cfg.get("workflow_id") != workflow_id or cfg.get("on", "any") not in ("any", "error"):
+            continue
+        wf = workflow_main.get_workflow(row["workflow_id"], owner_id=owner_id)
+        if wf is None or wf.get("status") != "published":
+            continue
+        listeners.append({"workflow_id": row["workflow_id"], "name": wf.get("name")})
+    return listeners
+
+
 def next_trigger_chain(prior_chain: list[str], workflow_id: str) -> Optional[list[str]]:
     """``None`` si ajouter ``workflow_id`` créerait un cycle ou dépasserait
     ``MAX_TRIGGER_CHAIN`` ; sinon la chaîne étendue.
@@ -887,6 +995,8 @@ async def notify_run_finished(
     status: str,
     output: Any,
     error_message: Optional[str],
+    error_code: Optional[str] = None,
+    error_node: Optional[str] = None,
 ) -> None:
     """Déclenche les triggers ``workflow_done`` en écoute sur CE run.
 
@@ -912,6 +1022,27 @@ async def notify_run_finished(
     source_workflow_id = config.get("workflow_id")
     if not source_workflow_id:
         return
+    # « Tester jusqu'ici » : une sortie partielle n'est pas la fin du workflow.
+    if config.get("until"):
+        return
+
+    alert = None
+    if status == run_main.STATUS_ERROR:
+        # « Me prévenir en cas d'échec » : en parallèle des écouteurs, qui
+        # n'attendent jamais l'envoi d'un mail.
+        alert = asyncio.create_task(
+            _alert_failure(
+                run_id=run_id,
+                owner_id=owner_id,
+                workflow_id=source_workflow_id,
+                error_code=error_code,
+                error_node=error_node,
+            )
+        )
+        # Référence forte : détachée d'un appelant annulé, la tâche ne doit
+        # pas être ramassée avant la fin de l'envoi.
+        _alerts_in_flight.add(alert)
+        alert.add_done_callback(_alerts_in_flight.discard)
 
     prior_chain: list[str] = []
     try:
@@ -921,15 +1052,36 @@ async def notify_run_finished(
     if isinstance(own_trigger, dict):
         prior_chain = list((own_trigger.get("detail") or {}).get("chain") or [])
 
-    await fire_workflow_done_triggers(
-        source_workflow_id=source_workflow_id,
-        source_owner_id=owner_id,
-        source_run_id=run_id,
-        status=status,
-        output=output,
-        error=_error_detail(status, error_message),
-        prior_chain=prior_chain,
-    )
+    try:
+        await fire_workflow_done_triggers(
+            source_workflow_id=source_workflow_id,
+            source_owner_id=owner_id,
+            source_run_id=run_id,
+            status=status,
+            output=output,
+            error=_error_detail(status, error_message),
+            prior_chain=prior_chain,
+        )
+    finally:
+        if alert is not None:
+            # shield : un appelant annulé (client parti) n'annule pas l'envoi,
+            # qui laisserait le run réservé et l'heure prise sans aucun mail.
+            await asyncio.shield(alert)
+
+
+_alerts_in_flight: set[asyncio.Task] = set()
+
+
+async def _alert_failure(**kwargs: Any) -> None:
+    """``workflow_alerts.alert_run_failed`` sans jamais lever."""
+    try:
+        from apowerb.core import workflow_alerts
+
+        await workflow_alerts.alert_run_failed(**kwargs)
+    except Exception:  # noqa: BLE001 - une alerte ratée ne casse pas la fin du run
+        logger.exception(
+            "[triggers] alerte d'échec non traitée (run_id=%s)", kwargs.get("run_id")
+        )
 
 
 async def fire_workflow_done_triggers(
@@ -1045,4 +1197,11 @@ async def call_agent_tool(
         return {"run_id": run_id, "output": terminal.get("output")}
     if event == "cancelled":
         return {"error": "cancelled", "run_id": run_id}
+    if event == "awaiting_input":
+        # Le run attend une décision humaine : il reprendra plus tard.
+        return {
+            "status": "awaiting_decision",
+            "run_id": run_id,
+            "question": terminal.get("question"),
+        }
     return {"error": "run_failed", "run_id": run_id, "detail": terminal.get("detail")}
