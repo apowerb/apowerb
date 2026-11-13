@@ -1,16 +1,23 @@
 """Real health check router (B19).
 
-Three endpoints:
+Endpoints in this router:
 
-- ``GET /health``      : legacy alias → same payload as ``/health/live``.
-- ``GET /health/live`` : liveness probe — 200 if the process is alive.
+- ``GET /health/live``    : liveness probe — 200 if the process is alive.
   No dependency check, intentionally fast so kube-probes don't
   accidentally restart us because of a downstream hiccup.
-- ``GET /health/ready``: readiness probe — tests hard deps (DB + Fernet
-  key) and best-effort soft deps (RAG API, Stripe). Returns 200 when
-  hard deps are OK, 503 otherwise, with a JSON body enumerating each
-  check's status. Each check is bounded by ``DEPENDENCY_TIMEOUT_S`` so
-  a hanging dep cannot starve the endpoint.
+- ``GET /health/ready``   : readiness probe — checks two things, the
+  database (``SELECT 1``, bounded by ``DEPENDENCY_TIMEOUT_S`` so a hanging
+  connection cannot starve the endpoint) and that the Fernet key
+  (``ENCRYPT_KEY``) is loaded. Returns 200 with
+  ``{"status": "ready", "checks": {...}}`` when both pass. Otherwise it
+  raises ``HTTPException(503)`` with that payload as ``detail``, so the body
+  is ``{"detail": {"status": "not_ready", "checks": {...}}}``. Each entry in
+  ``checks`` is ``{"ok": bool, "error": str | None}``.
+- ``GET /health/notifier``: health of the system mailer's owner integration,
+  503 when it is missing or revoked.
+
+The legacy ``GET /health`` alias is defined in ``main.py`` and returns
+``{"status": "healthy", ...}`` without checking anything.
 """
 
 from __future__ import annotations
@@ -89,9 +96,7 @@ async def liveness() -> dict[str, Any]:
 
 @router.get("/ready")
 async def readiness() -> dict[str, Any]:
-    db_ok, db_err = await _run_with_timeout(
-        _check_db(), DEPENDENCY_TIMEOUT_S
-    )
+    db_ok, db_err = await _run_with_timeout(_check_db(), DEPENDENCY_TIMEOUT_S)
     fernet_ok, fernet_err = _check_fernet()
 
     checks = {
