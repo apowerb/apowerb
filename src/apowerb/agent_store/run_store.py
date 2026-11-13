@@ -242,6 +242,7 @@ class RunStore(BaseModel):
                         f'ON {schema_prefix}"{self.table_name}" ("workflow_id", "created_at")'
                     )
                 )
+        self._ensure_tools_executed_guard()
         # Après le COMMIT des ALTER : le rattrapage parcourt toute la table et
         # ne doit pas la garder verrouillée. Un échec n'empêche pas le
         # démarrage ; seuls les runs anciens manquent alors à l'historique.
@@ -250,6 +251,65 @@ class RunStore(BaseModel):
                 self._backfill_workflow_id()
             except Exception:  # noqa: BLE001
                 logger.exception("Run store: rattachement des runs à leur workflow échoué.")
+
+    def _ensure_tools_executed_guard(self) -> None:
+        """Rend ``tools_executed`` inscriptible une seule fois, côté base.
+
+        ``NULL`` veut dire « inconnu » et interdit le rejeu d'office ; la règle
+        ne tenait que par convention dans l'application. Ce déclencheur laisse
+        passer le premier ``UPDATE`` qui renseigne la colonne et rejette tout
+        ``UPDATE`` qui la touche ensuite, même pour la remettre à ``NULL`` ou
+        pour réécrire la même valeur. Les ``UPDATE`` qui ne la nomment pas
+        (statut, fin, pause) ne sont pas concernés. Créé au démarrage avec la
+        table ; Postgres et SQLite seulement, les deux moteurs du projet.
+        """
+        dialect = self.engine.dialect.name
+        if dialect not in ("postgresql", "sqlite"):
+            return
+        schema_prefix = f'"{self.db_schema}".' if self.db_schema else ""
+        table = f'{schema_prefix}"{self.table_name}"'
+        name = f"{self.table_name}_tools_executed_once"
+        message = "tools_executed is write-once and already set"
+        try:
+            with self.engine.begin() as conn:
+                if dialect == "postgresql":
+                    # Deux réplicas qui démarrent ensemble ne doivent pas se
+                    # marcher dessus sur le DROP/CREATE du déclencheur.
+                    conn.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext(:name))"),
+                        {"name": name},
+                    )
+                    conn.execute(
+                        text(
+                            f'CREATE OR REPLACE FUNCTION {schema_prefix}"{name}"() '
+                            "RETURNS trigger AS $$ BEGIN "
+                            f"RAISE EXCEPTION '{message}: run %', OLD.run_id "
+                            "USING ERRCODE = 'integrity_constraint_violation'; "
+                            "END; $$ LANGUAGE plpgsql"
+                        )
+                    )
+                    conn.execute(text(f'DROP TRIGGER IF EXISTS "{name}" ON {table}'))
+                    conn.execute(
+                        text(
+                            f'CREATE TRIGGER "{name}" '
+                            f'BEFORE UPDATE OF "tools_executed" ON {table} '
+                            'FOR EACH ROW WHEN (OLD."tools_executed" IS NOT NULL) '
+                            f'EXECUTE PROCEDURE {schema_prefix}"{name}"()'
+                        )
+                    )
+                else:
+                    conn.execute(
+                        text(
+                            f'CREATE TRIGGER IF NOT EXISTS {schema_prefix}"{name}" '
+                            f'BEFORE UPDATE OF "tools_executed" ON "{self.table_name}" '
+                            'FOR EACH ROW WHEN OLD."tools_executed" IS NOT NULL '
+                            f"BEGIN SELECT RAISE(ABORT, '{message}'); END"
+                        )
+                    )
+        except Exception:  # noqa: BLE001
+            # Un échec n'empêche pas le démarrage : la règle retombe sur la
+            # convention de l'application, comme avant.
+            logger.exception("Run store: garde de tools_executed non créée.")
 
     def _backfill_workflow_id(self) -> int:
         """Rattache à leur workflow les runs de graphe consignés avant la colonne.
