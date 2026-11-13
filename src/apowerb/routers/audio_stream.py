@@ -524,7 +524,18 @@ async def _handle_fallback_mode(websocket: WebSocket, session_id: str) -> None:
                 elif msg_type == "start_listening":
                     language = message.get("language", "auto")
                     stt = FallbackSTT()
-                    await stt.start(language=language, on_transcript_callback=on_transcript)
+                    try:
+                        await stt.start(
+                            language=language, on_transcript_callback=on_transcript
+                        )
+                    except Exception as exc:
+                        logger.error("Fallback STT error: %s", exc)
+                        await stt.stop()
+                        stt = None
+                        await websocket.send_json(
+                            {"type": "error", "message": f"STT error: {exc}"}
+                        )
+                        continue
                     await websocket.send_json({"type": "listening_started", "mode": "fallback"})
 
                 elif msg_type == "stop_listening":
