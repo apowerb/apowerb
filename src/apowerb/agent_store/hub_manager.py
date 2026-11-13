@@ -96,7 +96,9 @@ class HubStore(BaseModel):
         inspector = sa_inspect(self.engine)
         existing = [
             c["name"]
-            for c in inspector.get_columns(self.table_name, schema=self.db_schema)
+            for c in inspector.get_columns(
+                self.table_name, schema=self.db_schema or None
+            )
         ]
         new_cols: dict[str, str] = {
             "sub_agents_snapshot": "VARCHAR",

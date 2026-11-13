@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -43,6 +42,7 @@ from sqlalchemy.exc import IntegrityError
 
 from apowerb.agent_store.run_store import RunStore
 from apowerb.configs.paths import scope_upload_dir
+from apowerb.configs.settings import get_settings
 from apowerb.configs.th2logger import setup_logging
 
 logger = setup_logging(__name__)
@@ -883,7 +883,7 @@ TRACE_RETENTION_DEFAULT_DAYS = 30
 
 def trace_retention_days() -> int:
     """Durée de vie d'une trace, de ``RUN_TRACE_RETENTION_DAYS`` (30 jours par défaut)."""
-    raw = os.environ.get("RUN_TRACE_RETENTION_DAYS")
+    raw = get_settings().run_trace_retention_days
     if raw is None:
         return TRACE_RETENTION_DEFAULT_DAYS
     try:

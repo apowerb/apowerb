@@ -25,7 +25,7 @@ MODELS = {
         "model_api_base": AZURE_BASE,
         "model_api_version": "2024-12-01-preview",
     }),
-    8: ("gemini/gemini-2.5-flash", {"model_api_key": "key-gemini"}),
+    8: ("gemini/gemini-3.5-flash-lite", {"model_api_key": "key-gemini"}),
     9: ("azure/gpt-4.1-mini", {"model_api_key": "key-az", "api_version": "2025-01-01-preview"}),
     10: ("mistral/mistral-large-latest", {"model_api_key": "key-mistral"}),
     11: ("mistral/Mistral-Small-3.2-24B-Instruct-2506", {"model_api_key": "key-ovh"}),
@@ -63,7 +63,7 @@ def test_azure_agent_with_endpoint_goes_through_the_openai_compat_route():
 
 def test_agent_without_endpoint_keeps_its_model_and_sends_no_api_version():
     kwargs = _sql_call_kwargs("agent8")
-    assert kwargs["model"] == "gemini/gemini-2.5-flash"
+    assert kwargs["model"] == "gemini/gemini-3.5-flash-lite"
     assert kwargs["api_base"] is None
     assert "api_version" not in kwargs
 
