@@ -86,9 +86,9 @@
       "src/apowerb/core/adk_agent_builder.py": 7,
       "src/apowerb/core/agent_main.py": 1,
       "src/apowerb/helpers/user_migration.py": 12,
-      "src/apowerb/main.py": 34,
+      "src/apowerb/main.py": 37,
       "src/apowerb/routers/runs.py": 1,
-      "src/apowerb/scheduler/mage.py": 36,
+      "src/apowerb/scheduler/mage.py": 17,
       "src/apowerb/storage/test.py": 1,
       "src/apowerb/tools_store/portfolio/internal/data_handler.py": 3,
       "src/apowerb/tools_store/tools_helpers.py": 2

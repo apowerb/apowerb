@@ -270,20 +270,20 @@ class TestCrossOwnerDelete:
 
 
 # ---------------------------------------------------------------------------
-# 3c. Delete happy path — child logs are removed before the subscription
-#     (regression for roadmap#105: a subscription with logs returned 500
-#     because the delete relied on a DB FK cascade that is absent on older
-#     instances. The route now deletes the logs explicitly.)
+# 3c. Delete happy path — child logs are detached, never deleted, before the
+#     subscription goes (roadmap#105: a delete relying on a DB FK cascade
+#     returned 500 on older instances; incident 2026-11-09: the cascade, or
+#     the explicit DELETE that replaced it, erased the client's history).
 # ---------------------------------------------------------------------------
 
 
 class TestDeleteSubscriptionHappyPath:
-    def test_delete_removes_child_logs_before_subscription(self):
+    def test_delete_detaches_child_logs_before_subscription(self):
         sub = MagicMock()
         sub.id = 11
         sub.user_id = USER_A_ID
         # Neither provider branch runs: not gmail, and no external id -> the
-        # test isolates the DB deletion, which is what the regression is about.
+        # test isolates the DB statements, which is what the regression is about.
         sub.provider = "microsoft_outlook"
         sub.subscription_id = None
 
@@ -297,16 +297,12 @@ class TestDeleteSubscriptionHappyPath:
         assert resp.json().get("success") is True
         assert session.committed is True
         assert sub in session._deleted
-        # A bulk DELETE against webhook_logs for this subscription was issued
-        # before the commit — this is the actual fix.
-        deletes = [
-            s
-            for s in session._statements
-            if "delete from" in str(s).lower() and "webhook_logs" in str(s).lower()
-        ]
-        assert deletes, (
-            "expected a DELETE on webhook_logs before removing the subscription; "
-            f"statements seen: {[str(s) for s in session._statements]}"
+        seen = [str(s).lower() for s in session._statements]
+        assert any(s.startswith("update") and "webhook_logs" in s for s in seen), (
+            f"expected the logs to be detached by an UPDATE; statements seen: {seen}"
+        )
+        assert not any("delete from" in s and "webhook_logs" in s for s in seen), (
+            f"the execution history must never be deleted; statements seen: {seen}"
         )
 
 

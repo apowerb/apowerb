@@ -12,7 +12,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 
 from apowerb.configs.settings import get_settings
 from apowerb.helpers.database import sessionmanager
@@ -30,7 +30,56 @@ CHECK_INTERVAL_SECONDS = 6 * 3600  # every 6 hours
 RENEW_THRESHOLD_HOURS = 12
 
 
+def _is_past(expiry: datetime | None) -> bool:
+    """True when *expiry* is known and already reached (naive = UTC)."""
+    if expiry is None:
+        return False
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    return expiry <= datetime.now(timezone.utc)
+
+
 async def _renew_expiring_subscriptions() -> None:
+    """Single renewal pass, then alert on every subscription it left inactive.
+
+    Flipping a subscription out of ``active`` means mail stops reaching the
+    agent (incident 2026-11-02 -> 09: seven silent days). The alert is decided
+    here, around the pass, whichever branch of the pass flipped the row.
+    """
+    async with sessionmanager.session() as db:
+        before = dict((await db.execute(
+            select(WebhookSubscription.id, WebhookSubscription.provider)
+            .where(WebhookSubscription.status == "active")
+        )).all())
+
+    await _renewal_pass()
+
+    if not before:
+        return
+    async with sessionmanager.session() as db:
+        still_active = set((await db.execute(
+            select(WebhookSubscription.id).where(
+                WebhookSubscription.id.in_(list(before)),
+                WebhookSubscription.status == "active",
+            )
+        )).scalars().all())
+    for sub_db_id, provider in before.items():
+        if sub_db_id in still_active:
+            continue
+        logger.error(
+            "[WEBHOOK CRON] sub_db_id=%s (%s) is no longer active: incoming mail "
+            "will not reach the agent until a subscription is recreated.",
+            sub_db_id, provider,
+        )
+        await notify_etl.notify_job_failure(
+            "webhook-expired",
+            f"La souscription {provider} n'est plus active : les mails "
+            "n'arrivent plus à l'agent. Recréez-la dans Webhooks.",
+            context=f"sub_db_id={sub_db_id}",
+        )
+
+
+async def _renewal_pass() -> None:
     """Single renewal pass -- find and renew subscriptions close to expiry."""
     threshold = datetime.now(timezone.utc) + timedelta(hours=RENEW_THRESHOLD_HOURS)
     settings = get_settings()
@@ -65,6 +114,7 @@ async def _renew_expiring_subscriptions() -> None:
             sub_db_id = sub.id
             sub_graph_id = sub.subscription_id
             sub_user_id = sub.user_id
+            sub_expiry = sub.expiration_datetime
             try:
                 access_token = await OutlookWebhookService.get_access_token_for_user(
                     db, sub_user_id
@@ -102,25 +152,28 @@ async def _renew_expiring_subscriptions() -> None:
                 )
 
             except LookupError:
-                # 404 — subscription gone from Microsoft Graph; delete locally.
+                # 404 — subscription gone from Microsoft Graph. Keep the row,
+                # marked expired: webhook_logs cascades on it, so deleting it
+                # wipes the agent's whole execution history (live incident
+                # 2026-11-09).
                 logger.warning(
                     "[WEBHOOK CRON] sub_db_id=%s (graph_id=%s) not found on "
-                    "Microsoft Graph — deleting local record.",
+                    "Microsoft Graph — marking it expired, history kept.",
                     sub_db_id,
                     sub_graph_id,
                 )
                 try:
                     await db.execute(
-                        delete(WebhookSubscription).where(
-                            WebhookSubscription.id == sub_db_id
-                        )
+                        update(WebhookSubscription)
+                        .where(WebhookSubscription.id == sub_db_id)
+                        .values(status="expired")
                     )
                     await db.commit()
-                except Exception as del_exc:
+                except Exception as mark_exc:
                     logger.warning(
-                        "[WEBHOOK CRON] Failed to delete missing Outlook subscription sub_db_id=%s: %s",
+                        "[WEBHOOK CRON] Failed to mark missing Outlook subscription expired sub_db_id=%s: %s",
                         sub_db_id,
-                        del_exc,
+                        mark_exc,
                         exc_info=True,
                     )
 
@@ -135,10 +188,19 @@ async def _renew_expiring_subscriptions() -> None:
                     "webhook-renewal", f"{type(exc).__name__}: {exc}",
                     context=f"sub_db_id={sub_db_id}",
                 )
-                # Mark as expired so the operator notices it in the UI.
-                # Same UPDATE-by-id pattern — the ORM instance may be
-                # expired from the mid-pass token-refresh commit, so
-                # ``sub.status = ...`` would re-raise the greenlet error.
+                # While Microsoft Graph still holds the subscription, keep
+                # the row 'active' so the next pass retries it: the query
+                # above only selects 'active' rows. Live incident
+                # 2026-11-02: one failed token refresh 10h before expiry
+                # flipped the row to 'expired', no pass ever retried, and
+                # the subscription died at its Graph expiry.
+                if not _is_past(sub_expiry):
+                    continue
+                # Expiry passed: Graph has dropped it. Mark as expired so
+                # the operator notices it in the UI. Same UPDATE-by-id
+                # pattern — the ORM instance may be expired from the
+                # mid-pass token-refresh commit, so ``sub.status = ...``
+                # would re-raise the greenlet error.
                 try:
                     await db.execute(
                         update(WebhookSubscription)
