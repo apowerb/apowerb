@@ -445,6 +445,12 @@ class Settings(BaseSettings):
     workflow_suggest_model: str = ""
     workflow_suggest_timeout_s: float = 4.0
 
+    # Days a workflow run's stored trace is kept (RUN_TRACE_RETENTION_DAYS).
+    # Kept as text on purpose: `core.run_main.trace_retention_days` parses it
+    # and falls back to 30 days with a warning, rather than a bad value
+    # refusing to boot the whole app.
+    run_trace_retention_days: str | None = None
+
     # ── Contexte d'une prévision dit en français (th2forecast : events/scenarios) ──
     # Éteint par défaut : le modèle mutualisé traduit le texte en événements
     # datés, sous le même plafond que les runs. Le délai est plus long que pour
@@ -496,7 +502,7 @@ class Settings(BaseSettings):
     # core owns the configuration surface and the brick reads it.
     evaluation_enabled: bool = False
     # Judge model for the LLM-judge evaluator (litellm model string, e.g.
-    # "gemini/gemini-2.5-flash"). Must differ from the model being judged —
+    # "gemini/gemini-3.5-flash-lite"). Must differ from the model being judged —
     # `evaluate_task_completion` refuses to run otherwise (self-preference
     # bias). No default: an unconfigured judge must fail loudly, not silently
     # score everything with whatever happens to be `default_llm_model`.

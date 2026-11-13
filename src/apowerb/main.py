@@ -907,8 +907,8 @@ def serve(
         True, "--reload/--no-reload", help="Enable auto-reload"
     ),
 ):
-    """Start the th2agent FastAPI server."""
-    typer.echo(f"Starting th2agent server on {host}:{port}")
+    """Start the apowerb FastAPI server."""
+    typer.echo(f"Starting apowerb server on {host}:{port}")
     uvicorn.run("apowerb.main:app", host=host, port=port, reload=reload)
 
 
