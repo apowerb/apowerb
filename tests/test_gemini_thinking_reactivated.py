@@ -17,10 +17,9 @@ def _details(model: str) -> dict:
 
 
 def test_gemini_reasoning_effort_low_by_default(monkeypatch):
-    # Comportement gemini-2.5 : alias vers 3.5-flash-lite coupe (cf test_gemini_35_flash_lite_migration)
-    monkeypatch.setenv("GEMINI_25_FLASH_ALIAS", "off")
+    # Comportement gemini-2.5 : gemini-2.5-flash est aliase vers 3.5-flash-lite (cf test_gemini_35_flash_lite_migration)
     monkeypatch.delenv("GEMINI_REASONING_EFFORT", raising=False)
-    m = build_litellm_model(_details("gemini/gemini-2.5-flash"), None)
+    m = build_litellm_model(_details("gemini/gemini-2.5-pro"), None)
     assert m._additional_args.get("reasoning_effort") == "low"
 
 
@@ -47,9 +46,8 @@ def test_non_gemini_untouched(monkeypatch):
 
 
 def test_temperature_still_passed_alongside(monkeypatch):
-    # Comportement gemini-2.5 : alias vers 3.5-flash-lite coupe (cf test_gemini_35_flash_lite_migration)
-    monkeypatch.setenv("GEMINI_25_FLASH_ALIAS", "off")
+    # Comportement gemini-2.5 : gemini-2.5-flash est aliase vers 3.5-flash-lite (cf test_gemini_35_flash_lite_migration)
     monkeypatch.delenv("GEMINI_REASONING_EFFORT", raising=False)
-    m = build_litellm_model(_details("gemini/gemini-2.5-flash"), 0.3)
+    m = build_litellm_model(_details("gemini/gemini-2.5-pro"), 0.3)
     assert m._additional_args.get("temperature") == 0.3
     assert m._additional_args.get("reasoning_effort") == "low"
