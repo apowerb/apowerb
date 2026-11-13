@@ -4,7 +4,7 @@ Le 01/12/2026 Google redirige d'office ``gemini-2.5-flash`` vers
 ``gemini-3.5-flash-lite``. Sans action, litellm continuerait de construire une
 requete au format 2.5 (thinkingBudget, temperature) pour un modele 3.x. On
 renomme donc nous-memes, pour que la requete soit au format Gemini 3 et que la
-grille tarifaire trouve la bonne ligne. Kill-switch : GEMINI_25_FLASH_ALIAS=off.
+grille tarifaire trouve la bonne ligne. L'alias est toujours applique.
 """
 from pathlib import Path
 
@@ -23,27 +23,26 @@ def _details(model: str) -> dict:
     return {"agent_model": model, "agent_model_params": {}}
 
 
-def test_alias_rewrites_deprecated_flash(monkeypatch):
-    monkeypatch.delenv("GEMINI_25_FLASH_ALIAS", raising=False)
+def test_alias_rewrites_deprecated_flash():
     assert effective_gemini_model("gemini/gemini-2.5-flash") == LITE
     assert effective_gemini_model("gemini-2.5-flash") == "gemini-3.5-flash-lite"
 
 
-def test_alias_leaves_other_models(monkeypatch):
-    monkeypatch.delenv("GEMINI_25_FLASH_ALIAS", raising=False)
+def test_alias_leaves_other_models():
     for m in ("gemini/gemini-2.5-flash-lite", "gemini/gemini-2.5-pro",
               "gemini-2.5-flash-native-audio-preview-12-2025", "openai/gpt-6-luna", ""):
         assert effective_gemini_model(m) == m
 
 
-def test_alias_kill_switch(monkeypatch):
+def test_alias_cannot_be_switched_off(monkeypatch):
+    # L'ancien kill-switch GEMINI_25_FLASH_ALIAS=off n'existe plus : gemini-2.5-flash est arrete.
     monkeypatch.setenv("GEMINI_25_FLASH_ALIAS", "off")
-    assert effective_gemini_model("gemini/gemini-2.5-flash") == "gemini/gemini-2.5-flash"
+    assert effective_gemini_model("gemini/gemini-2.5-flash") == LITE
+    assert effective_gemini_model("gemini-2.5-flash") == "gemini-3.5-flash-lite"
 
 
 def test_builder_uses_lite_with_medium_thinking(monkeypatch):
     # Guide Google : medium/high pour les agents a outils, sinon arret premature.
-    monkeypatch.delenv("GEMINI_25_FLASH_ALIAS", raising=False)
     monkeypatch.delenv("GEMINI_REASONING_EFFORT", raising=False)
     m = build_litellm_model(_details("gemini/gemini-2.5-flash"), 0.3)
     assert m.model == LITE
@@ -57,17 +56,7 @@ def test_builder_gemini3_reasoning_env_override(monkeypatch):
     assert m._additional_args.get("reasoning_effort") == "high"
 
 
-def test_builder_kill_switch_keeps_25_behaviour(monkeypatch):
-    monkeypatch.setenv("GEMINI_25_FLASH_ALIAS", "off")
-    monkeypatch.delenv("GEMINI_REASONING_EFFORT", raising=False)
-    m = build_litellm_model(_details("gemini/gemini-2.5-flash"), 0.3)
-    assert m.model == "gemini/gemini-2.5-flash"
-    assert m._additional_args.get("reasoning_effort") == "low"
-    assert m._additional_args.get("temperature") == 0.3
-
-
-def test_sampling_params_dropped_for_gemini3_only(monkeypatch):
-    monkeypatch.delenv("GEMINI_25_FLASH_ALIAS", raising=False)
+def test_sampling_params_dropped_for_gemini3_only():
     kw = {"model": "gemini/gemini-2.5-flash", "temperature": 0.0, "top_p": 0.9,
           "top_k": 5, "candidate_count": 1, "messages": []}
     out = drop_gemini3_sampling_params(kw)
