@@ -120,4 +120,21 @@ async def notifier_health_endpoint() -> dict[str, Any]:
     return {"status": "ok", **res}
 
 
+@router.get("/webhooks")
+async def webhooks_health_endpoint() -> dict[str, Any]:
+    """Mail subscriptions health, for an external monitor. 503 when a
+    subscription is overdue for renewal or a mailbox has no active one
+    (mail no longer reaches the agent). Counts only: unauthenticated."""
+    from apowerb.helpers.webhook_health import check_webhook_health
+
+    try:
+        res = await check_webhook_health()
+    except Exception:
+        logger.exception("[HEALTH] webhook check failed")
+        raise HTTPException(status_code=503, detail={"status": "degraded", "detail": "check failed"})
+    if not res["healthy"]:
+        raise HTTPException(status_code=503, detail={"status": "degraded", **res})
+    return {"status": "ok", **res}
+
+
 __all__ = ["router", "DEPENDENCY_TIMEOUT_S", "_check_db", "_check_fernet"]
