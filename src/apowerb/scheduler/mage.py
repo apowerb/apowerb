@@ -39,11 +39,14 @@ class MageAPIClient:
         if not self.api_key:
             raise ValueError("Mage api_key is not configured in settings")
 
-        print("[Mage] API Client initialized:")
-        print(f"   Base URL: {self.base_url}")
-        print(f"   Project: {self.project_name}")
-        print(f"   OAuth Token: {'Set' if self.oauth_token else 'Not Set'}")
-        print(f"   API Key: {'Set' if self.api_key else 'Not Set'}")
+        logger.info(
+            "[Mage] API client initialized: base_url=%s project=%s "
+            "oauth_token=%s api_key=%s",
+            self.base_url,
+            self.project_name,
+            "set" if self.oauth_token else "not set",
+            "set" if self.api_key else "not set",
+        )
 
         self._initialized = True
 
@@ -508,20 +511,23 @@ class AgentOrchestrator:
 
     def _ensure_pipeline_exists(self) -> bool:
         """Ensure the agents pipeline exists."""
-        print(f"\n[1/2] Checking pipeline '{self.PIPELINE_UUID}'...")
+        logger.info("[1/2] Checking pipeline '%s'...", self.PIPELINE_UUID)
         try:
             if self.client.pipeline_exists(self.PIPELINE_UUID):
-                print(f"   ✓ Pipeline '{self.PIPELINE_UUID}' already exists.")
+                logger.info("Pipeline '%s' already exists.", self.PIPELINE_UUID)
                 return True
 
-            print(f"   Pipeline not found. Creating '{self.PIPELINE_UUID}'...")
+            logger.info("Pipeline '%s' not found, creating it...", self.PIPELINE_UUID)
             result = self.client.create_pipeline(self.PIPELINE_UUID)
             if result:
-                print(f"   ✓ Pipeline '{self.PIPELINE_UUID}' created successfully!")
+                logger.info("Pipeline '%s' created.", self.PIPELINE_UUID)
                 return True
 
-            print(f"   ✗ Failed to create pipeline '{self.PIPELINE_UUID}'")
-            print(f"   Debug: create_pipeline returned: {result}")
+            logger.warning(
+                "Failed to create pipeline '%s': create_pipeline returned %r",
+                self.PIPELINE_UUID,
+                result,
+            )
             return False
         except OrchestratorUnavailable:
             # `return False` below becomes a bare "failed to initialize pipeline
@@ -531,22 +537,19 @@ class AgentOrchestrator:
             # `POST /pipelines/agents/triggers`, which is the very thing that
             # commit set out to remove.
             raise
-        except Exception as e:
-            print(f"   ✗ Exception in _ensure_pipeline_exists: {e}")
-            import traceback
-
-            traceback.print_exc()
+        except Exception:
+            logger.exception("Exception in _ensure_pipeline_exists")
             return False
 
     def _ensure_block_exists(self) -> bool:
         """Ensure the agent_exe block exists in the pipeline."""
-        print(f"\n[2/2] Checking block '{self.BLOCK_UUID}'...")
+        logger.info("[2/2] Checking block '%s'...", self.BLOCK_UUID)
         try:
             if self.client.block_exists(self.PIPELINE_UUID, self.BLOCK_UUID):
-                print(f"   ✓ Block '{self.BLOCK_UUID}' already exists.")
+                logger.info("Block '%s' already exists.", self.BLOCK_UUID)
                 return True
 
-            print(f"   Block not found. Creating '{self.BLOCK_UUID}'...")
+            logger.info("Block '%s' not found, creating it...", self.BLOCK_UUID)
 
             # Create the block content that calls your API
             block_content = """import pandas as pd
@@ -628,11 +631,14 @@ def load_agent_data(*args, **kwargs):
             )
 
             if result:
-                print(f"   ✓ Block '{self.BLOCK_UUID}' created successfully!")
+                logger.info("Block '%s' created.", self.BLOCK_UUID)
                 return True
 
-            print(f"   ✗ Failed to create block '{self.BLOCK_UUID}'")
-            print(f"   Debug: create_block returned: {result}")
+            logger.warning(
+                "Failed to create block '%s': create_block returned %r",
+                self.BLOCK_UUID,
+                result,
+            )
             return False
         except OrchestratorUnavailable:
             # `return False` below becomes a bare "failed to initialize pipeline
@@ -642,11 +648,8 @@ def load_agent_data(*args, **kwargs):
             # `POST /pipelines/agents/triggers`, which is the very thing that
             # commit set out to remove.
             raise
-        except Exception as e:
-            print(f"   ✗ Exception in _ensure_block_exists: {e}")
-            import traceback
-
-            traceback.print_exc()
+        except Exception:
+            logger.exception("Exception in _ensure_block_exists")
             return False
 
     def _initialize_pipeline(self) -> bool:
@@ -654,16 +657,15 @@ def load_agent_data(*args, **kwargs):
         if self._pipeline_initialized:
             return True
 
-        print("=" * 70)
-        print("INITIALIZING AGENTS PIPELINE INFRASTRUCTURE")
-        print("=" * 70)
+        logger.info("Initializing the agents pipeline infrastructure")
 
         # Test Mage connectivity first
-        print("\n[0/2] Testing Mage API connectivity...")
+        logger.info("[0/2] Testing Mage API connectivity...")
         try:
             pipelines = self.client.get_all_pipelines()
-            print("   ✓ Successfully connected to Mage API")
-            print(f"   Found {len(pipelines)} existing pipelines")
+            logger.info(
+                "Connected to the Mage API, %d existing pipelines", len(pipelines)
+            )
         except OrchestratorUnavailable:
             # Let this one out. Both callers turn ``return False`` into
             # ``Exception("Failed to initialize pipeline infrastructure")``,
@@ -672,10 +674,12 @@ def load_agent_data(*args, **kwargs):
             # answered. ``get_all_pipelines`` was made to raise precisely so
             # this could be told apart; catching it here threw that away.
             raise
-        except Exception as e:
-            print(f"   ✗ Failed to connect to Mage API: {e}")
-            print(f"   Base URL: {self.client.base_url}")
-            print("   Check your Mage settings and network connectivity")
+        except Exception:
+            logger.exception(
+                "Failed to connect to the Mage API at %s; "
+                "check your Mage settings and network connectivity",
+                self.client.base_url,
+            )
             return False
 
         # Step 1: Ensure pipeline exists
@@ -687,8 +691,7 @@ def load_agent_data(*args, **kwargs):
             return False
 
         self._pipeline_initialized = True
-        print("\n✅ Pipeline infrastructure initialized successfully!")
-        print("=" * 70)
+        logger.info("Pipeline infrastructure initialized")
         return True
 
     def create_agent_trigger(
@@ -710,26 +713,27 @@ def load_agent_data(*args, **kwargs):
 
         agent_name = agent_meta.get("agent_name", agent_id)
 
-        print("\n" + "=" * 70)
-        print(f"⚠️  CREATING DEPRECATED API TRIGGER: {agent_name} (ID: {agent_id})")
-        print("=" * 70)
+        logger.info(
+            "Creating the deprecated API trigger for %s (ID: %s)", agent_name, agent_id
+        )
 
         # Check if trigger already exists
-        print(f"\n[3/3] Checking for API trigger '{agent_id}'...")
+        logger.info("[3/3] Checking for API trigger '%s'...", agent_id)
         schedules = self.client.get_pipeline_schedules(self.PIPELINE_UUID)
         existing_trigger = next(
             (s for s in schedules if s.get("name") == agent_id), None
         )
 
+        # The trigger token is returned to the caller, never logged.
         if existing_trigger:
             schedule_id = existing_trigger.get("id")
             trigger_token = existing_trigger.get("token")
-            print(f"   ✓ Trigger '{agent_id}' already exists.")
-            print(f"   Schedule ID: {schedule_id}")
-            print(f"   Trigger Token: {trigger_token}")
+            logger.info(
+                "Trigger '%s' already exists (schedule ID: %s)", agent_id, schedule_id
+            )
         else:
             # Create API trigger with agent_id and agent_meta as runtime variables
-            print(f"   Creating API trigger '{agent_id}'...")
+            logger.info("Creating API trigger '%s'...", agent_id)
 
             runtime_variables = {
                 "agent_id": agent_id,
@@ -746,8 +750,9 @@ def load_agent_data(*args, **kwargs):
             schedule_id = trigger_info.get("id")
             trigger_token = trigger_info.get("token")
 
-            print(f"   Schedule ID: {schedule_id}")
-            print(f"   Trigger Token: {trigger_token}")
+            logger.info(
+                "API trigger '%s' created (schedule ID: %s)", agent_id, schedule_id
+            )
 
         result = {
             "schedule_id": schedule_id,
@@ -761,14 +766,14 @@ def load_agent_data(*args, **kwargs):
 
         # Optionally trigger an initial run
         if create_initial_run:
-            print("\n[4/4] Triggering initial pipeline run...")
+            logger.info("[4/4] Triggering initial pipeline run...")
 
             execution_result = self.client.trigger_pipeline(
                 schedule_id, trigger_token, run_variables=None
             )
 
             if not execution_result:
-                print("⚠ Warning: Failed to trigger initial run")
+                logger.warning("Failed to trigger the initial run of '%s'", agent_id)
             else:
                 run_info = execution_result.get("pipeline_run", {})
                 run_id = run_info.get("id")
@@ -777,9 +782,10 @@ def load_agent_data(*args, **kwargs):
                 result["run_id"] = run_id
                 result["status"] = status
 
-                print(f"\n✅ Initial run triggered! Run ID: {run_id}, Status: {status}")
+                logger.info(
+                    "Initial run triggered: run ID %s, status %s", run_id, status
+                )
 
-        print("=" * 70)
         return result
 
     def delete_agent_schedules(self, agent_id: str) -> int:
@@ -816,13 +822,13 @@ def load_agent_data(*args, **kwargs):
 
         agent_name = agent_meta.get("agent_name", agent_id)
 
-        print("\n" + "=" * 70)
-        print(f"✅ CREATING SCHEDULE TRIGGER: {agent_name} (ID: {agent_id})")
-        print(f"   Interval: {schedule_interval}")
-        print(
-            f"   Start Time: {start_time or 'Immediately'}"
-        )  # ✅ NEW: Show start time
-        print("=" * 70)
+        logger.info(
+            "Creating a schedule trigger for %s (ID: %s): interval %s, start time %s",
+            agent_name,
+            agent_id,
+            schedule_interval,
+            start_time or "immediately",
+        )
 
         # Runtime variables for the schedule — agent_id and agent_meta are
         # stored at the trigger level; jwt_token is also baked in here so
@@ -849,14 +855,11 @@ def load_agent_data(*args, **kwargs):
 
         schedule_id = trigger_info.get("id")
 
-        print("\n Schedule trigger created successfully!")
-        print(f"   Schedule ID: {schedule_id}")
-        print("   Type: time-based schedule")
+        logger.info(
+            "Schedule trigger created (schedule ID: %s, type: time-based)", schedule_id
+        )
         if start_time:
-            print(
-                f"   First run: {start_time}"
-            )  # ✅ NEW: Show when first run will occur
-        print("=" * 70)
+            logger.info("First run: %s", start_time)
 
         return {
             "schedule_id": schedule_id,

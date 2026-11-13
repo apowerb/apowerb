@@ -35,7 +35,7 @@ from urllib.parse import quote
 
 import httpx
 
-from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
+from apowerb.tools_store.portfolio.http_errors import http_error_result
 from apowerb.tools_store.portfolio.microsoft_auth import microsoft_auth_headers
 from apowerb.tools_store.portfolio.onedrive_core import _format_item
 
@@ -86,41 +86,21 @@ def _get(path: str, params: dict | None = None) -> dict:
     return resp.json()
 
 
+_HTTP_HINTS = {
+    401: "Authentication expired. The user needs to reconnect SharePoint.",
+    403: "Permission denied: the user cannot access this site or file.",
+    404: "Not found: check the site, library or item ID.",
+    423: (
+        "SharePoint access is blocked by the organization's policy; an "
+        "administrator must allow this app in the SharePoint admin center."
+    ),
+}
+
+
 def _error_result(exc: Exception) -> dict:
-    if isinstance(exc, IntegrationStatusError):
-        return exc.as_tool_result()
-    if isinstance(exc, ValueError):
-        return {"status": "error", "message": str(exc), "retry": False}
-    if isinstance(exc, httpx.HTTPStatusError):
-        code = exc.response.status_code
-        hints = {
-            401: "Authentication expired. The user needs to reconnect SharePoint.",
-            403: "Permission denied: the user cannot access this site or file.",
-            404: "Not found: check the site, library or item ID.",
-            423: (
-                "SharePoint access is blocked by the organization's policy; an "
-                "administrator must allow this app in the SharePoint admin center."
-            ),
-        }
-        logger.warning("[SHAREPOINT] HTTP %s: %s", code, exc.response.text[:300])
-        return {
-            "status": "error",
-            "http_status": code,
-            "message": f"{hints.get(code, 'SharePoint request failed.')} (HTTP {code})",
-            "retry": code == 429 or code >= 500,
-        }
-    if isinstance(exc, httpx.TimeoutException):
-        return {
-            "status": "error",
-            "message": "SharePoint request timed out.",
-            "retry": True,
-        }
-    logger.warning("[SHAREPOINT] request failed: %s", exc)
-    return {
-        "status": "error",
-        "message": f"SharePoint request failed: {exc}",
-        "retry": False,
-    }
+    return http_error_result(
+        exc, "SharePoint", _HTTP_HINTS, default_hint="SharePoint request failed."
+    )
 
 
 def _items(data: dict, limit: int) -> list[dict]:

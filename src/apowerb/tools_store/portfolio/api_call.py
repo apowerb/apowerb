@@ -13,6 +13,7 @@ from apowerb.schema.forecast_schema import (
     MAX_DATA_ROWS,
     MAX_HORIZON,
     ForecastRequestSchema,
+    aggregate_forecast_rows,
 )
 from apowerb.tools_store.portfolio.bi_datasets import (
     _agent_owner,
@@ -33,15 +34,15 @@ _MAX_INLINE_ROWS = 2000
 # an agent needs a handful of representative points, not the whole curve.
 _MAX_SAMPLE_POINTS = 6
 _MAX_CORRECTIONS_SHOWN = 5
+# Series kept in the answer when a (group, model) grid is large: the weakest
+# ones, since they are the ones an agent must warn about.
+_MAX_SERIES = 20
+_RELIABILITY_ORDER = {"poor": 0, "fair": 1, "good": 2}
+_MAX_ERROR_CHARS = 500
 
 # Metrics worth surfacing to the LLM as-is; th2forecast returns more, but the
 # rest is redundant for a summary (mase already tells beats_baseline's story).
 _KEY_METRICS = ("mape", "smape", "mase", "rmse")
-
-
-def tool_api_call(api_url: str, payload: dict, token: str) -> dict:
-    """Placeholder function for API call tool."""
-    return {"status": "success", "data": {"api_url": api_url, "payload": payload}}
 
 
 def _sample_points(points: list[dict]) -> list[dict]:
@@ -159,12 +160,30 @@ def _summarize_series(series: dict) -> dict:
 
 def _compact_response(th2forecast_response: dict) -> dict:
     series = th2forecast_response.get("series") or []
+    kept = series
+    if len(series) > _MAX_SERIES:
+        kept = sorted(
+            series, key=lambda s: _RELIABILITY_ORDER.get(s.get("reliability"), 3)
+        )[:_MAX_SERIES]
     return {
         "status": th2forecast_response.get("status", "success"),
         "frequency": th2forecast_response.get("frequency"),
         "warnings": th2forecast_response.get("warnings") or [],
-        "series": [_summarize_series(s) for s in series],
+        "series": [_summarize_series(s) for s in kept],
+        "series_total": len(series),
+        "series_truncated": len(series) > _MAX_SERIES,
     }
+
+
+def _error_message(body: Any) -> str:
+    """Short, useful error text from a th2forecast error body (never the raw
+    dump, which can embed the request payload)."""
+    if isinstance(body, dict):
+        for key in ("message", "detail", "error"):
+            if body.get(key):
+                body = body[key]
+                break
+    return str(body)[:_MAX_ERROR_CHARS]
 
 
 def _too_large_message(what: str) -> str:
@@ -234,8 +253,9 @@ def tool_thaink2_forecast(
     Returns:
         dict: On success, {"status": "success", "frequency", "warnings",
             "series": [{"group", "model", "reliability", "beats_baseline",
-            "metrics", "forecast_sample", "summary", "warnings"}, ...]} — one
-            entry per (group, model) pair, with a compact forecast sample and
+            "metrics", "forecast_sample", "summary", "warnings"}, ...],
+            "series_total", "series_truncated"} — one entry per (group,
+            model) pair (beyond 20, only the 20 least reliable), with a compact forecast sample and
             a factual summary (trend, forecast min/max, average interval
             width) rather than the full curve. When outliers were corrected
             (R engine), each series also carries "preprocessing":
@@ -354,6 +374,12 @@ def _forecast_raw(
             ),
         }
 
+    # Grain transaction (plusieurs lignes par date) : th2forecast refuserait
+    # la série, on somme la mesure par période et on le dit dans warnings.
+    data_rows, aggregation_note = aggregate_forecast_rows(
+        data_rows, date_var, target_var, group_var, frequency,
+    )
+
     try:
         request = ForecastRequestSchema(
             data=data_rows,
@@ -379,8 +405,19 @@ def _forecast_raw(
     try:
         response = client.forecast(request.model_dump(exclude_none=False))
     except Th2forecastAPIError as exc:
-        body = exc.body if isinstance(exc.body, dict) else {"message": str(exc.body)}
-        return {"status": "error", "errors": body.get("errors", [{"field": None, "message": str(body)}])}
+        body = exc.body
+        errors = body.get("errors") if isinstance(body, dict) else None
+        if not errors:
+            errors = [{"field": None, "message": _error_message(body)}]
+        return {
+            "status": "error",
+            "errors": [
+                {**e, "message": str(e.get("message", ""))[:_MAX_ERROR_CHARS]}
+                if isinstance(e, dict)
+                else {"field": None, "message": str(e)[:_MAX_ERROR_CHARS]}
+                for e in errors[:10]
+            ],
+        }
     except Th2forecastTimeout:
         return {
             "status": "error",
@@ -389,4 +426,6 @@ def _forecast_raw(
     except Th2forecastUnavailable as exc:
         return {"status": "error", "message": f"Service de prévision indisponible : {exc}"}
 
+    if aggregation_note:
+        response = {**response, "warnings": [*(response.get("warnings") or []), aggregation_note]}
     return {"status": "success", **response}

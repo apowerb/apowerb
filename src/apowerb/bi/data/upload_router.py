@@ -29,7 +29,10 @@ from apowerb.bi.data._bi_storage import bi_artifact_app_name, save_file
 from apowerb.bi.data.fec_import import FecImportError, fec_to_tabular, is_fec, parse_fec
 from apowerb.bi.data.tabular_import import store_tabular_as_csv
 from apowerb.bi.db_stores import DatabaseDataStore
-from apowerb.tools_store.tools_helpers import list_user_tool_configs
+from apowerb.tools_store.tools_helpers import (
+    list_user_tool_configs,
+    redact_foreign_tool_config,
+)
 from apowerb.helpers.database import get_db
 from apowerb.helpers.tabular_loader import SUPPORTED_EXTENSIONS, TabularLoadError, load_tabular
 from apowerb.schema.forecast_schema import MAX_DATA_ROWS
@@ -406,8 +409,9 @@ async def list_gdrive_configs(
     
     # Filter for tool configs relating to Google Drive
     gdrive_configs = [
-        c for c in configs 
-        if "google" in c.get("tool_name", "").lower() 
+        redact_foreign_tool_config(c, str(current_user.email))
+        for c in configs
+        if "google" in c.get("tool_name", "").lower()
         or c.get("tool_name") == "gdrive"
     ]
     

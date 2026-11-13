@@ -222,7 +222,7 @@ async def list_files_for_trigger(
             ]
         if provider == "google_drive":
             from apowerb.tools_store.portfolio.google_drive import (
-                tool_list_files as _tool_list_files,
+                tool_gdrive_list_files as _tool_list_files,
             )
 
             async with env_scope({"GOOGLE_DRIVE_REFRESH_TOKEN": refresh_token}):

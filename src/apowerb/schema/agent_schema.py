@@ -136,6 +136,8 @@ class AgentCreateSchema(BaseModel):
         return _decode_json_text(value)
 
     memory_enabled: bool = False
+    # None = inchangé : un client qui ne connaît pas le drapeau ne l'éteint pas.
+    case_bank_enabled: bool | None = None
     artifacts_enabled: bool = False
     superagent_template_id: str | None = None
     loop_max_iterations: int | None = None

@@ -18,12 +18,12 @@ def test_callback_spec_carries_wiring_metadata():
         trigger="ARMatchPayload",
         builder=lambda **k: None,
         position="head",
-        flag="SCEI_AR_GATE_ACTIVE",
+        flag="CLIENT_GATE_ACTIVE",
         required_output_key="ar_match",
         db_trigger="attachment_pdf_gate",
     )
     assert s.position == "head"
-    assert s.flag == "SCEI_AR_GATE_ACTIVE"
+    assert s.flag == "CLIENT_GATE_ACTIVE"
     assert s.required_output_key == "ar_match"
     assert s.db_trigger == "attachment_pdf_gate"
 
@@ -62,7 +62,7 @@ def test_tool_rebinder_roundtrip():
         return tools_funcs
     r.register_tool_rebinder("tool_persist_ar_record", reb)
     assert r.tool_rebinders()["tool_persist_ar_record"] is reb
-    assert "tool_send_scei_mail" not in r.tool_rebinders()
+    assert "tool_send_client_mail" not in r.tool_rebinders()
 
 
 def test_webhook_hooks_named_points():

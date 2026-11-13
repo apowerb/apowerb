@@ -15,17 +15,21 @@ https://docs.mistral.ai/api/endpoint/ocr (verified 2026-10-02).
 
 from __future__ import annotations
 
+import base64
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
+from apowerb.artifacts import agent_uploads
+from apowerb.tools_store.portfolio import ocr
 from apowerb.tools_store.portfolio.ocr import (
     _MISTRAL_OCR_MODEL,
     _MISTRAL_OCR_URL,
     _PROVIDER_ORDER,
     _PROVIDERS,
     _build_document_chunk,
+    ocr_trusted_file,
     tool_ocr_document,
 )
 
@@ -51,6 +55,17 @@ def _ocr_payload(markdowns: list[str], images_per_page: int = 0) -> dict:
         ],
         "usage_info": {"pages_processed": len(markdowns)},
     }
+
+
+@pytest.fixture
+def agent_dir(monkeypatch, tmp_path):
+    """Uploads folder of the running root agent (agent42), on local storage."""
+    monkeypatch.setenv("ROOT_AGENT_ID", "42")
+    monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: False)
+    monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
+    folder = tmp_path / "agent42"
+    folder.mkdir()
+    return folder
 
 
 # ── Provider registry sanity ──────────────────────────────────────────────
@@ -113,15 +128,15 @@ class TestBuildChunk:
         chunk = _build_document_chunk("https://host/a.png?sig=abc")
         assert chunk["type"] == "image_url"
 
-    def test_local_file_becomes_base64_data_url(self, tmp_path):
-        f = tmp_path / "scan.pdf"
+    def test_local_file_becomes_base64_data_url(self, agent_dir):
+        f = agent_dir / "scan.pdf"
         f.write_bytes(b"%PDF-1.4 fake")
         chunk = _build_document_chunk(str(f))
         assert chunk["type"] == "document_url"
         assert chunk["document_url"].startswith("data:application/pdf;base64,")
 
-    def test_local_image_uses_image_url_data(self, tmp_path):
-        f = tmp_path / "pic.jpg"
+    def test_local_image_uses_image_url_data(self, agent_dir):
+        f = agent_dir / "pic.jpg"
         f.write_bytes(b"\xff\xd8\xff fake jpeg")
         chunk = _build_document_chunk(str(f))
         assert chunk["type"] == "image_url"
@@ -168,10 +183,10 @@ class TestHappyPath:
         }
         assert body["include_image_base64"] is False
 
-    def test_local_file_through_tool(self, monkeypatch, tmp_path):
+    def test_local_file_through_tool(self, monkeypatch, agent_dir):
         # The branch Farid hits first: an uploaded file OCR'd end-to-end.
         monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
-        f = tmp_path / "upload.pdf"
+        f = agent_dir / "upload.pdf"
         f.write_bytes(b"%PDF-1.4 fake")
         payload = _ocr_payload(["extracted text"])
         with patch("httpx.post", return_value=_fake_response(payload)) as mock_post:
@@ -195,31 +210,16 @@ class TestHappyPath:
 
         assert mock_post.call_args.kwargs["json"]["include_image_base64"] is True
         assert result["pages"][0]["image_count"] == 2
-        assert result["pages"][0]["images"] == [{"id": "img0_0"}, {"id": "img0_1"}]
+        assert "images" not in result["pages"][0]  # crops never sent to the model
 
 
 # ── Output is bounded ─────────────────────────────────────────────────────
 class TestTruncation:
-    def test_oversized_page_is_truncated(self, monkeypatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
-        from apowerb.tools_store.portfolio import ocr
-
-        monkeypatch.setattr(ocr, "_MAX_PAGE_MARKDOWN_CHARS", 100, raising=False)
-        payload = _ocr_payload(["x" * 5000])
-        with patch("httpx.post", return_value=_fake_response(payload)):
-            result = tool_ocr_document("https://example.com/big.pdf")
-
-        assert result["status"] == "success"
-        assert result["output_truncated"] is True
-        assert "[page truncated]" in result["pages"][0]["markdown"]
-        assert len(result["pages"][0]["markdown"]) < 1000
-
     def test_combined_cap_truncates(self, monkeypatch):
         # Pages each under the per-page cap, but summing over the combined cap.
         monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
         from apowerb.tools_store.portfolio import ocr
 
-        monkeypatch.setattr(ocr, "_MAX_PAGE_MARKDOWN_CHARS", 10_000, raising=False)
         monkeypatch.setattr(ocr, "_MAX_MARKDOWN_CHARS", 50, raising=False)
         payload = _ocr_payload(["a" * 30, "b" * 30, "c" * 30])
         with patch("httpx.post", return_value=_fake_response(payload)):
@@ -228,8 +228,8 @@ class TestTruncation:
         assert result["status"] == "success"
         assert result["output_truncated"] is True
         assert "[output truncated]" in result["markdown"]
-        # Per-page markdown is untouched (only the combined string is capped).
-        assert result["pages"][0]["markdown"] == "a" * 30
+        # Text is not duplicated per page.
+        assert result["pages"][0] == {"index": 0, "image_count": 0}
 
 
 # ── Azure Document Intelligence provider ──────────────────────────────────
@@ -269,7 +269,8 @@ class TestAzureProvider:
 
         assert result["status"] == "success"
         assert result["provider_used"] == "Azure Document Intelligence"
-        assert result["pages"][0]["markdown"] == "Hello\nWorld"
+        assert result["markdown"] == "Hello\nWorld"
+        assert "markdown" not in result["pages"][0]
         assert result["pages"][0]["index"] == 0  # pageNumber 1 → 0-based
         assert result["page_count"] == 1
         # analyze URL + auth header + body shape
@@ -283,10 +284,10 @@ class TestAzureProvider:
         # polled the Operation-Location
         assert mock_get.call_args.args[0] == "https://az/op/123"
 
-    def test_azure_local_file_uses_base64_source(self, monkeypatch, tmp_path):
+    def test_azure_local_file_uses_base64_source(self, monkeypatch, agent_dir):
         monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
         monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
-        f = tmp_path / "scan.png"
+        f = agent_dir / "scan.png"
         f.write_bytes(b"\x89PNG fake")
         pages = [{"pageNumber": 1, "lines": [{"content": "text"}]}]
         with patch("httpx.post", return_value=_azure_accepted()) as mock_post, patch(
@@ -357,3 +358,227 @@ class TestHttpError:
         assert result["status"] == "error"
         assert "File not found" in result["error_message"]
         mock_post.assert_not_called()
+
+
+# ── Uploaded file referenced by name ──────────────────────────────────────
+# The agent only knows the name it was shown in ``[Uploaded files: cv.pdf]``,
+# not where the upload lives. Before this, "cv.pdf" was opened relative to the
+# worker's CWD and always came back "File not found".
+class TestUploadedFileByName:
+    PDF = b"%PDF-1.4 uploaded cv"
+
+    @pytest.fixture
+    def azure(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        monkeypatch.setenv("ROOT_AGENT_ID", "42")
+        pages = [{"pageNumber": 1, "lines": [{"content": "Jean Dupont"}]}]
+        with patch("httpx.post", return_value=_azure_accepted()) as mock_post, patch(
+            "httpx.get", return_value=_azure_result("succeeded", pages)
+        ):
+            yield mock_post
+
+    def test_local_upload_resolved_in_agent_dir(self, azure, monkeypatch, tmp_path):
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: False)
+        monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
+        (tmp_path / "agent42").mkdir()
+        (tmp_path / "agent42" / "cv.pdf").write_bytes(self.PDF)
+
+        result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "success", result
+        assert result["markdown"] == "Jean Dupont"
+        sent = azure.call_args.kwargs["json"]["base64Source"]
+        assert base64.b64decode(sent) == self.PDF
+
+    def test_s3_upload_resolved_for_root_agent(self, azure, monkeypatch):
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
+        with patch(
+            "apowerb.artifacts.file_lookup.read_file_and_names", return_value=(self.PDF, [])
+        ) as read:
+            result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "success", result
+        read.assert_called_once_with("agent42", "cv.pdf")
+        sent = azure.call_args.kwargs["json"]["base64Source"]
+        assert base64.b64decode(sent) == self.PDF
+
+    def test_s3_missing_upload_lists_available_files(self, azure, monkeypatch):
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
+        with patch(
+            "apowerb.artifacts.file_lookup.read_file_and_names",
+            return_value=(None, ["resume.pdf"]),
+        ):
+            result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "cv.pdf" in result["error_message"]
+        assert "resume.pdf" in result["error_message"]
+        azure.assert_not_called()
+
+    def test_path_is_not_looked_up_in_uploads(self, azure, monkeypatch, tmp_path):
+        # Only a bare filename is mapped; "../x.pdf" must not escape agent42/.
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: False)
+        monkeypatch.setattr("apowerb.configs.paths.uploads_dir", lambda: tmp_path)
+        (tmp_path / "x.pdf").write_bytes(self.PDF)
+
+        result = tool_ocr_document("../x.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        azure.assert_not_called()
+
+    def test_no_active_agent_keeps_file_not_found(self, azure, monkeypatch):
+        monkeypatch.delenv("ROOT_AGENT_ID")
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
+        with patch("apowerb.artifacts.file_lookup.read_file_and_names") as read:
+            result = tool_ocr_document("cv.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        read.assert_not_called()
+        azure.assert_not_called()
+
+
+# ── Local paths: only the running agent's own uploads ─────────────────────
+# A path is read only when it points into uploads/agent{root}/ of the agent
+# running the tool; anything else answers "File not found", as a missing file.
+class TestLocalPathScope:
+    PDF = b"%PDF-1.4 local"
+
+    @pytest.fixture
+    def mistral(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        with patch("httpx.post", return_value=_fake_response(_ocr_payload(["t"]))) as post:
+            yield post
+
+    def _refused(self, result, post):
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        post.assert_not_called()
+
+    def test_own_upload_by_path_is_read(self, mistral, agent_dir):
+        f = agent_dir / "own.pdf"
+        f.write_bytes(self.PDF)
+
+        result = tool_ocr_document(str(f))
+
+        assert result["status"] == "success", result
+        mistral.assert_called_once()
+
+    def test_file_outside_uploads_is_not_read(self, mistral, agent_dir, tmp_path):
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        (outside / "doc.pdf").write_bytes(self.PDF)
+
+        self._refused(tool_ocr_document(str(outside / "doc.pdf")), mistral)
+
+    def test_other_agent_upload_is_not_read(self, mistral, agent_dir, tmp_path):
+        other = tmp_path / "agent7"
+        other.mkdir()
+        (other / "doc.pdf").write_bytes(self.PDF)
+
+        self._refused(tool_ocr_document(str(other / "doc.pdf")), mistral)
+        self._refused(tool_ocr_document(str(agent_dir / ".." / "agent7" / "doc.pdf")), mistral)
+
+    def test_link_leaving_uploads_is_not_followed(self, mistral, agent_dir, tmp_path):
+        target = tmp_path / "doc.pdf"
+        target.write_bytes(self.PDF)
+        (agent_dir / "link.pdf").symlink_to(target)
+
+        self._refused(tool_ocr_document(str(agent_dir / "link.pdf")), mistral)
+
+    def test_no_running_agent_reads_no_local_path(self, mistral, agent_dir, monkeypatch):
+        (agent_dir / "own.pdf").write_bytes(self.PDF)
+        monkeypatch.delenv("ROOT_AGENT_ID")
+
+        self._refused(tool_ocr_document(str(agent_dir / "own.pdf")), mistral)
+
+    def test_unsupported_type_does_not_reveal_existence(self, mistral, agent_dir, tmp_path):
+        (tmp_path / "present.xyz").write_text("x")
+
+        for name in ("present.xyz", "absent.xyz"):
+            result = tool_ocr_document(str(tmp_path / name))
+            assert "Unsupported file type" in result["error_message"]
+            assert "File not found" not in result["error_message"]
+        mistral.assert_not_called()
+
+    def test_own_upload_by_path_is_read_from_disk_with_s3_storage(
+        self, mistral, agent_dir, monkeypatch
+    ):
+        monkeypatch.setattr(agent_uploads, "is_s3_storage", lambda: True)
+        (agent_dir / "staged.pdf").write_bytes(self.PDF)
+
+        with patch("apowerb.artifacts.file_lookup.read_file_and_names") as read:
+            result = tool_ocr_document(str(agent_dir / "staged.pdf"))
+
+        assert result["status"] == "success", result
+        read.assert_not_called()
+
+
+# ── Server-vetted file (workflow attachment) ──────────────────────────────
+# The workflow `document` node resolves an attachment ref itself (owner
+# checked, path under the attachments root) and hands that one file to OCR;
+# it lives outside any agent's uploads folder and no root agent is bound.
+class TestTrustedFile:
+    PDF = b"%PDF-1.4 attachment"
+
+    @pytest.fixture
+    def azure(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        monkeypatch.delenv("ROOT_AGENT_ID", raising=False)
+        pages = [{"pageNumber": 1, "lines": [{"content": "AR"}]}]
+        with patch("httpx.post", return_value=_azure_accepted()) as post, patch(
+            "httpx.get", return_value=_azure_result("succeeded", pages)
+        ):
+            yield post
+
+    def test_vetted_file_is_read(self, azure, tmp_path):
+        f = tmp_path / "workflow_uploads" / "abc" / "AR.pdf"
+        f.parent.mkdir(parents=True)
+        f.write_bytes(self.PDF)
+
+        result = ocr_trusted_file(f, provider="azure")
+
+        assert result["status"] == "success", result
+        assert "AR" in result["markdown"]
+        azure.assert_called_once()
+
+    def test_trust_does_not_outlive_the_call(self, azure, tmp_path):
+        f = tmp_path / "AR.pdf"
+        f.write_bytes(self.PDF)
+        ocr_trusted_file(f, provider="azure")
+        azure.reset_mock()
+
+        result = tool_ocr_document(str(f), provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        azure.assert_not_called()
+
+    def test_trust_covers_only_that_file(self, azure, tmp_path, monkeypatch):
+        vetted = tmp_path / "AR.pdf"
+        vetted.write_bytes(self.PDF)
+        other = tmp_path / "other.pdf"
+        other.write_bytes(self.PDF)
+        # Inside the trusted call, the tool is asked for another file.
+        monkeypatch.setattr(ocr, "tool_ocr_document", lambda source, provider: (
+            ocr._read_supported_file(str(other))
+        ))
+
+        with pytest.raises(ValueError, match="File not found"):
+            ocr_trusted_file(vetted, provider="azure")
+
+    def test_vanished_file_is_not_looked_up_by_name(self, azure, tmp_path, monkeypatch):
+        # Agent bound by env (single-agent server) with an upload of that name.
+        monkeypatch.setenv("ROOT_AGENT_ID", "7")
+        looked_up = MagicMock(return_value=self.PDF)
+        monkeypatch.setattr(ocr, "_read_uploaded_file", looked_up)
+
+        result = ocr_trusted_file(tmp_path / "AR.pdf", provider="azure")
+
+        assert result["status"] == "error"
+        assert "File not found" in result["error_message"]
+        looked_up.assert_not_called()
+        azure.assert_not_called()

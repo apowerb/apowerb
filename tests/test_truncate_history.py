@@ -1,6 +1,6 @@
 """TDD - Levier 1 : troncature historique before_model_callback.
 
-Tests ecrits AVANT l'implementation. Objectif : adapter le pipeline SCEI
+Tests ecrits AVANT l'implementation. Objectif : adapter un pipeline client
 au contexte 32k OVHcloud en tronquant l'historique ADK a keep_recent=14
 messages + le message user initial.
 """
@@ -69,7 +69,7 @@ class TestTruncateHistoryCallback:
         create_cb = _import_cb()
         cb = create_cb(keep_recent=14)
 
-        system = _msg("system", "tu es un agent SCEI")
+        system = _msg("system", "tu es un agent client")
         user = _msg("user", "traite cet AR")
         contents = [system, user]
         req = _build_llm_request(list(contents))
@@ -155,7 +155,7 @@ class TestTruncateHistoryCallback:
         create_cb = _import_cb()
         cb = create_cb(keep_recent=14)
 
-        system = _msg("system", "agent SCEI")
+        system = _msg("system", "agent client")
         user_initial = _msg("user", "AR a traiter : " + "x" * 500)
 
         big_rows = [{"col": "v" * 80, "idx": i} for i in range(150)]

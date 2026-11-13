@@ -44,7 +44,13 @@ from apowerb.helpers.database import get_db
 from apowerb.helpers.emails import get_domain_from_email
 from apowerb.integrations.gmail_webhook import GmailWebhookService
 from apowerb.integrations.outlook_webhook import OutlookWebhookService
-from apowerb.models import Integration, User, WebhookLog, WebhookSubscription
+from apowerb.models import (
+    WEBHOOK_CONSUMER_AGENT,
+    Integration,
+    User,
+    WebhookLog,
+    WebhookSubscription,
+)
 from apowerb.routers.webhook_handlers import NOTIFICATION_HANDLERS
 from apowerb.schema.webhook_schema import (
     WebhookSubscriptionCreate,
@@ -72,6 +78,7 @@ def _subscription_to_response(sub: WebhookSubscription) -> WebhookSubscriptionRe
         subscription_id=sub.subscription_id,
         resource=sub.resource,
         change_type=sub.change_type,
+        consumer=sub.consumer,
         agent_id=sub.agent_id,
         agent_message_template=sub.agent_message_template,
         status=sub.status,
@@ -356,10 +363,15 @@ async def list_subscriptions(
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
 ) -> WebhookSubscriptionList:
-    """Return all webhook subscriptions owned by the current user."""
+    """Return the agent webhook subscriptions owned by the current user.
+
+    The owner's workflow subscription (``consumer = 'workflow'``) is managed by the
+    system (``core/workflow_mail_subscriptions.py``) and is not listed here.
+    """
     result = await db.execute(
         select(WebhookSubscription).where(
             WebhookSubscription.user_id == current_user.user_id,
+            WebhookSubscription.consumer == WEBHOOK_CONSUMER_AGENT,
         )
     )
     subscriptions = result.scalars().all()
@@ -387,6 +399,8 @@ async def delete_subscription(
     result = await db.execute(
         select(WebhookSubscription).where(
             WebhookSubscription.id == subscription_db_id,
+            # The workflow subscription is system-managed (see list_subscriptions).
+            WebhookSubscription.consumer == WEBHOOK_CONSUMER_AGENT,
         )
     )
     subscription = result.scalar_one_or_none()
@@ -439,17 +453,17 @@ async def delete_subscription(
     sub_provider = subscription.provider
     sub_external_id = subscription.subscription_id
 
-    # Delete child webhook_logs first, in the same transaction. The model
-    # declares ON DELETE CASCADE on webhook_logs.subscription_id, but that
-    # only protects databases whose FK was actually created with it: on an
-    # instance where the table predates the cascade, the constraint has no
-    # cascade and `db.delete(subscription)` fails with a ForeignKeyViolation
-    # at commit() -> HTTP 500 (roadmap#105). Deleting the logs explicitly is
-    # independent of the live constraint and is a no-op harmless duplicate of
-    # the cascade where it does exist. Bulk DELETE, not an ORM relationship
-    # cascade, so we don't load every log row to delete it.
+    # Detach the child webhook_logs first, in the same transaction: the
+    # execution history outlives its subscription (incident 2026-11-09, the
+    # 11 179 logs of a client were deleted with one subscription row). The
+    # model declares ON DELETE SET NULL, but an instance whose FK predates it
+    # may still have CASCADE (history lost) or no action (ForeignKeyViolation
+    # at commit -> HTTP 500, roadmap#105). Detaching explicitly is independent
+    # of the live constraint. Bulk UPDATE, no row is loaded.
     await db.execute(
-        delete(WebhookLog).where(WebhookLog.subscription_id == subscription_db_id)
+        update(WebhookLog)
+        .where(WebhookLog.subscription_id == subscription_db_id)
+        .values(subscription_id=None)
     )
 
     # Delete from database
@@ -478,11 +492,15 @@ async def update_subscription(
     db: AsyncSession = Depends(get_db),
     current_user: user_schemas.User = Depends(get_current_user),
 ) -> WebhookSubscriptionResponse:
-    """Update a webhook subscription (agent, template, change_type)."""
+    """Update an agent webhook subscription (agent, template, change_type).
+
+    The workflow subscription is system-managed: not found here, like in the list.
+    """
     result = await db.execute(
         select(WebhookSubscription).where(
             WebhookSubscription.id == subscription_db_id,
             WebhookSubscription.user_id == current_user.user_id,
+            WebhookSubscription.consumer == WEBHOOK_CONSUMER_AGENT,
         )
     )
     subscription = result.scalar_one_or_none()
@@ -577,24 +595,27 @@ async def renew_subscription(
             access_token, graph_sub_id
         )
     except LookupError:
-        # 404 — subscription no longer exists on Microsoft Graph; clean up.
+        # 404 — subscription no longer exists on Microsoft Graph. Keep the
+        # row (marked expired) instead of deleting it: webhook_logs cascades
+        # on webhook_subscriptions, so a delete wipes the agent's whole
+        # execution history (live incident 2026-11-09).
         logger.warning(
             "[WEBHOOK] Subscription db_id=%s (graph_id=%s) not found on "
-            "Microsoft Graph — deleting local record.",
+            "Microsoft Graph — marking it expired, history kept.",
             subscription_db_id,
             graph_sub_id,
         )
         await db.execute(
-            delete(WebhookSubscription).where(
-                WebhookSubscription.id == subscription_db_id
-            )
+            update(WebhookSubscription)
+            .where(WebhookSubscription.id == subscription_db_id)
+            .values(status="expired")
         )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
             detail=(
                 "The webhook subscription no longer exists on Microsoft Graph "
-                "and has been deleted. Please create a new one."
+                "and has been marked expired. Please create a new one."
             ),
         )
     except (RuntimeError, httpx.HTTPError) as exc:
@@ -966,6 +987,7 @@ async def list_webhook_logs(
             {
                 "id": log.id,
                 "subscription_id": log.subscription_id,
+                "consumer": log.consumer,
                 "agent_id": log.agent_id,
                 "trigger_event": log.trigger_event,
                 "email_subject": log.email_subject,
@@ -1047,6 +1069,7 @@ async def get_webhook_log_by_id(
         "log": {
             "id": log.id,
             "subscription_id": log.subscription_id,
+            "consumer": log.consumer,
             "agent_id": log.agent_id,
             "trigger_event": log.trigger_event,
             "email_subject": log.email_subject,

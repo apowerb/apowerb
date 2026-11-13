@@ -257,12 +257,12 @@ def test_schema_route_200_on_a_real_portfolio_tool(client):
         "name": "limit",
         "type": "integer",
         "required": False,
-        "default": 100,
-        "description": "Maximum number of leads to return (1-100, default 100)",
+        "default": 25,
+        "description": "Maximum number of leads to return (1-100, default 25)",
         "enum": None,
     }
-    assert by_name["after_date"]["required"] is False
-    assert by_name["after_date"]["type"] == "string"
+    assert by_name["properties"]["required"] is False
+    assert "after_date" not in by_name and "filters" not in by_name
     assert "api_key" in by_name
     assert body["accepts_kwargs"] is False
     assert body["needs_agent_context"] is False

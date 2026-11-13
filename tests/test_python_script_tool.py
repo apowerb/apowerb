@@ -158,6 +158,22 @@ def test_large_output_is_truncated(enabled, monkeypatch):
     assert "truncated" in result["stdout"]
 
 
+def test_model_facing_caps_keep_stdout_head_and_tail_and_stderr_tail(enabled):
+    script = (
+        "import sys\n"
+        "print('H' * 20000 + 'END')\n"
+        "sys.stderr.write('E' * 9000 + 'TRACEBACK_END')\n"
+    )
+    result = tool_run_python_script(script)
+    assert result["output_truncated"] is True
+    assert result["stdout"].startswith("HHH")
+    assert result["stdout"].rstrip().endswith("END")  # final totals survive
+    assert "truncated" in result["stdout"]
+    assert len(result["stdout"]) < 12200
+    assert result["stderr"].endswith("TRACEBACK_END")
+    assert len(result["stderr"]) < 4200
+
+
 # ── AC#6: not self-addable from the agent catalogue ──────────────────────
 def test_not_in_agent_catalogue_even_when_enabled(enabled):
     from apowerb.core.agent_helpers import tool_catalog

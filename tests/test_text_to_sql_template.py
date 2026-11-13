@@ -28,6 +28,16 @@ class TestTextToSqlTemplate:
         assert "text_to_sql.tool_text_to_sql" in tools
         assert "database.tool_run_sql" in tools
 
+    def test_one_dashboard_family_only(self):
+        # Chart-based dashboards stay; the spec dashboards (tool_bi_*, datasets)
+        # belong to the BI templates and cost 4,239 tokens per model call here.
+        tools = _template()["recommended_tools"]
+        assert "business_intelligence.tool_add_chart_to_dashboard" in tools
+        assert not [t for t in tools if t.startswith(("bi_dashboard_tools.", "bi_datasets."))]
+        instr = _template()["agent_instruction"]
+        assert "tool_bi_" not in instr and "tool_list_datasets" not in instr
+        assert "BI Assistant" in instr
+
     def test_instruction_drives_embed_chart_workflow(self):
         instr = _template()["agent_instruction"]
         assert "embed_chart" in instr
@@ -55,3 +65,13 @@ class TestTextToSqlTemplate:
         # for a small model (Mistral-Small) — a leaner-instruction refactor is a
         # worthwhile follow-up — but this still guards against unbounded bloat.
         assert len(instr) < 5600, f"instruction trop longue: {len(instr)} chars"
+
+    def test_inline_chart_uses_the_one_call_composite(self):
+        tpl = _template()
+        # query + saved chart in one tool call: one model call less per chart
+        assert tpl["chart_from_question"] is True
+        instr = tpl["agent_instruction"]
+        assert "data not queried yet → tool_chart_from_question(question, chart_type, title)" in instr
+        # a chart of rows already fetched reuses their SQL instead of re-querying
+        assert "tool_create_chart(query=<that sql_query>" in instr
+        assert "ONLY when the user asks for a chart" in instr

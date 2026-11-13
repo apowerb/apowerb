@@ -2,7 +2,7 @@
 
 An overlay may append a DETERMINISTIC block to the displayed agent_response
 (tool functionResponses never traverse extract_agent_response, and the LLM
-cannot be trusted to echo them — cf. SCEI [RESEND_DIFF], incident 2026-07-15).
+cannot be trusted to echo them — cf. [RESEND_DIFF] in a client overlay, incident 2026-07-15).
 Contract: hook returns the augmented string (used as-is) or None/empty
 (original kept); a hook failure NEVER breaks the run.
 """

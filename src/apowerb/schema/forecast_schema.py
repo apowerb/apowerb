@@ -164,3 +164,96 @@ class ForecastInterpretSchema(BaseModel):
         if not self.history_start <= self.history_end < self.horizon_end:
             raise ValueError("attendu : history_start <= history_end < horizon_end")
         return self
+
+
+# Libellé de la période d'agrégation dans la note renvoyée à l'appelant.
+_PERIOD_LABELS = {
+    None: "date", "day": "jour", "week": "semaine", "month": "mois",
+    "quarter": "trimestre", "year": "année",
+}
+
+
+def aggregate_forecast_rows(
+    rows: list[dict[str, Any]], date_var: str, target_var: str,
+    group_var: str | None, frequency: str | None, extra_keys: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Sum ``target_var`` per (group, period) when several rows share a date.
+
+    th2forecast rejects a series whose dates repeat ("Doublons de dates"), so
+    transaction-grain data (one row per order) could not be forecast at all.
+    Rows are summed per period start when ``frequency`` is given (week =
+    Monday), per day otherwise. Rows with one row per date — or with a date
+    or value this function cannot read, left for the engine to report — are
+    returned untouched, with no note. Otherwise returns the aggregated rows
+    (date, measure, group and ``extra_keys`` columns only) and a note stating
+    the aggregated measure, meant for the response's ``warnings``.
+    """
+    import pandas as pd
+
+    keys = [k for k in (group_var, *(extra_keys or [])) if k]
+    frame = pd.DataFrame(rows)
+    if any(c not in frame.columns for c in (date_var, target_var, *keys)):
+        return rows, None
+    days = _wall_clock_days(frame[date_var])
+    values = pd.to_numeric(frame[target_var], errors="coerce")
+    readable = days.notna() & values.notna()
+    if not frame[readable].assign(_day=days[readable]).duplicated([*keys, "_day"]).any():
+        return rows, None
+    # Une ligne sans date ou sans mesure lisible ne compte pas dans la somme.
+    frame, days, values = frame[readable], days[readable], values[readable]
+
+    if frequency == "week":
+        period = days - pd.to_timedelta(days.dt.weekday, unit="D")
+    elif frequency in ("month", "quarter", "year"):
+        period = days.dt.to_period({"month": "M", "quarter": "Q", "year": "Y"}[frequency]).dt.start_time
+    else:
+        period = days
+    summed = (
+        frame[keys].assign(**{date_var: period, target_var: values})
+        .groupby([*keys, date_var], dropna=False, sort=True)[target_var].sum()
+        .reset_index()
+    )
+    summed[date_var] = summed[date_var].dt.strftime("%Y-%m-%d")
+    out = [
+        {date_var: r[date_var], target_var: float(r[target_var]),
+         **{k: None if pd.isna(r[k]) else r[k] for k in keys}}
+        for r in summed.to_dict(orient="records")
+    ]
+    per = _PERIOD_LABELS.get(frequency, "date")
+    by_group = f" et par {group_var}" if group_var else ""
+    note = (
+        f"Mesure agrégée : somme de {target_var} par {per}{by_group} "
+        f"({len(rows)} lignes → {len(out)} points), plusieurs lignes partageant une même date."
+    )
+    if len(frame) < len(rows):
+        note += f" {len(rows) - len(frame)} ligne(s) sans date ou valeur lisible ignorée(s)."
+    return out, note
+
+
+def _wall_clock_days(column):
+    """Each value's calendar day in its own time zone (NaT when unreadable).
+
+    Mixed UTC offsets (summer/winter time) make pandas fall back to an object
+    column, so those are read one by one."""
+    import warnings
+
+    import pandas as pd
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)  # fuseaux mixtes : erreur dans pandas 3
+            dates = pd.to_datetime(column, errors="coerce")
+    except (TypeError, ValueError):
+        dates = None
+    if dates is None or not pd.api.types.is_datetime64_any_dtype(dates):
+        def wall(value):
+            try:
+                ts = pd.Timestamp(value)
+            except (TypeError, ValueError):
+                return pd.NaT
+            return ts.tz_localize(None) if ts.tzinfo is not None else ts
+
+        dates = pd.to_datetime(column.map(wall), errors="coerce")
+    elif dates.dt.tz is not None:
+        dates = dates.dt.tz_localize(None)
+    return dates.dt.normalize()

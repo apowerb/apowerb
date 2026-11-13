@@ -163,7 +163,8 @@ class TestGenerateImageWithMock:
 
             assert result["status"] == "success"
             assert result["provider_used"] == "Gemini Imagen"
-            assert result["base64_data"]
+            assert "base64_data" not in result
+            assert result["download_path"]
             assert result["image_format"] in ("PNG", "JPEG")
             assert result["aspect_ratio"] == "1:1"
             mock_fn.assert_called_once()

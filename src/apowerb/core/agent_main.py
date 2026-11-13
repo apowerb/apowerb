@@ -138,6 +138,7 @@ def register_agent(agent: AgentCreateSchema) -> dict:
             status=status,
             guardrails_config=json.dumps(agent.guardrails_config) if agent.guardrails_config else None,
             memory_enabled=str(agent.memory_enabled).lower() if agent.memory_enabled else "false",
+            case_bank_enabled="true" if agent.case_bank_enabled else "false",
             artifacts_enabled=str(agent.artifacts_enabled).lower() if agent.artifacts_enabled else "false",
             superagent_template_id=agent.superagent_template_id,
             superagent_template_version_hash=template_version_hash,
@@ -433,6 +434,7 @@ def get_agent(agent_id: int, user_id: str, reveal_secrets: bool = False) -> dict
         agent["agent_skills"] = _parse_string_list(agent.get("agent_skills"))
 
         agent["memory_enabled"] = (agent.get("memory_enabled") or "false").lower() == "true"
+        agent["case_bank_enabled"] = (agent.get("case_bank_enabled") or "false").lower() == "true"
         agent["artifacts_enabled"] = (agent.get("artifacts_enabled") or "false").lower() == "true"
 
         if agent.get("mcp_servers"):
@@ -893,6 +895,7 @@ def update_agent(agent_id: int, agent: AgentCreateSchema, user_id: str) -> dict:
             updated_at=updated_at,
             guardrails_config=json.dumps(agent.guardrails_config) if agent.guardrails_config else None,
             memory_enabled=str(agent.memory_enabled).lower() if agent.memory_enabled else "false",
+            **({"case_bank_enabled": "true" if agent.case_bank_enabled else "false"} if agent.case_bank_enabled is not None else {}),
             artifacts_enabled=str(agent.artifacts_enabled).lower() if agent.artifacts_enabled else "false",
             superagent_template_id=agent.superagent_template_id,
             loop_max_iterations=str(agent.loop_max_iterations) if agent.loop_max_iterations else None,
@@ -980,6 +983,17 @@ def delete_agent(agent_id: str, user_id: str) -> None:
             agent_name=agent_id,
         )
         _delete_agent_schedules(agent_id)
+        _delete_agent_cases(agent_id)
+
+
+def _delete_agent_cases(agent_id: str) -> None:
+    """Retire les cas de la banque de l'agent supprimé, au mieux comme ses planifications."""
+    try:
+        from apowerb.memory.case_bank import default_case_bank
+
+        default_case_bank().delete_agent_cases(agent_id=int(agent_id))
+    except Exception:
+        logger.warning("cas de l'agent %s non supprimes", agent_id, exc_info=True)
 
 
 def _delete_agent_schedules(agent_id: str) -> None:

@@ -166,7 +166,8 @@ def tool_visualize_data(
     # push the HTML to S3 too. Best-effort — the local copy still exists.
     try:
         from apowerb.configs.settings import get_settings
-        if get_settings().storage_mode != "local":
+        from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+        if is_s3_artifact_storage_configured(get_settings()):
             from apowerb.storage.s3 import upload_bytes_to_s3
             upload_bytes_to_s3(
                 html_path.read_bytes(),

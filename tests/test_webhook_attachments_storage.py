@@ -32,6 +32,32 @@ def tmp_root(tmp_path, monkeypatch):
 _FIXED_NOW = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
 
 
+
+class TestAttachmentRoot:
+    """Where attachments land when nothing else says so."""
+
+    @pytest.fixture(autouse=True)
+    def fresh_settings(self, monkeypatch):
+        from apowerb.configs import paths
+        from apowerb.configs.settings import Settings
+
+        monkeypatch.setattr(paths, "get_settings", lambda: Settings())
+
+    def test_env_var_wins(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("TH2_ATTACHMENT_ROOT", str(tmp_path / "pj"))
+        monkeypatch.setenv("RUNTIME_ROOT", str(tmp_path / "rt"))
+        assert wa._attachment_root() == tmp_path / "pj"
+
+    def test_default_is_under_the_runtime_root(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("TH2_ATTACHMENT_ROOT", raising=False)
+        monkeypatch.setenv("RUNTIME_ROOT", str(tmp_path))
+        assert wa._attachment_root() == tmp_path / "webhook_attachments"
+
+    def test_empty_env_var_falls_back_to_the_default(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("TH2_ATTACHMENT_ROOT", "")
+        monkeypatch.setenv("RUNTIME_ROOT", str(tmp_path))
+        assert wa._attachment_root() == tmp_path / "webhook_attachments"
+
 class TestSafeFilename:
     def test_strips_directory_components(self):
         assert wa._safe_filename("/etc/passwd") == "passwd"

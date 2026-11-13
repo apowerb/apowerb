@@ -1,6 +1,6 @@
 """Tests for tool_pdf_first_page — first-page TEXT extraction
-(SCEI intake redesign, Option A). No image conversion: the tool returns
-the page's native text layer (the SCEI AR corpus is 100% text-native)."""
+(intake redesign, Option A). No image conversion: the tool returns
+the page's native text layer (the order-acknowledgement corpus is 100% text-native)."""
 
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ class TestPdfFirstPageRobustness:
             f.write(b"this is not a real pdf")
         res = _make_pdf_first_page(two_page_pdf)("broken.pdf")
         assert res["status"] == "error"
-        assert "Could not open" in res["message"]
+        assert "Could not read PDF 'broken.pdf'" in res["message"]
 
     def test_path_traversal_filename_is_neutralised(self, two_page_pdf):
         """A crafted '../' filename must not escape the uploads dir."""

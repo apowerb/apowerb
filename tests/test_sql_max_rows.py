@@ -58,6 +58,8 @@ class TestSqlMaxRows:
 
         assert result["row_count"] == 150
         assert len(result["data"]) == 150
+        assert result["truncated"] is True and result["row_limit"] == 150
+        assert "sql" not in result  # success no longer echoes the query
         # Verifier qu'un warning a ete emis
         assert any("truncat" in r.message.lower() or "SQL" in r.message
                    for r in caplog.records), f"Aucun warning SQL truncation : {caplog.records}"
@@ -69,6 +71,7 @@ class TestSqlMaxRows:
 
         assert result["row_count"] == 37
         assert len(result["data"]) == 37
+        assert "truncated" not in result and "row_limit" not in result
 
     def test_default_max_rows_is_150(self):
         """Sans SQL_MAX_ROWS, la valeur par defaut est 150."""
@@ -108,3 +111,13 @@ class TestSqlMaxRows:
         assert result['row_count'] == 150, (
             f'fallback attendu 150, obtenu {result["row_count"]}'
         )
+
+
+def test_tool_run_sql_error_points_to_schema_tool():
+    import apowerb.tools_store.portfolio.database as db_mod
+
+    with patch.object(db_mod, "_get_connection", side_effect=Exception('relation "x" does not exist')):
+        out = db_mod.tool_run_sql("SELECT * FROM x")
+    assert out["success"] is False
+    assert "tool_get_database_schema" in out["error"]
+    assert out["sql"] == "SELECT * FROM x"

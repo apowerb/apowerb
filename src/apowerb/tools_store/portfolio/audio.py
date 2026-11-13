@@ -13,7 +13,6 @@ The tools save generated audio to the agent's uploads folder and return
 metadata so the UI can play or download the audio.
 """
 
-import base64
 import os
 import re
 import time
@@ -289,6 +288,8 @@ _ELEVENLABS_VOICE_MAP = {
 
 _ELEVENLABS_DEFAULT_VOICE = "21m00Tcm4TlvDq8ikWAM"
 
+_MAX_ANALYZE_TRANSCRIPT_CHARS = 4000
+
 
 def _tts_elevenlabs(text: str, voice: str, output_format: str) -> tuple[bytes, str]:
     """Generate speech via ElevenLabs API.
@@ -343,15 +344,6 @@ _TTS_PROVIDERS = {
 }
 
 _TTS_PROVIDER_ORDER = ["openai", "elevenlabs"]
-
-
-# ---------------------------------------------------------------------------
-# Audio generation provider registry (stub — for future providers)
-# ---------------------------------------------------------------------------
-
-_AUDIOGEN_PROVIDERS: dict = {}
-
-_AUDIOGEN_PROVIDER_ORDER: list = []
 
 
 # ---------------------------------------------------------------------------
@@ -485,7 +477,7 @@ def tool_text_to_speech(
                         Default: "auto".
 
     Returns:
-        dict: Contains status, file_name, download_path, base64_data,
+        dict: Contains status, file_name, file_path, download_path,
               audio_format, content_type, size_kb, provider_used, voice,
               message, or error_message if generation fails.
     """
@@ -539,7 +531,6 @@ def tool_text_to_speech(
             abs_path = str(Path(file_path).resolve())
             folder_name = f"agent{agent_id}"
             download_path = f"/api/files/{folder_name}/{filename}"
-            b64 = base64.b64encode(audio_bytes).decode("ascii")
 
             logger.info(
                 "[TTS] Saved %s (%d KB) via %s",
@@ -553,7 +544,6 @@ def tool_text_to_speech(
                 "file_name": filename,
                 "file_path": abs_path,
                 "download_path": download_path,
-                "base64_data": b64,
                 "audio_format": output_format.upper(),
                 "content_type": content_type,
                 "size_kb": round(len(audio_bytes) / 1024, 1),
@@ -593,8 +583,10 @@ def tool_analyze_audio(audio_file_path: str) -> dict:
                                formats: mp3, wav, ogg, m4a, webm, flac, aac, wma, opus.
 
     Returns:
-        dict: Contains status, file_size_kb, format, transcription, summary,
-              language_detected, provider_used, or error_message on failure.
+        dict: Contains status, file_size_kb, format, transcription (cut to
+              4000 characters, with transcription_truncated, when a summary
+              is present), summary, language_detected, provider_used, or
+              error_message on failure.
     """
     # Validate file exists
     if not os.path.isfile(audio_file_path):
@@ -687,47 +679,11 @@ def tool_analyze_audio(audio_file_path: str) -> dict:
             "Configure OPENAI_API_KEY, DEEPGRAM_API_KEY, or GEMINI_API_KEY for full analysis."
         )
 
+    # The summary already condenses the transcript: cap the verbatim text.
+    transcription = result["transcription"]
+    if result["summary"] and transcription and len(transcription) > _MAX_ANALYZE_TRANSCRIPT_CHARS:
+        result["transcription"] = transcription[:_MAX_ANALYZE_TRANSCRIPT_CHARS]
+        result["transcription_truncated"] = True
+
     return result
 
-
-def tool_generate_audio(
-    prompt: str,
-    duration_seconds: int = 10,
-    output_format: str = "mp3",
-    provider: str = "auto",
-) -> dict:
-    """Generate audio from a text prompt (sound effects, music, etc.).
-
-    Note: Audio generation from text prompts is not yet available through
-    stable APIs. This tool is a placeholder for future provider support.
-    For spoken audio, use tool_text_to_speech instead.
-
-    Args:
-        prompt (str): Description of the audio to generate (e.g., "ocean waves
-                      with seagulls", "upbeat jazz piano").
-        duration_seconds (int): Desired duration in seconds. Default: 10.
-        output_format (str): Audio output format. Default: "mp3".
-        provider (str): Which provider to use. Options: "auto".
-                        Default: "auto".
-
-    Returns:
-        dict: Info message explaining current availability status.
-    """
-    # Provider registry is ready but empty — providers will be added
-    # as their APIs mature and stabilize.
-    if provider != "auto" and provider in _AUDIOGEN_PROVIDERS:
-        # Future: try the specific provider
-        pass
-
-    if provider == "auto" and _AUDIOGEN_PROVIDERS:
-        # Future: iterate through available providers
-        pass
-
-    return {
-        "status": "info",
-        "message": (
-            "Audio generation from text prompts is not yet available through "
-            "stable APIs. For spoken audio, use tool_text_to_speech instead. "
-            "Audio generation providers will be added as their APIs mature."
-        ),
-    }

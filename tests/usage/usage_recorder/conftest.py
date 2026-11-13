@@ -1,10 +1,9 @@
-"""Conftest for tests/usage_recorder — mirrors tests/unit_scei/conftest.py.
+"""Conftest for tests/usage_recorder — mirrors the client overlays' own conftest.
 
 Patches DB-eager modules at collection time so importing
 apowerb.core.agent_helpers.* does not open a real Postgres connection
 (apowerb.tools_store.tools_helpers runs ``tool_config_store.create_table()``
-at module import time — a pre-existing repo-wide trap, see
-tests/unit_scei/conftest.py for the original occurrence).
+at module import time — a pre-existing repo-wide trap).
 """
 from __future__ import annotations
 

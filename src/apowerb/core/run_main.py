@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -42,6 +42,7 @@ from sqlalchemy.exc import IntegrityError
 
 from apowerb.agent_store.run_store import RunStore
 from apowerb.configs.paths import scope_upload_dir
+from apowerb.configs.settings import get_settings
 from apowerb.configs.th2logger import setup_logging
 
 logger = setup_logging(__name__)
@@ -53,6 +54,8 @@ STATUS_RUNNING = "running"
 STATUS_SUCCESS = "success"
 STATUS_ERROR = "error"
 STATUS_CANCELLED = "cancelled"
+# Arrêté sur une décision humaine : ni fini, ni en vol, ni orphelin.
+STATUS_AWAITING = "awaiting"
 
 # Statuts depuis lesquels un rejeu va de soi. Un run réussi a déjà produit ses
 # effets de bord et un run en vol n'a pas encore rendu son verdict : les deux
@@ -69,6 +72,11 @@ AGENT_TRIGGERS = ("schedule", "chat")
 # rejouable. Généreux pour ne jamais clore un vrai run long (même borne que la
 # réconciliation côté déclencheur schedule).
 RUN_STALE_AFTER = timedelta(hours=6)
+
+# « Reprendre ici » : l'instantané d'un run en échec est gardé ce temps après
+# sa fin, puis purgé à la lecture. Une semaine laisse corriger le nœud fautif
+# après un week-end sans garder indéfiniment des sorties (jusqu'à 8 Mio).
+RETRY_STATE_TTL = timedelta(days=7)
 
 
 def _now() -> str:
@@ -164,6 +172,7 @@ def start_run(
         attempts=1,
         created_at=_now(),
         replay_of=replay_of,
+        workflow_id=str(cfg["workflow_id"]) if cfg.get("workflow_id") else None,
     )
     try:
         with run_store.engine.begin() as conn:
@@ -215,6 +224,30 @@ def settle_run(
         record_tools_executed(run_id, tools_executed)
     except Exception:  # la trace ne doit pas masquer l'issue
         logger.exception("[RUNS] issue du run_id=%s non consignee", run_id)
+        return
+    _learn_case(run_id)
+
+
+def _learn_case(run_id: str) -> None:
+    """Range dans la banque de cas ce que ce run apprend (agent volontaire seulement)."""
+    from apowerb.memory.case_bank import (
+        default_case_bank,
+        record_run_case,
+        resolve_agent_from_store,
+    )
+
+    try:
+        with run_store.engine.begin() as conn:
+            row = conn.execute(
+                run_store.run_table.select().where(run_store.run_table.c.run_id == run_id)
+            ).fetchone()
+        if row is None:
+            return
+        record_run_case(
+            _row_to_dict(row), bank=default_case_bank(), resolve_agent=resolve_agent_from_store
+        )
+    except Exception:  # un cas perdu ne doit pas coûter l'issue du run
+        logger.warning("[RUNS] cas du run_id=%s non range", run_id, exc_info=True)
 
 
 def failure_cause(exc: BaseException) -> str:
@@ -236,15 +269,82 @@ def finish_run(run_id: str, status: str, error_message: str | None = None) -> No
     Ne filtre pas par propriétaire : l'appelant est le code qui a lancé le run,
     pas une requête utilisateur.
     """
+    t = run_store.run_table
     with run_store.engine.begin() as conn:
+        if status == STATUS_CANCELLED:
+            _give_back_retry(conn, run_id)
         conn.execute(
-            run_store.run_table.update()
-            .where(run_store.run_table.c.run_id == run_id)
+            t.update()
+            # Une pause consignée (``pause_run``) n'est jamais une fin : seule
+            # la reprise ou l'abandon la font sortir de ``awaiting``.
+            .where(t.c.run_id == run_id, t.c.status != STATUS_AWAITING)
             .values(
                 status=status,
                 error_message=error_message,
+                error_info=None,
                 finished_at=_now(),
+                paused_state=None,
+                assignee=None,
+                decision=None,
+                # Seul un échec se reprend : l'instantané écrit par
+                # ``save_failure`` (ou hérité par une reprise) ne survit qu'à lui.
+                **(
+                    {}
+                    if status == STATUS_ERROR
+                    else {"failure_state": None, "failure_node": None}
+                ),
             )
+        )
+
+
+# Les paramètres d'erreur qui ne disent que la structure du graphe ou de sa
+# configuration. Les autres (question d'un agent, destinataire, recherche…)
+# portent des données du run : ils ne sont ni gardés en clair en base, ni
+# envoyés à l'assigné d'une décision.
+_STRUCTURAL_PARAMS = frozenset({
+    "node", "field", "max", "seconds", "limit", "status", "days", "run_id",
+    "tool", "tool_name", "agent", "workflow", "workflow_id", "connection",
+    "service", "provider", "transport", "table", "sqlstate", "header",
+    "format", "type", "kind", "mode", "route", "routes", "triggers", "to",
+    "expected", "actual", "value", "options", "problem", "reason", "ref",
+})
+# Valeur d'un paramètre masqué : la clé reste, pour que le message se traduise.
+MASKED_PARAM = "…"
+
+
+def safe_error_params(params: object) -> dict | None:
+    """Les paramètres d'une erreur, ceux qui portent des données du run masqués."""
+    if not isinstance(params, dict):
+        return None
+    return {
+        k: v if k in _STRUCTURAL_PARAMS else MASKED_PARAM for k, v in params.items()
+    }
+
+
+def record_failure(run_id: str, error: dict | None) -> None:
+    """Ajoute à un run échoué son échec structuré.
+
+    ``error`` : ce que :meth:`RunTrace.failure` lit dans l'événement ``error``
+    du moteur. ``error_info`` n'en garde, en clair, que ``code``, ``ref``, le
+    nœud en échec (``failed_node``) et les paramètres structurels
+    (:func:`safe_error_params`). ``failure_node`` n'est pas écrit ici : il dit
+    qu'un instantané de reprise a été enregistré, et seul :func:`save_failure`
+    le sait. Écrit après :func:`finish_run`, qui remet ``error_info`` à zéro.
+    """
+    if not error:
+        return
+    info = {k: error[k] for k in ("code", "ref", "failed_node") if error.get(k) is not None}
+    params = safe_error_params(error.get("params"))
+    if params:
+        info["params"] = params
+    if not info:
+        return
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        conn.execute(
+            t.update()
+            .where(t.c.run_id == run_id, t.c.status == STATUS_ERROR)
+            .values(error_info=json.dumps(info, ensure_ascii=False, default=str))
         )
 
 
@@ -360,6 +460,37 @@ def _sse_event(block: str) -> dict | None:
     return event if isinstance(event, dict) else None
 
 
+def _give_back_retry(conn, run_id: str) -> None:
+    """Rend à l'original l'instantané d'une reprise qui n'a pas abouti.
+
+    La reprise a consommé l'échec de l'original (``prepare_retry``) et en
+    porte la copie. Arrêtée (Stop, coupure) avant une vraie fin, elle ne doit
+    pas emporter la seule possibilité de reprendre : l'original redevient
+    reprenable. Seulement s'il est toujours en échec et sans instantané
+    (idempotent). Une reprise qui réussit ou échoue à son tour ne rend rien :
+    l'échec est alors le sien.
+    """
+    t = run_store.run_table
+    row = conn.execute(
+        t.select()
+        .with_only_columns(t.c.replay_of, t.c.config, t.c.failure_state, t.c.failure_node)
+        .where(t.c.run_id == run_id)
+    ).fetchone()
+    if row is None or not row.replay_of or not row.failure_state:
+        return
+    if "retry_from" not in json.loads(row.config or "{}"):
+        return
+    conn.execute(
+        t.update()
+        .where(
+            t.c.run_id == row.replay_of,
+            t.c.status == STATUS_ERROR,
+            t.c.failure_state.is_(None),
+        )
+        .values(failure_state=row.failure_state, failure_node=row.failure_node)
+    )
+
+
 def _reconcile_if_orphaned(conn, row):
     """Règle un run resté ``running`` faute d'avoir pu consigner son issue.
 
@@ -376,7 +507,9 @@ def _reconcile_if_orphaned(conn, row):
     data = row._asdict()
     if data.get("status") != STATUS_RUNNING:
         return row
-    created = data.get("created_at")
+    # Un run repris après une décision a pu attendre des jours : son âge
+    # compte depuis la reprise.
+    created = data.get("resumed_at") or data.get("created_at")
     if not created:
         return row
     try:
@@ -385,18 +518,45 @@ def _reconcile_if_orphaned(conn, row):
         return row
     if age < RUN_STALE_AFTER:
         return row
+    if data.get("paused_state"):
+        # Repris puis arrêté avant que la réponse soit prise (l'instantané
+        # n'est effacé qu'à ce moment, voir ``mark_decided``) : rien n'a été
+        # fait après la pause, le run attend toujours sa décision.
+        conn.execute(
+            run_store.run_table.update()
+            .where(
+                run_store.run_table.c.run_id == data["run_id"],
+                run_store.run_table.c.status == STATUS_RUNNING,
+            )
+            .values(status=STATUS_AWAITING, resumed_at=None)
+        )
+        return conn.execute(
+            run_store.run_table.select().where(
+                run_store.run_table.c.run_id == data["run_id"]
+            )
+        ).fetchone()
     hours = int(RUN_STALE_AFTER.total_seconds() // 3600)
     message = (
         "Run settled by reconciliation: no completion was recorded within "
         f"{hours}h; its actual outcome is unknown."
     )
+    # Une reprise coupée net : on ignore jusqu'où elle est allée, sa copie de
+    # l'instantané ne dit plus la vérité. L'échec revient à l'original.
+    retry = "retry_from" in json.loads(data.get("config") or "{}")
+    if retry:
+        _give_back_retry(conn, data["run_id"])
     conn.execute(
         run_store.run_table.update()
         .where(
             run_store.run_table.c.run_id == data["run_id"],
             run_store.run_table.c.status == STATUS_RUNNING,
         )
-        .values(status=STATUS_ERROR, error_message=message, finished_at=_now())
+        .values(
+            status=STATUS_ERROR,
+            error_message=message,
+            finished_at=_now(),
+            **({"failure_state": None, "failure_node": None} if retry else {}),
+        )
     )
     return conn.execute(
         run_store.run_table.select().where(
@@ -405,9 +565,64 @@ def _reconcile_if_orphaned(conn, row):
     ).fetchone()
 
 
+# Le déclencheur consigné est soit un nom (``workflow``, ``schedule``…), soit
+# le JSON ``{"kind", "detail"}`` d'un trigger de workflow : l'interface reçoit
+# un nom stable, sans rien avoir à analyser.
+_TRIGGER_ALIASES = {
+    "workflow": "manual",
+    "workflow_simulated_email": "simulated_email",
+}
+
+
+def _trigger_kind(trigger: str | None) -> tuple[str | None, dict | None]:
+    if trigger and trigger.startswith("{"):
+        try:
+            parsed = json.loads(trigger)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("kind"):
+            detail = parsed.get("detail")
+            return str(parsed["kind"]), detail if isinstance(detail, dict) else None
+    return _TRIGGER_ALIASES.get(trigger, trigger), None
+
+
+def _duration_ms(created_at: str | None, finished_at: str | None) -> int | None:
+    """Durée d'un run fini. Pour un run repris après une décision, l'attente compte."""
+    if not created_at or not finished_at:
+        return None
+    try:
+        delta = datetime.fromisoformat(finished_at) - datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    return max(0, round(delta.total_seconds() * 1000))
+
+
 def _row_to_dict(row) -> dict:
     run = row._asdict()
+    # L'instantané d'une pause peut peser plusieurs Mio et ne regarde que la
+    # reprise : on n'expose que la question en attente.
+    run.pop("paused_state", None)
+    # Même chose pour l'échec : on dit seulement où, et si l'on peut reprendre.
+    run["retry_available"] = bool(run.pop("failure_state", None)) and (
+        run.get("status") == STATUS_ERROR
+    )
+    run.pop("assignee", None)
+    run.pop("resumed_at", None)
+    decision = run.pop("decision", None)
+    if run.get("status") == STATUS_AWAITING and decision:
+        run["decision"] = json.loads(decision)
     run["agent_ids"] = json.loads(run.get("agent_ids") or "[]")
+    error_info = run.pop("error_info", None)
+    try:
+        run["error"] = json.loads(error_info) if error_info else None
+    except json.JSONDecodeError:
+        run["error"] = None
+    run["trigger_kind"], run["trigger_detail"] = _trigger_kind(run.get("trigger"))
+    run["duration_ms"] = _duration_ms(run.get("created_at"), run.get("finished_at"))
+    # Stockées en heure locale du serveur, sans fuseau : le navigateur les
+    # lirait dans le sien. Il reçoit l'instant en UTC.
+    for field in ("created_at", "finished_at"):
+        run[field] = _utc_iso(run.get(field))
     tools = run.get("tools_executed")
     run["tools_executed"] = json.loads(tools) if tools else None
     try:
@@ -440,6 +655,8 @@ def _row_to_dict(row) -> dict:
 def get_run(run_id: str, owner_id: str) -> dict | None:
     """Un run donné, à condition qu'il appartienne à ce propriétaire."""
     with run_store.engine.begin() as conn:
+        _expire_due(conn)
+        _purge_failure_states(conn)
         row = conn.execute(
             run_store.run_table.select().where(
                 run_store.run_table.c.run_id == run_id,
@@ -450,17 +667,265 @@ def get_run(run_id: str, owner_id: str) -> dict | None:
     return _row_to_dict(row) if row else None
 
 
-def list_runs(owner_id: str, limit: int = 50) -> list[dict]:
-    """Les runs d'un propriétaire, du plus récent au plus ancien."""
+RUN_STATUSES = (
+    STATUS_RUNNING,
+    STATUS_SUCCESS,
+    STATUS_ERROR,
+    STATUS_CANCELLED,
+    STATUS_AWAITING,
+)
+
+
+def list_runs(
+    owner_id: str,
+    limit: int = 50,
+    *,
+    offset: int = 0,
+    workflow_id: str | None = None,
+    statuses: list[str] | None = None,
+) -> list[dict]:
+    """Les runs d'un propriétaire, du plus récent au plus ancien.
+
+    ``workflow_id`` et ``statuses`` restreignent la liste (l'historique d'un
+    workflow, ses seuls échecs) ; ``offset`` la pagine. Un statut inconnu
+    lève ``ValueError`` plutôt que de rendre une liste vide trompeuse.
+
+    Limite : le filtre de statut porte sur ce qui est écrit. Un run tué en vol
+    reste ``running`` jusqu'à ce qu'une lecture le réconcilie
+    (``_reconcile_if_orphaned``) — il n'apparaît parmi les échecs qu'après.
+    """
+    unknown = [s for s in statuses or [] if s not in RUN_STATUSES]
+    if unknown:
+        raise ValueError(f"unknown run status: {', '.join(unknown)}")
+    t = run_store.run_table
+    conds = [t.c.owner_id == owner_id]
+    if workflow_id is not None:
+        conds.append(t.c.workflow_id == workflow_id)
+    if statuses:
+        conds.append(t.c.status.in_(statuses))
     with run_store.engine.begin() as conn:
+        _expire_due(conn)
+        _purge_failure_states(conn)
         rows = conn.execute(
-            run_store.run_table.select()
-            .where(run_store.run_table.c.owner_id == owner_id)
-            .order_by(run_store.run_table.c.created_at.desc())
+            t.select()
+            .where(*conds)
+            .order_by(t.c.created_at.desc(), t.c.run_id.desc())
             .limit(limit)
+            .offset(offset)
         ).fetchall()
         rows = [_reconcile_if_orphaned(conn, row) for row in rows]
     return [_row_to_dict(row) for row in rows]
+
+
+# --- Le déroulé d'un run, pour le rouvrir plus tard ---------------------------
+#
+# Le panneau Test rejoue un run à partir de ses événements SSE ; l'historique
+# rouvre un run passé de la même façon. Les événements sont ceux que le
+# propriétaire a déjà vus en direct (entrées, sorties, appels d'outils) : rien
+# de plus n'est exposé, mais ils sont plafonnés pour qu'un run bavard ne pèse
+# pas des mégaoctets en base.
+
+# Au-delà, un champ volumineux (sortie, entrée, appels d'outils) est remplacé
+# par un aperçu dans la trace — jamais dans le run lui-même.
+TRACE_FIELD_MAX_CHARS = 8_000
+# Budget de la trace entière. Passé ce cap, seuls les événements qui disent
+# l'issue (terminaux, erreurs de nœud) sont encore retenus, sans leurs champs
+# volumineux.
+TRACE_MAX_BYTES = 512 * 1024
+_TRACE_BULKY_FIELDS = ("output", "input", "tool_calls")
+_TRACE_ENDINGS = ("node_error", "error", "done", "cancelled", "awaiting_input")
+
+
+def _parse_sse(chunk) -> dict | None:
+    text = chunk.decode() if isinstance(chunk, bytes) else chunk
+    if not isinstance(text, str) or not text.startswith("data: "):
+        return None
+    try:
+        payload = json.loads(text[len("data: ") :])
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) and payload.get("event") else None
+
+
+def _clip(value) -> tuple[object, bool]:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= TRACE_FIELD_MAX_CHARS:
+        return value, False
+    return text[:TRACE_FIELD_MAX_CHARS] + "…", True
+
+
+class RunTrace:
+    """Les événements d'un run, plafonnés, et le nœud qui l'a fait échouer."""
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+        self.truncated = False
+        self._size = 0
+
+    def add(self, chunk) -> None:
+        event = _parse_sse(chunk)
+        if event is None:
+            return
+        event = dict(event)
+        for field in _TRACE_BULKY_FIELDS:
+            if field in event:
+                event[field], cut = _clip(event[field])
+                if cut:
+                    event[f"{field}_truncated"] = True
+                    self.truncated = True
+        size = len(json.dumps(event, ensure_ascii=False, default=str))
+        if self._size + size > TRACE_MAX_BYTES:
+            self.truncated = True
+            if event["event"] not in _TRACE_ENDINGS:
+                return
+            event = {k: v for k, v in event.items() if k not in _TRACE_BULKY_FIELDS}
+            size = len(json.dumps(event, ensure_ascii=False, default=str))
+        self.events.append(event)
+        self._size += size
+
+    def failure(self) -> dict | None:
+        """L'échec du run tel que le moteur le dit : ``code``, ``params``,
+        ``ref`` et ``failed_node``, le nœud en échec calculé par ``run_graph``
+        (« Reprendre ici »). Rien n'est recalculé depuis les ``node_error``.
+        """
+        terminal = next(
+            (e for e in reversed(self.events) if e["event"] == "error"), None
+        )
+        if terminal is None:
+            return None
+        return {
+            k: terminal[k]
+            for k in ("code", "params", "ref", "failed_node")
+            if terminal.get(k) is not None
+        }
+
+
+def save_trace(run_id: str, trace: RunTrace) -> None:
+    """Remplace la trace d'un run (une reprise réémet tout le déroulé).
+
+    Elle porte les entrées, sorties et appels d'outils du run : chiffrée
+    comme l'instantané d'une pause (``_seal``). Sans ``ENCRYPT_KEY`` le
+    chiffrement lève et rien n'est écrit : jamais de repli en clair.
+    """
+    from apowerb.helpers.encryptor import encrypt_value
+
+    t = run_store.trace_table
+    values = dict(
+        events=encrypt_value(json.dumps(trace.events, ensure_ascii=False, default=str)),
+        truncated=1 if trace.truncated else 0,
+        updated_at=_now(),
+    )
+    with run_store.engine.begin() as conn:
+        updated = conn.execute(t.update().where(t.c.run_id == run_id).values(**values))
+        if not updated.rowcount:
+            conn.execute(t.insert().values(run_id=run_id, **values))
+
+
+def _open_trace(raw: str | None) -> list | None:
+    """Les événements d'une trace stockée ; ``None`` si elle n'est plus lisible."""
+    from cryptography.fernet import InvalidToken
+
+    from apowerb.helpers.encryptor import decrypt_value
+
+    if not raw:
+        return []
+    try:
+        # Jamais en clair : une trace qui n'est pas un jeton est illisible.
+        return json.loads(decrypt_value(raw))
+    except (InvalidToken, RuntimeError, ValueError) as exc:
+        logger.warning("[RUNS] déroulé illisible (%s)", type(exc).__name__)
+        return None
+
+
+def get_trace(run_id: str, owner_id: str) -> dict | None:
+    """La trace d'un run, à son seul propriétaire. ``None`` : run inconnu ou d'autrui.
+
+    Une trace absente (run d'avant la trace, purgée) ou illisible (clé
+    changée) est dite indisponible.
+    """
+    runs, traces = run_store.run_table, run_store.trace_table
+    with run_store.engine.begin() as conn:
+        owned = conn.execute(
+            runs.select()
+            .with_only_columns(runs.c.run_id)
+            .where(runs.c.run_id == run_id, runs.c.owner_id == owner_id)
+        ).fetchone()
+        if owned is None:
+            return None
+        row = conn.execute(
+            traces.select().where(traces.c.run_id == run_id)
+        ).fetchone()
+    events = _open_trace(row.events) if row is not None else None
+    if events is None:
+        return {"events": [], "truncated": False, "available": False}
+    return {"events": events, "truncated": bool(row.truncated), "available": True}
+
+
+def forget_workflow_traces(workflow_id: str, owner_id: str) -> int:
+    """Oublie les traces des runs d'un workflow supprimé. Rend leur nombre.
+
+    Les runs eux-mêmes restent (statut, erreur, rejeu refusé faute de
+    graphe) ; leurs sorties n'ont plus de raison d'être gardées.
+    """
+    runs, traces = run_store.run_table, run_store.trace_table
+    owned = (
+        runs.select()
+        .with_only_columns(runs.c.run_id)
+        .where(runs.c.workflow_id == workflow_id, runs.c.owner_id == owner_id)
+    )
+    with run_store.engine.begin() as conn:
+        result = conn.execute(traces.delete().where(traces.c.run_id.in_(owned)))
+    return result.rowcount or 0
+
+
+TRACE_RETENTION_DEFAULT_DAYS = 30
+
+
+def trace_retention_days() -> int:
+    """Durée de vie d'une trace, de ``RUN_TRACE_RETENTION_DAYS`` (30 jours par défaut)."""
+    raw = get_settings().run_trace_retention_days
+    if raw is None:
+        return TRACE_RETENTION_DEFAULT_DAYS
+    try:
+        days = int(raw)
+    except ValueError:
+        days = 0
+    if days < 1:
+        logger.warning(
+            "[RUNS] RUN_TRACE_RETENTION_DAYS=%r invalide, %d jours retenus",
+            raw,
+            TRACE_RETENTION_DEFAULT_DAYS,
+        )
+        return TRACE_RETENTION_DEFAULT_DAYS
+    return days
+
+
+def purge_old_traces(days: int | None = None) -> int:
+    """Supprime les traces plus vieilles que la rétention. Rend leur nombre.
+
+    Un run en attente d'une décision garde la sienne : sa reprise la
+    remplacera, et son échéance borne déjà son âge.
+    """
+    days = days or trace_retention_days()
+    # ``updated_at`` suit le format de ``_now`` : la comparaison de chaînes
+    # vaut comparaison de dates.
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S.%f")
+    runs, traces = run_store.run_table, run_store.trace_table
+    waiting = (
+        runs.select()
+        .with_only_columns(runs.c.run_id)
+        .where(runs.c.status == STATUS_AWAITING)
+    )
+    with run_store.engine.begin() as conn:
+        result = conn.execute(
+            traces.delete().where(
+                traces.c.updated_at < cutoff, traces.c.run_id.not_in(waiting)
+            )
+        )
+    deleted = result.rowcount or 0
+    if deleted:
+        logger.info("[RUNS] %d déroulé(s) de plus de %d jours purgé(s)", deleted, days)
+    return deleted
 
 
 def _refuse_if_side_effects(tools_executed: str | None) -> None:
@@ -493,6 +958,7 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
     ``file_bytes`` et ``file_name``. Le run d'origine n'est pas modifié.
     """
     with run_store.engine.begin() as conn:
+        _expire_due(conn)
         row = conn.execute(
             run_store.run_table.select().where(
                 run_store.run_table.c.run_id == run_id,
@@ -509,6 +975,12 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
 
     original = row._asdict()
     status = original.get("status")
+    if status == STATUS_AWAITING:
+        # Rejouer referait tout ce que la reprise rejouera sans l'exécuter.
+        raise HTTPException(
+            status_code=409,
+            detail="This run is waiting for a human decision — answer or abandon it.",
+        )
     if status not in _REPLAYABLE and not force:
         if status == STATUS_RUNNING:
             raise HTTPException(
@@ -553,6 +1025,8 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
         config = json.loads(original.get("config") or "{}")
     except json.JSONDecodeError:
         config = {}
+    # Un rejeu refait tout, même celui d'une reprise.
+    config.pop("retry_from", None)
 
     new_run_id = start_run(
         trigger=original.get("trigger") or "workflow",
@@ -575,4 +1049,651 @@ def prepare_replay(run_id: str, owner_id: str, force: bool = False) -> dict:
         "config": config,
         "file_bytes": file_bytes,
         "file_name": file_name,
+    }
+
+
+# --- Décision humaine ---------------------------------------------------------
+#
+# Un run arrêté sur un nœud ``approval`` garde son ``run_id`` : la pause écrit
+# l'instantané et le statut ``awaiting``, la reprise le reprend atomiquement
+# (``awaiting`` -> ``running``) puis le run finit comme n'importe quel autre.
+
+
+EXPIRED_MESSAGE = "Décision humaine expirée : personne n'a répondu avant l'échéance."
+UNREADABLE_MESSAGE = (
+    "Décision humaine illisible : l'instantané ne se déchiffre plus "
+    "(ENCRYPT_KEY changée depuis la pause ?)."
+)
+ABANDONED_MESSAGE = "Décision humaine abandonnée"
+STOPPED_MESSAGE = "Décision humaine abandonnée : run arrêté avant que la réponse soit prise."
+# ``end_notice`` d'une fin sans réponse que ``core.decision_notices`` annonce.
+END_NOTICE_PENDING = "pending"
+# Runs clos sans réponse possible : un retardataire apprend pourquoi (409).
+_CLOSED_DECISIONS = {
+    EXPIRED_MESSAGE: "decision_expired",
+    UNREADABLE_MESSAGE: "decision_state_unreadable",
+}
+
+
+def _instant(stamp: str) -> datetime:
+    """Une échéance stockée, en instant avec fuseau.
+
+    Les pauses écrivent de l'ISO UTC. Celles d'avant gardent le format
+    ``_now``, en heure locale du serveur : lue avec les règles de la date
+    elle-même, elle reste juste de part et d'autre d'un changement d'heure.
+    """
+    if "T" in stamp:
+        moment = datetime.fromisoformat(stamp)
+        return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+    return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S.%f").astimezone()
+
+
+def _iso(stamp: str | None) -> str | None:
+    """Une échéance stockée en ISO avec fuseau, pour le navigateur."""
+    if not stamp:
+        return stamp
+    return _instant(stamp).isoformat()
+
+
+def _utc_iso(stamp: str | None) -> str | None:
+    """Un horodatage stocké, en ISO UTC à la milliseconde pour le navigateur."""
+    if not stamp:
+        return stamp
+    try:
+        return _instant(stamp).astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    except ValueError:
+        return stamp
+
+
+def _decision_of(state: dict) -> dict:
+    return {"node_id": state.get("node_id"), **(state.get("prompt") or {})}
+
+
+def _seal(state: dict) -> str:
+    """L'instantané au repos : il porte les sorties du run, chiffré (Fernet).
+
+    Sans ``ENCRYPT_KEY`` le chiffrement lève, la pause échoue
+    (``decision_not_saved``) : jamais de repli en clair.
+    """
+    from apowerb.helpers.encryptor import encrypt_value
+
+    return encrypt_value(json.dumps(state, ensure_ascii=False, default=str))
+
+
+def _unseal(raw: str) -> dict:
+    from apowerb.helpers.encryptor import decrypt_value
+
+    # Pauses écrites en clair avant le chiffrement : un JSON, pas un jeton.
+    return json.loads(raw if raw.lstrip().startswith("{") else decrypt_value(raw))
+
+
+def _expire_due(conn, now: datetime | None = None) -> None:
+    """Clôt en ``error`` les décisions dont l'échéance est passée.
+
+    Appliquée à la lecture (listes, run, reprise, abandon, rejeu), donc
+    avant que quiconque s'appuie sur le statut — le planificateur compris ;
+    ``core.decision_notices`` l'applique aussi à chaque passage pour
+    annoncer l'expiration. La comparaison se fait en instants, pas en
+    chaînes : les échéances anciennes (heure locale) et nouvelles (UTC)
+    n'ont pas le même format. Les décisions en attente sont peu nombreuses.
+    Le ``WHERE status`` et l'échéance lue rendent l'écriture idempotente
+    entre réplicas.
+    """
+    t = run_store.run_table
+    now = now or datetime.now(timezone.utc)
+    pending = conn.execute(
+        t.select()
+        .with_only_columns(t.c.run_id, t.c.expires_at)
+        .where(t.c.status == STATUS_AWAITING, t.c.expires_at.isnot(None))
+    ).fetchall()
+    for run_id, expires_at in pending:
+        try:
+            due = _instant(expires_at) <= now
+        except ValueError:
+            # Une échéance illisible ne doit pas casser toutes les lectures.
+            logger.error("[RUNS] échéance illisible pour run_id=%s : %r", run_id, expires_at)
+            continue
+        if not due:
+            continue
+        conn.execute(
+            t.update()
+            .where(
+                t.c.run_id == run_id,
+                t.c.status == STATUS_AWAITING,
+                t.c.expires_at == expires_at,
+            )
+            .values(
+                status=STATUS_ERROR,
+                error_message=EXPIRED_MESSAGE,
+                finished_at=_now(),
+                paused_state=None,
+                decision=None,
+                end_notice=END_NOTICE_PENDING,
+                # L'assigné reste : sa réponse tardive s'entend dire
+                # « expirée » (409), pas « inconnue » (404).
+            )
+        )
+
+
+def _release_dead_resumptions(conn) -> None:
+    """Remet en attente les reprises mortes avant d'avoir pris la décision.
+
+    Même règle que ``_reconcile_if_orphaned`` (instantané encore là, âge
+    compté depuis la reprise), appliquée sans que le propriétaire ouvre le
+    run : la liste de l'assigné, la reprise et l'abandon en dépendent.
+    """
+    t = run_store.run_table
+    stale = (datetime.now() - RUN_STALE_AFTER).strftime("%Y-%m-%d %H:%M:%S.%f")
+    conn.execute(
+        t.update()
+        .where(
+            t.c.status == STATUS_RUNNING,
+            t.c.paused_state.isnot(None),
+            t.c.resumed_at.isnot(None),
+            t.c.resumed_at <= stale,
+        )
+        .values(status=STATUS_AWAITING, resumed_at=None)
+    )
+
+
+def remind_moment(paused: datetime, expires: datetime) -> datetime:
+    """Quand rappeler la décision : 24 h avant l'échéance, à mi-délai si
+    le délai ne laisse pas 48 h."""
+    delay = expires - paused
+    return expires - min(timedelta(hours=24), delay / 2)
+
+
+def pause_run(run_id: str, snapshot: dict, now: datetime | None = None) -> None:
+    """Consigne un run arrêté sur une décision humaine, avec son instantané.
+
+    L'échéance est calculée et stockée en UTC : une heure locale à décalage
+    figé se tromperait d'une heure à travers un changement d'heure.
+    """
+    from apowerb.core.workflow_graph import DEFAULT_DECISION_HOURS
+
+    prompt = snapshot.get("prompt") or {}
+    assignee = prompt.get("assignee")
+    hours = prompt.get("expires_after_hours") or DEFAULT_DECISION_HOURS
+    paused = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    expires = paused + timedelta(hours=hours)
+    snapshot = {**snapshot, "paused_at": paused.isoformat()}
+    decision = {
+        **_decision_of(snapshot),
+        "paused_at": snapshot["paused_at"],
+        "expires_at": expires.isoformat(),
+    }
+    with run_store.engine.begin() as conn:
+        result = conn.execute(
+            run_store.run_table.update()
+            .where(run_store.run_table.c.run_id == run_id)
+            .values(
+                status=STATUS_AWAITING,
+                paused_state=_seal(snapshot),
+                decision=json.dumps(decision, ensure_ascii=False, default=str),
+                assignee=assignee.strip().lower() if isinstance(assignee, str) else None,
+                expires_at=expires.isoformat(),
+                finished_at=None,
+                resumed_at=None,
+                # Une nouvelle décision : elle sera annoncée, puis rappelée.
+                remind_at=remind_moment(paused, expires).isoformat(),
+                notified_at=None,
+                reminded_at=None,
+                end_notice=None,
+            )
+        )
+    if result.rowcount != 1:
+        # Un run sans ligne ne pourrait jamais être repris : mieux vaut un
+        # échec visible (``decision_not_saved``) qu'une attente sans fin.
+        raise LookupError(f"run {run_id} non consigné : pause impossible")
+
+
+def _may_decide(row: dict, user: str) -> bool:
+    return row["owner_id"] == user or (row.get("assignee") or "") == user.lower()
+
+
+def _awaiting_row(conn, run_id: str, user: str) -> dict:
+    row = conn.execute(
+        run_store.run_table.select().where(run_store.run_table.c.run_id == run_id)
+    ).fetchone()
+    # 404 pour un tiers comme pour un run inconnu : ne pas révéler qu'il existe.
+    if row is None or not _may_decide(row._asdict(), user):
+        raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
+    data = row._asdict()
+    closed = _CLOSED_DECISIONS.get(data.get("error_message") or "")
+    if data["status"] == STATUS_ERROR and closed:
+        detail = {"code": closed}
+        if closed == "decision_expired":
+            detail["expires_at"] = _iso(data.get("expires_at"))
+        raise HTTPException(status_code=409, detail=detail)
+    if data["status"] != STATUS_AWAITING or not data.get("paused_state"):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "decision_already_answered", "status": data["status"]},
+        )
+    return data
+
+
+def list_awaiting(user: str) -> list[dict]:
+    """Les runs en attente d'une décision de ``user`` (propriétaire ou assigné)."""
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        _release_dead_resumptions(conn)
+        _expire_due(conn)
+        # Jamais ``paused_state`` ici : l'instantané peut peser des Mio.
+        rows = conn.execute(
+            t.select()
+            .with_only_columns(t.c.run_id, t.c.owner_id, t.c.config, t.c.decision)
+            .where(
+                t.c.status == STATUS_AWAITING,
+                (t.c.owner_id == user) | (t.c.assignee == user.lower()),
+            )
+            .order_by(t.c.created_at.desc())
+        ).fetchall()
+    out = []
+    for row in rows:
+        data = row._asdict()
+        config = json.loads(data.get("config") or "{}")
+        out.append(
+            {
+                "run_id": data["run_id"],
+                # Interne (nom du workflow) : la route le retire, l'assigné
+                # n'a pas à connaître l'adresse du propriétaire.
+                "owner_id": data["owner_id"],
+                "mine": data["owner_id"] == user,
+                "workflow_id": config.get("workflow_id"),
+                **json.loads(data.get("decision") or "{}"),
+            }
+        )
+    return out
+
+
+def claim_paused_run(run_id: str, user: str, choice, text) -> dict:
+    """Prend la décision pour ``user`` : la ligne repasse ``running``.
+
+    404 (inconnu ou pas à lui), 409 (déjà repris, abandonné, ou pris par un
+    double clic concurrent : l'``UPDATE ... WHERE status='awaiting'`` ne
+    réussit qu'une fois), 422 (réponse non permise). Renvoie la ligne, son
+    instantané (``state``) et la réponse (``answer``).
+    """
+    from cryptography.fernet import InvalidToken
+
+    from apowerb.core.workflow_graph import GraphError, check_decision_answer
+
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        # Validées avant un refus qui annulerait la transaction.
+        _release_dead_resumptions(conn)
+        _expire_due(conn)
+    resumed_at = _now()
+    with run_store.engine.begin() as conn:
+        data = _awaiting_row(conn, run_id, user)
+        try:
+            state = _unseal(data["paused_state"])
+        except (InvalidToken, ValueError):
+            # Clé changée, jeton abîmé ou ancien instantané en clair corrompu
+            # (``JSONDecodeError`` est une ``ValueError``) : aucune reprise
+            # possible. Le run est clos ici plutôt que laissé en attente
+            # jusqu'à son échéance ; le refus suit, hors de cette transaction.
+            state = None
+            conn.execute(
+                t.update()
+                .where(t.c.run_id == run_id, t.c.status == STATUS_AWAITING)
+                .values(
+                    status=STATUS_ERROR,
+                    error_message=UNREADABLE_MESSAGE,
+                    finished_at=_now(),
+                    paused_state=None,
+                    decision=None,
+                    end_notice=END_NOTICE_PENDING,
+                )
+            )
+    if state is None:
+        raise HTTPException(status_code=409, detail={"code": "decision_state_unreadable"})
+    with run_store.engine.begin() as conn:
+        try:
+            choice, text = check_decision_answer(state.get("prompt") or {}, choice, text)
+        except GraphError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": exc.code, "params": exc.params}
+            ) from exc
+        # L'instantané reste en place : si la reprise n'atteint pas la
+        # décision (client parti, panne au démarrage), ``release_paused_run``
+        # remet le run en attente. ``finish_run`` l'efface à la vraie fin.
+        claimed = conn.execute(
+            t.update()
+            .where(t.c.run_id == run_id, t.c.status == STATUS_AWAITING)
+            .values(status=STATUS_RUNNING, resumed_at=resumed_at)
+        )
+        if claimed.rowcount != 1:
+            raise HTTPException(
+                status_code=409, detail={"code": "decision_already_answered"}
+            )
+    answer = {
+        "node_id": state.get("node_id"),
+        "choice": choice,
+        "text": text,
+        "answered_by": user,
+        "answered_at": datetime.now(timezone.utc).isoformat(),
+    }
+    data["config"] = json.loads(data.get("config") or "{}")
+    return {"run": data, "state": state, "answer": answer, "resumed_at": resumed_at}
+
+
+def mark_decided(run_id: str, resumed_at: str | None = None) -> bool:
+    """La réponse est prise par le moteur : l'instantané ne sert plus.
+
+    Sans instantané, ni ``release_paused_run`` ni la réconciliation ne
+    remettent le run en attente : la suite a pu agir. ``resumed_at`` est
+    celui de la prise : si la ligne a été remise en attente puis reprise
+    ailleurs entre-temps, elle n'est plus la nôtre et rien n'est écrit.
+    Renvoie si la décision est bien consignée pour cette reprise.
+    """
+    t = run_store.run_table
+    where = [t.c.run_id == run_id, t.c.status == STATUS_RUNNING]
+    if resumed_at is not None:
+        where.append(t.c.resumed_at == resumed_at)
+    with run_store.engine.begin() as conn:
+        done = conn.execute(
+            t.update().where(*where).values(paused_state=None, decision=None, assignee=None)
+        )
+    return done.rowcount == 1
+
+
+def release_paused_run(run_id: str) -> None:
+    """Remet en attente un run repris qui n'a pas atteint sa décision."""
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        conn.execute(
+            t.update()
+            .where(
+                t.c.run_id == run_id,
+                t.c.status == STATUS_RUNNING,
+                t.c.paused_state.isnot(None),
+            )
+            .values(status=STATUS_AWAITING, resumed_at=None)
+        )
+
+
+def abandon_paused_run(run_id: str, user: str) -> None:
+    """Clôt un run en attente sans y répondre (``cancelled``).
+
+    Réservé au propriétaire : l'assigné répond, il n'annule pas le run d'un
+    autre.
+    """
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        _release_dead_resumptions(conn)
+        _expire_due(conn)
+    with run_store.engine.begin() as conn:
+        data = _awaiting_row(conn, run_id, user)
+        if data["owner_id"] != user:
+            raise HTTPException(
+                status_code=403, detail="Only the run's owner can abandon it"
+            )
+        done = conn.execute(
+            t.update()
+            .where(t.c.run_id == run_id, t.c.status == STATUS_AWAITING)
+            .values(
+                status=STATUS_CANCELLED,
+                paused_state=None,
+                decision=None,
+                # L'assigné reste : il est prévenu du retrait, et sa réponse
+                # tardive s'entend dire « déjà réglée » (409), pas « inconnue ».
+                error_message=ABANDONED_MESSAGE,
+                finished_at=_now(),
+                end_notice=END_NOTICE_PENDING,
+            )
+        )
+        if done.rowcount != 1:
+            raise HTTPException(
+                status_code=409, detail={"code": "decision_already_answered"}
+            )
+
+
+def stop_unanswered_resume(run_id: str, resumed_at: str | None) -> bool:
+    """Clôt en ``cancelled`` une reprise arrêtée avant de prendre la réponse.
+
+    L'arrêt est demandé par le propriétaire (``POST /{wid}/cancel``) : le
+    run s'arrête vraiment, comme un abandon, au lieu de se remettre en
+    attente derrière un panneau qui dit « annulé ». ``resumed_at`` est celui
+    de la prise : une ligne reprise ailleurs entre-temps n'est pas touchée.
+    Renvoie si la ligne a été close.
+    """
+    t = run_store.run_table
+    where = [
+        t.c.run_id == run_id,
+        t.c.status == STATUS_RUNNING,
+        t.c.paused_state.isnot(None),
+    ]
+    if resumed_at is not None:
+        where.append(t.c.resumed_at == resumed_at)
+    with run_store.engine.begin() as conn:
+        done = conn.execute(
+            t.update()
+            .where(*where)
+            .values(
+                status=STATUS_CANCELLED,
+                paused_state=None,
+                decision=None,
+                error_message=STOPPED_MESSAGE,
+                finished_at=_now(),
+                end_notice=END_NOTICE_PENDING,
+            )
+        )
+    return done.rowcount == 1
+
+
+# --- Reprendre ici -------------------------------------------------------------
+#
+# Un run de graphe qui échoue sur un nœud garde l'instantané de ce qui était
+# fait (``save_failure``). « Reprendre ici » ouvre un NOUVEAU run qui cite
+# l'original (``replay_of``) : l'amont est rejoué depuis l'instantané, jamais
+# réexécuté, le nœud en échec et la suite s'exécutent. La version est la
+# dernière sauvegarde du workflow, brouillon compris (``get_workflow``, comme
+# le panneau Test) — c'est ce qui permet de corriger le nœud fautif avant de
+# reprendre — à condition que les nœuds rejoués n'aient pas changé
+# (``workflow_graph.retry_mismatch``). Un run déclenché (webhook, planifié)
+# avait tourné sur la version publiée : il reprend sur la version publiée
+# actuelle (un correctif republié compte), ou, si le workflow est repassé en
+# brouillon, sur la version qu'il avait exécutée — jamais sur un brouillon.
+#
+# La reprise emporte l'instantané de l'original et en garde une copie. Si
+# elle n'aboutit pas (Stop, coupure, run réconcilié), elle le lui rend
+# (``_give_back_retry``) : l'original redevient reprenable. Elle ne garde
+# l'échec pour elle que si elle échoue à son tour.
+
+
+def save_failure(run_id: str, snapshot: dict) -> None:
+    """Consigne l'instantané d'un run en échec, scellé comme une pause.
+
+    Purge au passage les instantanés échus : un run déclenché (webhook,
+    planifié) que personne n'ouvre ne garde pas le sien au-delà du délai.
+    """
+    with run_store.engine.begin() as conn:
+        _purge_failure_states(conn)
+        result = conn.execute(
+            run_store.run_table.update()
+            .where(run_store.run_table.c.run_id == run_id)
+            .values(failure_state=_seal(snapshot), failure_node=snapshot.get("failed_node"))
+        )
+    if result.rowcount != 1:
+        raise LookupError(f"run {run_id} non consigné : instantané d'échec perdu")
+
+
+def _purge_failure_states(conn) -> None:
+    """Efface les instantanés d'échec plus vieux que ``RETRY_STATE_TTL``.
+
+    Appliqué à la lecture, comme ``_expire_due``. ``failure_node`` reste : il
+    dit encore où le run a échoué, et qu'il a expiré plutôt que jamais existé.
+    """
+    t = run_store.run_table
+    cutoff = (datetime.now() - RETRY_STATE_TTL).strftime("%Y-%m-%d %H:%M:%S.%f")
+    conn.execute(
+        t.update()
+        .where(
+            t.c.failure_state.isnot(None),
+            t.c.finished_at.isnot(None),
+            t.c.finished_at <= cutoff,
+        )
+        .values(failure_state=None)
+    )
+
+
+def _retry_refusal(conn, data: dict) -> HTTPException:
+    """Pourquoi un run en échec n'a plus d'instantané à reprendre."""
+    t = run_store.run_table
+    child = conn.execute(
+        t.select()
+        .with_only_columns(t.c.run_id, t.c.config)
+        .where(t.c.replay_of == data["run_id"])
+        .order_by(t.c.created_at.desc())
+    ).fetchall()
+    for row in child:
+        if "retry_from" in json.loads(row.config or "{}"):
+            return HTTPException(
+                status_code=409,
+                detail={"code": "retry_already_started", "params": {"run_id": row.run_id}},
+            )
+    finished = data.get("finished_at")
+    cutoff = (datetime.now() - RETRY_STATE_TTL).strftime("%Y-%m-%d %H:%M:%S.%f")
+    if data.get("failure_node") and finished and finished <= cutoff:
+        days = RETRY_STATE_TTL.days
+        return HTTPException(
+            status_code=409, detail={"code": "retry_expired", "params": {"days": days}}
+        )
+    if data.get("failure_node"):
+        # Instantané consommé par une reprise dont le run n'est pas encore
+        # écrit (``start_run`` suit la consommation) : elle est bien partie.
+        return HTTPException(status_code=409, detail={"code": "retry_already_started"})
+    return HTTPException(status_code=409, detail={"code": "retry_unavailable"})
+
+
+def _is_triggered(trigger: str | None) -> bool:
+    """Run lancé par un déclencheur (webhook, planifié…), pas depuis le Studio."""
+    try:
+        return isinstance(json.loads(trigger or ""), dict)
+    except ValueError:
+        return False
+
+
+def prepare_retry(run_id: str, owner_id: str) -> dict:
+    """Ouvre la reprise d'un run en échec au nœud fautif.
+
+    404 (inconnu ou pas à lui), 409 avec un ``code`` : ``retry_not_failed``,
+    ``retry_already_started`` (``params.run_id``), ``retry_expired``,
+    ``retry_unavailable`` (échec avant tout nœud, instantané trop lourd),
+    ``retry_state_unreadable``, ``retry_workflow_missing``,
+    ``retry_graph_changed`` (``params.nodes``) ; 422 si la dernière
+    sauvegarde n'est pas valide. L'instantané n'est consommé qu'après tous
+    ces contrôles, atomiquement : un second appel prend 409. Il est recopié
+    sur le nouveau run, qui reste reprenable s'il échoue avant d'atteindre
+    un nœud.
+    """
+    from cryptography.fernet import InvalidToken
+
+    from apowerb.core import workflow_graph, workflow_main
+
+    t = run_store.run_table
+    with run_store.engine.begin() as conn:
+        _purge_failure_states(conn)
+    with run_store.engine.begin() as conn:
+        row = conn.execute(
+            t.select().where(t.c.run_id == run_id, t.c.owner_id == owner_id)
+        ).fetchone()
+        row = _reconcile_if_orphaned(conn, row)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Unknown run: {run_id}")
+        data = row._asdict()
+        if data["status"] != STATUS_ERROR:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "retry_not_failed", "params": {"status": data["status"]}},
+            )
+        if not data.get("failure_state"):
+            raise _retry_refusal(conn, data)
+        try:
+            state = _unseal(data["failure_state"])
+        except (InvalidToken, ValueError):
+            # Clé changée ou instantané abîmé : il ne servira jamais.
+            state = None
+            conn.execute(
+                t.update()
+                .where(t.c.run_id == run_id)
+                .values(failure_state=None, failure_node=None)
+            )
+    if state is None:
+        raise HTTPException(status_code=409, detail={"code": "retry_state_unreadable"})
+
+    config = json.loads(data.get("config") or "{}")
+    workflow_id = config.get("workflow_id")
+    wf = workflow_main.get_workflow(workflow_id, owner_id=owner_id) if workflow_id else None
+    if wf is not None and _is_triggered(data.get("trigger")) and wf.get("status") != "published":
+        # Un run déclenché tournait sur la version publiée : il ne reprend
+        # jamais sur un brouillon, mais sur la version qu'il avait exécutée.
+        raw = workflow_main.get_workflow_graph_at(
+            workflow_id, config.get("version"), owner_id=owner_id
+        )
+        wf = None if raw is None else {**wf, "graph": raw, "version": config.get("version")}
+    if wf is None:
+        raise HTTPException(status_code=409, detail={"code": "retry_workflow_missing"})
+    report = workflow_main.check_workflow(wf["graph"], workflow_id=workflow_id)
+    if not report["valid"]:
+        codes = report.get("codes")
+        detail = {**codes[0], "message": report["errors"][0]} if codes else report["errors"][0]
+        raise HTTPException(status_code=422, detail=detail)
+    graph = workflow_main.parse_graph(wf["graph"])
+    changed = workflow_graph.retry_mismatch(state["graph"], graph, state.get("outputs") or {})
+    # Le nœud en échec et la borne « Tester jusqu'ici » doivent exister encore :
+    # sans eux, la reprise sauterait à la suite sans le dire.
+    until = state.get("until")
+    present = {n.id for n in graph.nodes}
+    for node_id in (state.get("failed_node"), until):
+        if node_id is not None and node_id not in present and node_id not in changed:
+            changed.append(node_id)
+    if changed:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "retry_graph_changed", "params": {"nodes": changed}},
+        )
+
+    with run_store.engine.begin() as conn:
+        taken = conn.execute(
+            t.update()
+            .where(t.c.run_id == run_id, t.c.failure_state.isnot(None))
+            .values(failure_state=None)
+        )
+        if taken.rowcount != 1:
+            raise _retry_refusal(conn, data)
+
+    new_config = {
+        "workflow_id": workflow_id,
+        "version": wf["version"],
+        "payload": state.get("payload"),
+        **({"until": until} if until is not None else {}),
+        "retry_from": state.get("failed_node"),
+    }
+    new_run_id = start_run(
+        trigger=data.get("trigger") or "workflow",
+        owner_id=owner_id,
+        config=new_config,
+        organization_id=data.get("organization_id"),
+        replay_of=run_id,
+    )
+    state = {**state, "graph": graph.model_dump(mode="json")}
+    try:
+        save_failure(new_run_id, state)
+    except Exception:  # noqa: BLE001 - la reprise part quand même
+        logger.exception("[RUNS] instantané non recopié sur la reprise %s", new_run_id)
+    logger.info(
+        "[RUNS] reprise de run_id=%s au nœud %s -> nouveau run_id=%s",
+        run_id,
+        state.get("failed_node"),
+        new_run_id,
+    )
+    return {
+        "run_id": new_run_id,
+        "replay_of": run_id,
+        "graph": graph,
+        "state": state,
+        "config": new_config,
     }

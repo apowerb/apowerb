@@ -2,7 +2,7 @@
 
 Live incident 2026-05-19: every Outlook webhook event reused the same
 ADK session keyed on ``sub_db_id`` (``session_id="webhook_1"`` for the
-SCEI subscription). After a few days the session had accumulated
+a client subscription). After a few days the session had accumulated
 3656+ events and the next agent run crashed with
 ``litellm.ContextWindowExceededError`` once Gemini's 1M-token window
 was breached.

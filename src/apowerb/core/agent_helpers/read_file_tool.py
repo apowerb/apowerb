@@ -9,7 +9,7 @@ import os
 from apowerb.configs.th2logger import setup_logging
 from apowerb.configs.paths import uploads_dir
 from apowerb.configs.settings import get_settings
-from apowerb.artifacts.file_lookup import available_filenames, read_file_bytes
+from apowerb.artifacts.file_lookup import read_file_and_names
 from apowerb.core.agent_helpers.text_utils import _truncate_content
 from apowerb.core.agent_helpers.pdf_writer import _extract_pdf_text
 from apowerb.core.agent_helpers.file_readers import (
@@ -29,8 +29,51 @@ from apowerb.core.agent_helpers.file_readers import (
 logger = setup_logging(__name__)
 
 
-def _make_read_uploaded_file(folder_name: str):
-    """Create a read_uploaded_file tool with the agent folder name pre-bound."""
+_TABULAR_EXTENSIONS = {".csv": ",", ".tsv": "\t"}
+_PREVIEW_MIN_CHARS = 4000
+
+
+def _tabular_preview(content: str, ext: str, rows: int) -> dict | None:
+    """Header, first ``rows`` rows and row count of a large CSV/TSV.
+
+    The raw file (up to 50,000 characters, ~39k tokens for the 13,554-row
+    demo CSV) went into the model context; picking columns or checking the
+    format only needs the header and a sample. The tools that use the data
+    (forecast, BI import) read the file themselves from its name. ``None``
+    for small files or other formats: they are returned whole as before.
+    """
+    if not rows or ext not in _TABULAR_EXTENSIONS or len(content) < _PREVIEW_MIN_CHARS:
+        return None
+    import csv
+    import io
+
+    records = csv.reader(io.StringIO(content), delimiter=_TABULAR_EXTENSIONS[ext])
+    try:
+        header = next(records, [])
+        row_count = sum(1 for _ in records)
+    except csv.Error:  # fichier mal formé : rendu brut comme avant
+        return None
+    lines = content.splitlines()
+    return {
+        "columns": header,
+        "row_count": row_count,
+        "content": "\n".join(lines[: rows + 1]),
+        "format": "tabular_preview",
+        "truncated": True,
+        "note": (
+            f"Header and first {rows} of {row_count} rows only. To use the data, pass "
+            "the file name to the tool that works on it (its file_id or filename "
+            "argument); do not re-read the file."
+        ),
+    }
+
+
+def _make_read_uploaded_file(folder_name: str, tabular_preview_rows: int = 0):
+    """Create a read_uploaded_file tool with the agent folder name pre-bound.
+
+    ``tabular_preview_rows`` > 0 returns a large CSV/TSV as header + sample +
+    row count instead of its raw content (set by BI templates).
+    """
 
     def read_uploaded_file(filename: str) -> dict:
         """Read a file that was uploaded by the user for this agent.
@@ -43,8 +86,9 @@ def _make_read_uploaded_file(folder_name: str):
             A dict with the file content or an error message.
         """
         settings=get_settings()
-        if settings.storage_mode=="local":
-            import os
+        from apowerb.configs.artifact_service_config import is_s3_artifact_storage_configured
+
+        if not is_s3_artifact_storage_configured(settings):
             file_path = str(uploads_dir() / folder_name / filename)
 
             if not os.path.exists(file_path):
@@ -91,7 +135,7 @@ def _make_read_uploaded_file(folder_name: str):
                     "message": "PDF file contains no extractable text (may be scanned/image-based)",
                 }
 
-            # Images: return metadata + base64 (if small enough)
+            # Images: attached to the result (see apowerb.core.tool_images)
             if ext in _IMAGE_EXTENSIONS:
                 return _read_image(file_path, file_size, filename)
 
@@ -135,6 +179,10 @@ def _make_read_uploaded_file(folder_name: str):
                 try:
                     with open(file_path, "r", encoding=encoding) as f:
                         content = f.read()
+                    preview = _tabular_preview(content, ext, tabular_preview_rows)
+                    if preview:
+                        return {"status": "success", "filename": filename, "size": file_size,
+                                "encoding": encoding, **preview}
                     content, truncated = _truncate_content(content)
                     return {
                         "status": "success",
@@ -154,16 +202,15 @@ def _make_read_uploaded_file(folder_name: str):
                 "message": "Could not decode file as text (not UTF-8 or CP1252)",
             }
         else:
-            logger.info("==================================================USING S3 NOW in _make_read_uploaded_file\n ===================================================\n========================================\n==================\n===================")
-            import os
+            logger.debug("[READ_FILE] S3 read of %s for %s", filename, folder_name)
             import tempfile
-            content_bytes = read_file_bytes(folder_name, filename)
+            content_bytes, available = read_file_and_names(folder_name, filename)
 
             if content_bytes is None:
                 return {
                     "status": "error",
                     "message": f"File '{filename}' not found in {folder_name}",
-                    "available_files": available_filenames(folder_name),
+                    "available_files": available,
                 }
 
             file_size = len(content_bytes)
@@ -281,6 +328,10 @@ def _make_read_uploaded_file(folder_name: str):
             for encoding in ["utf-8", "cp1252"]:
                 try:
                     content = content_bytes.decode(encoding)
+                    preview = _tabular_preview(content, ext, tabular_preview_rows)
+                    if preview:
+                        return {"status": "success", "filename": filename, "size": file_size,
+                                "encoding": encoding, **preview}
                     content, truncated = _truncate_content(content)
                     return {
                         "status": "success",

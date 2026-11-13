@@ -1,3 +1,5 @@
+"""Agents router — CRUD endpoints for AI agents under ``/api/agents``."""
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError

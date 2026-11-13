@@ -177,6 +177,18 @@ def _clean_row(row: dict) -> dict:
     return out
 
 
+def _columnar(rows: list[dict]) -> dict:
+    """Rows as one header + value lists: the keys are not repeated on every row.
+
+    The model rereads a tool result on every following call of the turn, and a
+    chart's keys repeated over 30 rows were about half of its characters.
+    """
+    columns: list[str] = []
+    for row in rows:
+        columns += [k for k in row if k not in columns]
+    return {"columns": columns, "rows": [[row.get(k) for k in columns] for row in rows]}
+
+
 def _component_title(comp) -> str | None:
     visual = getattr(comp, "visual", None)
     if visual is None:
@@ -226,7 +238,7 @@ def _summarize_components(dashboard, response, *, detail: bool) -> tuple[list[di
             entry["row_count"] = len(res.rows)
             limit = _TABLE_ROWS if res.type == "table" else _CHART_ROWS
             if detail:
-                entry["rows"] = [_clean_row(r) for r in res.rows[:limit]]
+                entry.update(_columnar([_clean_row(r) for r in res.rows[:limit]]))
                 if len(res.rows) > limit:
                     entry["truncated"] = True
             else:
@@ -235,16 +247,20 @@ def _summarize_components(dashboard, response, *, detail: bool) -> tuple[list[di
     return out, errors
 
 
-async def _preview(dashboard, owner: str, filters: dict | None = None, *, detail: bool = False) -> dict:
+async def _preview(
+    dashboard, owner: str, filters: dict | None = None, *, detail: bool = False, components: list[str] | None = None
+) -> dict:
     """Compute the dashboard and summarise it; a compute failure is reported, not raised."""
     try:
-        response = await _compute(dashboard, filters, owner)
+        response = await _compute(dashboard, filters, owner, components)
     except Exception as exc:  # engine/SQL/forecast failure
         logger.warning("[BI_SPEC] preview failed: %s", exc)
         return {"preview_error": f"Computation failed: {exc}", "components": [], "errors": {}}
-    components, errors = _summarize_components(dashboard, response, detail=detail)
+    summary, errors = _summarize_components(dashboard, response, detail=detail)
+    if components:
+        summary = [c for c in summary if c["id"] in components]
     result: dict[str, Any] = {
-        "components": components,
+        "components": summary,
         "errors": errors,
         "filters": {
             fid: {"value": rf.value, "label": rf.label, **({"from": rf.date_from, "to": rf.date_to} if rf.date_from else {})}
@@ -385,7 +401,50 @@ async def _async_patch(dashboard_id: str, ops: list, dry_run: bool, owner: str) 
     }
 
 
-async def _async_query(dashboard_id: str, filters: dict, owner: str) -> dict:
+def _select_components(dashboard, wanted: str) -> tuple[list[str] | None, str | None]:
+    """Component ids from a comma-separated list of ids or titles (case-insensitive)."""
+    names = [w.strip() for w in wanted.split(",") if w.strip()]
+    if not names:
+        return None, None
+    ids, unknown = [], []
+    for name in names:
+        match = next(
+            (c.id for c in dashboard.components
+             if c.id == name or (_component_title(c) or "").casefold() == name.casefold()),
+            None,
+        )
+        if match:
+            ids.append(match)
+        else:
+            unknown.append(name)
+    if unknown:
+        valid = "; ".join(f"{c.id} ({_component_title(c) or '-'})" for c in dashboard.components)
+        return None, f"Unknown component(s): {', '.join(unknown)}. Valid components: {valid}."
+    return ids, None
+
+
+async def _async_spec_dashboard_data(dashboard_id: str, owner: str) -> dict | None:
+    """Computed values of a spec v2 dashboard, for ``tool_get_dashboard_data``.
+
+    None when the dashboard is not spec v2 or not visible to ``owner``: the
+    caller then reads it as a classic dashboard (``chart``/``key_value``).
+    """
+    from apowerb.bi.data.csv_executor import use_session_factory
+
+    async with _dashboard_store(owner) as store:
+        dashboard = await store.get(dashboard_id)
+    if dashboard is None or not dashboard.sources:
+        return None
+    with use_session_factory(lambda: _get_session()):
+        preview = await _preview(dashboard, owner, detail=True)
+    if "preview_error" in preview:
+        return {"success": False, "error": preview["preview_error"]}
+    return {"success": True, "dashboard_id": dashboard_id, "dashboard_title": dashboard.title, **preview}
+
+
+async def _async_query(
+    dashboard_id: str, filters: dict, owner: str, component_ids: str = "", group_by: str = ""
+) -> dict:
     async with _dashboard_store(owner) as store:
         dashboard = await store.get(dashboard_id)
     if dashboard is None:
@@ -395,10 +454,38 @@ async def _async_query(dashboard_id: str, filters: dict, owner: str) -> dict:
             "success": False,
             "error": "This dashboard has no spec v2 sources (it is made of classic charts). Use tool_get_dashboard_data instead.",
         }
-    preview = await _preview(dashboard, owner, filters, detail=True)
+    components, error = _select_components(dashboard, component_ids)
+    if error:
+        return {"success": False, "error": error}
+    if group_by and not components:
+        return {"success": False, "error": "group_by needs component_ids: name the figure(s) to compare."}
+    preview = await _preview(dashboard, owner, filters, detail=True, components=components)
     if "preview_error" in preview:
         return {"success": False, "error": preview["preview_error"]}
-    return {"success": True, "dashboard_id": dashboard_id, "title": dashboard.title, **preview}
+    if not group_by:
+        return {"success": True, "dashboard_id": dashboard_id, "title": dashboard.title, **preview}
+    return await _grouped(dashboard, owner, filters, components, group_by.strip(), preview)
+
+
+async def _grouped(dashboard, owner: str, filters: dict, components: list[str], group_by: str, base: dict) -> dict:
+    """The selected components once per value of the filter ``group_by``:
+    its options (select) or its presets (period, grain...)."""
+    options = dict(base.get("filter_options", {}))
+    options.update({f.id: f.presets for f in dashboard.filters if f.presets and f.id not in options})
+    if group_by not in options:
+        return {"success": False, "error": f"Filter {group_by!r} has no values to group by. group_by accepts: {', '.join(options) or 'none'}."}
+    groups, errors = [], {}
+    for value in options[group_by]:
+        part = await _preview(dashboard, owner, {**filters, group_by: value}, components=components)
+        if "preview_error" in part:
+            errors[str(value)] = part["preview_error"]
+            continue
+        groups.append({"value": value, "components": [{k: v for k, v in c.items() if k != "id"} for c in part["components"]]})
+        errors.update({f"{value}/{k}": e for k, e in part["errors"].items()})
+    return {
+        "success": True, "dashboard_id": dashboard.id, "title": dashboard.title, "group_by": group_by,
+        "filters": {k: v for k, v in base["filters"].items() if k != group_by}, "groups": groups, "errors": errors,
+    }
 
 
 def _describe_transform(step) -> str:
@@ -539,6 +626,8 @@ def tool_bi_import_attachment(filename: str, sheet: str = "") -> dict:
     tool_bi_create_stock_dashboard or tool_bi_create_dashboard. The dataset
     lands in the user's Data Pool, exactly as if they had uploaded the file in
     the BI page. Importing the same file again reuses the same dataset.
+    Do not read the file with read_uploaded_file first: this tool reads it and
+    returns its columns, and the raw content would be resent on every step.
 
     Args:
         filename: Name of the attached file, exactly as shown in
@@ -770,8 +859,9 @@ def tool_bi_create_stock_dashboard(
 def tool_bi_list_dashboard_templates(language: str = "fr") -> dict:
     """Lists the ready-made dashboard templates (stock steering, delivery OTIF, production quality...).
 
-    Each template gives its id, what it shows, the columns it expects (key,
-    label, type, required, default column name) and its parameters. Use it
+    Each template gives its id, what it shows, the columns it expects (one line
+    per column key: type, required or optional, default column name, label) and
+    its parameters. Use it
     before tool_bi_create_dashboard_from_template to pick the template that
     fits the user's need and map the dataset columns.
 
@@ -786,7 +876,28 @@ def tool_bi_list_dashboard_templates(language: str = "fr") -> dict:
         templates = list_templates(language)
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
-    return {"success": True, "templates": [tpl.describe() for tpl in templates]}
+    return {"success": True, "templates": [_template_brief(tpl) for tpl in templates]}
+
+
+def _template_brief(tpl) -> dict:
+    """What the model needs to pick a template and map columns, one line per column.
+
+    The full ``describe()`` (versions, ownership, null fields, one object per
+    column) was ~7k tokens for 15 templates, reread on every following call.
+    """
+    columns = {}
+    for c in tpl.columns:
+        line = f"{c.type}, {'required' if c.required else 'optional'}"
+        if c.default:
+            line += f", default column: {c.default}"
+        columns[c.key] = f"{line} ({c.label})"
+    params = {p.key: f"{p.type} {p.min}-{p.max}, default {p.default} ({p.label})" for p in tpl.params}
+    brief = {"id": tpl.id, "label": tpl.label, "description": tpl.description, "columns": columns}
+    if params:
+        brief["params"] = params
+    if tpl.origin != "builtin":
+        brief["origin"] = tpl.origin
+    return brief
 
 
 def tool_bi_create_dashboard_from_template(
@@ -901,22 +1012,33 @@ def tool_bi_patch_dashboard(dashboard_id: str, ops_json: str, dry_run: bool = Fa
         return _fail("tool_bi_patch_dashboard", exc)
 
 
-def tool_bi_query_dashboard(dashboard_id: str, filters_json: str = "{}") -> dict:
+def tool_bi_query_dashboard(
+    dashboard_id: str, filters_json: str = "{}", component_ids: str = "", group_by: str = ""
+) -> dict:
     """Reads the computed values of a spec v2 dashboard to answer a question.
 
     Use it when the user asks about the numbers of a dashboard built with
     tool_bi_create_dashboard / tool_bi_create_stock_dashboard ("what is the
     coverage for family A over 13 weeks?"). Never invent figures: query first.
     Returns KPI values with their traffic-light status, texts, and chart/table
-    rows (tables: first 20 rows, charts: first 30, "truncated" is set when cut).
+    data as "columns" + "rows" (tables: first 20 rows, charts: first 30,
+    "truncated" is set when cut).
 
     filters_json is a JSON object of filter id -> value, using the ids shown by
     tool_bi_describe_dashboard. Omitted filters keep their default. Example:
     {"famille": "A", "periode": "13w"}. A select filter set to null means "all".
 
+    component_ids limits the answer to some components (comma-separated ids or
+    titles). Once you have seen the dashboard, use it to compare a figure across
+    several filter values: {"canal": "Email"} with component_ids="ROAS" returns
+    one KPI instead of the whole dashboard; group_by="canal" with
+    component_ids="ROAS" returns the ROAS of every channel in one call.
+
     Args:
         dashboard_id: Dashboard id (UUID).
         filters_json: JSON object of filter values, "{}" for the defaults.
+        component_ids: Comma-separated component ids or titles, "" for all.
+        group_by: Filter id: component_ids for each of its values or period presets, "" for none.
     """
     owner = _agent_owner()
     if not owner:
@@ -925,7 +1047,7 @@ def tool_bi_query_dashboard(dashboard_id: str, filters_json: str = "{}") -> dict
     if error:
         return {"success": False, "error": error}
     try:
-        return _run_tool(_async_query(dashboard_id.strip(), filters, owner))
+        return _run_tool(_async_query(dashboard_id.strip(), filters, owner, component_ids or "", group_by or ""))
     except Exception as exc:
         return _fail("tool_bi_query_dashboard", exc)
 

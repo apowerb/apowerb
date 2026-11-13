@@ -1,3 +1,5 @@
+"""Files router — upload, list and download agent files under ``/api/files``."""
+
 import asyncio
 import json
 import mimetypes

@@ -38,9 +38,14 @@ async def get_triggers(
     workflow_id: str, current_user: user_schemas.User = Depends(get_current_user)
 ):
     wf = _owned_workflow(workflow_id, current_user.email)
-    return wt.get_trigger_status(
-        workflow_id, current_user.email, workflow_status=wf["status"]
-    )
+    return {
+        **wt.get_trigger_status(
+            workflow_id, current_user.email, workflow_status=wf["status"]
+        ),
+        # Les workflows qui prennent le relais quand celui-ci échoue : le
+        # Studio n'avertit pas d'un workflow sans gestion d'erreur s'il y en a.
+        "failure_listeners": wt.failure_listeners(workflow_id, current_user.email),
+    }
 
 
 @router.post("/{workflow_id}/triggers/rotate")

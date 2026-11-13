@@ -6,8 +6,8 @@ Providers (in priority order):
 3. Stability AI — uses STABILITY_API_KEY
 
 The tool saves generated images to the agent's uploads folder and returns
-metadata + base64 so the vision callback can inject the image into the
-LLM context.
+metadata (no image bytes: a base64 image in the response would be billed
+as text); ``file_path`` lets ``tool_convert_image_to_base64`` review it.
 """
 
 import base64
@@ -211,7 +211,7 @@ def tool_generate_image(
                      the provider's default style.
 
     Returns:
-        dict: Contains status, file_name, file_path, base64_data, image_format,
+        dict: Contains status, file_name, file_path, download_path, image_format,
               provider_used, or error_message if generation fails.
     """
     # Validate aspect ratio
@@ -265,7 +265,6 @@ def tool_generate_image(
             abs_path = str(Path(file_path).resolve())
             folder_name = f"agent{agent_id}"
             download_path = f"/api/files/{folder_name}/{filename}"
-            b64 = base64.b64encode(image_bytes).decode("ascii")
             fmt = "PNG" if ext == ".png" else "JPEG"
 
             logger.info("[IMAGE_GEN] Saved %s (%d KB) via %s", abs_path, len(image_bytes) // 1024, prov_name)
@@ -275,7 +274,6 @@ def tool_generate_image(
                 "file_name": filename,
                 "file_path": abs_path,
                 "download_path": download_path,
-                "base64_data": b64,
                 "image_format": fmt,
                 "content_type": mime_type,
                 "size_kb": round(len(image_bytes) / 1024, 1),

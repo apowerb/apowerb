@@ -1,6 +1,6 @@
 """Tests for ``drop_old_image_blobs_from_messages``.
 
-The helper is what stops vision-LLM agents (SCEI ARs in particular)
+The helper is what stops vision-LLM agents (order acknowledgements in particular)
 from saturating Gemini's per-minute input-token quota by re-sending
 the same PDF page images on every chain-of-thought turn. These tests
 nail down the wire-format cases we know about (OpenAI / litellm and

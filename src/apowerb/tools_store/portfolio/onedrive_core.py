@@ -2,6 +2,7 @@ import io
 import os
 import re
 from logging import getLogger
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -9,6 +10,9 @@ from apowerb.tools_store.portfolio.integration_status import (
     INTEGRATION_BLOCKED_BY_TENANT,
     IntegrationStatusError,
 )
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = getLogger(__name__)
 

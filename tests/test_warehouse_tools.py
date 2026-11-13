@@ -423,3 +423,14 @@ def test_tools_discovered():
         for p in store.get_tool_expected_params("snowflake.tool_snowflake_run_query")
     }
     assert {"SNOWFLAKE_ACCOUNT", "SNOWFLAKE_TOKEN"} <= keys
+
+
+def test_rows_result_omits_row_count_when_total_rows_says_it():
+    from apowerb.tools_store.portfolio.warehouse_core import rows_result
+
+    full = rows_result(["a"], [[1], [2]], 10, 2)
+    assert "row_count" not in full and full["total_rows"] == 2
+    capped = rows_result(["a"], [[1], [2], [3]], 2, 3)
+    assert capped["row_count"] == 2 and capped["truncated"] is True
+    unknown = rows_result(["a"], [[1]], 10, None)
+    assert unknown["row_count"] == 1

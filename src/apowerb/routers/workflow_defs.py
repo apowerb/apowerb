@@ -7,9 +7,20 @@ par ``POST /api/workflows/{run_id}/cancel`` comme un run de canvas.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from nanoid import generate as nanoid_generate
 from pydantic import BaseModel
 
@@ -18,10 +29,12 @@ from apowerb.auth.dependencies import get_current_user
 from apowerb.core import run_main, workflow_main, workflow_suggest_stats
 from apowerb.core.workflow_graph import run_graph
 from apowerb.core.workflow_suggest_stats import SuggestEvent
-from apowerb.routers.workflows import _streaming_run, logger
+from apowerb.routers.workflows import _streaming_run, failure_saver, logger, pause_saver
 from apowerb.users import schemas as user_schemas
 
 router = APIRouter(prefix="/workflows/defs", tags=["workflows"])
+
+_MAX_SIMULATED_FILES = 10
 
 
 class WorkflowCreate(BaseModel):
@@ -44,6 +57,8 @@ class GraphBody(BaseModel):
 
 class RunBody(BaseModel):
     payload: Any = None
+    # « Tester jusqu'ici » : seuls ce nœud et son amont s'exécutent.
+    until: Optional[str] = None
 
 
 class SuggestBody(BaseModel):
@@ -97,6 +112,23 @@ async def validate_graph(
     body: GraphBody, current_user: user_schemas.User = Depends(get_current_user)
 ):
     return workflow_main.check_workflow(body.graph, owner_id=current_user.email)
+
+
+@router.post("/node-shapes")
+async def node_shapes(
+    body: GraphBody, current_user: user_schemas.User = Depends(get_current_user)
+):
+    """Forme connue de la sortie de chaque nœud du brouillon, sans rien exécuter.
+
+    Lecture seule, comme ``/validate`` : la configuration du graphe, plus la
+    forme apprise de la réponse des outils de l'appelant (``workflow_shapes``).
+    """
+    from apowerb.core import workflow_shapes
+
+    graph = _call(workflow_main.parse_graph, body.graph)
+    tool_refs = [n.config.get("tool") for n in graph.nodes if n.type == "tool"]
+    learned = workflow_shapes.read_tool_shapes(current_user.email, tool_refs)
+    return {"shapes": workflow_shapes.node_shapes(graph, tool_shapes=learned)}
 
 
 @router.post("/suggest-next")
@@ -215,11 +247,87 @@ async def run_workflow(
     body: RunBody,
     current_user: user_schemas.User = Depends(get_current_user),
 ):
-    """Exécute la version courante côté serveur et diffuse ses événements (SSE)."""
+    """Exécute la version courante côté serveur et diffuse ses événements (SSE).
+
+    ``until`` limite le run à ce nœud et à son amont (``run_graph``) ; un tel
+    run partiel ne réveille aucun trigger ``workflow_done``.
+    """
+    return await _run_current_version(
+        workflow_id,
+        body.payload,
+        current_user.email,
+        trigger="workflow",
+        until=body.until,
+    )
+
+
+@router.post("/{workflow_id}/simulate-email")
+async def simulate_email(
+    workflow_id: str,
+    sender: str = Form(..., alias="from"),
+    subject: str = Form(""),
+    body: str = Form(""),
+    to: str = Form(""),
+    files: list[UploadFile] = File(default=[]),
+    current_user: user_schemas.User = Depends(get_current_user),
+):
+    """Lance le workflow comme si ce mail venait d'arriver (SSE).
+
+    Même enveloppe que le trigger ``email`` (``workflow_email_triggers.
+    email_envelope``) : les pièces jointes sont enregistrées pour le
+    demandeur et n'apparaissent que sous forme de ``ref`` opaque. Sert à
+    tester un workflow mail sans boîte branchée ; la version courante
+    (brouillon compris) s'exécute, comme ``POST /run``.
+    """
+    from apowerb.core import workflow_attachments
+    from apowerb.core.workflow_email_triggers import email_envelope
+
+    owner = current_user.email
+    if workflow_main.get_workflow(workflow_id, owner_id=owner) is None:
+        raise _not_found(workflow_id)
+    if len(files) > _MAX_SIMULATED_FILES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"{_MAX_SIMULATED_FILES} pièces jointes au plus",
+        )
+    attachments = []
+    for upload in files:
+        data = await upload.read(workflow_attachments.MAX_ATTACHMENT_BYTES + 1)
+        try:
+            attachments.append(
+                workflow_attachments.store(
+                    owner, upload.filename or "", upload.content_type or "", data
+                )
+            )
+        except workflow_attachments.AttachmentError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                {"code": exc.code, "message": str(exc)},
+            ) from exc
+    payload = email_envelope(
+        sender=sender,
+        to=to,
+        subject=subject,
+        body=body,
+        received_at=datetime.now(timezone.utc).isoformat(),
+        attachments=attachments,
+    )
+    return await _run_current_version(
+        workflow_id, payload, owner, trigger="workflow_simulated_email"
+    )
+
+
+async def _run_current_version(
+    workflow_id: str,
+    payload: Any,
+    owner: str,
+    *,
+    trigger: str,
+    until: Optional[str] = None,
+):
     from apowerb.core import workflow_runtime
     from apowerb.core.run_gate import resolve_owner_plan
 
-    owner = current_user.email
     wf = workflow_main.get_workflow(workflow_id, owner_id=owner)
     if wf is None:
         raise _not_found(workflow_id)
@@ -233,9 +341,23 @@ async def run_workflow(
         )
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail)
     graph = workflow_main.parse_graph(wf["graph"])
+    if until is not None and until not in {n.id for n in graph.nodes}:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "code": "until_unknown_node",
+                "message": f"nœud inconnu pour un test partiel : {until}",
+                "params": {"node": until},
+            },
+        )
+    from apowerb.core.workflow_shapes import learning_run_tool
+
     run_agent, run_tool, run_rag, run_notify = workflow_runtime.bindings_for(
         owner, await resolve_owner_plan(owner)
     )
+    # La forme de chaque réponse d'outil est retenue (jamais ses valeurs) pour
+    # proposer ses champs au nœud suivant la prochaine fois.
+    run_tool = learning_run_tool(owner, run_tool)
     # Sous-workflows : callback owner-scopé (même contrôle d'accès que pour
     # lancer ce workflow directement, cf. get_workflow ci-dessus) — un
     # subworkflow exécute la MÊME version « courante » que ce endpoint
@@ -246,13 +368,14 @@ async def run_workflow(
     run_id = nanoid_generate(size=21)
     try:
         run_id = run_main.start_run(
-            trigger="workflow",
+            trigger=trigger,
             owner_id=owner,
             run_id=run_id,
             config={
                 "workflow_id": workflow_id,
                 "version": wf["version"],
-                "payload": body.payload,
+                "payload": payload,
+                **({"until": until} if until is not None else {}),
             },
         )
     except Exception:  # noqa: BLE001 - même politique que /run-sse
@@ -263,7 +386,7 @@ async def run_workflow(
     def _runner(cancel_event):
         return run_graph(
             graph,
-            payload=body.payload,
+            payload=payload,
             run_agent=run_agent,
             run_tool=run_tool,
             run_rag=run_rag,
@@ -271,6 +394,11 @@ async def run_workflow(
             workflow_id=workflow_id,
             cancel_event=cancel_event,
             run_notify=run_notify,
+            services=workflow_runtime.services_for(owner),
+            until=until,
+            on_await=pause_saver(run_id),
+            on_fail=failure_saver(run_id),
+            run_id=run_id,
         )
 
     return _streaming_run(

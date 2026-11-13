@@ -121,7 +121,7 @@ class TestGoogleDriveBrowserNoLeak:
         # Clean slate
         os.environ.pop("GOOGLE_DRIVE_REFRESH_TOKEN", None)
 
-        with patch("apowerb.routers.google_drive_browser.tool_list_files",
+        with patch("apowerb.routers.google_drive_browser.tool_gdrive_list_files",
                    side_effect=fake_tool):
             client = self._build_client(USER_A, observed)
             resp = client.get("/api/googledrivebrowser/list")
@@ -219,7 +219,7 @@ class TestBrowsersConcurrentNoCrossTenantLeak:
 
         os.environ.pop("GOOGLE_DRIVE_REFRESH_TOKEN", None)
 
-        with patch.object(gdb, "tool_list_files", side_effect=fake_tool):
+        with patch.object(gdb, "tool_gdrive_list_files", side_effect=fake_tool):
             # Manually drive _inject_and_run_* via the router's logic by
             # emulating two concurrent HTTP requests. Easiest way: call
             # the async helper directly and the endpoint function.

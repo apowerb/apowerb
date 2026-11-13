@@ -1,12 +1,14 @@
 """Tests for routers/audio_stream.py — WebSocket audio streaming endpoint."""
 
+import json
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 
-from apowerb.routers.audio_stream import router
+from apowerb.routers.audio_stream import _handle_fallback_mode, router
 
 
 def _create_app() -> FastAPI:
@@ -114,3 +116,38 @@ class TestWebSocketProtocol:
                 })
                 resp = ws.receive_json()
                 assert resp["type"] == "tts_start"
+
+
+class _ScriptedSocket:
+    """Hands the handler a fixed list of client messages, then a disconnect.
+
+    Driving the handler directly keeps a regression a plain failure: through
+    the TestClient, a handler that returns without closing the socket leaves
+    ``receive_json()`` waiting forever.
+    """
+
+    def __init__(self, *messages: dict) -> None:
+        self._incoming = [
+            {"type": "websocket.receive", "text": json.dumps(m)} for m in messages
+        ]
+        self._incoming.append({"type": "websocket.disconnect"})
+        self.sent: list[dict] = []
+
+    async def receive(self) -> dict:
+        return self._incoming.pop(0)
+
+    async def send_json(self, data: dict) -> None:
+        self.sent.append(data)
+
+
+class TestFallbackSpeechToTextUnavailable:
+    async def test_start_listening_without_a_key_is_reported_and_the_socket_keeps_answering(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+        socket = _ScriptedSocket({"type": "start_listening"}, {"type": "ping"})
+
+        await _handle_fallback_mode(cast(WebSocket, socket), "s-1")
+
+        assert [m["type"] for m in socket.sent] == ["error", "pong"]
+        assert "DEEPGRAM_API_KEY" in socket.sent[0]["message"]

@@ -418,23 +418,3 @@ class MicrosoftIntegrationService:
         await db.refresh(integration)
 
         return new_access
-
-    @staticmethod
-    def remove_outlook_tool_config(owner_email: str) -> None:
-        """Delete the Outlook Mail tool_config for a user.
-
-        Called automatically when the Microsoft integration is disconnected so
-        the agent tools are disabled in lockstep with the integration removal.
-        Errors are logged but never re-raised — the integration row deletion
-        is the primary action and must not be blocked.
-        """
-        try:
-            delete_tool_config_by_owner_and_category(owner_email, _OUTLOOK_TOOL_CATEGORY)
-            logger.info(
-                "Outlook Mail tool_config removed for owner=%s", owner_email
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to remove Outlook Mail tool_config for owner=%s: %s",
-                owner_email, exc,
-            )

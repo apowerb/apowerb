@@ -18,40 +18,20 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
 
 import pytest
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from apowerb.scheduler import backlog_status_tool
-from apowerb.helpers.database import Base
 from apowerb.models import User, WebhookLog, WebhookSubscription
 
 
 @pytest.fixture
-async def factory(monkeypatch):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    sess = async_sessionmaker(engine, expire_on_commit=False)
+async def factory(sqlite_engine, bind_sessionmanager):
+    sess = async_sessionmaker(sqlite_engine, expire_on_commit=False)
 
-    @asynccontextmanager
-    async def _session() -> AsyncIterator[AsyncSession]:
-        async with sess() as s:
-            yield s
-
-    monkeypatch.setattr(
-        backlog_status_tool.sessionmanager,
-        "session",
-        _session,
-        raising=False,
-    )
+    bind_sessionmanager(sess)
     yield sess
-    await engine.dispose()
 
 
 async def _seed(factory, *, sub_id: int = 0):

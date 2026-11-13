@@ -247,3 +247,60 @@ async def test_unpublished_trigger_is_not_active_so_not_dispatched(recorder):
     )
 
     assert run_ids == []
+
+
+# --- références de pièces jointes (nœud document) ----------------------------
+
+
+async def test_dispatch_turns_stored_attachments_into_owner_refs(
+    recorder, tmp_path, monkeypatch
+):
+    from apowerb.core import workflow_attachments as wa
+
+    monkeypatch.setenv("TH2_ATTACHMENT_ROOT", str(tmp_path))
+    pdf = tmp_path / "2026" / "10" / "42" / "AR.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF fictif")
+    stored = [
+        {"filename": "AR.pdf", "path": str(pdf), "content_type": "application/pdf", "size": 11}
+    ]
+    wf = wm.create_workflow(owner_id=ALICE, name="W", graph=_email_graph())
+    _publish(wf, ALICE)
+
+    await wet.dispatch_email_triggers(
+        provider="outlook",
+        owner_id=ALICE,
+        envelope={**_ENVELOPE, "attachments": []},
+        stored_attachments=stored,
+    )
+
+    (entry,) = recorder.calls[0]["payload"]["attachments"]
+    assert "path" not in entry
+    assert entry["name"] == "AR.pdf"
+    assert wa.resolve(entry["ref"], ALICE)["path"] == str(pdf.resolve())
+    with pytest.raises(wa.AttachmentError):
+        wa.resolve(entry["ref"], BOB)
+
+
+async def test_no_matching_trigger_creates_no_ref(recorder, tmp_path, monkeypatch):
+    monkeypatch.setenv("TH2_ATTACHMENT_ROOT", str(tmp_path))
+    pdf = tmp_path / "AR.pdf"
+    pdf.write_bytes(b"%PDF")
+    await wet.dispatch_email_triggers(
+        provider="outlook",
+        owner_id=ALICE,
+        envelope=_ENVELOPE,
+        stored_attachments=[{"filename": "AR.pdf", "path": str(pdf), "size": 4}],
+    )
+    assert not (tmp_path / "workflow_refs").exists()
+
+
+def test_attachment_outside_the_root_keeps_metadata_without_ref(tmp_path, monkeypatch):
+    monkeypatch.setenv("TH2_ATTACHMENT_ROOT", str(tmp_path / "root"))
+    (tmp_path / "root").mkdir()
+    outside = tmp_path / "x.pdf"
+    outside.write_bytes(b"%PDF")
+    (entry,) = wet.attachment_entries(
+        ALICE, [{"filename": "x.pdf", "path": str(outside), "size": 4}]
+    )
+    assert entry == {"name": "x.pdf", "size": 4, "content_type": None, "ref": None}

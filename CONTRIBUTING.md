@@ -82,6 +82,9 @@ with Docker Compose and a Helm chart:
 
 ## Getting set up
 
+With `just` and a POSIX shell installed, use `just setup`, `just lint` and
+`just test` for the commands below.
+
 The package targets Python 3.10+ (`requires-python = ">=3.10"`); CI runs on
 3.13. Dependencies are managed with [uv](https://docs.astral.sh/uv/), and the
 lockfile is committed — do not hand-edit `uv.lock`.
@@ -170,15 +173,11 @@ and watch it fail — a test written after the fix has never proven anything.
 
 ### The ignore list is declared debt
 
-`.github/workflows/tests.yml` excludes thirteen test files from the blocking
+`.github/workflows/tests.yml` excludes a short list of test files from the blocking
 run, then runs them again in a non-blocking step so they stay visible. That list
 is meant to **shrink**. Removing a file from it — by fixing the tests — is a
 welcome contribution on its own. Adding a file to it needs a reason in the PR
 description, and is close to never the right answer.
-
-The `tests/unit_scei` directory and `tests/test_scei*` are excluded for a
-different reason: they exercise a customer overlay that does not live in this
-repository. That exclusion is structural, not debt.
 
 ## Security
 

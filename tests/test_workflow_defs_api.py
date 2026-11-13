@@ -469,6 +469,10 @@ def test_a_run_that_fails_midway_is_recorded_as_an_error(client, monkeypatch):
         "event": "error",
         "code": "workflow_error",
         "detail": "quota dépassé",
+        # « Reprendre ici » : où le run a échoué ; ce banc ne consigne pas
+        # le run, l'instantané n'a nulle part où aller.
+        "failed_node": "a",
+        "retryable": False,
     }
     assert finished == [("error", "quota dépassé")]
 

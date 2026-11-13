@@ -39,7 +39,7 @@ def _source_of(module_path: str) -> str:
     [
         ("apowerb.tools_store.portfolio.outlook_mail", "tool_download_attachment"),
         ("apowerb.tools_store.portfolio.onedrive_read", "tool_download_file"),
-        ("apowerb.tools_store.portfolio.google_drive", "tool_download_file"),
+        ("apowerb.tools_store.portfolio.google_drive", "tool_gdrive_download_file"),
     ],
 )
 def test_download_tool_uses_agent_prefixed_folder(module_path, fn_name):

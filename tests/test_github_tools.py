@@ -134,7 +134,7 @@ def test_lit_un_fichier_texte(tokens, monkeypatch):
     payload = {"type": "file", "path": "sql/ca.sql", "size": len(body), "encoding": "base64",
                "content": base64.b64encode(body.encode()).decode(), "html_url": "https://github.com/acme/data/blob/main/sql/ca.sql"}
     calls = _route(monkeypatch, lambda url, p, h: _Resp(200, payload))
-    out = gh.tool_read_file("acme/data", "sql/ca.sql", ref="main")
+    out = gh.tool_github_read_file("acme/data", "sql/ca.sql", ref="main")
     assert out["status"] == "success"
     assert out["content"] == body
     assert out["truncated"] is False
@@ -146,10 +146,28 @@ def test_liste_un_dossier(tokens, monkeypatch):
     payload = [{"name": "ca.sql", "path": "sql/ca.sql", "type": "file", "size": 52},
                {"name": "marts", "path": "sql/marts", "type": "dir", "size": 0}]
     _route(monkeypatch, lambda url, p, h: _Resp(200, payload))
-    out = gh.tool_read_file("acme/data", "sql")
+    out = gh.tool_github_read_file("acme/data", "sql")
     assert out["status"] == "success"
     assert out["type"] == "directory"
     assert [e["path"] for e in out["entries"]] == ["sql/ca.sql", "sql/marts"]
+
+
+def test_le_diff_d_une_pull_request_est_optionnel_par_defaut(tokens, monkeypatch):
+    pr = {"number": 12, "title": "t", "changed_files": 1}
+    calls = _route(monkeypatch, lambda url, p, h: _Resp(200, pr))
+    out = gh.tool_get_pull_request("acme/data", 12)
+    assert out["status"] == "success"
+    assert "files" not in out
+    assert len(calls) == 1
+
+
+def test_un_gros_dossier_est_plafonne(tokens, monkeypatch):
+    payload = [{"name": f"f{i}", "path": f"d/f{i}", "type": "file", "size": 1}
+               for i in range(gh._MAX_DIR_ENTRIES + 5)]
+    _route(monkeypatch, lambda url, p, h: _Resp(200, payload))
+    out = gh.tool_github_read_file("acme/data", "d")
+    assert len(out["entries"]) == gh._MAX_DIR_ENTRIES
+    assert out["truncated"] is True
 
 
 def test_un_fichier_binaire_n_est_pas_recrache_en_octets(tokens, monkeypatch):
@@ -157,7 +175,7 @@ def test_un_fichier_binaire_n_est_pas_recrache_en_octets(tokens, monkeypatch):
     payload = {"type": "file", "path": "logo.png", "size": len(raw), "encoding": "base64",
                "content": base64.b64encode(raw).decode()}
     _route(monkeypatch, lambda url, p, h: _Resp(200, payload))
-    out = gh.tool_read_file("acme/data", "logo.png")
+    out = gh.tool_github_read_file("acme/data", "logo.png")
     assert out["status"] == "success"
     assert out["binary"] is True
     assert "content" not in out
@@ -168,21 +186,21 @@ def test_un_gros_fichier_est_tronque_et_le_dit(tokens, monkeypatch):
     payload = {"type": "file", "path": "big.txt", "size": len(body), "encoding": "base64",
                "content": base64.b64encode(body.encode()).decode()}
     _route(monkeypatch, lambda url, p, h: _Resp(200, payload))
-    out = gh.tool_read_file("acme/data", "big.txt")
+    out = gh.tool_github_read_file("acme/data", "big.txt")
     assert out["truncated"] is True
     assert len(out["content"]) == gh._MAX_FILE_CHARS
 
 
 def test_un_nom_de_depot_invalide_est_refuse_sans_appel(tokens, monkeypatch):
     calls = _route(monkeypatch, lambda url, p, h: _Resp(200, {}))
-    out = gh.tool_read_file("../../etc", "passwd")
+    out = gh.tool_github_read_file("../../etc", "passwd")
     assert out["status"] == "error"
     assert calls == []
 
 
 def test_un_404_dit_que_l_acces_peut_manquer(tokens, monkeypatch):
     _route(monkeypatch, lambda url, p, h: _Resp(404, {"message": "Not Found"}))
-    out = gh.tool_read_file("acme/secret", "README.md")
+    out = gh.tool_github_read_file("acme/secret", "README.md")
     assert out["status"] == "error"
     assert out["retry"] is False
     assert "access" in out["message"].lower()
@@ -237,7 +255,7 @@ def test_detail_d_une_pull_request_avec_son_diff_borne(tokens, monkeypatch):
         return _Resp(200, files if url.endswith("/files") else pr)
 
     _route(monkeypatch, _handler)
-    out = gh.tool_get_pull_request("acme/data", 12)
+    out = gh.tool_get_pull_request("acme/data", 12, include_diff=True)
     assert out["status"] == "success"
     assert out["pull_request"]["title"] == "Ajoute le mart ventes"
     assert out["files"][0]["filename"] == "models/ventes.sql"
@@ -250,8 +268,8 @@ def test_le_module_n_expose_que_des_outils_de_lecture():
 
     outils = sorted(n for n, o in inspect.getmembers(gh, inspect.isfunction) if n.startswith("tool_"))
     assert outils == [
-        "tool_get_pull_request", "tool_index_repository_docs", "tool_list_pull_requests",
-        "tool_list_repositories", "tool_read_file", "tool_search_code",
+        "tool_get_pull_request", "tool_github_read_file", "tool_index_repository_docs",
+        "tool_list_pull_requests", "tool_list_repositories", "tool_search_code",
     ]
 
 

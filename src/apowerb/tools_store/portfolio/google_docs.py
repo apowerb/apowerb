@@ -16,12 +16,13 @@ from logging import getLogger
 import httpx
 
 from apowerb.tools_store.portfolio.google_auth import google_auth_headers
-from apowerb.tools_store.portfolio.integration_status import IntegrationStatusError
+from apowerb.tools_store.portfolio.http_errors import google_error_result
 
 logger = getLogger(__name__)
 
 _BASE = "https://docs.googleapis.com/v1/documents"
 _SERVICE = "GOOGLE_DOCS"
+_MAX_CONTENT_CHARS = 30000
 
 
 def _extract_text(document: dict) -> str:
@@ -39,13 +40,14 @@ def _extract_text(document: dict) -> str:
 
 
 def tool_read_document(document_id: str) -> dict:
-    """Read the full text content of a Google Doc.
+    """Read the text content of a Google Doc (first 30,000 characters).
 
     Args:
         document_id: The ID of the document (from the URL).
 
     Returns:
-        A dict with status, title, content (plain text), and total_chars.
+        A dict with status, title, content (plain text), total_chars (real
+        length) and truncated (true when content was cut at 30,000 characters).
     """
     try:
         headers = google_auth_headers(_SERVICE)
@@ -60,14 +62,12 @@ def tool_read_document(document_id: str) -> dict:
         return {
             "status": "ok",
             "title": doc.get("title"),
-            "content": content,
+            "content": content[:_MAX_CONTENT_CHARS],
             "total_chars": len(content),
+            "truncated": len(content) > _MAX_CONTENT_CHARS,
         }
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_read_document failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Docs")
 
 
 def tool_create_document(title: str, content: str | None = None) -> dict:
@@ -119,11 +119,8 @@ def tool_create_document(title: str, content: str | None = None) -> dict:
             "title": title,
             "documentLink": f"https://docs.google.com/document/d/{doc_id}/edit",
         }
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_create_document failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Docs")
 
 
 def tool_append_text(document_id: str, text: str) -> dict:
@@ -172,8 +169,5 @@ def tool_append_text(document_id: str, text: str) -> dict:
             "document_id": document_id,
             "appended_chars": len(text),
         }
-    except IntegrationStatusError as e:
-        return e.as_tool_result()
     except Exception as exc:
-        logger.exception("tool_append_text failed")
-        return {"status": "error", "message": str(exc), "retry": False}
+        return google_error_result(exc, "Google Docs")

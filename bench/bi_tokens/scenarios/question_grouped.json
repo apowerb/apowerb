@@ -1,0 +1,16 @@
+{
+ "description": "La question ROAS si le modèle compare les canaux en un seul appel (group_by + component_ids)",
+ "source": "variante scriptée de question",
+ "estimate": true,
+ "turns": [
+  {
+   "recorded": "question",
+   "transform": "grouped",
+   "facts": [
+    "ROAS[^{}]{0,60}32\\.8",
+    "ROAS[^{}]{0,60}3\\.6",
+    "ROAS[^{}]{0,60}3\\.0"
+   ]
+  }
+ ]
+}

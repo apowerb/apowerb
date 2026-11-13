@@ -119,6 +119,43 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+_BODY_MAX_CHARS = 300
+
+
+def _failure(action: str, exc: Exception | None = None, *, resp: httpx.Response | None = None,
+             param: str | None = None, **extra) -> dict:
+    """Error result that tells the model whether and how to retry.
+
+    Only configuration/permission problems say "do not retry"; a 4xx the model
+    can fix names the faulty parameter, and 429/5xx are marked retryable.
+    The HTTP body is cut to 300 characters.
+    """
+    if resp is None and isinstance(exc, httpx.HTTPStatusError):
+        resp = exc.response
+    if resp is None:
+        detail = str(exc)[:_BODY_MAX_CHARS]
+        return {"status": "error", "message": f"Failed to {action}: {detail}. Inform the user.",
+                "retry": False, **extra}
+    code = resp.status_code
+    body = resp.text[:_BODY_MAX_CHARS]
+    if code in (401, 403):
+        advice, retry = "Authentication/permission problem (configuration issue). Do not retry; inform the user.", False
+    elif code == 404:
+        advice = (f"Not found: check `{param}` (list valid ones with tool_list_knowledge)."
+                  if param else "Not found.")
+        retry = False
+    elif code in (400, 409, 422):
+        advice = (f"The request was rejected; fix `{param}` or the other arguments per the response, then retry."
+                  if param else "The request was rejected; fix the arguments per the response, then retry.")
+        retry = True
+    elif code == 429 or code >= 500:
+        advice, retry = "Temporary server problem; retry later.", True
+    else:
+        advice, retry = "Do not retry; inform the user.", False
+    return {"status": "error", "message": f"Failed to {action} (HTTP {code}): {body}. {advice}",
+            "http_status": code, "retry": retry, **extra}
+
+
 # ---------------------------------------------------------------------------
 # Public tools (auto-discovered by the tool loader via the ``tool_`` prefix)
 # ---------------------------------------------------------------------------
@@ -152,7 +189,7 @@ def tool_create_knowledge(
     try:
         headers = _auth_headers()
     except Exception as e:
-        return {"status": "error", "message": f"RAG authentication failed: {e}. Do not retry — this is a configuration issue.", "retry": False}
+        return {"status": "error", "message": f"RAG authentication failed: {str(e)[:300]}. Do not retry — this is a configuration issue.", "retry": False}
 
     # Build multipart payload with explicit MIME types
     import mimetypes
@@ -160,7 +197,7 @@ def tool_create_knowledge(
     multipart_files = []
     for fpath in files:
         if not os.path.exists(fpath):
-            return {"status": "error", "message": f"File not found: {fpath}. Verify the path is correct. Do not retry with the same path.", "retry": False}
+            return {"status": "error", "message": f"File not found: {fpath}. Fix the path in `files` (it must exist locally) and retry.", "retry": True}
         fname = os.path.basename(fpath)
         ext = os.path.splitext(fname)[1].lower()
         mime_type = MIME_OVERRIDES.get(ext) or mimetypes.guess_type(fname)[0] or "application/octet-stream"
@@ -194,14 +231,7 @@ def tool_create_knowledge(
                 [f for f in files],
                 response_body,
             )
-            return {
-                "status": "error",
-                "message": (
-                    f"RAG API returned HTTP {resp.status_code} on POST /knowledge/. "
-                    f"Response: {response_body}. Do not retry — inform the user."
-                ),
-                "retry": False,
-            }
+            return _failure("create knowledge", resp=resp, param="files")
 
         data = resp.json()
         # API nests the knowledge under "result" key
@@ -217,14 +247,10 @@ def tool_create_knowledge(
             "[RAG] HTTPStatusError on POST /knowledge/ — %s\n  Response body: %s",
             e, response_body,
         )
-        return {
-            "status": "error",
-            "message": f"Failed to create knowledge (HTTP {e.response.status_code}): {response_body}. Do not retry — inform the user.",
-            "retry": False,
-        }
+        return _failure("create knowledge", e, param="files")
     except Exception as e:
         logger.error("[RAG] Unexpected error on POST /knowledge/ — %s", e, exc_info=True)
-        return {"status": "error", "message": f"Failed to create knowledge: {e}. Do not retry — inform the user.", "retry": False}
+        return _failure("create knowledge", e)
     finally:
         for _, (_, fobj, _) in multipart_files:
             fobj.close()
@@ -291,7 +317,7 @@ def tool_list_knowledge() -> dict:
             items = data.get("results", data.get("items", data.get("knowledge_bases", [])))
         return {"status": "success", "knowledge_bases": items, "total": len(items)}
     except Exception as e:
-        return {"status": "error", "message": f"Failed to list knowledge bases: {e}. Do not retry — inform the user.", "retry": False}
+        return _failure("list knowledge bases", e)
 
 
 def tool_get_knowledge(knowledge_id: str) -> dict:
@@ -320,7 +346,7 @@ def tool_get_knowledge(knowledge_id: str) -> dict:
             "raw": data,
         }
     except Exception as e:
-        return {"status": "error", "message": f"Failed to get knowledge base: {e}. Do not retry — inform the user.", "retry": False}
+        return _failure("get knowledge base", e, param="knowledge_id")
 
 
 def tool_delete_knowledge(knowledge_id: str) -> dict:
@@ -342,7 +368,7 @@ def tool_delete_knowledge(knowledge_id: str) -> dict:
         resp.raise_for_status()
         return {"status": "success", "message": f"Knowledge base {knowledge_id} deleted."}
     except Exception as e:
-        return {"status": "error", "message": f"Failed to delete knowledge base: {e}. Do not retry — inform the user.", "retry": False}
+        return _failure("delete knowledge base", e, param="knowledge_id")
 
 
 def tool_search_knowledge(
@@ -367,7 +393,7 @@ def tool_search_knowledge(
     try:
         headers = _auth_headers()
     except Exception as e:
-        return {"status": "error", "message": f"RAG authentication failed: {e}. Do not retry — this is a configuration issue.", "retry": False}
+        return {"status": "error", "message": f"RAG authentication failed: {str(e)[:300]}. Do not retry — this is a configuration issue.", "retry": False}
 
     # 1. Verify readiness
     try:
@@ -387,7 +413,7 @@ def tool_search_knowledge(
                 "retry": False,
             }
     except Exception as e:
-        return {"status": "error", "message": f"Failed to check knowledge readiness: {e}. Do not retry — inform the user.", "retry": False}
+        return _failure("check knowledge readiness", e, param="knowledge_id")
 
     # 2. Create conversation if needed (linked to knowledge_id for document RAG)
     if not conversation_id:
@@ -402,7 +428,7 @@ def tool_search_knowledge(
             conv_data = conv_resp.json()
             conversation_id = str(conv_data.get("id") or conv_data.get("conversation_id"))
         except Exception as e:
-            return {"status": "error", "message": f"Failed to create conversation: {e}. Do not retry — inform the user.", "retry": False}
+            return _failure("create conversation", e, param="knowledge_id")
 
     # 3. Send message and get RAG answer
     try:
@@ -427,10 +453,7 @@ def tool_search_knowledge(
             "knowledge_id": knowledge_id,
         }
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to query knowledge base: {e}. Do not retry — inform the user.",
-            "conversation_id": conversation_id,
-            "knowledge_id": knowledge_id,
-            "retry": False,
-        }
+        return _failure(
+            "query knowledge base", e, param="conversation_id",
+            conversation_id=conversation_id, knowledge_id=knowledge_id,
+        )

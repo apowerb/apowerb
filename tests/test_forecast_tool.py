@@ -245,3 +245,36 @@ class TestOutlierCorrection:
     def test_summary_omits_preprocessing_key_when_response_has_none(self):
         result, _ = self._run()
         assert "preprocessing" not in result["series"][0]
+
+
+class TestSeriesCap:
+    def _series(self, n):
+        rel = ["good", "fair", "poor"]
+        return [
+            {"group": f"g{i}", "model": "prophet", "reliability": rel[i % 3],
+             "forecast": [{"date": "2026-01-01", "value": 1.0}]}
+            for i in range(n)
+        ]
+
+    def test_caps_series_weakest_first_and_reports_totals(self):
+        out = api_call._compact_response({"series": self._series(30)})
+        assert len(out["series"]) == 20
+        assert out["series_total"] == 30
+        assert out["series_truncated"] is True
+        assert out["series"][0]["reliability"] == "poor"
+        assert "good" not in [s["reliability"] for s in out["series"][:10]]
+
+    def test_small_grid_is_not_truncated(self):
+        out = api_call._compact_response({"series": self._series(3)})
+        assert (len(out["series"]), out["series_total"], out["series_truncated"]) == (3, 3, False)
+
+    def test_error_without_errors_list_is_short(self):
+        from apowerb.integrations.th2forecast_client import Th2forecastAPIError
+
+        body = {"detail": "boom " * 300, "data": [{"x": 1}] * 500}
+        with patch.object(api_call, "Th2forecastClient") as mock_ctor:
+            mock_ctor.return_value.forecast.side_effect = Th2forecastAPIError(500, body)
+            result = api_call.tool_thaink2_forecast(**_valid_kwargs())
+        assert result["status"] == "error"
+        message = result["errors"][0]["message"]
+        assert message.startswith("boom") and len(message) <= 500

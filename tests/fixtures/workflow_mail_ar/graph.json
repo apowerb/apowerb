@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "mail", "type": "trigger", "config": {"kind": "manual"}},
+    {"id": "pieces", "type": "document", "config": {"files": "{{mail.attachments}}"}},
+    {
+      "id": "tri",
+      "type": "classifier",
+      "config": {
+        "engine": "jev",
+        "text": "Objet : {{mail.subject}}\n\n{{pieces.text}}",
+        "min_confidence": 0.7,
+        "routes": [
+          {"route": "ar", "description": "Accusé de réception ou confirmation d'une commande passée chez un fournisseur (order acknowledgement)"},
+          {"route": "autre", "description": "Tout autre document : facture, offre de prix, avis de livraison, publicité"}
+        ]
+      }
+    },
+    {
+      "id": "enregistrer",
+      "type": "db_write",
+      "config": {
+        "connection": "tool_config0",
+        "table": "documents_recus",
+        "values": {
+          "expediteur": "{{mail.from}}",
+          "sujet": "{{mail.subject}}",
+          "fichier": "{{pieces.documents.0.name}}",
+          "classe": "AR",
+          "extrait": "{{pieces.text}}"
+        }
+      }
+    },
+    {"id": "fin_ar", "type": "output", "config": {"value": "AR enregistré : {{mail.subject}}"}},
+    {"id": "fin_autre", "type": "output", "config": {"value": "Pas un AR : {{mail.subject}}"}},
+    {"id": "fin_doute", "type": "output", "config": {"value": "À vérifier à la main : {{mail.subject}}"}}
+  ],
+  "edges": [
+    {"source": "mail", "target": "pieces"},
+    {"source": "pieces", "target": "tri"},
+    {"source": "tri", "target": "enregistrer", "route": "ar"},
+    {"source": "tri", "target": "fin_autre", "route": "autre"},
+    {"source": "tri", "target": "fin_doute", "route": "uncertain"},
+    {"source": "enregistrer", "target": "fin_ar"}
+  ]
+}

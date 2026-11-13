@@ -1,13 +1,13 @@
-"""Helpers centralisés pour valider l'ownership (IDOR).
+"""Centralised helpers for ownership validation (IDOR).
 
-Évite les imports circulaires inter-routers et regroupe les checks d'ownership
-communs (agent_id → owner_id == current_user.email).
+Avoids circular imports between routers and groups common ownership checks
+(agent_id → owner_id == current_user.email).
 
-Ces fonctions vivaient dans `evaluation/run_service.py`. L'évaluation devient
-une brique commerciale, et ce sont des questions de *possession*, pas
-d'évaluation : « quels agents sont les miens », « qui peut lire le compte d'un
-autre ». Elles restent donc dans le noyau, où la supervision et n'importe quel
-autre consommateur peuvent les appeler sans dépendre d'un paquet qui déménage.
+These functions used to live in `evaluation/run_service.py`. Evaluation is
+becoming a commercial brick, and these are questions of *ownership*, not
+evaluation: "which agents are mine", "who can read another user's account".
+They therefore stay in the core, where supervision and any other consumer can
+call them without depending on a package that is moving away.
 """
 
 import asyncio
@@ -25,21 +25,27 @@ logger = getLogger(__name__)
 
 
 async def validate_agent_ownership(agent_id: str, current_user: user_schemas.User) -> None:
-    """Vérifie le format, l'existence et l'appartenance d'un agent.
+    """Validate the format, existence and ownership of an agent.
 
     Raises:
-        HTTPException 400 – format invalide (protection path traversal)
-        HTTPException 404 – agent inexistant
-        HTTPException 403 – agent d'un autre utilisateur
+        HTTPException 400 – invalid format (path traversal protection)
+        HTTPException 404 – agent does not exist
+        HTTPException 403 – agent belongs to another user
     """
+    await validate_agent_ownership_by_email(agent_id, current_user.email)
+
+
+async def validate_agent_ownership_by_email(agent_id: str, email: str) -> None:
+    """Même contrôle que :func:`validate_agent_ownership`, à partir du seul
+    email : les websockets n'ont que le ``sub`` du jeton, pas d'objet User."""
     if not re.match(r"^agent\d+$", agent_id):
         logger.warning(
             "[OWNERSHIP] Invalid agent_id format: %r from user %s",
-            agent_id, current_user.email,
+            agent_id, email,
         )
         raise HTTPException(status_code=400, detail="Invalid agent_id format")
 
-    # Lazy import pour éviter tout import circulaire
+    # Lazy import to avoid circular imports
     from apowerb.core.agent_main import agent_store
 
     numeric_id = int(agent_id.replace("agent", ""))
@@ -52,10 +58,10 @@ async def validate_agent_ownership(agent_id: str, current_user: user_schemas.Use
         raise HTTPException(status_code=404, detail="Agent not found")
 
     agent = rows[0]._asdict()
-    if str(agent.get("owner_id")) != str(current_user.email):
+    if str(agent.get("owner_id")) != str(email):
         logger.warning(
             "[OWNERSHIP] Denied: user %s tried to access agent %s (owner=%s)",
-            current_user.email, agent_id, agent.get("owner_id"),
+            email, agent_id, agent.get("owner_id"),
         )
         raise HTTPException(status_code=403, detail="Not your agent")
 

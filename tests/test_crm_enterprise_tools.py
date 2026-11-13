@@ -251,7 +251,7 @@ class TestDynamics365:
             updated = dynamics365.tool_dynamics365_update_record(
                 "leads", GUID, {"subject": "Demo 2"}
             )
-        assert created["record"]["leadid"] == GUID
+        assert created == {"status": "success", "id": GUID}
         assert updated == {"status": "success", "id": GUID}
         assert post.call_count == 1  # token reused
         create_call, update_call = req.call_args_list

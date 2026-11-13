@@ -146,7 +146,7 @@ def tool_get_account_info() -> dict:
         }
 
 
-def tool_list_files(
+def tool_gdrive_list_files(
     max_results: int = 10,
     folder_id: str | None = None,
     mime_type: str | None = None,
@@ -226,7 +226,7 @@ def tool_list_files(
         }
 
 
-def tool_search_files(query: str, max_results: int = 10) -> dict:
+def tool_gdrive_search_files(query: str, max_results: int = 10) -> dict:
     """Search files in Google Drive by name or content.
 
     Uses Drive's full-text search to find files matching the query across
@@ -309,7 +309,7 @@ def tool_read_drive_file(file_id: str) -> dict:
     10,000 characters). For binary files, returns metadata and a download link.
 
     Args:
-        file_id: The Drive file ID (from tool_list_files or tool_search_files).
+        file_id: The Drive file ID (from tool_gdrive_list_files or tool_gdrive_search_files).
 
     Returns:
         dict with keys: status, id, name, mimeType, content (text) or
@@ -383,7 +383,16 @@ def tool_read_drive_file(file_id: str) -> dict:
                     content = content[:_MAX_TEXT_CONTENT_LENGTH] + "\n\n... [content truncated at 10,000 characters]"
                 result["content"] = content
             else:
-                result["content"] = f"[Export failed with HTTP {content_resp.status_code}. Use the webViewLink to view the file.]"
+                return {
+                    "status": "error",
+                    "message": (
+                        f"Export failed (HTTP {content_resp.status_code}): "
+                        f"{content_resp.text[:300]}. Do not retry — "
+                        "share the webViewLink with the user instead."
+                    ),
+                    "webViewLink": result["webViewLink"],
+                    "retry": False,
+                }
             return result
 
         # Regular files: try to read content
@@ -401,12 +410,21 @@ def tool_read_drive_file(file_id: str) -> dict:
                     content = content[:_MAX_TEXT_CONTENT_LENGTH] + "\n\n... [content truncated at 10,000 characters]"
                 result["content"] = content
             else:
-                result["content"] = f"[Download failed with HTTP {content_resp.status_code}. Use the webViewLink to view the file.]"
+                return {
+                    "status": "error",
+                    "message": (
+                        f"Download failed (HTTP {content_resp.status_code}): "
+                        f"{content_resp.text[:300]}. Do not retry — "
+                        "share the webViewLink with the user instead."
+                    ),
+                    "webViewLink": result["webViewLink"],
+                    "retry": False,
+                }
             return result
 
         # Binary file: return metadata only
         result["content"] = (
-            f"[Binary file ({mime_type}). Use tool_download_file to download it, "
+            f"[Binary file ({mime_type}). Use tool_gdrive_download_file to download it, "
             f"or open it via the webViewLink.]"
         )
         return result
@@ -425,7 +443,7 @@ def tool_read_drive_file(file_id: str) -> dict:
         }
 
 
-def tool_download_file(file_id: str, save_filename: str | None = None) -> dict:
+def tool_gdrive_download_file(file_id: str, save_filename: str | None = None) -> dict:
     """Download a file from Google Drive and save it locally.
 
     Downloads the file content and saves it to the agent's uploads directory.
