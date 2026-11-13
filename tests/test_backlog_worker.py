@@ -17,6 +17,14 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from apowerb.models import User, WebhookLog, WebhookSubscription
+from apowerb.scheduler import backlog_worker
+from apowerb.scheduler.backlog_quota import QuotaCooldowns
 
 
 def _seconds_between(later: datetime, earlier: datetime) -> float:
@@ -28,13 +36,6 @@ def _seconds_between(later: datetime, earlier: datetime) -> float:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
     return (_as_naive_utc(later) - _as_naive_utc(earlier)).total_seconds()
-
-import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
-from apowerb.models import User, WebhookLog, WebhookSubscription
-from apowerb.scheduler import backlog_worker
 
 
 @pytest.fixture
@@ -48,20 +49,20 @@ async def sqlite_session_factory(sqlite_engine, bind_sessionmanager):
     yield factory
 
 
-async def _seed_user_and_subscription(factory) -> tuple[int, int]:
+async def _seed_user_and_subscription(factory, user_id=1) -> tuple[int, int]:
     async with factory() as db:
         user = User(
-            user_id=1,
+            user_id=user_id,
             first_name="Op",
             last_name="Erator",
-            email="ops@example.com",
+            email=f"ops{user_id}@example.com",
             password="x",
             role="USER",
         )
         db.add(user)
         await db.commit()
         sub = WebhookSubscription(
-            user_id=1,
+            user_id=user_id,
             integration_id=None,
             provider="microsoft_outlook",
             resource="me/mailFolders('Inbox')/messages",
@@ -74,7 +75,7 @@ async def _seed_user_and_subscription(factory) -> tuple[int, int]:
         )
         db.add(sub)
         await db.commit()
-        return 1, sub.id
+        return user_id, sub.id
 
 
 async def _enqueue_log(
@@ -86,12 +87,13 @@ async def _enqueue_log(
     status: str = WebhookLog.STATUS_PENDING,
     next_attempt_at: datetime | None = None,
     started_at: datetime | None = None,
+    agent_id: int | None = 42,
 ) -> int:
     async with factory() as db:
         log = WebhookLog(
             user_id=user_id,
             subscription_id=sub_id,
-            agent_id=42,
+            agent_id=agent_id,
             trigger_event="created",
             resource_id=resource_id,
             payload_json=json.dumps({"resource": resource_id}),
@@ -121,9 +123,10 @@ async def test_claim_marks_in_progress_and_increments_attempts(
     claimed = await backlog_worker._claim_one()
 
     assert claimed is not None
-    claimed_id, attempts = claimed  # _claim_one returns scalars (id, attempts)
+    claimed_id, attempts, agent_id = claimed
     assert claimed_id == log_id
     assert attempts == 1
+    assert agent_id == 42
     async with sqlite_session_factory() as db:
         r = await db.get(WebhookLog, log_id)
         assert r.status == WebhookLog.STATUS_IN_PROGRESS
@@ -259,7 +262,6 @@ async def test_rate_limit_error_marks_retrying_with_provider_delay(
 
     before = datetime.now(timezone.utc)
     did_work = await backlog_worker.process_once(processor)
-    after = datetime.now(timezone.utc)
     assert did_work is True
 
     async with sqlite_session_factory() as db:
@@ -467,12 +469,13 @@ def test_parse_retry_delay_returns_none_when_absent():
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limit_cooldown():
+def _reset_rate_limit_cooldown(monkeypatch):
     """Every test starts with a clean cooldown so test order cannot
     leak a cooldown set by an earlier rate-limit test."""
-    backlog_worker._RATE_LIMIT_COOLDOWN_UNTIL = None
-    yield
-    backlog_worker._RATE_LIMIT_COOLDOWN_UNTIL = None
+    monkeypatch.setattr(backlog_worker, "_QUOTA_COOLDOWNS", QuotaCooldowns())
+    monkeypatch.setattr(
+        backlog_worker, "settings", SimpleNamespace(backlog_quota_groups={})
+    )
 
 
 @pytest.mark.asyncio
@@ -493,12 +496,9 @@ async def test_rate_limit_sets_global_cooldown(sqlite_session_factory):
     await backlog_worker.process_once(processor)
 
     # Cooldown set to ~ retry_delay seconds in the future.
-    cooldown = backlog_worker._RATE_LIMIT_COOLDOWN_UNTIL
-    assert cooldown is not None
-    delta = _seconds_between(cooldown, before)
-    assert 46 <= delta <= 60, (
-        f"cooldown should match retry_delay (~47s), got {delta}"
-    )
+    cooldowns = backlog_worker._QUOTA_COOLDOWNS
+    assert cooldowns.eligible_agent_ids({}, before + timedelta(seconds=46)) == set()
+    assert cooldowns.eligible_agent_ids({}, before + timedelta(seconds=60)) is None
 
 
 @pytest.mark.asyncio
@@ -512,8 +512,8 @@ async def test_process_once_skips_during_cooldown(sqlite_session_factory):
         sub_id=sub_id, user_id=user_id, resource_id="msg-during-cooldown",
     )
 
-    backlog_worker._RATE_LIMIT_COOLDOWN_UNTIL = (
-        datetime.now(timezone.utc) + timedelta(seconds=30)
+    backlog_worker._QUOTA_COOLDOWNS.defer(
+        None, datetime.now(timezone.utc) + timedelta(seconds=30)
     )
 
     called = []
@@ -544,8 +544,8 @@ async def test_process_once_resumes_after_cooldown_window(sqlite_session_factory
     )
 
     # Cooldown already elapsed.
-    backlog_worker._RATE_LIMIT_COOLDOWN_UNTIL = (
-        datetime.now(timezone.utc) - timedelta(seconds=1)
+    backlog_worker._QUOTA_COOLDOWNS.defer(
+        None, datetime.now(timezone.utc) - timedelta(seconds=1)
     )
 
     called = []
@@ -558,6 +558,194 @@ async def test_process_once_resumes_after_cooldown_window(sqlite_session_factory
 
     assert did_work is True
     assert len(called) == 1, "processor must run once the cooldown has passed"
+
+
+@pytest.mark.asyncio
+async def test_shared_quota_waits_without_claiming_while_independent_work_progresses(
+    sqlite_session_factory,
+    monkeypatch,
+):
+    # Explicit operator-provided quota groups, not tenant ids or API keys.
+    monkeypatch.setattr(
+        backlog_worker,
+        "settings",
+        SimpleNamespace(
+            backlog_quota_groups={42: "quota-a", 43: "quota-a", 44: "quota-b"}
+        ),
+    )
+    user_a, sub_a = await _seed_user_and_subscription(sqlite_session_factory)
+    user_b, sub_b = await _seed_user_and_subscription(sqlite_session_factory, user_id=2)
+    a1 = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_a,
+        user_id=user_a,
+        resource_id="a1",
+    )
+    a2 = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_b,
+        user_id=user_b,
+        resource_id="a2",
+        agent_id=43,
+    )
+    unknown = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_a,
+        user_id=user_a,
+        resource_id="unknown",
+        agent_id=99,
+    )
+    b1 = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_b,
+        user_id=user_b,
+        resource_id="b1",
+        agent_id=44,
+    )
+    calls = []
+
+    async def processor(log_id):
+        calls.append(log_id)
+        if log_id == a1:
+            raise _FakeRateLimitError(_GEMINI_429_PAYLOAD)
+        return "ok"
+
+    assert await backlog_worker.process_once(processor) is True
+    assert await backlog_worker.process_once(processor) is True
+    assert calls == [a1, b1]
+    async with sqlite_session_factory() as db:
+        paused = await db.get(WebhookLog, a2)
+        assert paused.status == WebhookLog.STATUS_PENDING
+        assert paused.attempts == 0
+        assert paused.started_at is None
+        assert (await db.get(WebhookLog, unknown)).attempts == 0
+        assert (await db.get(WebhookLog, b1)).status == WebhookLog.STATUS_SUCCESS
+    assert await backlog_worker.process_once(processor) is False
+    assert calls == [a1, b1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unknown_group", [None, "", "   "])
+async def test_unknown_quota_failure_also_pauses_configured_agents(
+    sqlite_session_factory,
+    monkeypatch,
+    unknown_group,
+):
+    groups = {44: "quota-b"}
+    if unknown_group is not None:
+        groups[42] = unknown_group
+    monkeypatch.setattr(
+        backlog_worker, "settings", SimpleNamespace(backlog_quota_groups=groups)
+    )
+    user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
+    failed = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_id,
+        user_id=user_id,
+        resource_id="unknown-failure",
+    )
+    waiting = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_id,
+        user_id=user_id,
+        resource_id="configured-waiting",
+        agent_id=44,
+    )
+    calls = []
+
+    async def processor(log_id):
+        calls.append(log_id)
+        raise _FakeRateLimitError(_GEMINI_429_PAYLOAD)
+
+    assert await backlog_worker.process_once(processor) is True
+    assert await backlog_worker.process_once(processor) is False
+    assert calls == [failed]
+    async with sqlite_session_factory() as db:
+        row = await db.get(WebhookLog, waiting)
+        assert row.status == WebhookLog.STATUS_PENDING
+        assert row.attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_final_rate_limited_attempt_still_pauses_its_quota(
+    sqlite_session_factory,
+):
+    user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
+    failed = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_id,
+        user_id=user_id,
+        resource_id="final-attempt",
+    )
+    waiting = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_id,
+        user_id=user_id,
+        resource_id="still-waiting",
+    )
+    async with sqlite_session_factory() as db:
+        row = await db.get(WebhookLog, failed)
+        row.attempts = backlog_worker._MAX_ATTEMPTS - 1
+        await db.commit()
+
+    async def processor(log_id):
+        raise _FakeRateLimitError(_GEMINI_429_PAYLOAD)
+
+    assert await backlog_worker.process_once(processor) is True
+    assert await backlog_worker.process_once(processor) is False
+    async with sqlite_session_factory() as db:
+        assert (await db.get(WebhookLog, failed)).status == WebhookLog.STATUS_ERROR
+        assert (await db.get(WebhookLog, waiting)).attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_claimed_work_resumes_after_its_quota_expires(
+    sqlite_session_factory,
+    monkeypatch,
+):
+    current = SimpleNamespace(now=datetime.now(timezone.utc))
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current.now
+
+    monkeypatch.setattr(backlog_worker, "datetime", Clock)
+    monkeypatch.setattr(
+        backlog_worker,
+        "settings",
+        SimpleNamespace(backlog_quota_groups={42: "quota-a"}),
+    )
+    user_id, sub_id = await _seed_user_and_subscription(sqlite_session_factory)
+    first = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_id,
+        user_id=user_id,
+        resource_id="resume-first",
+    )
+    second = await _enqueue_log(
+        sqlite_session_factory,
+        sub_id=sub_id,
+        user_id=user_id,
+        resource_id="resume-second",
+    )
+    calls = []
+
+    async def processor(log_id):
+        calls.append(log_id)
+        if len(calls) == 1:
+            raise _FakeRateLimitError(_GEMINI_429_PAYLOAD)
+        return "ok"
+
+    assert await backlog_worker.process_once(processor) is True
+    assert await backlog_worker.process_once(processor) is False
+    current.now += timedelta(seconds=60)
+    assert await backlog_worker.process_once(processor) is True
+    assert await backlog_worker.process_once(processor) is True
+    assert calls == [first, first, second]
+    async with sqlite_session_factory() as db:
+        assert (await db.get(WebhookLog, first)).attempts == 2
+        assert (await db.get(WebhookLog, second)).attempts == 1
 
 
 # ---------------------------------------------------------------------------
