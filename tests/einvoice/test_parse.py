@@ -195,12 +195,14 @@ def test_c10_montants_en_decimal_jamais_en_float(agent_dir, rendu):
 
 def test_c11_entite_externe_refusee_sans_rien_lire(agent_dir, tmp_path):
     """Contrôle 11 : un XML avec DOCTYPE et entité externe SYSTEM est refusé ; rien n'en fuit."""
-    secret = tmp_path / "secret.txt"
-    secret.write_text("JETON-SECRET-7f3a9c", encoding="utf-8")
+    # ``cible`` : le chemin que l'entité externe vise. Un fichier leurre créé
+    # pour ce test, au contenu fictif — pas un secret.
+    cible = tmp_path / "secret.txt"
+    cible.write_text("JETON-SECRET-7f3a9c", encoding="utf-8")
     xml = fx.cii(fx.facture()).replace(
         '<?xml version="1.0" encoding="UTF-8"?>\n',
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        f'<!DOCTYPE rsm:CrossIndustryInvoice [<!ENTITY xxe SYSTEM "file://{secret}">]>\n',
+        f'<!DOCTYPE rsm:CrossIndustryInvoice [<!ENTITY xxe SYSTEM "file://{cible}">]>\n',
     ).replace("<ram:ID>FA-2026-0042</ram:ID>", "<ram:ID>&xxe;</ram:ID>")
 
     result = _parse(agent_dir, "xxe.xml", xml)

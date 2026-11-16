@@ -162,6 +162,21 @@ def test_loop_is_refused_before_any_agent_runs():
     assert "loop" in events[-1]["detail"].lower()
 
 
+def test_canvas_that_cannot_be_built_sends_a_reference_not_the_exception_text():
+    # An unexpected ValueError/KeyError while compiling is not a message we
+    # wrote: its text (a DSN, a host, a path) stays in the logs.
+    class _BrokenCatalog(_Catalog):
+        def details_of(self, agent_id):
+            raise ValueError("could not connect to db.internal:5432")
+
+    events = asyncio.run(_run(_BrokenCatalog(), ["agent1"]))
+
+    assert events[-1]["event"] == "error"
+    assert events[-1]["code"] == "internal"
+    assert events[-1]["ref"] in events[-1]["detail"]
+    assert "db.internal" not in json.dumps(events)
+
+
 # --- Erreurs et annulation --------------------------------------------------
 
 

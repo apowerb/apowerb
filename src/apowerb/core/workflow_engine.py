@@ -613,7 +613,7 @@ async def run_canvas(
             cancel_event=cancel_event,
         )
     except (UnsupportedWorkflow, KeyError, ValueError) as exc:
-        yield _sse({"event": "error", "detail": str(exc)})
+        yield _sse({"event": "error", **error_fields(exc)})
         return
 
     exc: Optional[BaseException] = None

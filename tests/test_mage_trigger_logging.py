@@ -65,7 +65,9 @@ class TestInitializePipeline:
         assert capsys.readouterr().out == ""
         errors = [r for r in _records(caplog) if r.levelno == logging.ERROR]
         assert len(errors) == 1
-        assert "http://mage.test" in errors[0].getMessage()
+        # The URL is the record's one argument, compared whole: a substring
+        # test on the rendered message also passes for http://mage.test.evil/.
+        assert errors[0].args == ("http://mage.test",)
         assert errors[0].exc_info is not None
         assert errors[0].exc_info[0] is RuntimeError
         client.pipeline_exists.assert_not_called()
