@@ -32,8 +32,11 @@ from sqlalchemy import select, update
 from apowerb.helpers.database import sessionmanager
 from apowerb.models import WebhookLog
 from apowerb.helpers import notify_etl
+from apowerb.configs.settings import get_settings
+from apowerb.scheduler.backlog_quota import QuotaCooldowns
 
 logger = setup_logging(__name__)
+settings = get_settings()
 
 
 _BACKOFF_BASE_SECONDS = (5, 30, 120, 600)
@@ -42,17 +45,10 @@ _MAX_ATTEMPTS = 8
 
 _WORKER_TASK: Optional[asyncio.Task] = None
 
-# Global rate-limit circuit breaker. When the underlying LLM provider
-# returns a quota error, we don't just reschedule the *current* row —
-# we pause every subsequent pick until the provider's retry window
-# has elapsed. Otherwise the worker keeps draining the queue at full
-# speed (one pick every ~2 s), each pick paying the full input-token
-# cost of an LLM call, which re-hits the per-minute quota immediately
-# and turns every row into a doomed retry. One deployment hit
-# this loop on 2026-05-07, after PR #137: 100+ pending rows, every one of them
-# RateLimit'd within seconds because the cooldown was per-row instead
-# of process-wide.
-_RATE_LIMIT_COOLDOWN_UNTIL: Optional[datetime] = None
+# Per-process circuit breakers. Per-row retry delays alone drain other rows
+# against the same exhausted quota; explicit groups let independent work
+# continue. Without a known scope, retain the original process-wide pause.
+_QUOTA_COOLDOWNS = QuotaCooldowns()
 
 
 def _parse_retry_delay_from_error(exc: BaseException) -> Optional[float]:
@@ -116,12 +112,15 @@ async def _reclaim_stale_in_progress(
         return result.rowcount or 0
 
 
-async def _claim_one(now: Optional[datetime] = None) -> Optional[tuple[int, int]]:
+async def _claim_one(
+    now: Optional[datetime] = None,
+    eligible_agent_ids: set[int] | None = None,
+) -> Optional[tuple[int, int, Optional[int]]]:
     """Atomically pick the oldest ready row and mark it in_progress.
 
     Uses a conditional UPDATE so two workers racing on the same row can
     never both succeed — the second sees zero rows updated and moves
-    on. Returns ``(log_id, attempts)`` as SCALARS after the claim, or
+    on. Returns ``(log_id, attempts, agent_id)`` as SCALARS after the claim, or
     ``None`` when the queue has nothing ready.
 
     Returns scalars, NEVER an ORM instance: a detached ``WebhookLog``
@@ -132,33 +131,32 @@ async def _claim_one(now: Optional[datetime] = None) -> Optional[tuple[int, int]
     """
     if now is None:
         now = datetime.now(timezone.utc)
+    if eligible_agent_ids is not None and not eligible_agent_ids:
+        return None
+    ready = [
+        WebhookLog.status.in_((WebhookLog.STATUS_PENDING, WebhookLog.STATUS_RETRYING)),
+        WebhookLog.next_attempt_at.is_(None) | (WebhookLog.next_attempt_at <= now),
+    ]
+    if eligible_agent_ids is not None:
+        ready.append(WebhookLog.agent_id.in_(eligible_agent_ids))
     async with sessionmanager.session() as db:
-        candidate_id = (
+        candidate = (
             await db.execute(
-                select(WebhookLog.id)
-                .where(
-                    WebhookLog.status.in_(
-                        (WebhookLog.STATUS_PENDING, WebhookLog.STATUS_RETRYING)
-                    ),
-                    (
-                        WebhookLog.next_attempt_at.is_(None)
-                        | (WebhookLog.next_attempt_at <= now)
-                    ),
-                )
+                select(WebhookLog.id, WebhookLog.agent_id)
+                .where(*ready)
                 .order_by(WebhookLog.id.asc())
                 .limit(1)
             )
-        ).scalar_one_or_none()
-        if candidate_id is None:
+        ).one_or_none()
+        if candidate is None:
             return None
+        candidate_id, agent_id = candidate
 
         result = await db.execute(
             update(WebhookLog)
             .where(
                 WebhookLog.id == candidate_id,
-                WebhookLog.status.in_(
-                    (WebhookLog.STATUS_PENDING, WebhookLog.STATUS_RETRYING)
-                ),
+                *ready,
             )
             .values(
                 status=WebhookLog.STATUS_IN_PROGRESS,
@@ -173,7 +171,7 @@ async def _claim_one(now: Optional[datetime] = None) -> Optional[tuple[int, int]
         if claimed_attempts is None:
             # Lost the race (another worker claimed it first).
             return None
-        return (candidate_id, int(claimed_attempts))
+        return (candidate_id, int(claimed_attempts), agent_id)
 
 
 async def _mark_success(
@@ -239,26 +237,26 @@ async def process_once(processor: ProcessorFn) -> bool:
 
     Returns True when a row was processed (success or recoverable
     failure), False when nothing was ready (including the case where
-    the global rate-limit circuit breaker is currently holding off
-    further picks). Tests drive this directly so the infinite loop
+    quota cooldowns currently hold off all eligible picks). Tests drive
+    this directly so the infinite loop
     stays out of the unit-test path.
     """
-    global _RATE_LIMIT_COOLDOWN_UNTIL
     await _reclaim_stale_in_progress()
 
-    # Honour the global rate-limit cooldown: when the most recent LLM
-    # call returned 429, every other row in the queue is going to hit
-    # the same quota window if we pick it now. Sleep through the
-    # provider's retry hint instead of churning failed retries.
+    # Filter BEFORE claiming: blocked rows must not spend an attempt, and
+    # an earlier blocked row must not hide independent ready work.
     now = datetime.now(timezone.utc)
-    if _RATE_LIMIT_COOLDOWN_UNTIL is not None and now < _RATE_LIMIT_COOLDOWN_UNTIL:
-        return False
-
-    claimed = await _claim_one()
+    groups = {
+        agent_id: group.strip()
+        for agent_id, group in settings.backlog_quota_groups.items()
+        if group.strip()
+    }
+    eligible = _QUOTA_COOLDOWNS.eligible_agent_ids(groups, now)
+    claimed = await _claim_one(now, eligible)
     if claimed is None:
         return False
 
-    log_id, attempts = claimed
+    log_id, attempts, agent_id = claimed
     started = datetime.now(timezone.utc)
     try:
         agent_response = await processor(log_id)
@@ -269,29 +267,27 @@ async def process_once(processor: ProcessorFn) -> bool:
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
         logger.warning("[BACKLOG] log_id=%s failed: %s", log_id, message)
-        if attempts >= _MAX_ATTEMPTS:
-            await _mark_error(log_id, message)
-            return True
-
         if _is_rate_limit_error(exc):
             delay = _parse_retry_delay_from_error(exc)
             if delay is None or delay <= 0:
                 delay = 60.0
             delay += min(5.0, max(0.5, delay * 0.05))
-            # Trip the global circuit breaker so subsequent picks wait
-            # for the same window. Without this we keep claiming rows
-            # at the poll interval (~2 s) and pay the full LLM input
-            # cost on each one — a single saturated minute turns into
-            # 30+ retried failures.
-            _RATE_LIMIT_COOLDOWN_UNTIL = (
-                datetime.now(timezone.utc) + timedelta(seconds=delay)
-            )
+            until = datetime.now(timezone.utc) + timedelta(seconds=delay)
+            group = groups.get(agent_id) if agent_id is not None else None
+            _QUOTA_COOLDOWNS.defer(group, until)
             logger.info(
                 "[BACKLOG] rate-limit cooldown set for %.1fs (until %s)",
-                delay, _RATE_LIMIT_COOLDOWN_UNTIL.isoformat(),
+                delay,
+                until.isoformat(),
             )
         else:
             delay = _backoff_for_attempt(attempts)
+
+        # Even the final failed attempt must protect the remaining queue
+        # against the exhausted quota, while still exhausting this row.
+        if attempts >= _MAX_ATTEMPTS:
+            await _mark_error(log_id, message)
+            return True
 
         next_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
         await _mark_retrying(log_id, message, next_at)
