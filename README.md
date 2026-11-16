@@ -4,7 +4,7 @@
 [![YouTube](https://img.shields.io/badge/YouTube-@thaink2-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/@thaink2)
 [![GitHub stars](https://img.shields.io/github/stars/apowerb/apowerb?style=social)](https://github.com/apowerb/apowerb/stargazers)
 [![PyPI version](https://img.shields.io/pypi/v/apowerb?logo=pypi&logoColor=white)](https://pypi.org/project/apowerb/)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 <br>
@@ -250,7 +250,7 @@ On a core-only install, the routes of an absent brick answer `404`: that means
 The [quick start](#quick-start) above needs **Docker and Docker Compose**, and
 nothing else. What follows is for running the core from its sources:
 
-- Python 3.10+ (CI runs on 3.13)
+- Python 3.11+ (CI runs on 3.13)
 - PostgreSQL
 - UV (package manager)
 
