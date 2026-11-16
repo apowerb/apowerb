@@ -274,30 +274,32 @@ def compute_next_run(cfg: dict, *, after: datetime) -> Optional[datetime]:
     fields = parse_cron(cfg["cron"])
     dom_restricted = len(fields["day"]) < 31
     dow_restricted = len(fields["weekday"]) < 7
-    local = after.astimezone(tz)
-    candidate = (local + timedelta(minutes=1)).replace(second=0, microsecond=0)
+    candidate = (
+        after.astimezone(timezone.utc) + timedelta(minutes=1)
+    ).replace(second=0, microsecond=0)
     limit = candidate + timedelta(days=370)
     while candidate <= limit:
+        local_candidate = candidate.astimezone(tz)
         if dom_restricted and dow_restricted:
             # Sémantique cron standard : jour-du-mois OU jour-de-semaine
             # quand les deux sont restreints.
             day_ok = (
-                candidate.day in fields["day"]
-                or candidate.isoweekday() % 7 in fields["weekday"]
+                local_candidate.day in fields["day"]
+                or local_candidate.isoweekday() % 7 in fields["weekday"]
             )
         elif dom_restricted:
-            day_ok = candidate.day in fields["day"]
+            day_ok = local_candidate.day in fields["day"]
         elif dow_restricted:
-            day_ok = candidate.isoweekday() % 7 in fields["weekday"]
+            day_ok = local_candidate.isoweekday() % 7 in fields["weekday"]
         else:
             day_ok = True
         if (
             day_ok
-            and candidate.minute in fields["minute"]
-            and candidate.hour in fields["hour"]
-            and candidate.month in fields["month"]
+            and local_candidate.minute in fields["minute"]
+            and local_candidate.hour in fields["hour"]
+            and local_candidate.month in fields["month"]
         ):
-            return candidate.astimezone(timezone.utc)
+            return candidate
         candidate += timedelta(minutes=1)
     return None
 

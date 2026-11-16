@@ -107,6 +107,17 @@ def test_compute_next_run_weekday_cron():
     assert nxt > after
 
 
+def test_compute_next_run_after_repeated_local_hour_is_still_in_the_future():
+    after = datetime(2026, 10, 25, 1, 30, tzinfo=timezone.utc)
+
+    nxt = wt.compute_next_run(
+        {"cron": "31 2 * * *", "timezone": "Europe/Paris"}, after=after
+    )
+
+    assert nxt == datetime(2026, 10, 25, 1, 31, tzinfo=timezone.utc)
+    assert nxt > after
+
+
 # --- tick : lance un run échu -----------------------------------------------
 
 
