@@ -118,7 +118,7 @@ def test_support_item_lost_after_retrieval_fails_context_and_compare(replay, cap
 
     script = module.Script()
     script.checks = checks
-    script.log = [{"tokens": 1, "system": 1, "tools": 1, "history": 1,
+    script.log = [{"turn": 1, "tokens": 1, "system": 1, "tools": 1, "history": 1,
                    "n_tools": 1, "measured": None}]
     summary = module.summarize({"turns": [{}]}, script)
     assert not summary["quality"]["ok"]

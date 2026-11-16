@@ -435,9 +435,7 @@ async def _run_scenario(sc: dict, live: set[str]) -> Script:
             return None
         for i, r in enumerate(recorded):
             if r["name"] == tool.name:
-                response = recorded.pop(i)["response"]
-                track_support_response(response)
-                return response
+                return recorded.pop(i)["response"]
         script.checks.append({"check": "tool_ok", "call": len(script.log), "ok": False,
                               "detail": [f"{tool.name}: no recorded response"]})
         return {"error": "not recorded"}
@@ -452,8 +450,11 @@ async def _run_scenario(sc: dict, live: set[str]) -> Script:
 
     cbs = agent.before_tool_callback
     agent.before_tool_callback = [replay_tool] + (cbs if isinstance(cbs, list) else [cbs] if cbs else [])
+    # En tête : ADK s'arrête au premier callback qui rend une valeur, et
+    # sanitize_tool_response en rend toujours une. check_live rend None : il
+    # voit ainsi chaque réponse, rejouée ou LIVE, sans court-circuiter la suite.
     after = agent.after_tool_callback
-    agent.after_tool_callback = (after if isinstance(after, list) else [after] if after else []) + [check_live]
+    agent.after_tool_callback = [check_live] + (after if isinstance(after, list) else [after] if after else [])
     svc = InMemorySessionService()
     await svc.create_session(app_name="bench", user_id=OWNER, session_id="bench")
     runner = Runner(app_name="bench", agent=agent, session_service=svc)
