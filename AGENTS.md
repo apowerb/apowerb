@@ -11,14 +11,17 @@ This file points, it does not explain. Read only the page for the area you touch
 | a feature | `agent-docs/features/<feature>.md`; the model to imitate is `agent-docs/features/bug-reports.md` |
 | the way work is planned and reviewed | `agent-docs/agent-workflow.md` |
 | runtime configuration | `README.md`, `src/apowerb/configs/settings.py` |
+| a mistake already made here (exception text sent to a client, URL assertions in tests, security bumps…) | `agent-docs/guides/`: one short page per mistake, don't / do / check. Find it with `rg -il "<word>" agent-docs/guides`, read it before writing the code |
 
 A feature without a page: write `agent-docs/features/<feature>.md` by imitating `bug-reports.md`, one feature at a time. Never rewrite the docs wholesale.
+
+A mistake fixed for the second time: write its page in `agent-docs/guides/<area>/` (first line `> Use when …`, then don't / do / check) and, when a regex can see it, add the rule to `harness.config.json` with a counter-example under `tests/harness/fixtures/bad/`. `tests/test_harness_rules.py` fails if a rule stops firing.
 
 ## Hard rules (enforced by script, not by this file)
 
 `python3 scripts/harness.py` runs the rules in `harness.config.json`. It is also a pre-commit hook.
 Strict rules allow zero occurrence (the core never imports a `th2agent_*` extension, no debugger, no bare `except:`, no `datetime.utcnow()`).
-Ratchet rules (`os.environ` outside `configs/`, `print()` outside the CLI, router imports from lower layers, `# type: ignore`) tolerate today's debt per file and refuse any increase. When you clean a file, run `python3 scripts/harness.py --update-baseline` to lock the decrease; it never goes up.
+Ratchet rules (`os.environ` outside `configs/`, `print()` outside the CLI, router imports from lower layers, `# type: ignore`, an exception's text in what a router sends back) tolerate today's debt per file and refuse any increase. When you clean a file, run `python3 scripts/harness.py --update-baseline` to lock the decrease; it never goes up.
 
 ## End of task
 

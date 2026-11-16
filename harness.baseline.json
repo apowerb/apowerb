@@ -4,6 +4,25 @@
       "src/apowerb/core/workflow_graph.py": 1,
       "src/apowerb/core/workflow_triggers.py": 1
     },
+    "no-exception-text-to-client": {
+      "src/apowerb/core/workflow_graph.py": 1,
+      "src/apowerb/routers/adk_runner.py": 1,
+      "src/apowerb/routers/agents.py": 2,
+      "src/apowerb/routers/artifacts.py": 1,
+      "src/apowerb/routers/audio_stream.py": 3,
+      "src/apowerb/routers/data_lake.py": 3,
+      "src/apowerb/routers/files.py": 3,
+      "src/apowerb/routers/integrations.py": 5,
+      "src/apowerb/routers/rag/index_db.py": 2,
+      "src/apowerb/routers/rag/index_s3.py": 3,
+      "src/apowerb/routers/rag/index_url.py": 1,
+      "src/apowerb/routers/rag/webhook.py": 1,
+      "src/apowerb/routers/scheduler.py": 1,
+      "src/apowerb/routers/tools.py": 1,
+      "src/apowerb/routers/webhooks.py": 8,
+      "src/apowerb/routers/workflow_defs.py": 1,
+      "src/apowerb/routers/workflows.py": 4
+    },
     "config-through-settings": {
       "src/apowerb/admin/migration.py": 2,
       "src/apowerb/auth/dependencies.py": 1,
@@ -87,7 +106,6 @@
       "src/apowerb/core/agent_main.py": 1,
       "src/apowerb/helpers/user_migration.py": 12,
       "src/apowerb/main.py": 37,
-      "src/apowerb/routers/runs.py": 1,
       "src/apowerb/scheduler/mage.py": 17,
       "src/apowerb/storage/test.py": 1,
       "src/apowerb/tools_store/portfolio/internal/data_handler.py": 3,
