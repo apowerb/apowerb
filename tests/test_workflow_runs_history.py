@@ -20,6 +20,7 @@ Ce que ces tests figent :
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from types import SimpleNamespace
@@ -34,6 +35,7 @@ from apowerb.core import run_main
 
 OWNER = "u@example.com"
 OTHER = "someone-else@example.com"
+_MINIMAL_GRAPH = {"version": 1, "nodes": [{"id": "t", "type": "trigger"}], "edges": []}
 
 
 def _sqlite_engine():
@@ -675,6 +677,161 @@ async def test_without_a_key_the_run_is_recorded_without_its_trace(workflows, mo
 
     assert run_main.get_run(run_id, owner_id=OWNER)["status"] == "success"
     assert _stored_trace(run_main.run_store, run_id) is None
+
+
+# --- an unexpected exception never reaches the client as text ----------------
+#
+# ``str(exc)`` of a driver or library error can carry a DSN, a host or a path.
+# The engine sends such a failure as ``code: internal`` with a logged ``ref``
+# (``workflow_engine.error_fields``); the router paths below used to send
+# ``"<Type>: <text>"`` instead. Errors we wrote for the user stay readable.
+
+_INTERNAL_HOST = "db.internal:5432"
+
+
+def _unreachable(*_args, **_kwargs):
+    raise RuntimeError(f"could not connect to {_INTERNAL_HOST}")
+
+
+async def _stream_events(generator):
+    return [json.loads(chunk[len("data: ") :]) async for chunk in generator]
+
+
+def _assert_internal_error(events):
+    failed = events[-1]
+    assert failed["event"] == "error"
+    assert failed["code"] == "internal"
+    assert failed["ref"] in failed["detail"]
+    assert "db.internal" not in json.dumps(events)
+    assert "RuntimeError" not in json.dumps(events)
+    return failed
+
+
+@pytest.fixture
+def broken_bindings(monkeypatch):
+    from apowerb.core import run_gate, workflow_runtime
+
+    async def _plan(_owner):
+        return None
+
+    monkeypatch.setattr(run_gate, "resolve_owner_plan", _plan)
+    monkeypatch.setattr(workflow_runtime, "bindings_for", _unreachable)
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_crashes_sends_a_reference_not_the_exception_text(workflows):
+    run_id = _graph_run("wf-7")
+
+    async def _runner(_cancel):
+        yield _sse({"event": "node_start", "node_id": "agent1", "type": "agent"})
+        _unreachable()
+
+    body = await _drain(workflows._streaming_run(
+        run_id=run_id, agent_ids=[], file_bytes=None, owner=OWNER, runner=_runner
+    ))
+
+    events = [json.loads(line[len("data: ") :]) for line in body.decode().split("\n\n") if line]
+    failed = _assert_internal_error(events)
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["status"] == "error"
+    assert run["error_message"] == failed["detail"]
+    assert run["error"]["code"] == "internal"
+    assert "db.internal" not in json.dumps(run_main.get_trace(run_id, owner_id=OWNER))
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_fails_on_an_error_written_for_the_user_keeps_its_message(workflows):
+    from apowerb.core.workflow_graph import GraphError
+
+    run_id = _graph_run("wf-7")
+
+    async def _runner(_cancel):
+        raise GraphError("agent inconnu : agent1", code="agent_unknown", params={"agent": "agent1"})
+        yield  # pragma: no cover - makes this an async generator
+
+    body = await _drain(workflows._streaming_run(
+        run_id=run_id, agent_ids=[], file_bytes=None, owner=OWNER, runner=_runner
+    ))
+
+    failed = json.loads(body.decode().split("\n\n")[-2][len("data: ") :])
+    assert failed == {
+        "event": "error",
+        "code": "agent_unknown",
+        "detail": "agent inconnu : agent1",
+        "params": {"agent": "agent1"},
+    }
+    run = run_main.get_run(run_id, owner_id=OWNER)
+    assert run["error_message"] == "agent inconnu : agent1"
+    assert run["error"]["code"] == "agent_unknown"
+
+
+@pytest.mark.asyncio
+async def test_a_retry_that_cannot_start_sends_a_reference_and_stays_retryable(
+    workflows, broken_bindings
+):
+    retry = {"run_id": "r1", "state": {}, "config": {"retry_from": "a1"}}
+
+    events = await _stream_events(workflows._retry_runner(OWNER, retry, asyncio.Event()))
+
+    failed = _assert_internal_error(events)
+    assert failed["failed_node"] == "a1" and failed["retryable"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_graph_replay_that_cannot_start_sends_a_reference(
+    workflows, broken_bindings, monkeypatch
+):
+    from apowerb.core import workflow_main
+
+    monkeypatch.setattr(workflow_main, "get_workflow_graph_at", lambda *a, **k: _MINIMAL_GRAPH)
+
+    events = await _stream_events(
+        workflows._graph_replay_runner(OWNER, {"workflow_id": "wf-1", "version": 1}, asyncio.Event())
+    )
+
+    _assert_internal_error(events)
+
+
+@pytest.mark.asyncio
+async def test_a_graph_replay_without_its_archived_graph_says_so(workflows, monkeypatch):
+    from apowerb.core import workflow_main
+
+    monkeypatch.setattr(workflow_main, "get_workflow_graph_at", lambda *a, **k: None)
+
+    events = await _stream_events(
+        workflows._graph_replay_runner(OWNER, {"workflow_id": "wf-1", "version": 3}, asyncio.Event())
+    )
+
+    assert events[-1] == {
+        "event": "error",
+        "code": "workflow_error",
+        "detail": "graphe du workflow wf-1 en version 3 introuvable : rejeu impossible",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_decision_resume_that_cannot_start_sends_a_reference(workflows, broken_bindings):
+    claimed = {"run": {"owner_id": OWNER}, "state": {"graph": _MINIMAL_GRAPH}}
+
+    events = await _stream_events(
+        workflows._decision_resume_stream("r1", claimed, asyncio.Event())
+    )
+
+    _assert_internal_error(events)
+
+
+@pytest.mark.asyncio
+async def test_an_agent_replay_that_crashes_sends_a_reference(workflows, monkeypatch):
+    from apowerb.core import agent_main
+
+    monkeypatch.setattr(agent_main, "get_agent_folder_name", _unreachable)
+    run_id = run_main.start_run(trigger="agent", owner_id=OWNER, config={"agent_name": "a"})
+
+    events = await _stream_events(
+        workflows._agent_replay_runner(run_id, OWNER, {"agent_name": "a", "new_message": "x"})
+    )
+
+    _assert_internal_error(events)
 
 
 # --- les routes ---------------------------------------------------------------

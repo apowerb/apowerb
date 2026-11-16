@@ -205,7 +205,7 @@ async def _agent_replay_runner(
         logger.exception("[workflows] rejeu d'agent run_id=%s a echoue", run_id)
         yield (
             "data: "
-            + json.dumps({"event": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            + json.dumps({"event": "error", **workflow_engine.error_fields(exc)})
             + "\n\n"
         )
         return
@@ -244,7 +244,12 @@ async def _graph_replay_runner(
     échoue explicitement. Relancer autre chose, ou rien, ferait passer pour
     réussi un run qui n'a pas reproduit l'original.
     """
-    from apowerb.core import workflow_graph, workflow_main, workflow_runtime
+    from apowerb.core import (
+        workflow_engine,
+        workflow_graph,
+        workflow_main,
+        workflow_runtime,
+    )
     from apowerb.core.run_gate import resolve_owner_plan
 
     workflow_id = config["workflow_id"]
@@ -253,7 +258,9 @@ async def _graph_replay_runner(
             workflow_id, config["version"], owner_id=owner
         )
         if raw is None:
-            raise LookupError(
+            # Rédigée pour l'utilisateur : ``error_fields`` la montre telle
+            # quelle, là où une erreur inattendue ne sort que sous une référence.
+            raise workflow_graph.GraphError(
                 f"graphe du workflow {workflow_id} en version {config['version']} "
                 "introuvable : rejeu impossible"
             )
@@ -264,7 +271,7 @@ async def _graph_replay_runner(
     except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
         yield (
             "data: "
-            + json.dumps({"event": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            + json.dumps({"event": "error", **workflow_engine.error_fields(exc)})
             + "\n\n"
         )
         return
@@ -292,7 +299,7 @@ async def _retry_runner(
     owner: str, retry: dict[str, Any], cancel_event: asyncio.Event
 ) -> AsyncGenerator[str, None]:
     """« Reprendre ici » : le graphe de la dernière sauvegarde, l'amont rejoué."""
-    from apowerb.core import workflow_graph, workflow_runtime
+    from apowerb.core import workflow_engine, workflow_graph, workflow_runtime
     from apowerb.core.run_gate import resolve_owner_plan
 
     run_id, state, config = retry["run_id"], retry["state"], retry["config"]
@@ -305,7 +312,7 @@ async def _retry_runner(
         # échec, qui se reprend au même nœud.
         failed = {
             "event": "error",
-            "detail": f"{type(exc).__name__}: {exc}",
+            **workflow_engine.error_fields(exc),
             "failed_node": config["retry_from"],
             "retryable": True,
         }
@@ -422,7 +429,7 @@ def _decision_taken(run_id: str, claimed: dict[str, Any]) -> Callable[[str], Non
 async def _decision_resume_stream(
     run_id: str, claimed: dict[str, Any], cancel_event: asyncio.Event
 ) -> AsyncGenerator[str, None]:
-    from apowerb.core import workflow_graph, workflow_runtime
+    from apowerb.core import workflow_engine, workflow_graph, workflow_runtime
     from apowerb.core.run_gate import resolve_owner_plan
 
     owner, state = claimed["run"]["owner_id"], claimed["state"]
@@ -434,7 +441,7 @@ async def _decision_resume_stream(
     except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
         yield (
             "data: "
-            + json.dumps({"event": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            + json.dumps({"event": "error", **workflow_engine.error_fields(exc)})
             + "\n\n"
         )
         return
@@ -628,9 +635,14 @@ def _streaming_run(
             raise
         except Exception as exc:  # noqa: BLE001 - l'issue doit être consignée
             outcome = run_main.STATUS_ERROR
-            error_message = f"{type(exc).__name__}: {exc}"
+            # Le texte d'une exception inattendue reste dans les logs : le
+            # client et l'historique reçoivent un code et une référence.
+            from apowerb.core.workflow_engine import error_fields
+
+            fields = error_fields(exc)
+            error_message, error_code = fields["detail"], fields["code"]
             logger.exception("[workflows] run_id=%s a echoue", run_id)
-            failed = "data: " + json.dumps({"event": "error", "detail": error_message}) + "\n\n"
+            failed = "data: " + json.dumps({"event": "error", **fields}) + "\n\n"
             run_trace.add(failed)
             yield failed.encode()
         finally:

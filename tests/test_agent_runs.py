@@ -219,8 +219,12 @@ async def test_the_endpoint_records_the_run_and_how_it_ended(workflows):
 
 
 @pytest.mark.asyncio
-async def test_a_runner_that_raises_leaves_the_cause_in_the_record(workflows, monkeypatch):
-    """The whole point: a failed run must still be findable afterwards."""
+async def test_a_runner_that_raises_leaves_the_cause_findable(workflows, monkeypatch, caplog):
+    """The whole point: a failed run must still be findable afterwards.
+
+    An unexpected exception's text can carry a host or a DSN, so it stays in
+    the logs; the stream and the record carry the reference that finds it.
+    """
 
     async def _exploding_runner(wid, cancel_event, canvas_agent_ids, file_bytes):
         yield f"data: {json.dumps({'event': 'started', 'wid': wid})}\n\n"
@@ -237,10 +241,15 @@ async def test_a_runner_that_raises_leaves_the_cause_in_the_record(workflows, mo
     )
     body = await _drain(response)
 
-    assert b"provider refused the call" in body
+    failed = json.loads(body.decode().split("\n\n")[-2][len("data: ") :])
+    assert failed["event"] == "error" and failed["code"] == "internal"
+    assert b"provider refused the call" not in body
     run = run_main.get_run("wid-boom", owner_id=OWNER)
     assert run["status"] == "error"
-    assert "provider refused the call" in run["error_message"]
+    assert failed["ref"] in run["error_message"]
+    assert "provider refused the call" not in run["error_message"]
+    assert f"ref={failed['ref']}" in caplog.text
+    assert "provider refused the call" in caplog.text, "operators lost the only copy of the cause"
 
 
 @pytest.mark.asyncio
@@ -494,7 +503,9 @@ async def test_replaying_a_failed_scheduled_run_sends_its_message_again(schedule
 
 
 @pytest.mark.asyncio
-async def test_a_replay_that_fails_again_is_recorded_as_a_failure(scheduler, workflows, monkeypatch):
+async def test_a_replay_that_fails_again_is_recorded_as_a_failure(
+    scheduler, workflows, monkeypatch, caplog
+):
     scheduler.run_adk.side_effect = RuntimeError("first failure")
     with pytest.raises(RuntimeError):
         await scheduler.run()
@@ -509,7 +520,10 @@ async def test_a_replay_that_fails_again_is_recorded_as_a_failure(scheduler, wor
 
     [replay] = [r for r in run_main.list_runs(owner_id=OWNER) if r["replay_of"]]
     assert replay["status"] == "error"
-    assert "second failure" in replay["error_message"]
+    # The record carries the reference; the cause is in the logs under it.
+    assert replay["error"]["code"] == "internal"
+    assert "second failure" not in replay["error_message"]
+    assert "second failure" in caplog.text
     assert replay["tools_executed"] == []
 
 
