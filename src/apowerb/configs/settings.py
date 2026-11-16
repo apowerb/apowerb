@@ -4,7 +4,7 @@ from typing import Literal
 
 from apowerb.configs.th2logger import setup_logging
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -388,6 +388,11 @@ class Settings(BaseSettings):
 
     # Scheduler feature flag — set SCHEDULER_ENABLED=false to disable Mage scheduler integration
     scheduler_enabled: bool = True
+
+    # Operator-declared shared provider quota groups for webhook agent ids.
+    # Unknown scope keeps the conservative global cooldown. Never use API
+    # keys here; all agents sharing ANY upstream quota must share a group.
+    backlog_quota_groups: dict[int, str] = Field(default_factory=dict)
 
     # ── Modèle « thaink2 par défaut » ───────────────────────────────
     # Credentials mutualisées servant les agents dont agent_model vaut
