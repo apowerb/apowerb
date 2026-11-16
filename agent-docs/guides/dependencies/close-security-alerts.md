@@ -8,6 +8,7 @@ The image and CI install from `uv.lock` (`uv sync --locked`), so an alert closes
 
 - **A second copy kept for a Python nobody runs.** uv locks the whole `requires-python` window. With `>=3.10`, the lock kept Pillow 12.3.0 next to 13.0.0 (which needs 3.11): 43 alerts stayed open after the bump. The fixed releases of filelock, dnspython, virtualenv and pymongo need 3.11 too, so they could not be locked at all. Fix the window, not the symptom.
 - **A fix capped by another package.** `opentelemetry-api` 1.45.2 needed `google-adk` 2.14.1 (2.12 capped it at 1.42.1). Read what uv answers instead of guessing.
+- **A fix that is itself vulnerable.** The smallest release that closed the open virtualenv alerts was 21.14.9, and 21.14.9 carried a newer advisory of its own (fixed in 21.14.13). The open alerts only describe the versions you leave, never the ones you land on: the first push failed `dependency-review`.
 - **A fix that drags a stack.** `litellm` 1.100.4 requires `boto3>=1.43`, which moves `aiobotocore` to 3.x and `s3fs`/`fsspec` with it. Say it in the PR; the tests of that stack are the evidence.
 
 ## Do
@@ -27,5 +28,10 @@ The image and CI install from `uv.lock` (`uv sync --locked`), so an alert closes
 ## Check
 
 - Each open alert against **all** locked versions of its package (the alert gives `vulnerable_version_range`): zero match.
+- Each **new** locked version against the advisory database, before pushing: the smallest fix can sit inside another advisory's range. One call takes several `package@version`, an empty answer means none is known:
+  ```bash
+  gh api "/advisories?ecosystem=pip&affects=virtualenv@21.14.13,pillow@13.0.0" --jq '.[].ghsa_id'
+  ```
+  The `dependency-review` check of the PR is the same question asked by GitHub: it must be green.
 - `DB_SCHEMA="" uv run pytest -q -m "not integration"` compared with the same run on `main`: a major bump of a transitive package (oauthlib 4, filelock 4, aiobotocore 3) has no other proof.
 - GitHub re-reads the lock after the merge: the alert count is confirmed there, not locally.
