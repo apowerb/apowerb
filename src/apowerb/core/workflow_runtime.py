@@ -770,7 +770,10 @@ def bindings_for(owner_email: str, plan: Optional[str]):
 
 
 def _read_document(ref: str, owner_email: str) -> dict:
-    """OCR (Azure Document Intelligence) d'une pièce jointe du propriétaire.
+    """OCR d'une pièce jointe du propriétaire.
+
+    Le fournisseur est choisi par ``ocr.tool_ocr_document`` (``auto``) : le
+    premier configuré qui répond (Mistral, puis Azure Document Intelligence).
 
     La ref est résolue par ``workflow_attachments`` (propriétaire contrôlé,
     chemin sous la racine) : l'outil OCR ne reçoit jamais un chemin venu du
@@ -781,7 +784,7 @@ def _read_document(ref: str, owner_email: str) -> dict:
     from apowerb.tools_store.portfolio import ocr
 
     meta = workflow_attachments.resolve(ref, owner_email)
-    result = ocr.ocr_trusted_file(meta["path"], provider="azure")
+    result = ocr.ocr_trusted_file(meta["path"], provider="auto")
     if result.get("status") != "success":
         # Le détail (URL de l'endpoint, variables) reste dans les journaux.
         logger.warning(
@@ -789,8 +792,8 @@ def _read_document(ref: str, owner_email: str) -> dict:
             ref, result.get("error_message"),
         )
         raise GraphError(
-            f"lecture de {meta['name']} impossible : le service Azure Document "
-            "Intelligence a refusé ou échoué (détail dans les journaux du serveur)",
+            f"lecture de {meta['name']} impossible : aucun service OCR configuré "
+            "n'a pu lire le document (détail dans les journaux du serveur)",
             code="document_failed",
             params={"name": str(meta["name"])},
         )

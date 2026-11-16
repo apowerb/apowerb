@@ -1,7 +1,8 @@
 """OCR tools — extract text (markdown) from documents and images.
 
 Providers (in priority order):
-1. Mistral Document OCR (``mistral-ocr-latest``) — uses ``MISTRAL_API_KEY``
+1. Mistral Document OCR (``mistral-ocr-latest``) — uses ``MISTRAL_OCR_API_KEY``
+   (its own variable: ``MISTRAL_API_KEY`` may hold a chat-gateway token)
 2. Azure AI Document Intelligence (``prebuilt-read``) — uses
    ``AZURE_DOC_INTELLIGENCE_KEY`` + ``AZURE_DOC_INTELLIGENCE_ENDPOINT``
 
@@ -54,7 +55,7 @@ logger = getLogger(__name__)
 
 # API keys / endpoints used by this module — declared at module level so the
 # ToolsStore parameter scanner (regex on os.getenv) can discover them for the UI.
-_MISTRAL_KEY = os.getenv("MISTRAL_API_KEY", "")
+_MISTRAL_KEY = os.getenv("MISTRAL_OCR_API_KEY", "")
 _AZURE_KEY = os.getenv("AZURE_DOC_INTELLIGENCE_KEY", "")
 _AZURE_ENDPOINT = os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "")
 
@@ -96,6 +97,29 @@ _DOC_TYPES: dict[str, tuple[str, str]] = {
 }
 
 _SUPPORTED_EXTS = ", ".join(sorted(_DOC_TYPES))
+
+def _env(name: str) -> str:
+    """Environment value with surrounding whitespace removed.
+
+    Keys pasted into an env file often keep a trailing ``\r`` or space, which
+    httpx refuses as a header value before anything is sent.
+    """
+    return (os.environ.get(name) or "").strip()
+
+
+def _redact(text: str) -> str:
+    """``text`` with every configured provider secret replaced by ``***``.
+
+    httpx echoes a rejected header value (``Bearer <key>``) in its exception,
+    and a provider may echo the key in its error body. The keys are those of
+    ``_PROVIDERS``, so a new provider is covered as soon as it is registered.
+    """
+    for _label, _fn, name in _PROVIDERS.values():
+        raw = os.environ.get(name) or ""
+        for value in {raw, raw.strip()}:
+            if len(value) >= 4:
+                text = text.replace(value, "***")
+    return text
 
 
 def _is_remote(source: str) -> bool:
@@ -219,9 +243,9 @@ def _ocr_mistral(source: str, include_images: bool) -> dict:
     """
     import httpx
 
-    api_key = os.environ.get("MISTRAL_API_KEY")
+    api_key = _env("MISTRAL_OCR_API_KEY")
     if not api_key:
-        raise EnvironmentError("MISTRAL_API_KEY not set")
+        raise EnvironmentError("MISTRAL_OCR_API_KEY not set")
 
     document = _build_document_chunk(source)
     resp = httpx.post(
@@ -257,8 +281,8 @@ def _ocr_azure(source: str, include_images: bool) -> dict:
 
     del include_images  # read model returns no image crops
 
-    api_key = os.environ.get("AZURE_DOC_INTELLIGENCE_KEY")
-    endpoint = (os.environ.get("AZURE_DOC_INTELLIGENCE_ENDPOINT") or "").rstrip("/")
+    api_key = _env("AZURE_DOC_INTELLIGENCE_KEY")
+    endpoint = _env("AZURE_DOC_INTELLIGENCE_ENDPOINT").rstrip("/")
     if not api_key:
         raise EnvironmentError("AZURE_DOC_INTELLIGENCE_KEY not set")
     if not endpoint:
@@ -328,7 +352,7 @@ def _ocr_azure(source: str, include_images: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 _PROVIDERS = {
-    "mistral": ("Mistral Document OCR", _ocr_mistral, "MISTRAL_API_KEY"),
+    "mistral": ("Mistral Document OCR", _ocr_mistral, "MISTRAL_OCR_API_KEY"),
     "azure": ("Azure Document Intelligence", _ocr_azure, "AZURE_DOC_INTELLIGENCE_KEY"),
 }
 
@@ -429,7 +453,7 @@ def tool_ocr_document(
     for prov_key in order:
         prov_name, ocr_fn, env_key = _PROVIDERS[prov_key]
 
-        if not os.environ.get(env_key):
+        if not _env(env_key):
             errors.append(f"{prov_name}: {env_key} not set")
             continue
 
@@ -442,13 +466,14 @@ def tool_ocr_document(
         except httpx.HTTPStatusError as exc:
             resp = exc.response
             status = resp.status_code if resp is not None else "?"
-            detail = resp.text[:500] if resp is not None else ""
-            logger.warning("[OCR] %s HTTP error: %s", prov_name, exc)
+            detail = _redact(resp.text)[:500] if resp is not None else ""
+            logger.warning("[OCR] %s HTTP error: %s", prov_name, _redact(str(exc)))
             errors.append(f"{prov_name}: HTTP {status} {detail}")
             continue
         except Exception as exc:
-            logger.warning("[OCR] %s failed: %s", prov_name, exc)
-            errors.append(f"{prov_name}: {exc}")
+            message = _redact(str(exc))
+            logger.warning("[OCR] %s failed: %s", prov_name, message)
+            errors.append(f"{prov_name}: {message}")
             continue
 
         pages, combined, truncated = _collect_pages(raw, include_images)
@@ -468,7 +493,7 @@ def tool_ocr_document(
         "error_message": (
             "OCR failed with all providers.\n"
             + "\n".join(f"  - {err}" for err in errors)
-            + "\n\nMake sure at least one provider is configured: MISTRAL_API_KEY, "
+            + "\n\nMake sure at least one provider is configured: MISTRAL_OCR_API_KEY, "
             "or AZURE_DOC_INTELLIGENCE_KEY + AZURE_DOC_INTELLIGENCE_ENDPOINT."
         ),
     }

@@ -101,7 +101,7 @@ def test_document_service_ocrs_the_resolved_path(monkeypatch):
     monkeypatch.setattr(ocr, "tool_ocr_document", fake_ocr)
     out = asyncio.run(rt.services_for(ALICE).document(entry["ref"]))
     assert out == {"name": "a.pdf", "text": "ACCUSÉ DE RÉCEPTION", "page_count": 1}
-    assert seen == {"source": wa.resolve(entry["ref"], ALICE)["path"], "provider": "azure"}
+    assert seen == {"source": wa.resolve(entry["ref"], ALICE)["path"], "provider": "auto"}
 
 
 def test_document_service_never_ocrs_another_owners_file(monkeypatch):
@@ -262,6 +262,20 @@ def test_ocr_error_detail_stays_in_the_logs(monkeypatch):
         asyncio.run(rt.services_for(ALICE).document(entry["ref"]))
     assert "secret-endpoint" not in str(exc.value)
     assert exc.value.code == "document_failed"
+
+
+def test_document_error_names_no_single_provider(monkeypatch):
+    # Le nœud essaie tous les fournisseurs configurés : le message ne doit pas
+    # accuser Azure quand c est Mistral (ou un autre) qui a été appelé.
+    from apowerb.tools_store.portfolio import ocr
+
+    entry = wa.store(ALICE, "a.pdf", "application/pdf", PDF)
+    monkeypatch.setattr(
+        ocr, "tool_ocr_document", lambda **k: {"status": "error", "error_message": "x"}
+    )
+    with pytest.raises(GraphError) as exc:
+        asyncio.run(rt.services_for(ALICE).document(entry["ref"]))
+    assert "Azure" not in str(exc.value) and "OCR" in str(exc.value)
 
 
 def test_db_connection_failure_is_a_coded_error_without_host():

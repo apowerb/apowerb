@@ -98,11 +98,11 @@ class TestValidation:
 # ── Missing key: error, and NO network call ───────────────────────────────
 class TestMissingKey:
     def test_no_key_no_network(self, monkeypatch):
-        monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+        monkeypatch.delenv("MISTRAL_OCR_API_KEY", raising=False)
         with patch("httpx.post") as mock_post:
             result = tool_ocr_document("https://example.com/doc.pdf")
         assert result["status"] == "error"
-        assert "MISTRAL_API_KEY" in result["error_message"]
+        assert "MISTRAL_OCR_API_KEY" in result["error_message"]
         mock_post.assert_not_called()
 
 
@@ -156,7 +156,7 @@ class TestBuildChunk:
 # ── Happy path: request building + response parsing ───────────────────────
 class TestHappyPath:
     def test_remote_pdf_success(self, monkeypatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
         payload = _ocr_payload(["# Page one", "Second page text"])
         with patch("httpx.post", return_value=_fake_response(payload)) as mock_post:
             result = tool_ocr_document("https://example.com/doc.pdf")
@@ -185,7 +185,7 @@ class TestHappyPath:
 
     def test_local_file_through_tool(self, monkeypatch, agent_dir):
         # The branch Farid hits first: an uploaded file OCR'd end-to-end.
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
         f = agent_dir / "upload.pdf"
         f.write_bytes(b"%PDF-1.4 fake")
         payload = _ocr_payload(["extracted text"])
@@ -201,7 +201,7 @@ class TestHappyPath:
         )
 
     def test_include_images_toggles_flag_and_payload(self, monkeypatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
         payload = _ocr_payload(["text"], images_per_page=2)
         with patch("httpx.post", return_value=_fake_response(payload)) as mock_post:
             result = tool_ocr_document(
@@ -217,7 +217,7 @@ class TestHappyPath:
 class TestTruncation:
     def test_combined_cap_truncates(self, monkeypatch):
         # Pages each under the per-page cap, but summing over the combined cap.
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
         from apowerb.tools_store.portfolio import ocr
 
         monkeypatch.setattr(ocr, "_MAX_MARKDOWN_CHARS", 50, raising=False)
@@ -335,7 +335,7 @@ class TestAzureProvider:
 # ── HTTP error becomes an error dict ──────────────────────────────────────
 class TestHttpError:
     def test_http_error_returns_error_dict(self, monkeypatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
         err_resp = MagicMock()
         err_resp.status_code = 401
         err_resp.text = "Unauthorized"
@@ -352,7 +352,7 @@ class TestHttpError:
         assert "Unauthorized" in result["error_message"]
 
     def test_missing_local_file_is_fatal_error(self, monkeypatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
         with patch("httpx.post") as mock_post:
             result = tool_ocr_document("/no/such/file.pdf")
         assert result["status"] == "error"
@@ -448,7 +448,7 @@ class TestLocalPathScope:
 
     @pytest.fixture
     def mistral(self, monkeypatch):
-        monkeypatch.setenv("MISTRAL_API_KEY", "fake-key")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
         with patch("httpx.post", return_value=_fake_response(_ocr_payload(["t"]))) as post:
             yield post
 
@@ -582,3 +582,140 @@ class TestTrustedFile:
         assert "File not found" in result["error_message"]
         looked_up.assert_not_called()
         azure.assert_not_called()
+
+
+# ── Keys pasted into env files: trailing CR / whitespace ──────────────────
+# A key copied from a Windows-edited .env kept its "\r": httpx refused the
+# header before sending anything, and the provider looked broken.
+class TestKeyHygiene:
+    def test_mistral_key_is_stripped(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key\r\n")
+        with patch("httpx.post", return_value=_fake_response(_ocr_payload(["t"]))) as mock_post:
+            result = tool_ocr_document("https://example.com/doc.pdf", provider="mistral")
+        assert result["status"] == "success"
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer fake-key"
+
+    def test_azure_key_and_endpoint_are_stripped(self, monkeypatch):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", " az-key\r")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com/\r\n")
+        post = MagicMock()
+        post.raise_for_status.return_value = None
+        post.headers = {"Operation-Location": "https://my.az.com/op/1"}
+        poll = _fake_response(
+            {
+                "status": "succeeded",
+                "analyzeResult": {
+                    "modelId": "prebuilt-read",
+                    "pages": [{"pageNumber": 1, "lines": [{"content": "hi"}]}],
+                },
+            }
+        )
+        with patch("httpx.post", return_value=post) as mock_post, patch(
+            "httpx.get", return_value=poll
+        ):
+            result = tool_ocr_document("https://ex.com/doc.pdf", provider="azure")
+        assert result["status"] == "success"
+        assert mock_post.call_args.args[0].startswith(
+            "https://my.az.com/documentintelligence/"
+        )
+        assert mock_post.call_args.kwargs["headers"]["Ocp-Apim-Subscription-Key"] == "az-key"
+
+    def test_blank_key_counts_as_not_set(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "  \r\n")
+        monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_KEY", raising=False)
+        with patch("httpx.post") as mock_post:
+            result = tool_ocr_document("https://example.com/doc.pdf")
+        assert result["status"] == "error"
+        assert "MISTRAL_OCR_API_KEY not set" in result["error_message"]
+        mock_post.assert_not_called()
+
+
+# ── "auto" falls through to the next configured provider ──────────────────
+class TestAutoFallback:
+    def test_auto_uses_azure_when_mistral_refuses(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "bad-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", "az-key")
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        refused = MagicMock()
+        refused.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "401", request=MagicMock(), response=MagicMock(status_code=401, text="no")
+        )
+        accepted = MagicMock()
+        accepted.raise_for_status.return_value = None
+        accepted.headers = {"Operation-Location": "https://my.az.com/op/1"}
+        poll = _fake_response(
+            {
+                "status": "succeeded",
+                "analyzeResult": {"pages": [{"pageNumber": 1, "lines": [{"content": "ok"}]}]},
+            }
+        )
+        with patch("httpx.post", side_effect=[refused, accepted]), patch(
+            "httpx.get", return_value=poll
+        ):
+            result = tool_ocr_document("https://ex.com/doc.pdf")
+        assert result["status"] == "success"
+        assert result["provider_used"] == "Azure Document Intelligence"
+        assert result["markdown"] == "ok"
+
+    def test_auto_uses_mistral_when_only_mistral_is_set(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "fake-key")
+        monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_KEY", raising=False)
+        with patch("httpx.post", return_value=_fake_response(_ocr_payload(["m"]))):
+            result = tool_ocr_document("https://ex.com/doc.pdf")
+        assert result["provider_used"] == "Mistral Document OCR"
+
+
+# ── A provider key never leaks through an error or a log line ─────────────
+class TestNoSecretInErrors:
+    SECRET = "sk-very-secret-value-123"
+
+    def test_transport_error_echoing_the_key_is_redacted(self, monkeypatch, caplog):
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", self.SECRET)
+        monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_KEY", raising=False)
+        boom = httpx.LocalProtocolError(f"Illegal header value b'Bearer {self.SECRET}\\x00'")
+        with caplog.at_level("DEBUG"), patch("httpx.post", side_effect=boom):
+            result = tool_ocr_document("https://example.com/doc.pdf")
+        assert result["status"] == "error"
+        assert "Mistral Document OCR" in result["error_message"]
+        assert self.SECRET not in result["error_message"]
+        assert self.SECRET not in caplog.text
+
+    def test_http_error_body_echoing_the_key_is_redacted(self, monkeypatch, caplog):
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_KEY", self.SECRET)
+        monkeypatch.setenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "https://my.az.com")
+        bad = MagicMock()
+        bad.raise_for_status.side_effect = httpx.HTTPStatusError(
+            f"401 key {self.SECRET}",
+            request=MagicMock(),
+            response=MagicMock(status_code=401, text=f"invalid key {self.SECRET}"),
+        )
+        with caplog.at_level("DEBUG"), patch("httpx.post", return_value=bad):
+            result = tool_ocr_document("https://ex.com/doc.pdf", provider="azure")
+        assert result["status"] == "error"
+        assert "401" in result["error_message"]
+        assert self.SECRET not in result["error_message"]
+        assert self.SECRET not in caplog.text
+
+
+# ── The chat key is never used for OCR ────────────────────────────────────
+# In this repo MISTRAL_API_KEY may hold a token for another gateway (OVH AI
+# Endpoints, chat only). Sending it, with the document, to api.mistral.ai would
+# hand a credential and a customer file to a third party for nothing.
+class TestDedicatedMistralKey:
+    def test_chat_key_alone_never_reaches_mistral(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_API_KEY", "ovh-chat-token")
+        monkeypatch.delenv("MISTRAL_OCR_API_KEY", raising=False)
+        monkeypatch.delenv("AZURE_DOC_INTELLIGENCE_KEY", raising=False)
+        with patch("httpx.post") as mock_post:
+            result = tool_ocr_document("https://example.com/doc.pdf")
+        assert result["status"] == "error"
+        assert "MISTRAL_OCR_API_KEY not set" in result["error_message"]
+        mock_post.assert_not_called()
+
+    def test_ocr_key_is_the_one_sent(self, monkeypatch):
+        monkeypatch.setenv("MISTRAL_API_KEY", "ovh-chat-token")
+        monkeypatch.setenv("MISTRAL_OCR_API_KEY", "real-ocr-key")
+        with patch("httpx.post", return_value=_fake_response(_ocr_payload(["t"]))) as mock_post:
+            result = tool_ocr_document("https://example.com/doc.pdf", provider="mistral")
+        assert result["status"] == "success"
+        assert mock_post.call_args.kwargs["headers"]["Authorization"] == "Bearer real-ocr-key"
