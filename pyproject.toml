@@ -8,9 +8,15 @@ authors = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-# Compatibility target: the package should install on Python 3.10+.
+# Compatibility target: the package should install on Python 3.11+.
 # The runtime code is expected to stay compatible across that range.
-requires-python = ">=3.10"
+#
+# 3.10 was dropped for security, not convenience: the patched releases of
+# Pillow (13.0), filelock (4.2) and dnspython (2.9) require 3.11, and uv locks
+# the whole declared window, so keeping 3.10 kept a vulnerable copy of each in
+# uv.lock. Nothing built or shipped on 3.10 (image, CI and PyPI builds are
+# 3.13).
+requires-python = ">=3.11"
 keywords = ["agents", "adk", "llm", "rag", "text-to-sql", "fastapi", "postgresql", "orchestration", "multi-agent", "llmops", "mcp", "self-hosted", "helm", "business-intelligence"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -26,10 +32,10 @@ dependencies = [
     "anthropic>=0.43.0",
     "asyncpg>=0.31.0",
     "fastapi>=0.123.10",
-    # 2.12 needs Python >=3.11; this package still declares >=3.10 (image, CI
-    # and PyPI builds are 3.13), so 3.10 keeps the last release it can run.
-    "google-adk[toolbox,mcp]>=2.12.0,<3.0.0; python_version >= '3.11'",
-    "google-adk[toolbox,mcp]>=2.9.2,<2.12.0; python_version < '3.11'",
+    # 2.14.1 is the first ADK release that accepts opentelemetry-api 1.45.2
+    # (GHSA-mf5v-w3w3-f6cg, GHSA-xcq7-p3pf-p88h: unbounded traceparent and
+    # tracestate parsing); 2.12 and 2.13 cap it below the fix.
+    "google-adk[toolbox,mcp]>=2.14.1,<3.0.0",
     # ADK reads OTEL_EXPORTER_OTLP_ENDPOINT at startup and, when it is set,
     # imports opentelemetry.exporter.otlp.proto.http to build a span exporter.
     # In ADK 2.x that package only ships with the `gcp` / `all` extras, which
@@ -41,7 +47,13 @@ dependencies = [
     # `ModuleNotFoundError: No module named 'opentelemetry.exporter'` at boot,
     # invisible in any test run without the deployment env loaded.
     "opentelemetry-exporter-otlp-proto-http>=1.36",
-    "litellm>=1.84.0",
+    # Security floors (litellm here; pypdf, fpdf2, fsspec, Pillow and pymongo
+    # below): the first release with no open advisory when the floor was
+    # raised, so a fresh resolve (pip install apowerb) stays off the vulnerable
+    # releases, not only uv.lock.
+    # litellm 1.100.4: GHSA-7hp6-4w63-5g45 (proxy admin escalation). It needs
+    # boto3>=1.43, which moves aiobotocore to 3.x and s3fs/fsspec with it.
+    "litellm>=1.100.4",
     "psycopg2-binary>=2.9.11",
     "pydantic[email]>=2.12.5",
     "pydantic-settings>=2.12.0",
@@ -57,17 +69,21 @@ dependencies = [
     # project was renamed), so its advisories can never be patched — GHSA
     # "possible infinite loop when a comment is not terminated" has no fix
     # version. Same API, same import surface.
-    "pypdf>=6.1.3",
+    "pypdf>=6.21.4",
     "pymupdf>=1.24",
-    "fpdf2>=2.8.0",
+    "fpdf2>=2.8.8",
     # e-invoice XML parsing (einvoice tools): rejects external entities and entity bombs.
     "defusedxml>=0.7.1",
     "pins>=0.9.1",
-    "s3fs>=2023.12.0",
-    "fsspec>=2023.12.0",
+    # fsspec 2026.6.0: GHSA-27vj-qcqg-25rc (template injection in
+    # ReferenceFileSystem). s3fs pins the matching fsspec release.
+    "s3fs>=2026.6.0",
+    "fsspec>=2026.6.0",
     "aiobotocore>=2.9.0",
     "stripe>=14.3.0",
-    "Pillow>=10.0.0",
+    # Pillow 13.0.0 closes every advisory open on the 12.x line (the last 12.x
+    # release is 12.3.0, unpatched); it requires Python 3.11.
+    "Pillow>=13.0.0",
     "pyotp>=2.9.0",
     "qrcode>=8.0",
     "plotly>=5.18.0",
@@ -99,7 +115,7 @@ dependencies = [
     # pure-Python drivers (oracledb in its default "thin" mode needs no Oracle
     # client libraries), ~1-2 MB each: no heavy runtime in the app pod.
     "oracledb>=3.0",
-    "pymongo>=4.10",
+    "pymongo>=4.18.3",
 ]
 
 [project.urls]
@@ -116,23 +132,13 @@ Changelog = "https://github.com/apowerb/apowerb/releases"
 # An extra, not a dependency: a deployment with no collector must not carry
 # it, and one without this installed still boots — the bridge says out loud
 # that it is missing and the application runs untouched.
-#
-# The marker is not decoration: this project declares requires-python >=3.10
-# while th2pulse needs >=3.11, and uv resolves the whole declared window, so
-# an unmarked entry makes `uv sync` unsatisfiable on a Python nobody actually
-# runs here (image, CI and publishing are all 3.13). Marked, 3.10 simply gets
-# no bridge and the application says so at boot.
-#
-# The cleaner fix is to raise requires-python to >=3.11, since nothing builds
-# or ships on 3.10 -- but that changes what this package promises its users,
-# which is not this change's call.
 otel = [
-    "th2pulse>=0.1.4; python_version >= '3.11'",
+    "th2pulse>=0.1.4",
 ]
 
 s3 = [
-    "s3fs>=2024.6.0",
-    "fsspec>=2024.6.0",
+    "s3fs>=2026.6.0",
+    "fsspec>=2026.6.0",
     "aiobotocore>=2.13.0",
 ]
 langfuse = [

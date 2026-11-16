@@ -85,7 +85,7 @@ with Docker Compose and a Helm chart:
 With `just` and a POSIX shell installed, use `just setup`, `just lint` and
 `just test` for the commands below.
 
-The package targets Python 3.10+ (`requires-python = ">=3.10"`); CI runs on
+The package targets Python 3.11+ (`requires-python = ">=3.11"`); CI runs on
 3.13. Dependencies are managed with [uv](https://docs.astral.sh/uv/), and the
 lockfile is committed — do not hand-edit `uv.lock`.
 
