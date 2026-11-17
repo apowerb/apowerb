@@ -56,7 +56,7 @@ def serve(
 app.add_typer(agents_app, name="agents", help="Manage agents")
 app.add_typer(tools_app, name="tools", help="Manage tools")
 app.add_typer(runs_app, name="runs", help="Manage agent runs")
-app.add_typer(config_app, name="config", help="Configuration posée depuis l'écran d'administration")
+app.add_typer(config_app, name="config", help="Configuration set from the admin screen")
 
 if __name__ == "__main__":
     app()
