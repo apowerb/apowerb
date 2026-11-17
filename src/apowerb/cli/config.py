@@ -34,14 +34,14 @@ def export_env(
         help="Output file to write (created with 0600 permissions). Required.",
     ),
 ) -> None:
-    """Écrit les variables posées que l'environnement n'impose pas déjà.
+    """Write the configured variables that the environment does not already set.
 
-    ``--out`` est obligatoire, et il n'y a pas de sortie sur stdout : une
-    commande qui imprime des secrets finit tôt ou tard dans un journal, un
-    historique de shell ou une capture de terminal. Ce qui s'affiche, ce sont
-    les NOMS exportés — de quoi diagnostiquer un démarrage sans rien révéler.
+    ``--out`` is required and nothing is written to stdout: a command that
+    prints secrets ends up sooner or later in a log, a shell history or a
+    terminal capture. What is printed is the NAMES that were exported, enough
+    to diagnose a startup without revealing anything.
 
-    Usage dans l'ENTRYPOINT de l'image (``docker/entrypoint.sh``) :
+    Usage in the image ENTRYPOINT (``docker/entrypoint.sh``):
 
         apowerb config export-env --out /tmp/overlay.env
         set -a; . /tmp/overlay.env; set +a; rm -f /tmp/overlay.env
