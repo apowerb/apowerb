@@ -273,8 +273,8 @@ class RunStore(BaseModel):
         try:
             with self.engine.begin() as conn:
                 if dialect == "postgresql":
-                    # Deux réplicas qui démarrent ensemble ne doivent pas se
-                    # marcher dessus sur le DROP/CREATE du déclencheur.
+                    # Deux réplicas qui démarrent ensemble ne doivent pas
+                    # créer le déclencheur deux fois.
                     conn.execute(
                         text("SELECT pg_advisory_xact_lock(hashtext(:name))"),
                         {"name": name},
@@ -288,15 +288,25 @@ class RunStore(BaseModel):
                             "END; $$ LANGUAGE plpgsql"
                         )
                     )
-                    conn.execute(text(f'DROP TRIGGER IF EXISTS "{name}" ON {table}'))
-                    conn.execute(
+                    # Créé seulement s'il manque : CREATE TRIGGER prend un
+                    # verrou exclusif sur la table, à ne pas payer à chaque
+                    # démarrage. La fonction, elle, est remplacée sans verrou.
+                    exists = conn.execute(
                         text(
-                            f'CREATE TRIGGER "{name}" '
-                            f'BEFORE UPDATE OF "tools_executed" ON {table} '
-                            'FOR EACH ROW WHEN (OLD."tools_executed" IS NOT NULL) '
-                            f'EXECUTE PROCEDURE {schema_prefix}"{name}"()'
+                            "SELECT 1 FROM pg_trigger "
+                            "WHERE tgname = :name AND tgrelid = to_regclass(:table)"
+                        ),
+                        {"name": name, "table": table},
+                    ).first()
+                    if exists is None:
+                        conn.execute(
+                            text(
+                                f'CREATE TRIGGER "{name}" '
+                                f'BEFORE UPDATE OF "tools_executed" ON {table} '
+                                'FOR EACH ROW WHEN (OLD."tools_executed" IS NOT NULL) '
+                                f'EXECUTE PROCEDURE {schema_prefix}"{name}"()'
+                            )
                         )
-                    )
                 else:
                     conn.execute(
                         text(
@@ -308,8 +318,13 @@ class RunStore(BaseModel):
                     )
         except Exception:  # noqa: BLE001
             # Un échec n'empêche pas le démarrage : la règle retombe sur la
-            # convention de l'application, comme avant.
-            logger.exception("Run store: garde de tools_executed non créée.")
+            # convention de l'application, comme avant. Créer un déclencheur
+            # exige d'être propriétaire de la table (cf. #479).
+            logger.exception(
+                "Run store: garde de tools_executed absente, la règle d'écriture "
+                "unique n'est tenue que par l'application (propriétaire de la "
+                "table requis pour créer le déclencheur)."
+            )
 
     def _backfill_workflow_id(self) -> int:
         """Rattache à leur workflow les runs de graphe consignés avant la colonne.
