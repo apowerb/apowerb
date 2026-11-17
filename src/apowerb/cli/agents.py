@@ -12,7 +12,6 @@ from apowerb.schema.agent_schema import AgentCreateSchema
 from apowerb.core.agent_helpers.llm_model_builder import validate_agent_model
 from apowerb.cli.runtime_config import require_runtime_config
 
-
 app = typer.Typer()
 
 
@@ -228,4 +227,3 @@ def import_agents_cmd(
     except Exception as e:
         typer.echo(f"Error importing agents: {e}", err=True)
         raise typer.Exit(1)
-    
