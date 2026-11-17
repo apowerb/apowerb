@@ -4,6 +4,11 @@
  "turns": [
   {
    "recorded": "question",
+   "support_items": [
+    {"id": "email_roas", "pattern": "32\\.8"},
+    {"id": "google_ads_roas", "pattern": "3\\.6"},
+    {"id": "instagram_roas", "pattern": "3\\.0"}
+   ],
    "facts": [
     "ROAS[^{}]{0,60}32\\.8",
     "ROAS[^{}]{0,60}3\\.6",
