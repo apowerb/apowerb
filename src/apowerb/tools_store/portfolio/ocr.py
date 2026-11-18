@@ -62,9 +62,10 @@ logger = getLogger(__name__)
 _MISTRAL_KEY = os.getenv("MISTRAL_OCR_API_KEY", "")
 _AZURE_KEY = os.getenv("AZURE_DOC_INTELLIGENCE_KEY", "")
 _AZURE_ENDPOINT = os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT", "")
-_DOTS_BASE_URL = os.getenv("DOTS_OCR_BASE_URL", "")
-_DOTS_KEY = os.getenv("DOTS_OCR_API_KEY", "")
-_DOTS_MODEL = os.getenv("DOTS_OCR_MODEL", "")
+# dots.ocr: read for the scanner only, so not bound to a name.
+os.getenv("DOTS_OCR_BASE_URL", "")
+os.getenv("DOTS_OCR_API_KEY", "")
+os.getenv("DOTS_OCR_MODEL", "")
 
 # Secrets that are not a provider's "is it configured" variable but must still
 # be redacted from errors and logs.
@@ -147,7 +148,12 @@ def _env(name: str) -> str:
     Keys pasted into an env file often keep a trailing ``\r`` or space, which
     httpx refuses as a header value before anything is sent.
     """
-    return (os.environ.get(name) or "").strip()
+    return _raw_env(name).strip()
+
+
+def _raw_env(name: str) -> str:
+    """Environment value exactly as set, or an empty string."""
+    return os.environ.get(name) or ""
 
 
 def _redact(text: str) -> str:
@@ -159,7 +165,7 @@ def _redact(text: str) -> str:
     """
     names = [name for _label, _fn, name in _PROVIDERS.values()]
     for name in (*names, *_EXTRA_SECRET_ENVS):
-        raw = os.environ.get(name) or ""
+        raw = _raw_env(name)
         for value in {raw, raw.strip()}:
             if len(value) >= 4:
                 text = text.replace(value, "***")
