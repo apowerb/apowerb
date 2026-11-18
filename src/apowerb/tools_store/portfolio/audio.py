@@ -30,6 +30,11 @@ _DEEPGRAM_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 _GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 _ELEVENLABS_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 
+# Gemini model for audio understanding (transcription and analysis).
+# gemini-2.0-flash was shut down on 2026-06-01; Google maps it to
+# gemini-3.6-flash (ai.google.dev deprecations page, read 2026-11-18).
+GEMINI_AUDIO_MODEL = "gemini-3.6-flash"
+
 # MIME type mapping for audio formats
 _MIME_MAP = {
     ".mp3": "audio/mpeg",
@@ -198,7 +203,7 @@ def _stt_gemini(audio_path: str, language: str) -> dict:
     )
 
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model=GEMINI_AUDIO_MODEL,
         contents=[uploaded_file, prompt],
     )
 
@@ -657,7 +662,7 @@ def tool_analyze_audio(audio_file_path: str) -> dict:
             )
 
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model=GEMINI_AUDIO_MODEL,
                 contents=[uploaded_file, analysis_prompt],
             )
 
