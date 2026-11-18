@@ -73,7 +73,7 @@ class TestProviderRegistry:
     def test_providers_registered(self):
         assert "mistral" in _PROVIDERS
         assert "azure" in _PROVIDERS
-        assert _PROVIDER_ORDER == ["mistral", "azure"]
+        assert _PROVIDER_ORDER == ["dots", "mistral", "azure"]
 
     def test_tuple_structure(self):
         for _key, (name, fn, env_key) in _PROVIDERS.items():
