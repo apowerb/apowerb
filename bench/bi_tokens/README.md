@@ -82,6 +82,20 @@ DATABASE_URL=… python bench/bi_tokens/dev_usage.py --schema th2agent_dev --ses
 
 `total_tokens` est ce que somme la jauge client, cache compris.
 
+### Re-fetches après compaction (`refetches.py`)
+
+Enregistrer le JSON de la route ADK Dev Server
+`/dev/apps/{app_name}/debug/trace/session/{session_id}` dans `trace.json`.
+Le script lit les spans `call_llm` avec le contenu des messages capturé.
+
+```bash
+python bench/bi_tokens/refetches.py trace.json
+```
+
+La sortie JSON contient `refetches`. Un nouvel appel compte si le dernier
+résultat visible pour le même outil et les mêmes arguments porte le marqueur
+`_compacted`. Les résultats sont associés à leur appel par l'identifiant ADK.
+
 ## Résultats
 
 `results/*.json` : un fichier par état mesuré (`main` = avant les leviers).
