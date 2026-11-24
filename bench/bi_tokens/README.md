@@ -86,7 +86,9 @@ DATABASE_URL=… python bench/bi_tokens/dev_usage.py --schema th2agent_dev --ses
 
 Save the JSON response from the ADK Dev Server endpoint
 `/dev/apps/{app_name}/debug/trace/session/{session_id}` to `trace.json`.
-The script reads `call_llm` spans that include captured message content.
+The script reads schema v2 `generate_content` spans with captured input and
+output messages, including messages on the completion-details log. It also
+supports legacy `call_llm` spans.
 
 ```bash
 python bench/bi_tokens/refetches.py trace.json
@@ -94,7 +96,9 @@ python bench/bi_tokens/refetches.py trace.json
 
 The JSON output contains `refetches`. A new call counts if the latest visible
 result for the same tool and arguments carries the `_compacted` marker.
-ADK call IDs link each result to its original call.
+Call IDs link results to their original calls. When ADK strips an ID, the
+script matches the result by tool name if the pending calls identify a single
+argument set. It reports an error if the trace leaves the match ambiguous.
 
 ## Résultats
 
