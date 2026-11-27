@@ -58,48 +58,73 @@ def _call_key(call: dict) -> tuple[str, str]:
     return call["name"], json.dumps(call.get("arguments") or {}, sort_keys=True)
 
 
-def _latest_results(messages: list[dict], legacy: bool) -> dict[tuple[str, str], bool]:
+def _positional_tool(call_id: str) -> str | None:
+    name, _, index = call_id.rpartition("_")
+    if (
+        name
+        and index.isascii()
+        and index.isdecimal()
+        and (index == "0" or not index.startswith("0"))
+    ):
+        return name
+    return None
+
+
+def _latest_results(
+    messages: list[dict], legacy: bool
+) -> tuple[dict[tuple[str, str], bool], int]:
     calls: dict[str, tuple[str, str]] = {}
     anonymous: dict[str, list[tuple[str, str]]] = defaultdict(list)
     results: dict[tuple[str, str], bool] = {}
+    unmatched = 0
+    seen_result = False
     for message in messages:
         for part in message.get("parts") or []:
             call_id = part.get("id") or ""
-            prefix, _, index = call_id.rpartition("_")
-            # V2 synthesizes name_index IDs separately for each message. The
-            # index can change between a call and its result (e.g. a text part).
-            positional_id = (
-                not legacy and index.isdigit() and prefix == part.get("name", prefix)
-            )
+            positional_tool = None if legacy else _positional_tool(call_id)
             if part["type"] == "tool_call":
+                if seen_result:
+                    # Name-only matching is limited to the current batch of calls.
+                    anonymous.clear()
+                    seen_result = False
                 key = _call_key(part)
-                if call_id and not positional_id:
+                # ADK v2 fills missing IDs with a per-message tool_name_index.
+                # A provider ID with that shape has the same ambiguity.
+                if call_id and positional_tool != key[0]:
                     calls[call_id] = key
                 else:
                     anonymous[key[0]].append(key)
             elif part["type"] == "tool_call_response":
-                if call_id in calls:
+                seen_result = True
+                name = positional_tool if call_id else part.get("name")
+                name_matches = anonymous.get(name or "", [])
+                exact_match = calls.get(call_id)
+                candidates = set(name_matches)
+                if exact_match is not None:
+                    candidates.add(exact_match)
+                if len(candidates) != 1:
+                    unmatched += 1
+                    # An unresolved newer result may supersede an older match.
+                    for key in candidates:
+                        results.pop(key, None)
+                    continue
+                if exact_match is not None:
                     key = calls.pop(call_id)
                 else:
-                    name = prefix if positional_id else part.get("name")
-                    candidates = anonymous.get(name or "", [])
-                    if (call_id and not positional_id) or len(set(candidates)) != 1:
-                        raise ValueError(
-                            "Cannot uniquely match a tool result to its call in the captured history."
-                        )
-                    key = candidates.pop()
+                    key = name_matches.pop()
                 results[key] = "_compacted" in (part.get("response") or {})
-    return results
+    return results, unmatched
 
 
-def count_refetches(trace: list[dict]) -> int:
-    """Count new tool calls whose latest matching result was compacted in the prompt."""
+def count_refetches(trace: list[dict]) -> dict[str, int]:
+    """Count confirmed re-fetches and unmatched historical results in scored prompts."""
     legacy_ids = {
         span["span_id"]
         for span in trace
         if span["name"] == "call_llm" and "span_id" in span
     }
     total = 0
+    unmatched = 0
     found_inference = False
     for span in trace:
         legacy = span["name"] == "call_llm"
@@ -117,11 +142,12 @@ def count_refetches(trace: list[dict]) -> int:
             if p["type"] == "tool_call"
         ]
         if new_calls:
-            results = _latest_results(inputs, legacy)
+            results, unmatched_in_prompt = _latest_results(inputs, legacy)
+            unmatched += unmatched_in_prompt
             total += sum(results.get(_call_key(call), False) for call in new_calls)
     if not found_inference:
         raise ValueError("Trace has no ADK inference spans.")
-    return total
+    return {"refetches": total, "unmatched": unmatched}
 
 
 def main() -> None:
@@ -130,10 +156,10 @@ def main() -> None:
     args = parser.parse_args()
     try:
         trace = json.loads(args.trace.read_text(encoding="utf-8-sig"))
-        count = count_refetches(trace)
+        report = count_refetches(trace)
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    print(json.dumps({"refetches": count}))
+    print(json.dumps(report))
 
 
 if __name__ == "__main__":

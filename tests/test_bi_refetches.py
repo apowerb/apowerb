@@ -1,6 +1,7 @@
 """Re-fetch counts from ADK session trace fixtures."""
 
 import json
+from copy import deepcopy
 from importlib import import_module
 from pathlib import Path
 
@@ -78,12 +79,12 @@ def trace():
     ],
 )
 def test_counts_refetches_on_session_trace(trace, count_refetches, case, expected):
-    assert count_refetches([trace[case]]) == expected
+    assert count_refetches([trace[case]]) == {"refetches": expected, "unmatched": 0}
 
 
 def test_counts_each_new_call_once(trace, count_refetches):
     spans = [{"name": "execute_tool", "attributes": {}}, *trace.values()]
-    assert count_refetches(spans) == 1
+    assert count_refetches(spans) == {"refetches": 1, "unmatched": 0}
 
 
 def test_requires_captured_request_contents(count_refetches):
@@ -126,16 +127,12 @@ def v2_span():
 @pytest.mark.parametrize("capture", ["log", "span"])
 def test_default_adk_schema(trace, count_refetches, v2_span, capture):
     assert [count_refetches([v2_span(span, capture)]) for span in trace.values()] == [
-        0,
-        0,
-        0,
-        1,
-        0,
+        {"refetches": count, "unmatched": 0} for count in (0, 0, 0, 1, 0)
     ]
 
 
 def idless_span(trace, parallel):
-    span = trace["same_tool_and_arguments"]
+    span = deepcopy(trace["same_tool_and_arguments"])
     attrs = span["attributes"]
     request = json.loads(attrs["gcp.vertex.agent.llm_request"])
     calls, results = (message["parts"] for message in request["contents"])
@@ -154,17 +151,62 @@ def idless_span(trace, parallel):
 @pytest.mark.parametrize("schema", [1, 2])
 def test_refetch_with_stripped_ids(trace, count_refetches, v2_span, schema):
     span = idless_span(trace, parallel=False)
-    assert count_refetches([v2_span(span) if schema == 2 else span]) == 1
+    assert count_refetches([v2_span(span) if schema == 2 else span]) == {
+        "refetches": 1,
+        "unmatched": 0,
+    }
 
 
 @pytest.mark.parametrize("schema", [1, 2])
-def test_ambiguous_idless_parallel_results(trace, count_refetches, v2_span, schema):
-    span = idless_span(trace, parallel=True)
-    with pytest.raises(ValueError, match="uniquely match"):
-        count_refetches([v2_span(span) if schema == 2 else span])
+def test_unmatched_results_preserve_confirmed_refetches(
+    trace, count_refetches, v2_span, schema
+):
+    spans = [idless_span(trace, parallel=True), trace["same_tool_and_arguments"]]
+    if schema == 2:
+        spans = [v2_span(span) for span in spans]
+    assert count_refetches(spans) == {"refetches": 1, "unmatched": 2}
+
+
+def test_provider_ids_shaped_like_adk_positions_are_ambiguous(
+    trace, count_refetches, v2_span
+):
+    span = trace["same_tool_and_arguments"]
+    attrs = span["attributes"]
+    request = json.loads(attrs["gcp.vertex.agent.llm_request"])
+    calls, results = (message["parts"] for message in request["contents"])
+    for index, (call, result) in enumerate(zip(calls, reversed(results))):
+        provider_id = f"tool_bi_query_dashboard_{index}"
+        call["function_call"]["id"] = provider_id
+        result["function_response"]["id"] = provider_id
+    attrs["gcp.vertex.agent.llm_request"] = json.dumps(request)
+
+    assert count_refetches([v2_span(span)]) == {"refetches": 0, "unmatched": 2}
+
+
+def test_ambiguous_newer_result_supersedes_compacted_result(
+    trace, count_refetches, v2_span
+):
+    span = trace["same_tool_and_arguments"]
+    attrs = span["attributes"]
+    request = json.loads(attrs["gcp.vertex.agent.llm_request"])
+    newer = idless_span(trace, parallel=True)["attributes"][
+        "gcp.vertex.agent.llm_request"
+    ]
+    request["contents"].extend(json.loads(newer)["contents"])
+    attrs["gcp.vertex.agent.llm_request"] = json.dumps(request)
+
+    assert count_refetches([v2_span(span)]) == {"refetches": 0, "unmatched": 2}
 
 
 def test_legacy_child_span_does_not_duplicate_call(trace, count_refetches, v2_span):
     parent = dict(trace["same_tool_and_arguments"], span_id=100)
     child = dict(v2_span(parent), parent_span_id=100)
-    assert count_refetches([child, parent]) == 1
+    assert count_refetches([child, parent]) == {"refetches": 1, "unmatched": 0}
+
+
+def test_anonymized_dashboard_chat_capture(count_refetches):
+    fixture = (
+        Path(__file__).parent / "fixtures" / "bi_refetches" / "dashboard_chat_v2.json"
+    )
+    trace = json.loads(fixture.read_text(encoding="utf-8"))
+    assert count_refetches(trace) == {"refetches": 1, "unmatched": 12}

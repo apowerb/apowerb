@@ -1,0 +1,242 @@
+[
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 1,
+    "span_id": 1,
+    "parent_span_id": 2,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "adk-1", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 1,
+    "span_id": 3,
+    "parent_span_id": 2,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"redacted": true}}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "adk-2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "adk-3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "adk-4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "adk-5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 1,
+    "span_id": 4,
+    "parent_span_id": 2,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"redacted": true}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"redacted": true}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_1", "response": {"redacted": true}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_2", "response": {"redacted": true}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_3", "response": {"redacted": true}}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 2,
+    "span_id": 5,
+    "parent_span_id": 6,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_1", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_2", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_3", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "tool_call", "id": "adk-6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "component_ids": "example-6"}}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 2,
+    "span_id": 7,
+    "parent_span_id": 6,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_1", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_2", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_3", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "tool_call", "id": "tool_bi_query_dashboard_0", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "component_ids": "example-6"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"redacted": true}}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 3,
+    "span_id": 8,
+    "parent_span_id": 9,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_1", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_2", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_3", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "tool_call", "id": "tool_bi_query_dashboard_0", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "component_ids": "example-6"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "adk-7", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 3,
+    "span_id": 10,
+    "parent_span_id": 9,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_1", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_2", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_3", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "tool_call", "id": "tool_bi_query_dashboard_0", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "component_ids": "example-6"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"redacted": true}}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "adk-8", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "adk-9", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "adk-10", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "adk-11", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "generate_content scripted",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": 3,
+    "span_id": 11,
+    "parent_span_id": 9,
+    "attributes": {},
+    "logs": [
+      {
+        "event_name": "gen_ai.client.inference.operation.details",
+        "body": null,
+        "attributes": {
+          "gen_ai.input.messages": [
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_1", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_2", "response": {"_compacted": "Compacted result."}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_3", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "tool_call", "id": "tool_bi_query_dashboard_0", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "component_ids": "example-6"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"_compacted": "Compacted result."}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "user", "parts": [{"type": "text", "content": "[redacted]"}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_2", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"redacted": true}}]},
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "tool_call", "id": "tool_bi_query_dashboard_3", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-2\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_4", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-3\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_5", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-4\"}"}}, {"type": "tool_call", "id": "tool_bi_query_dashboard_6", "name": "tool_bi_query_dashboard", "arguments": {"dashboard_id": "example-1", "filters_json": "{\"filter\": \"filter-5\"}"}}]},
+            {"role": "user", "parts": [{"type": "tool_call_response", "id": "tool_bi_query_dashboard_0", "response": {"redacted": true}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_1", "response": {"redacted": true}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_2", "response": {"redacted": true}}, {"type": "tool_call_response", "id": "tool_bi_query_dashboard_3", "response": {"redacted": true}}]}
+          ],
+          "gen_ai.output.messages": [
+            {"role": "assistant", "parts": [{"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}, {"type": "text", "content": "[redacted]"}], "finish_reason": ""}
+          ]
+        }
+      }
+    ]
+  }
+]
