@@ -82,6 +82,35 @@ DATABASE_URL=… python bench/bi_tokens/dev_usage.py --schema th2agent_dev --ses
 
 `total_tokens` est ce que somme la jauge client, cache compris.
 
+### Re-fetches after compaction (`refetches.py`)
+
+Save the JSON response from the ADK Dev Server endpoint
+`/dev/apps/{app_name}/debug/trace/session/{session_id}` to `trace.json`.
+The script reads schema v2 `generate_content` spans with captured input and
+output messages, including messages on the completion-details log. It also
+supports legacy `call_llm` spans.
+
+```bash
+python bench/bi_tokens/refetches.py trace.json
+```
+
+The JSON output contains `refetches` and `unmatched`. A new call counts if the
+latest visible result for the exact tool and arguments carries the `_compacted`
+marker. An opaque call ID links a result to its original call. IDs of the form
+`tool_name_index` can come from ADK or a provider, so the script requires a
+unique argument set before using one of these IDs to match by tool name.
+
+`unmatched` counts tool results that could not be paired in the prompts used
+to score new calls. A result replayed in several prompts can contribute several
+sightings. The script continues counting confirmed re-fetches.
+
+The [test capture](../../tests/fixtures/bi_refetches/dashboard_chat_v2.json)
+comes from replaying the `dashboard_chat` scenario with its first question
+repeated as a third turn. The scripted model runs through ApowerB's BI agent
+and ADK's v2 telemetry exporter. The fixture retains the exported inference
+messages and redacts text, argument values, result bodies, and identifiers
+while preserving argument equality and the compaction marker.
+
 ## Résultats
 
 `results/*.json` : un fichier par état mesuré (`main` = avant les leviers).
